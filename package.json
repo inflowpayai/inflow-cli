@@ -30,7 +30,7 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "typedoc": "typedoc",
     "changeset": "changeset",
-    "version-packages": "changeset version",
+    "version-packages": "changeset version && node scripts/align-skill-version.js",
     "release": "turbo run build && node scripts/align-skill-version.js && changeset publish",
     "clean": "turbo run clean && rm -rf node_modules",
     "prepare": "husky"

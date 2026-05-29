@@ -16,14 +16,10 @@ export function useFlowState<T>(action: () => Promise<T>, onComplete: (result: T
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
+  const completedRef = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
-
-    const finish = (result: T | null) => {
-      setTimeout(() => {
-        if (!cancelled) onCompleteRef.current(result);
-      }, 0);
-    };
 
     const run = async () => {
       try {
@@ -31,13 +27,11 @@ export function useFlowState<T>(action: () => Promise<T>, onComplete: (result: T
         if (cancelled) return;
         setData(result);
         setStatus('success');
-        finish(result);
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
         setError(message);
         setStatus('error');
-        finish(null);
       }
     };
 
@@ -47,6 +41,16 @@ export function useFlowState<T>(action: () => Promise<T>, onComplete: (result: T
       cancelled = true;
     };
   }, [action]);
+
+  useEffect(() => {
+    if (status === 'loading' || completedRef.current) return;
+    completedRef.current = true;
+    const result = status === 'success' ? data : null;
+    const handle = setTimeout(() => {
+      onCompleteRef.current(result);
+    }, 50);
+    return () => clearTimeout(handle);
+  }, [status, data]);
 
   return { status, data, error };
 }
