@@ -1,5 +1,5 @@
 ---
-version: 0.5.0
+version: 0.5.1
 name: agentic-payments
 description: Authenticate with InFlow and pay HTTP 402 (x402)-protected resources. Use when the user invokes the `inflow` CLI or asks to log in / connect to InFlow. NOT for traditional merchant checkouts (card forms, hosted checkouts) — InFlow does not provision PANs.
 allowed-tools: ['Bash(inflow:*)', 'Bash(npx:*)', 'Bash(npm:*)']
