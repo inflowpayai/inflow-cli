@@ -1,0 +1,60 @@
+{
+  "name": "inflow",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "InFlow — agentic MPP / x402 payments from your machine.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inflowpayai/inflow-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/inflowpayai/inflow-cli/issues"
+  },
+  "homepage": "https://github.com/inflowpayai/inflow-cli#readme",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@11.1.3",
+  "scripts": {
+    "cli": "node packages/cli/dist/cli.js",
+    "build": "turbo run build && node scripts/align-skill-version.js",
+    "verify": "node scripts/clean-bundle-artifacts.mjs && pnpm format && pnpm typecheck && pnpm lint && pnpm test && pnpm typedoc && pnpm build",
+    "dev": "turbo run dev --parallel",
+    "test": "turbo run test",
+    "posttest": "node scripts/clean-bundle-artifacts.mjs",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "typedoc": "typedoc",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "turbo run build && node scripts/align-skill-version.js && changeset publish",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.5.0",
+    "@changesets/cli": "^2.27.0",
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-jsdoc": "^50.6.0",
+    "fast-check": "^3.22.0",
+    "husky": "^9.1.0",
+    "msw": "^2.4.0",
+    "prettier": "^3.3.0",
+    "prettier-plugin-jsdoc": "^1.3.0",
+    "tsup": "^8.3.0",
+    "turbo": "^2.2.0",
+    "typedoc": "^0.28.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^2.1.0",
+    "@vitest/coverage-v8": "^2.1.0"
+  }
+}

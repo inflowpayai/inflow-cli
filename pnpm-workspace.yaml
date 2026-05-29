@@ -1,0 +1,17 @@
+packages:
+  - 'packages/*'
+
+engineStrict: true
+
+publicHoistPattern:
+  - '*eslint*'
+  - '*prettier*'
+  - '*types*'
+
+allowBuilds:
+  esbuild: true
+  msw: true
+
+minimumReleaseAgeExclude:
+  - '@inflowpayai/x402'
+  - '@inflowpayai/x402-buyer'
