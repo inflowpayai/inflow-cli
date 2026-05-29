@@ -20,9 +20,9 @@ export function useFlowState<T>(action: () => Promise<T>, onComplete: (result: T
     let cancelled = false;
 
     const finish = (result: T | null) => {
-      queueMicrotask(() => {
+      setTimeout(() => {
         if (!cancelled) onCompleteRef.current(result);
-      });
+      }, 0);
     };
 
     const run = async () => {

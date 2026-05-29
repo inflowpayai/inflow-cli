@@ -1,6 +1,6 @@
 {
   "name": "inflow",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Authenticate with InFlow, inspect balances and deposit addresses, and perform agent-native payments via x402.",
   "author": {
     "name": "Jarwin, Inc."

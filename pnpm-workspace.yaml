@@ -15,3 +15,7 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@inflowpayai/x402'
   - '@inflowpayai/x402-buyer'
+
+auto-install-peers: true
+
+strict-peer-dependencies: false
