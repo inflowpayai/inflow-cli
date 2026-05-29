@@ -1,0 +1,2 @@
+node scripts/clean-bundle-artifacts.mjs
+node scripts/check-no-build-artifacts.mjs
