@@ -6,10 +6,11 @@ import {
   type X402StatusPhase,
 } from '@inflowpayai/inflow-core';
 import type { X402PayloadResponse } from '@inflowpayai/x402-buyer';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
 import { useEffect, useReducer } from 'react';
+import { useFlowExit } from '../../hooks/use-flow-exit.js';
 
 export { classifyPayloadResponse, TERMINAL_FAILURE_STATUSES };
 
@@ -30,9 +31,9 @@ export const X402StatusView: React.FC<X402StatusProps> = ({
   timeout,
   onComplete,
 }) => {
-  const { exit } = useApp();
   const initial: X402StatusPhase = { kind: 'polling' };
   const [phase, dispatch] = useReducer(reduceX402Status, initial);
+  const { finish } = useFlowExit(onComplete);
 
   useEffect(() => {
     const run = runX402Status({ fetchOnce, interval, maxAttempts, timeout });
@@ -50,10 +51,9 @@ export const X402StatusView: React.FC<X402StatusProps> = ({
 
   useEffect(() => {
     if (phase.kind === 'signed' || phase.kind === 'failed' || phase.kind === 'timeout' || phase.kind === 'error') {
-      onComplete(phase);
-      exit();
+      finish(phase);
     }
-  }, [phase, onComplete, exit]);
+  }, [phase, finish]);
 
   if (phase.kind === 'polling') {
     const statusText = phase.latest?.status ?? 'pending';

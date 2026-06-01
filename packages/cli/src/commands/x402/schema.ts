@@ -5,6 +5,19 @@ export const payArgs = z.object({
 });
 
 export const payOptions = z.object({
+  scheme: z
+    .string()
+    .optional()
+    .describe('Only consider `accepts[]` entries with this scheme (e.g. "exact", "balance").'),
+  network: z.string().optional().describe('Only consider entries on this network (e.g. "eip155:84532").'),
+  asset: z
+    .string()
+    .optional()
+    .describe('Only consider entries with this on-chain asset id (ERC-20 address or SVM mint).'),
+  assetName: z
+    .string()
+    .optional()
+    .describe('Only consider entries whose `extra.assetName` symbol matches (e.g. "USDC").'),
   method: z.string().default('GET').describe('HTTP method for the seller request.'),
   data: z
     .string()
@@ -51,30 +64,6 @@ export const payOptions = z.object({
     .describe(
       'Write the signed `encoded_payload` bytes to this file path (mode 0o600, overwrites silently). When set, the result frame includes `payload_saved_to: <absolute_path>` instead of `encoded_payload`. Use to keep one-time payment credentials out of chat transcripts and logs.',
     ),
-  scheme: z
-    .string()
-    .optional()
-    .describe(
-      'Constrain selection to seller `accepts[]` entries whose `scheme` matches exactly (e.g. "balance", "exact"). Combine with --network/--asset/--asset-name for a tighter filter; any flag can be set independently. When the filter empties the accepts list, the command fails with NO_FILTERED_MATCH instead of falling through to the buyer\'s prefer order.',
-    ),
-  network: z
-    .string()
-    .optional()
-    .describe(
-      'Constrain selection to seller `accepts[]` entries whose `network` matches exactly (e.g. "inflow:1", "eip155:84532", "solana:..."). Combine with --scheme/--asset/--asset-name for a tighter filter. When the filter empties the accepts list, the command fails with NO_FILTERED_MATCH.',
-    ),
-  asset: z
-    .string()
-    .optional()
-    .describe(
-      'Constrain selection to seller `accepts[]` entries whose `asset` matches exactly — the on-chain asset identifier (ERC-20 contract address for EVM, mint pubkey for SVM). When the filter empties the accepts list, the command fails with NO_FILTERED_MATCH.',
-    ),
-  assetName: z
-    .string()
-    .optional()
-    .describe(
-      'Constrain selection to seller `accepts[]` entries whose `extra.name` matches exactly — the human-readable symbol/name the seller advertises (e.g. "USDC"). When the filter empties the accepts list, the command fails with NO_FILTERED_MATCH.',
-    ),
 });
 
 export const statusArgs = z.object({
@@ -111,6 +100,10 @@ export const inspectArgs = z.object({
 });
 
 export const inspectOptions = z.object({
+  scheme: z.string().optional().describe('Only show `accepts[]` entries with this scheme (e.g. "exact", "balance").'),
+  network: z.string().optional().describe('Only show entries on this network (e.g. "eip155:84532").'),
+  asset: z.string().optional().describe('Only show entries with this on-chain asset id (ERC-20 address or SVM mint).'),
+  assetName: z.string().optional().describe('Only show entries whose `extra.assetName` symbol matches (e.g. "USDC").'),
   method: z.string().default('GET').describe('HTTP method for the probe request.'),
   data: z
     .string()
@@ -119,28 +112,4 @@ export const inspectOptions = z.object({
       'Request body for the probe. JSON or raw text. Content-Type defaults to application/json when --data is set unless a --header overrides it.',
     ),
   header: z.array(z.string()).default([]).describe('Repeatable. "Name: Value" format.'),
-  scheme: z
-    .string()
-    .optional()
-    .describe(
-      'Constrain the rendered accepts to entries whose `scheme` matches exactly (e.g. "balance", "exact"). When the filter empties the accepts list, the command fails with NO_FILTERED_MATCH.',
-    ),
-  network: z
-    .string()
-    .optional()
-    .describe(
-      'Constrain the rendered accepts to entries whose `network` matches exactly (e.g. "inflow:1", "eip155:84532"). When the filter empties the accepts list, the command fails with NO_FILTERED_MATCH.',
-    ),
-  asset: z
-    .string()
-    .optional()
-    .describe(
-      'Constrain the rendered accepts to entries whose `asset` matches exactly — the on-chain asset identifier (ERC-20 contract address for EVM, mint pubkey for SVM). When the filter empties the accepts list, the command fails with NO_FILTERED_MATCH.',
-    ),
-  assetName: z
-    .string()
-    .optional()
-    .describe(
-      'Constrain the rendered accepts to entries whose `extra.name` matches exactly — the human-readable symbol/name the seller advertises (e.g. "USDC"). When the filter empties the accepts list, the command fails with NO_FILTERED_MATCH.',
-    ),
 });

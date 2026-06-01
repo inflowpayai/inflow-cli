@@ -10,7 +10,7 @@
   "logLevel": "Info",
   "out": "docs/api",
   "readme": "none",
-  "treatWarningsAsErrors": false,
+  "treatWarningsAsErrors": true,
   "tsconfig": "tsconfig.docs.json",
   "validation": {
     "invalidLink": true,

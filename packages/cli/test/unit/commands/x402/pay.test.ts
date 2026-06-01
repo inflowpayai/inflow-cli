@@ -115,7 +115,7 @@ function makePrepared(
 
 function makeClient(overrides: Partial<X402InflowClient> = {}): X402InflowClient {
   const base = {
-    selectInflowRequirement: vi.fn(() => makeRequirement()),
+    selectInflowRequirement: vi.fn(async () => makeRequirement()),
     prepareInflowPayment: vi.fn(async () => makePrepared()),
     getSupported: vi.fn(async () => ({ kinds: [{ scheme: 'balance', network: 'inflow:1', x402Version: 2 }] })),
     getX402Payload: vi.fn(async () => ({ status: 'INITIATED' })),
@@ -161,9 +161,9 @@ describe('mapSdkError', () => {
     expect(mapped.code).toBe(NO_INFLOW_MATCH_CODE);
   });
 
-  it('falls through to PAY_FAILED for unknown errors', () => {
+  it('falls through to PAYMENT_FAILED for unknown errors', () => {
     const mapped = mapSdkError(new Error('boom'));
-    expect(mapped.code).toBe('PAY_FAILED');
+    expect(mapped.code).toBe('PAYMENT_FAILED');
     expect(mapped.message).toBe('boom');
   });
 });
@@ -223,7 +223,7 @@ describe('runPayPipeline', () => {
       }),
     );
     const client = makeClient({
-      selectInflowRequirement: vi.fn(() => null),
+      selectInflowRequirement: vi.fn(async () => null),
     } as Partial<X402InflowClient>);
     const { emit, events } = captureEvents();
     await runPayPipeline(
@@ -566,15 +566,15 @@ describe('filterAccepts', () => {
     expect(out.accepts[0]?.asset).toBe('0xUSDC');
   });
 
-  it('filters by assetName (extra.name) alone', () => {
+  it('filters by assetName (extra.assetName) alone', () => {
     const decoded = makeMultiAcceptPaymentRequired();
     decoded.accepts[1] = {
       ...decoded.accepts[1],
-      extra: { name: 'USDC' },
+      extra: { assetName: 'USDC' },
     } as (typeof decoded.accepts)[number];
     decoded.accepts[2] = {
       ...decoded.accepts[2],
-      extra: { name: 'PYUSD' },
+      extra: { assetName: 'PYUSD' },
     } as (typeof decoded.accepts)[number];
     const out = filterAccepts(decoded, { assetName: 'USDC' });
     expect(out.accepts).toHaveLength(1);
@@ -586,7 +586,7 @@ describe('filterAccepts', () => {
     decoded.accepts[1] = {
       ...decoded.accepts[1],
       asset: '0xUSDC',
-      extra: { name: 'USDC' },
+      extra: { assetName: 'USDC' },
     } as (typeof decoded.accepts)[number];
     const out = filterAccepts(decoded, {
       scheme: 'exact',
@@ -616,13 +616,13 @@ describe('buildNoFilteredMatchMessage', () => {
     decoded.accepts[0] = {
       ...decoded.accepts[0],
       asset: '0xUSDC',
-      extra: { name: 'USDC' },
+      extra: { assetName: 'USDC' },
     } as (typeof decoded.accepts)[number];
     const msg = buildNoFilteredMatchMessage(decoded, { asset: '0xMISSING', assetName: 'PYUSD' });
     expect(msg).toContain('--asset=0xMISSING');
     expect(msg).toContain('--asset-name=PYUSD');
     expect(msg).toContain('asset=0xUSDC');
-    expect(msg).toContain('name=USDC');
+    expect(msg).toContain('assetName=USDC');
   });
 
   it('says "(none)" when the seller has no accepts entries', () => {
@@ -650,7 +650,7 @@ describe('runPayPipeline with --scheme / --network / --asset / --asset-name filt
       }),
     );
     fetchSpy.mockResolvedValueOnce(new Response('paid-body', { status: 200 }));
-    const selectSpy = vi.fn((_decoded: PaymentRequired) => makeRequirement());
+    const selectSpy = vi.fn(async (_decoded: PaymentRequired) => makeRequirement());
     const client = makeClient({
       selectInflowRequirement: selectSpy,
     } as Partial<X402InflowClient>);
@@ -685,7 +685,7 @@ describe('runPayPipeline with --scheme / --network / --asset / --asset-name filt
         headers: { 'PAYMENT-REQUIRED': header },
       }),
     );
-    const selectSpy = vi.fn((_decoded: PaymentRequired) => makeRequirement());
+    const selectSpy = vi.fn(async (_decoded: PaymentRequired) => makeRequirement());
     const client = makeClient({
       selectInflowRequirement: selectSpy,
     } as Partial<X402InflowClient>);
@@ -748,7 +748,7 @@ describe('runPayPipeline with --scheme / --network / --asset / --asset-name filt
         headers: { 'PAYMENT-REQUIRED': header },
       }),
     );
-    const selectSpy = vi.fn((_decoded: PaymentRequired) => makeRequirement());
+    const selectSpy = vi.fn(async (_decoded: PaymentRequired) => makeRequirement());
     const client = makeClient({
       selectInflowRequirement: selectSpy,
     } as Partial<X402InflowClient>);
@@ -777,7 +777,7 @@ describe('runPayPipeline with --scheme / --network / --asset / --asset-name filt
     const decoded = makeMultiAcceptPaymentRequired();
     decoded.accepts[0] = {
       ...decoded.accepts[0],
-      extra: { name: 'USDC' },
+      extra: { assetName: 'USDC' },
     } as (typeof decoded.accepts)[number];
     const header = encodePaymentRequiredHeader(decoded);
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
@@ -786,7 +786,7 @@ describe('runPayPipeline with --scheme / --network / --asset / --asset-name filt
         headers: { 'PAYMENT-REQUIRED': header },
       }),
     );
-    const selectSpy = vi.fn((_decoded: PaymentRequired) => makeRequirement());
+    const selectSpy = vi.fn(async (_decoded: PaymentRequired) => makeRequirement());
     const client = makeClient({
       selectInflowRequirement: selectSpy,
     } as Partial<X402InflowClient>);
@@ -820,7 +820,7 @@ describe('runPayPipeline with --scheme / --network / --asset / --asset-name filt
       }),
     );
     const client = makeClient({
-      selectInflowRequirement: vi.fn(() => null),
+      selectInflowRequirement: vi.fn(async () => null),
     } as Partial<X402InflowClient>);
     const { emit, events } = captureEvents();
     await runPayPipeline(

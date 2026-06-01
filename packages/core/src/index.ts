@@ -23,9 +23,10 @@
  */
 
 /* Client + augmented interfaces ------------------------------------------- */
-export { Inflow, type IX402Resource } from './client.js';
+export { Inflow, type IMppResource, type IX402Resource } from './client.js';
 export {
   augmentAuth,
+  augmentMpp,
   augmentUser,
   type AuthLoginApiKeyRequest,
   type AuthLoginRequest,
@@ -35,8 +36,13 @@ export {
   type IAuth,
   type IBalances,
   type IDepositAddresses,
+  type IMpp,
   type IUser,
   type IX402,
+  type MppCancelRequest,
+  type MppInspectRequest,
+  type MppPayRequest,
+  type MppStatusRequest,
   type X402CancelRequest,
   type X402InspectRequest,
   type X402PayRequest,
@@ -128,6 +134,7 @@ export {
   runInspectPipeline,
 } from './flows/x402-inspect.js';
 export {
+  type BodyAttachment,
   buildBodyAttachment,
   buildSettledMeta,
   mapSdkError,
@@ -153,6 +160,57 @@ export {
 } from './flows/x402-status.js';
 export { runX402Cancel, type X402CancelInput, type X402CancelResult } from './flows/x402-cancel.js';
 export { runX402Supported, type X402SupportedInput } from './flows/x402-supported.js';
+export {
+  type DecodedChallenge,
+  type DecodeResult,
+  decodeChallengeRequest,
+  decodeMppValue,
+  summarizeChallenge,
+} from './flows/mpp-decode.js';
+export {
+  type MppInspectEvent,
+  type MppInspectPhase,
+  type MppInspectPipelineDeps,
+  type MppInspectResultChallenges,
+  type MppInspectResultNoPayment,
+  reduceMppInspect,
+  runMppInspectPipeline,
+} from './flows/mpp-inspect.js';
+export {
+  buildSettlement,
+  mapMppError,
+  type MppPayCreated,
+  type MppPayEvent,
+  type MppPayPhase,
+  type MppPayPipelineDeps,
+  type MppPayResultNoPayment,
+  type MppPayResultRejected,
+  type MppPayResultSuccess,
+  type MppPaySettlement,
+  reduceMppPay,
+  runMppPayPipeline,
+} from './flows/mpp-pay.js';
+export {
+  classifyTransaction,
+  reduceMppStatus,
+  runMppStatus,
+  TERMINAL_STATES,
+  type MppStatusEvent,
+  type MppStatusInput,
+  type MppStatusPhase,
+  type MppStatusRun,
+} from './flows/mpp-status.js';
+export { runMppCancel, type MppCancelInput, type MppCancelResult } from './flows/mpp-cancel.js';
+export { runMppSupported, type MppSupportedInput } from './flows/mpp-supported.js';
+export {
+  filterInflowChallenges,
+  INVALID_402_CODE as MPP_INVALID_402_CODE,
+  NO_FILTERED_MATCH_CODE as MPP_NO_FILTERED_MATCH_CODE,
+  NO_INFLOW_MATCH_CODE as MPP_NO_INFLOW_MATCH_CODE,
+  NO_INFLOW_MATCH_MESSAGE as MPP_NO_INFLOW_MATCH_MESSAGE,
+  PAYMENT_NOT_ACCEPTED_CODE as MPP_PAYMENT_NOT_ACCEPTED_CODE,
+  UNEXPECTED_PROBE_STATUS_CODE as MPP_UNEXPECTED_PROBE_STATUS_CODE,
+} from './flows/mpp-shared.js';
 export { type BalancesListInput, runBalancesList } from './flows/balances-list.js';
 export { type DepositAddressesListInput, runDepositAddressesList } from './flows/deposit-addresses-list.js';
 export {

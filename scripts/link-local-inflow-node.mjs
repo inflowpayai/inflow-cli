@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * Redirect `@inflowpayai/x402` and `@inflowpayai/x402-buyer` to a local
- * `inflow-node` checkout via pnpm-workspace.yaml overrides. Use while
- * developing against unpublished SDK changes (e.g. spec sibling/013)
- * before the corresponding npm release lands.
+ * Redirect the local SDK buyer packages (`@inflowpayai/x402`,
+ * `@inflowpayai/x402-buyer`, `@inflowpayai/mpp`, `@inflowpayai/mpp-buyer`)
+ * to a local `inflow-node` checkout via pnpm-workspace.yaml overrides. Use
+ * while developing against unpublished SDK changes before the corresponding
+ * npm release lands.
  *
  * Reads the target checkout from `$INFLOW_NODE_PATH` (defaults to
- * `../inflow-node` resolved against this repo's root). Bails out if the
- * target's `packages/x402/package.json` is missing.
+ * `../inflow-node` resolved against this repo's root). Bails out if any
+ * linked package is missing or unbuilt in the target checkout.
  *
  * Writes to `pnpm-workspace.yaml`'s `overrides:` block — the modern home
  * for workspace-level overrides under pnpm 11+ (the legacy
@@ -25,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_PKG_JSON = path.join(REPO_ROOT, 'package.json');
 const WORKSPACE_YAML = path.join(REPO_ROOT, 'pnpm-workspace.yaml');
-const LINKED = ['@inflowpayai/x402', '@inflowpayai/x402-buyer'];
+const LINKED = ['@inflowpayai/x402', '@inflowpayai/x402-buyer', '@inflowpayai/mpp', '@inflowpayai/mpp-buyer'];
 
 const BEGIN_MARK = '# >>> link-local-inflow-node:overrides';
 const END_MARK = '# <<< link-local-inflow-node:overrides';
@@ -57,19 +58,13 @@ async function assertCheckout(inflowNodePath) {
       );
       process.exit(1);
     }
-  }
-  const dist = path.join(
-    inflowNodePath,
-    'packages',
-    'x402-buyer',
-    'dist',
-    'index.d.ts',
-  );
-  if (!(await fileExists(dist))) {
-    process.stderr.write(
-      `link-local-inflow-node: ${dist} not found. Run \`pnpm --filter @inflowpayai/x402-buyer build\` in inflow-node first.\n`,
-    );
-    process.exit(1);
+    const dist = path.join(inflowNodePath, 'packages', sub, 'dist', 'index.d.ts');
+    if (!(await fileExists(dist))) {
+      process.stderr.write(
+        `link-local-inflow-node: ${dist} not found. Run \`pnpm --filter ${name} build\` in inflow-node first.\n`,
+      );
+      process.exit(1);
+    }
   }
 }
 

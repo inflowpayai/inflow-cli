@@ -1,19 +1,11 @@
 {
   "name": "inflow",
   "version": "0.5.2",
-  "description": "Authenticate with InFlow, inspect balances and deposit addresses, and perform agent-native payments via x402.",
+  "description": "Authenticate with InFlow, inspect balances and deposit addresses, and perform agent-native payments via x402 and MPP.",
   "author": {
     "name": "Jarwin, Inc."
   },
-  "keywords": [
-    "onboarding",
-    "payments",
-    "x402",
-    "mpp",
-    "agentic",
-    "inflow",
-    "wallet"
-  ],
+  "keywords": ["onboarding", "payments", "x402", "mpp", "agentic", "inflow", "wallet"],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json"
 }

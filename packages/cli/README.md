@@ -9,20 +9,26 @@ should request.
 
 ## Command index
 
-| Command                              | Purpose                                                                                                                |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `inflow auth login`                  | Run the OAuth device flow to authenticate. Saves a refreshable access token.                                           |
-| `inflow auth logout`                 | Clear the saved access token and API key from local config.                                                            |
-| `inflow auth status`                 | Show which credential the CLI would use, plus the active environment and resolved API URL.                             |
-| `inflow user get`                    | Fetch the authenticated user's profile.                                                                                |
-| `inflow balances list`               | List the authenticated user's balances.                                                                                |
-| `inflow deposit-addresses list`      | List the user's configured deposit addresses, grouped by network.                                                      |
-| `inflow x402 pay <url>`              | Probe a seller; if it returns 402, drive the approval flow and replay the request with the signed `PAYMENT-SIGNATURE`. |
-| `inflow x402 inspect <url>`          | Read-only probe. Show the seller's `PAYMENT-REQUIRED` accepts for a URL — no auth, no payment.                         |
-| `inflow x402 status <transactionId>` | Poll the signing state of an in-flight transaction. Used to resume a previous `pay` across CLI invocations.            |
-| `inflow x402 cancel <approvalId>`    | Best-effort cancel of an in-flight approval. Always reports success.                                                   |
-| `inflow x402 decode <header>`        | Decode a raw `PAYMENT-REQUIRED` header value. No auth required.                                                        |
-| `inflow x402 supported`              | List the buyer-side `(scheme, network)` capability cache.                                                              |
+| Command                              | Purpose                                                                                                                         |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `inflow auth login`                  | Run the OAuth device flow to authenticate. Saves a refreshable access token.                                                    |
+| `inflow auth logout`                 | Clear the saved access token and API key from local config.                                                                     |
+| `inflow auth status`                 | Show which credential the CLI would use, plus the active environment and resolved API URL.                                      |
+| `inflow user get`                    | Fetch the authenticated user's profile.                                                                                         |
+| `inflow balances list`               | List the authenticated user's balances.                                                                                         |
+| `inflow deposit-addresses list`      | List the user's configured deposit addresses, grouped by network.                                                               |
+| `inflow x402 pay <url>`              | Probe a seller; if it returns 402, drive the approval flow and replay the request with the signed `PAYMENT-SIGNATURE`.          |
+| `inflow x402 inspect <url>`          | Read-only probe. Show the seller's `PAYMENT-REQUIRED` accepts for a URL — no auth, no payment.                                  |
+| `inflow x402 status <transactionId>` | Poll the signing state of an in-flight transaction. Used to resume a previous `pay` across CLI invocations.                     |
+| `inflow x402 cancel <approvalId>`    | Best-effort cancel of an in-flight approval. Always reports success.                                                            |
+| `inflow x402 decode <header>`        | Decode a raw `PAYMENT-REQUIRED` header value. No auth required.                                                                 |
+| `inflow x402 supported`              | List the buyer-side `(scheme, network)` capability cache.                                                                       |
+| `inflow mpp pay <url>`               | Probe a seller; if it returns a `WWW-Authenticate: Payment` 402, fulfil the challenge and replay with `Authorization: Payment`. |
+| `inflow mpp inspect <url>`           | Read-only probe. Parse the seller's MPP `Payment` challenge(s) for a URL — no auth, no payment.                                 |
+| `inflow mpp status <transactionId>`  | Poll the buyer-side state of an in-flight MPP transaction. Used to resume a previous `pay` across CLI invocations.              |
+| `inflow mpp cancel <approvalId>`     | Best-effort cancel of an in-flight MPP approval. Always reports success.                                                        |
+| `inflow mpp decode <value>`          | Decode a `WWW-Authenticate: Payment` header, or a base64url credential / receipt. No auth required.                             |
+| `inflow mpp supported`               | List the methods the buyer can pay with — by intent, settlement rail, and currency.                                             |
 
 ## Global flags
 
@@ -142,22 +148,22 @@ with the signed `PAYMENT-SIGNATURE` header.
 
 #### Useful flags
 
-| Flag                             | Default | Notes                                                                                                                                                                                                                              |
-| -------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--method <verb>`                | `GET`   | HTTP method for the seller request.                                                                                                                                                                                                |
-| `--data <body>`                  | —       | Request body. Sets `Content-Type: application/json` unless a `--header` overrides it.                                                                                                                                              |
-| `--header <"Name: Value">`       | —       | Repeatable. Forwarded on both the probe and the replay.                                                                                                                                                                            |
-| `--scheme <scheme>`              | —       | Constrain the picked `accepts[]` entry to a specific scheme (e.g. `balance`, `exact`).                                                                                                                                             |
-| `--network <network>`            | —       | Constrain the picked `accepts[]` entry to a specific network (e.g. `inflow:1`, `eip155:84532`, `solana:...`).                                                                                                                      |
-| `--asset <asset>`                | —       | Constrain the picked `accepts[]` entry to a specific on-chain asset identifier (ERC-20 contract address for EVM, mint pubkey for SVM).                                                                                             |
-| `--asset-name <name>`            | —       | Constrain the picked `accepts[]` entry by its `extra.name` (e.g. `USDC`, `USD Coin`). Matches what the seller advertises in `extra`, not the on-chain asset.                                                                       |
-| `--interval <seconds>`           | `0`     | Inline poll cadence while awaiting approval. `0` returns the approval URL and a follow-up command hint without blocking.                                                                                                           |
-| `--max-attempts <n>`             | `0`     | Hard cap on poll attempts when `--interval > 0`. `0` is unlimited.                                                                                                                                                                 |
-| `--timeout <seconds>`            | `900`   | Polling deadline. Matches `@inflowpayai/x402-buyer`'s default approval expiry.                                                                                                                                                     |
-| `--payment-id <id>`              | —       | Caller-supplied payment identifier (16–128 chars, `^[a-zA-Z0-9_-]+$`). Forwarded to the server as `remotePaymentId`.                                                                                                               |
-| `--show-body` / `--no-show-body` | `true`  | Include the seller response body inline in the result. Default suits AI assistants paying for content.                                                                                                                             |
-| `--output-file <path>`           | —       | Write the seller response body bytes to disk (overwrites silently) and surface `output_saved_to: <abs-path>` instead of `body` / `body_base64`. Natural for binary downloads. Pair with `--no-show-body`.                          |
-| `--payload-file <path>`          | —       | Write the signed `encoded_payload` bytes to disk (mode `0o600`, overwrites silently) and surface `payload_saved_to: <abs-path>` instead of `encoded_payload`. Keeps one-time payment credentials out of chat transcripts and logs. |
+| Flag                             | Default | Notes                                                                                                                                                                                                                                          |
+| -------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--method <verb>`                | `GET`   | HTTP method for the seller request.                                                                                                                                                                                                            |
+| `--data <body>`                  | —       | Request body. Sets `Content-Type: application/json` unless a `--header` overrides it.                                                                                                                                                          |
+| `--header <"Name: Value">`       | —       | Repeatable. Forwarded on both the probe and the replay.                                                                                                                                                                                        |
+| `--scheme <scheme>`              | —       | Constrain the picked `accepts[]` entry to a specific scheme (e.g. `balance`, `exact`).                                                                                                                                                         |
+| `--network <network>`            | —       | Constrain the picked `accepts[]` entry to a specific network (e.g. `inflow:1`, `eip155:84532`, `solana:...`).                                                                                                                                  |
+| `--asset <asset>`                | —       | Constrain the picked `accepts[]` entry to a specific on-chain asset identifier (ERC-20 contract address for EVM, mint pubkey for SVM).                                                                                                         |
+| `--asset-name <name>`            | —       | Constrain the picked `accepts[]` entry by its `extra.assetName` — the human-readable symbol the seller advertises (e.g. `USDC`). Distinct from `extra.name` (the EIP-712 domain, e.g. `USD Coin`); matches the symbol, not the on-chain asset. |
+| `--interval <seconds>`           | `0`     | Inline poll cadence while awaiting approval. `0` returns the approval URL and a follow-up command hint without blocking.                                                                                                                       |
+| `--max-attempts <n>`             | `0`     | Hard cap on poll attempts when `--interval > 0`. `0` is unlimited.                                                                                                                                                                             |
+| `--timeout <seconds>`            | `900`   | Polling deadline. Matches `@inflowpayai/x402-buyer`'s default approval expiry.                                                                                                                                                                 |
+| `--payment-id <id>`              | —       | Caller-supplied payment identifier (16–128 chars, `^[a-zA-Z0-9_-]+$`). Forwarded to the server as `remotePaymentId`.                                                                                                                           |
+| `--show-body` / `--no-show-body` | `true`  | Include the seller response body inline in the result. Default suits AI assistants paying for content.                                                                                                                                         |
+| `--output-file <path>`           | —       | Write the seller response body bytes to disk (overwrites silently) and surface `output_saved_to: <abs-path>` instead of `body` / `body_base64`. Natural for binary downloads. Pair with `--no-show-body`.                                      |
+| `--payload-file <path>`          | —       | Write the signed `encoded_payload` bytes to disk (mode `0o600`, overwrites silently) and surface `payload_saved_to: <abs-path>` instead of `encoded_payload`. Keeps one-time payment credentials out of chat transcripts and logs.             |
 
 #### TTY example
 
@@ -225,9 +231,10 @@ inflow x402 pay https://seller.example.com/api/widgets \
 
 `--scheme`, `--network`, `--asset`, and `--asset-name` are independent and AND-combined: each one that's set narrows the
 seller's `accepts[]` further. `--asset` matches the on-chain asset identifier; `--asset-name` matches the
-seller-declared `extra.name`. When the resulting set is empty the command fails with `NO_FILTERED_MATCH` and the message
-reports the scheme/network/asset/name tuples the seller actually advertises. When a match exists but the buyer-side
-cache can't sign it, the existing `NO_INFLOW_MATCH` still fires — filtering and routing are orthogonal.
+seller-declared `extra.assetName` symbol (e.g. `USDC`) — not `extra.name`, which is the EIP-712 domain (e.g.
+`USD Coin`). When the resulting set is empty the command fails with `NO_FILTERED_MATCH` and the message reports the
+scheme/network/asset/name tuples the seller actually advertises. When a match exists but the buyer-side cache can't sign
+it, the existing `NO_INFLOW_MATCH` still fires — filtering and routing are orthogonal.
 
 ### `x402 inspect`
 
@@ -241,8 +248,8 @@ no replay. Useful for surfacing the seller's prices and network choices to a use
 
 TTY renders a table with proper-cased headers — `Scheme`, `Network`, `Amount`, `Asset`, `Pay To`, `Timeout`, `Extra` —
 with `Pay To` rendered verbatim (no truncation). The `Extra` column shows the comma-separated keys of the
-scheme-specific `extra` record (e.g. `name, version, assetTransferMethod` for EIP-3009); pass `--format json` to see the
-values.
+scheme-specific `extra` record (e.g. `assetName, name, version, assetTransferMethod` for EIP-3009, where `assetName` is
+the symbol `--asset-name` matches on); pass `--format json` to see the values.
 
 ```
 PAYMENT-REQUIRED for https://seller.example.com/api/widgets  ·  x402Version 2  ·  3 accepts
@@ -250,7 +257,7 @@ PAYMENT-REQUIRED for https://seller.example.com/api/widgets  ·  x402Version 2  
 Scheme   Network                                      Amount  Asset  Pay To                                       Timeout  Extra
 -------  -------------------------------------------  ------  -----  -------------------------------------------  -------  -----------------------------------
 balance  inflow:1                                     500     USDC   inflow:abc                                   60s      —
-exact    eip155:84532                                 500     USDC   0xAbCdEfABcDef0123456789aBcDeF0123456789aB   60s      name, version, assetTransferMethod
+exact    eip155:84532                                 500     USDC   0xAbCdEfABcDef0123456789aBcDeF0123456789aB   60s      assetName, name, version, assetTransferMethod
 exact    solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1      500     USDC   sol-payto                                    60s      —
 
 Use --format json to inspect extras values.
@@ -273,7 +280,7 @@ Agent shape:
       "asset": "USDC",
       "pay_to": "0xabc...",
       "max_timeout_seconds": 60,
-      "extra": { "name": "USD Coin", "version": "2", "assetTransferMethod": "eip3009" },
+      "extra": { "assetName": "USDC", "name": "USD Coin", "version": "2", "assetTransferMethod": "eip3009" },
     },
   ],
 }
@@ -348,6 +355,67 @@ code. The `x402` group adds these codes:
 | `PAYMENT_NOT_ACCEPTED`    | The seller still returned non-2xx on the replayed (PAYMENT-SIGNATURE-bearing) request. The approval completed but the seller did not honour the payment.                                                                  |
 | `POLLING_TIMEOUT`         | `x402 status --interval` exhausted its budget before the transaction settled. Retryable.                                                                                                                                  |
 | `INSPECT_FAILED`          | Transport-layer failure during `x402 inspect` (DNS, connection refused, etc.).                                                                                                                                            |
+
+## `mpp`
+
+The `mpp` command group is the MPP analog of `x402`, for sellers that answer `402` with `WWW-Authenticate: Payment …`
+(the MPP `Payment` auth scheme) instead of x402's `PAYMENT-REQUIRED`. It is built on `@inflowpayai/mpp`'s `MppClient`
+and mirrors `x402` command-for-command — `pay`, `inspect`, `status`, `cancel`, `decode`, `supported` — with the same
+TTY + agent renderings, the same two-process approval handoff, and the same `--output-file` / `--format` behaviour.
+
+```bash
+inflow mpp inspect <url>                                    # parse the seller's Payment challenge(s) — read-only
+inflow mpp pay <url> --interval 5 --max-attempts 60         # fast path: create -> poll -> replay -> return body
+inflow mpp pay <url> --format json                          # two-process: returns transaction_id + a `mpp status` _next hint
+inflow mpp status <transactionId> --interval 5              # resume an in-flight transaction; ready frames carry `credential`
+inflow mpp cancel <approvalId>                              # best-effort cancel of a pending approval
+inflow mpp decode '<WWW-Authenticate: Payment value>'       # or a base64url credential / receipt
+inflow mpp supported                                        # methods the buyer can pay with: method -> intent -> rail -> currencies
+```
+
+Differences from `x402`:
+
+- The seller's challenge pins the settlement rail, so the buyer does not choose a scheme/network/asset the way x402
+  does. Instead the buyer narrows _which advertised challenge_ to fulfil (see the flags below), then optionally names a
+  funding instrument.
+- `pay` (when ready) and `status` surface a base64url `credential`; replay the request with
+  `Authorization: Payment <credential>`. `--credential-file <path>` writes it at mode `0o600` and the frame carries
+  `credential_saved_to` instead of `credential` — the analog of x402's `--payload-file` / `encoded_payload`.
+- A 402 carrying no `inflow`-method challenge fails with `NO_INFLOW_MATCH`.
+
+#### Challenge-selection flags (`pay` and `inspect`)
+
+These narrow the seller's advertised challenge set; each is independent and AND-combined. When the result is empty the
+command fails with `NO_FILTERED_MATCH`. (`x402`'s `--scheme`/`--network`/`--asset`/`--asset-name` have no MPP analog —
+the rail is fixed by the seller, so the buyer filters by method/intent/currency/rail instead.)
+
+| Flag                     | Notes                                                                                                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--payment-method <m>`   | Only consider challenges with this payment method (e.g. `inflow`).                                                                                                        |
+| `--intent <intent>`      | Only consider challenges with this intent (e.g. `charge`).                                                                                                                |
+| `--currency <CODE>`      | Only consider challenges in this currency (e.g. `USDC`). Disambiguates when the seller offers the `inflow` method in more than one currency.                              |
+| `--rail <rail>`          | Only consider challenges on this settlement rail (e.g. `balance`, `instrument`).                                                                                          |
+| `--instrument-id <uuid>` | Funding instrument id for an instrument-rail (fiat) challenge. The only option that selects _how_ to fund rather than which challenge — the rail itself is seller-pinned. |
+
+### Errors (mpp group)
+
+Same `--format json` envelope as `x402` (`{ code, message, retryable? }` plus a non-zero exit code). The shared
+probe/decode/match codes carry the same meaning as in the `x402` table above; the rail-specific terminal codes differ:
+
+| Code                      | When                                                                                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NOT_AUTHENTICATED`       | No saved device token and no `--api-key`. (Not raised by `inspect` or `decode` — both are auth-free.)                                                         |
+| `INVALID_HEADER`          | A `--header` flag wasn't in `Name: Value` form.                                                                                                               |
+| `INVALID_402`             | Seller returned 402 without a parseable `WWW-Authenticate: Payment` challenge.                                                                                |
+| `DECODE_FAILED`           | Challenge / credential / receipt parse failed.                                                                                                                |
+| `UNEXPECTED_PROBE_STATUS` | Seller returned a non-2xx, non-402 status during the probe. Raised by `pay` and `inspect`.                                                                    |
+| `NO_INFLOW_MATCH`         | The 402 carried no `inflow`-method challenge the buyer can fulfil.                                                                                            |
+| `NO_FILTERED_MATCH`       | `--payment-method` / `--intent` / `--currency` / `--rail` excluded every challenge. The message lists the challenges the seller actually advertised.          |
+| `PAYMENT_NOT_ACCEPTED`    | The seller still returned non-2xx on the replayed (`Authorization: Payment`) request. The transaction was ready but the seller did not honour the credential. |
+| `PAYMENT_FAILED`          | The transaction reached a terminal `failed` state, or the pay pipeline could not produce a credential.                                                        |
+| `PAYMENT_EXPIRED`         | The transaction expired before it became ready.                                                                                                               |
+| `POLLING_TIMEOUT`         | `mpp status --interval` exhausted its budget before the transaction became ready. Retryable.                                                                  |
+| `INSPECT_FAILED`          | Transport-layer failure during `mpp inspect` (DNS, connection refused, etc.).                                                                                 |
 
 ## Notes
 

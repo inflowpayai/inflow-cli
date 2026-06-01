@@ -22,6 +22,7 @@ import {
   type SellerProbeOptions,
   type SellerProbeResult,
 } from '@inflowpayai/x402-buyer/probe';
+import { userFacingApiError } from './api-error.js';
 import { type DecodedHeader } from './x402-decode.js';
 import {
   type AcceptsFilters,
@@ -204,8 +205,8 @@ export interface PayPipelineDeps {
    */
   assetFilter?: string;
   /**
-   * Caller-supplied asset-name filter — matches `entry.extra.name`, the human-readable symbol/name the seller
-   * advertises (e.g. "USDC"). Same semantics as `schemeFilter`.
+   * Caller-supplied asset-name filter — matches `entry.extra.assetName`, the human-readable symbol the seller
+   * advertises (e.g. "USDC"). Present on every scheme including `balance`. Same semantics as `schemeFilter`.
    */
   assetNameFilter?: string;
   /**
@@ -218,7 +219,7 @@ export interface PayPipelineDeps {
 
 /**
  * Map a buyer-side x402 SDK error into the agent-mode `{ code, message }` envelope the CLI emits. Recognised classes
- * collapse to their canonical code strings; anything else falls through to a generic `PAY_FAILED` with the raw
+ * collapse to their canonical code strings; anything else falls through to a generic `PAYMENT_FAILED` with the raw
  * message.
  */
 export function mapSdkError(err: unknown): { code: string; message: string } {
@@ -237,10 +238,9 @@ export function mapSdkError(err: unknown): { code: string; message: string } {
   if (err instanceof X402AdapterRoutingError) {
     return { code: NO_INFLOW_MATCH_CODE, message: NO_INFLOW_MATCH_MESSAGE };
   }
-  return {
-    code: 'PAY_FAILED',
-    message: err instanceof Error ? err.message : String(err),
-  };
+  // An InFlow API rejection surfaces the server's own code + human message (endpoint / status / request id stripped);
+  // anything else falls back to a generic PAYMENT_FAILED with the raw message.
+  return userFacingApiError(err, 'PAYMENT_FAILED');
 }
 
 /**
@@ -261,7 +261,7 @@ export function buildSettledMeta(headers: Headers): PaySettledMeta | undefined {
   }
 }
 
-interface BodyAttachment {
+export interface BodyAttachment {
   bodySizeBytes: number;
   body?: string;
   bodyBase64?: string;
@@ -402,7 +402,7 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
       });
       return;
     }
-    const requirement = deps.client.selectInflowRequirement(filtered);
+    const requirement = await deps.client.selectInflowRequirement(filtered);
     if (requirement === null) {
       emit({
         type: 'errored',

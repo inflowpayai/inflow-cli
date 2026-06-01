@@ -344,7 +344,7 @@ describe('plugin and skill distribution (spec 050)', () => {
       author?: string;
       openclaw?: { emoji?: string; install?: { package?: string }[] };
     };
-    expect(metadata.author).toBe('jarwin');
+    expect(metadata.author).toBe('Jarwin, Inc.');
     expect(metadata.openclaw?.install?.[0]?.package).toBe('@inflowpayai/inflow');
   });
 

@@ -64,7 +64,7 @@ function makePrepared(
 
 function makeClient(overrides: Partial<X402InflowClient> = {}): X402InflowClient {
   const base = {
-    selectInflowRequirement: vi.fn(() => ({
+    selectInflowRequirement: vi.fn(async () => ({
       scheme: 'balance',
       network: 'inflow:1',
       amount: '500',
@@ -305,7 +305,7 @@ describe('runPayCommand (agent mode)', () => {
         headers: { 'PAYMENT-REQUIRED': header },
       }),
     );
-    const selectSpy = vi.fn(() => ({
+    const selectSpy = vi.fn(async () => ({
       scheme: 'balance' as const,
       network: 'inflow:1',
       amount: '500',
@@ -365,7 +365,7 @@ describe('runPayCommand (agent mode)', () => {
         headers: { 'PAYMENT-REQUIRED': header },
       }),
     );
-    const selectSpy = vi.fn((_decoded: PaymentRequired) => ({
+    const selectSpy = vi.fn(async (_decoded: PaymentRequired) => ({
       scheme: 'exact' as const,
       network: 'eip155:84532',
       amount: '500',
@@ -409,7 +409,7 @@ describe('runPayCommand (agent mode)', () => {
       }),
     );
     const client = makeClient({
-      selectInflowRequirement: vi.fn(() => null),
+      selectInflowRequirement: vi.fn(async () => null),
     });
     const ctx = agentContext(
       { url: 'https://seller/api' },
