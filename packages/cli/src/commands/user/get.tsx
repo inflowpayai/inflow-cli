@@ -1,8 +1,9 @@
 import { buildProfileRows, type User } from '@inflowpayai/inflow-core';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
 import { useCallback, useRef } from 'react';
+import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { useFlowState } from '../../hooks/use-flow-state.js';
 
 export type UserGetOutcome = { kind: 'success'; user: User } | { kind: 'error'; message: string };
@@ -13,24 +14,23 @@ export interface UserGetProps {
 }
 
 export const UserGet: React.FC<UserGetProps> = ({ userResource, onComplete }) => {
-  const { exit } = useApp();
   const action = useCallback(() => userResource.retrieve(), [userResource]);
+  const { finish } = useFlowExit(onComplete);
 
   const lastErrorRef = useRef<string>('');
 
   const handleLinger = useCallback(
     (result: User | null) => {
       if (result !== null) {
-        onComplete({ kind: 'success', user: result });
+        finish({ kind: 'success', user: result });
       } else {
-        onComplete({
+        finish({
           kind: 'error',
           message: lastErrorRef.current || 'No result produced.',
         });
       }
-      exit();
     },
-    [onComplete, exit],
+    [finish],
   );
 
   const { status, data: user, error } = useFlowState(action, handleLinger);

@@ -7,10 +7,11 @@ import {
   type IAuth,
   type User,
 } from '@inflowpayai/inflow-core';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
 import { useEffect, useReducer } from 'react';
+import { useFlowExit } from '../../hooks/use-flow-exit.js';
 
 type View =
   | { kind: 'loading' }
@@ -82,7 +83,7 @@ export const AuthStatus: React.FC<AuthStatusProps> = ({
 }) => {
   const initial: View = { kind: 'loading' };
   const [view, dispatch] = useReducer(reduce, initial);
-  const { exit } = useApp();
+  const { finish } = useFlowExit(onComplete);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,9 +108,8 @@ export const AuthStatus: React.FC<AuthStatusProps> = ({
 
   useEffect(() => {
     if (view.kind === 'loading' || view.kind === 'probing') return;
-    onComplete();
-    exit();
-  }, [view, onComplete, exit]);
+    finish();
+  }, [view, finish]);
 
   if (view.kind === 'loading') return null;
 

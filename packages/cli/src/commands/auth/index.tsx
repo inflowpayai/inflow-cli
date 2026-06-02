@@ -12,8 +12,9 @@ import {
   type User,
 } from '@inflowpayai/inflow-core';
 import { Cli } from 'incur';
-import { Text, useApp } from 'ink';
+import { Text } from 'ink';
 import React, { useEffect, useState } from 'react';
+import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import type { UpdateInfo, UpdateProbe } from '../../utils/update-probe.js';
 import { NPM_INSTALL_COMMAND } from '../../utils/user-display.js';
@@ -159,7 +160,7 @@ export const InteractiveLoginShell: React.FC<InteractiveLoginShellProps> = ({
 }) => {
   const initial: Stage = { kind: 'probing' };
   const [stage, setStage] = useState<Stage>(initial);
-  const { exit } = useApp();
+  const { finish } = useFlowExit(onComplete);
 
   useEffect(() => {
     let cancelled = false;
@@ -190,9 +191,8 @@ export const InteractiveLoginShell: React.FC<InteractiveLoginShellProps> = ({
 
   useEffect(() => {
     if (stage.kind !== 'declined') return;
-    onComplete();
-    exit();
-  }, [stage, onComplete, exit]);
+    finish();
+  }, [stage, finish]);
 
   if (stage.kind === 'probing') return null;
 

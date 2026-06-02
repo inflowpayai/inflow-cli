@@ -71,8 +71,25 @@ describe('mapSdkError', () => {
     expect(out.message).toContain('Seller does not accept InFlow-signed payments');
   });
 
-  it('falls through to PAY_FAILED for unrecognised errors', () => {
-    expect(mapSdkError(new Error('something'))).toEqual({ code: 'PAY_FAILED', message: 'something' });
+  it('falls through to PAYMENT_FAILED for unrecognised errors', () => {
+    expect(mapSdkError(new Error('something'))).toEqual({ code: 'PAYMENT_FAILED', message: 'something' });
+  });
+
+  it('surfaces an SDK API error with the server code and a message free of endpoint/status/request-id', () => {
+    // Shape of the `@inflowpayai/x402` InflowApiError: a string `code` + `endpoint`, and a `.message` that the SDK
+    // composes as `[<requestId>] <endpoint>: <httpStatus> <code> — <serverMessage>`.
+    const apiError = Object.assign(
+      new Error(
+        '[req_abc] /v1/transactions/x402: 400 INSUFFICIENT_FUNDS — Insufficient funds for x402 payment requirements.',
+      ),
+      { code: 'INSUFFICIENT_FUNDS', endpoint: '/v1/transactions/x402', httpStatus: 400 },
+    );
+    const out = mapSdkError(apiError);
+    expect(out.code).toBe('INSUFFICIENT_FUNDS');
+    expect(out.message).toBe('Insufficient funds for x402 payment requirements.');
+    expect(out.message).not.toContain('/v1/transactions/x402');
+    expect(out.message).not.toContain('400');
+    expect(out.message).not.toContain('req_abc');
   });
 });
 

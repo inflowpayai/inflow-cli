@@ -12,6 +12,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { resolve as resolvePath, dirname, join } from 'node:path';
+import { encode, renderChallengeHeader } from '@inflowpayai/mpp';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -104,6 +105,26 @@ describe('cli smoke', () => {
     expect(frames.length).toBeGreaterThanOrEqual(1);
     const first = frames[0] as { authenticated: boolean };
     expect(first.authenticated).toBe(false);
+  });
+
+  it('mpp decode --format json decodes a WWW-Authenticate: Payment header to a challenge', async () => {
+    const header = renderChallengeHeader({
+      id: 'chal-1',
+      realm: 'mpp.test',
+      method: 'inflow',
+      intent: 'charge',
+      request: encode({ amount: '10', currency: 'USDC', methodDetails: { rail: 'balance' } }),
+    });
+    const result = await run(['mpp', 'decode', header, '--format', 'json']);
+    expect(result.exitCode).toBe(0);
+    const parsed = parseAgentJson(result.stdout) as { kind: string };
+    expect(parsed.kind).toBe('challenge');
+  });
+
+  it('mpp decode --format json emits a DECODE_FAILED error envelope on garbage input', async () => {
+    const result = await run(['mpp', 'decode', '@@@not-decodable@@@', '--format', 'json']);
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('DECODE_FAILED');
   });
 
   describe.skipIf(process.env.INFLOW_SMOKE_SANDBOX !== '1')('live sandbox', () => {

@@ -5,10 +5,11 @@ import {
   type IAuth,
   reduceAuthLoginApiKey,
 } from '@inflowpayai/inflow-core';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
 import { useEffect, useReducer } from 'react';
+import { useFlowExit } from '../../hooks/use-flow-exit.js';
 
 export interface LoginApiKeyProps {
   apiKey: string;
@@ -20,7 +21,7 @@ export interface LoginApiKeyProps {
 export const LoginApiKey: React.FC<LoginApiKeyProps> = ({ apiKey, auth, connection, onComplete }) => {
   const initial: AuthLoginApiKeyPhase = { kind: 'validating' };
   const [phase, dispatch] = useReducer(reduceAuthLoginApiKey, initial);
-  const { exit } = useApp();
+  const { finish } = useFlowExit(onComplete);
 
   useEffect(() => {
     const run = auth.loginApiKey({ apiKey, connection });
@@ -38,9 +39,8 @@ export const LoginApiKey: React.FC<LoginApiKeyProps> = ({ apiKey, auth, connecti
 
   useEffect(() => {
     if (phase.kind === 'validating') return;
-    onComplete();
-    exit();
-  }, [phase, onComplete, exit]);
+    finish();
+  }, [phase, finish]);
 
   if (phase.kind === 'validating') {
     return (

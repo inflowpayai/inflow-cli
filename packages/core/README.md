@@ -18,6 +18,9 @@ The package exposes three things:
    - `inflow.depositAddresses` (`IDepositAddressResource`) — `list()`.
    - `inflow.x402` (`IX402`) — `client()` (lazy buyer client) plus `pay` / `status` / `cancel` / `inspect` /
      `supported`.
+   - `inflow.mpp` (`IMpp`) — `client()` (lazy `MppClient` for MPP, the Machine Payments Protocol, from
+     `@inflowpayai/mpp`) plus `pay` / `status` / `cancel` / `inspect` / `supported`; the pure-codec `decodeMppValue`
+     decodes a `WWW-Authenticate: Payment` header or a base64url credential / receipt.
 
    Every handle is sanitized through an ANSI-stripping Proxy so server-controlled strings can never carry terminal
    escape codes into the consumer. Stateful operations (`pay`, `inspect`, `auth.login`) return a `FlowRun<E>` whose
@@ -89,5 +92,5 @@ This package is the headless contract. It must not import any CLI-rendering libr
 `update-notifier`, etc.). The repo's ESLint config has a `no-restricted-imports` rule scoped to `packages/core/src/**`
 that fails the lint step on any such import. Add new bans there when promoting more CLI-only deps.
 
-The CLI binary (`@inflowpayai/inflow`) is the only sanctioned consumer today. The package can be made public later
-without touching the internals — the `private: true` flag in `package.json` is the only thing holding it back.
+The CLI binary (`@inflowpayai/inflow`) is the only sanctioned consumer today; the package is workspace-internal
+(`private: true` in `package.json`).

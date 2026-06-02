@@ -3,10 +3,11 @@ import {
   type IDepositAddressResource,
   runDepositAddressesList,
 } from '@inflowpayai/inflow-core';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
 import { useCallback } from 'react';
+import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { useFlowState } from '../../hooks/use-flow-state.js';
 import { Table, type TableColumn } from '../../utils/table.js';
 
@@ -22,19 +23,10 @@ const COLUMNS: ReadonlyArray<TableColumn<ConfiguredDepositAddress>> = [
 ];
 
 export const DepositAddressesList: React.FC<DepositAddressesListProps> = ({ depositAddressResource, onComplete }) => {
-  const { exit } = useApp();
-
   const action = useCallback(() => runDepositAddressesList({ depositAddressResource }), [depositAddressResource]);
+  const { finish } = useFlowExit(onComplete);
 
-  const handleLinger = useCallback(
-    (result: ConfiguredDepositAddress[] | null) => {
-      onComplete(result);
-      exit();
-    },
-    [onComplete, exit],
-  );
-
-  const { status, data: addresses, error } = useFlowState(action, handleLinger);
+  const { status, data: addresses, error } = useFlowState(action, finish);
 
   if (status === 'loading') {
     return (

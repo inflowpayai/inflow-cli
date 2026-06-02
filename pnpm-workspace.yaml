@@ -13,6 +13,8 @@ allowBuilds:
   msw: true
 
 minimumReleaseAgeExclude:
+  - '@inflowpayai/mpp'
+  - '@inflowpayai/mpp-buyer'
   - '@inflowpayai/x402'
   - '@inflowpayai/x402-buyer'
 

@@ -14,7 +14,8 @@ const sample: PaymentRequired = {
       maxTimeoutSeconds: 300,
       asset: '',
       amount: '',
-      extra: {},
+      // Real balance rows advertise the symbol under `extra.assetName` and carry no `extra.name`.
+      extra: { assetName: 'USDC' },
     },
     {
       scheme: 'exact',
@@ -24,7 +25,8 @@ const sample: PaymentRequired = {
       maxTimeoutSeconds: 300,
       asset: '0xUSDC',
       amount: '1.50',
-      extra: { name: 'USDC' },
+      // Exact rows carry both: the symbol (`assetName`) and the EIP-712 domain / on-chain name (`name`).
+      extra: { assetName: 'PYUSD', name: 'PayPal USD' },
     },
   ],
 } as unknown as PaymentRequired;
@@ -52,10 +54,15 @@ describe('filterAccepts', () => {
     expect(out.accepts[0]?.asset).toBe('0xUSDC');
   });
 
-  it('filters by assetName (extra.name)', () => {
+  it('filters by assetName against extra.assetName — matches the balance row that has no extra.name', () => {
     const out = filterAccepts(sample, { assetName: 'USDC' });
     expect(out.accepts).toHaveLength(1);
-    expect(out.accepts[0]?.network).toBe('base');
+    expect(out.accepts[0]?.scheme).toBe('balance');
+  });
+
+  it('does not match against extra.name (the EIP-712 domain name)', () => {
+    // 'PayPal USD' is the exact row's extra.name; filtering by assetName must NOT match it.
+    expect(filterAccepts(sample, { assetName: 'PayPal USD' }).accepts).toHaveLength(0);
   });
 
   it('filters by both scheme and network', () => {
@@ -68,7 +75,7 @@ describe('filterAccepts', () => {
       scheme: 'exact',
       network: 'base',
       asset: '0xUSDC',
-      assetName: 'USDC',
+      assetName: 'PYUSD',
     });
     expect(out.accepts).toHaveLength(1);
   });
@@ -94,7 +101,7 @@ describe('buildNoFilteredMatchMessage', () => {
     expect(msg).toContain('--asset=0xMISSING');
     expect(msg).toContain('--asset-name=PYUSD');
     expect(msg).toContain('asset=0xUSDC');
-    expect(msg).toContain('name=USDC');
+    expect(msg).toContain('assetName=USDC');
   });
 
   it('falls back to "(none)" when the seller advertises no accepts', () => {

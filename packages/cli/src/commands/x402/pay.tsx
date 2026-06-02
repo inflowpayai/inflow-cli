@@ -21,10 +21,11 @@ import {
   runPayPipeline,
   UNEXPECTED_PROBE_STATUS_CODE,
 } from '@inflowpayai/inflow-core';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useState } from 'react';
+import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { openUrl } from '../../utils/open-url.js';
 import { summarizeAccepts } from './decode.js';
 
@@ -56,29 +57,49 @@ export interface PayViewProps {
   method: string;
   deps: PayPipelineDeps;
   onComplete: (final: PayPhase) => void;
+  /** Best-effort cancel of the pending approval when the user presses Escape. */
+  onCancel?: (approvalId: string) => Promise<unknown> | void;
 }
 
-export const PayView: React.FC<PayViewProps> = ({ url, method, deps, onComplete }) => {
-  const { exit } = useApp();
+export const PayView: React.FC<PayViewProps> = ({ url, method, deps, onComplete, onCancel }) => {
   const initial: PayPhase = { kind: 'probing' };
   const [phase, dispatch] = useReducer(reducePay, initial);
+  const [cancelling, setCancelling] = useState(false);
+  const { finish, cancelThenFinish } = useFlowExit(onComplete);
 
   useInput(
     (_input, key) => {
-      if (key.return && phase.kind === 'awaiting-approval') {
+      if (phase.kind !== 'awaiting-approval') return;
+      if (key.return) {
         openUrl(phase.approvalUrl);
+        return;
+      }
+      if (key.escape) {
+        const { approvalId } = phase.prepared;
+        setCancelling(true);
+        cancelThenFinish(() => onCancel?.(approvalId), {
+          kind: 'error',
+          code: 'APPROVAL_CANCELLED',
+          message: `Approval ${approvalId} cancelled.`,
+        });
       }
     },
-    { isActive: phase.kind === 'awaiting-approval' },
+    { isActive: phase.kind === 'awaiting-approval' && !cancelling },
   );
 
   useEffect(() => {
+    // Abort the in-flight `awaitPayload` poll when the view tears down (Escape/unmount). The SDK threads
+    // `signOptions.signal` from `prepareInflowPayment` into `awaitPayload`, so aborting it stops the long-poll (and its
+    // open socket) immediately — otherwise the poll keeps the process alive until its sign timeout (~60s).
+    const controller = new AbortController();
     let cancelled = false;
-    void runPayPipeline(deps, (event: PayEvent) => {
+    const runDeps: PayPipelineDeps = { ...deps, signOptions: { ...deps.signOptions, signal: controller.signal } };
+    void runPayPipeline(runDeps, (event: PayEvent) => {
       if (!cancelled) dispatch(event);
     });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [deps]);
 
@@ -89,10 +110,19 @@ export const PayView: React.FC<PayViewProps> = ({ url, method, deps, onComplete 
       phase.kind === 'no-payment-final' ||
       phase.kind === 'error'
     ) {
-      onComplete(phase);
-      exit();
+      finish(phase);
     }
-  }, [phase, onComplete, exit]);
+  }, [phase, finish]);
+
+  if (cancelling) {
+    return (
+      <Box>
+        <Text color="yellow">
+          <Spinner type="dots" /> Cancelling approval...
+        </Text>
+      </Box>
+    );
+  }
 
   if (phase.kind === 'probing') {
     return (
@@ -150,6 +180,7 @@ export const PayView: React.FC<PayViewProps> = ({ url, method, deps, onComplete 
             </Text>
           </Text>
           <Text dimColor>Press Enter to open in browser.</Text>
+          <Text dimColor>Press Escape to cancel.</Text>
         </Box>
         <Box marginTop={1}>
           <Text color="cyan">
@@ -177,12 +208,10 @@ export const PayView: React.FC<PayViewProps> = ({ url, method, deps, onComplete 
         <Text color="green">
           ✓ Paid {result.scheme} / {result.network}
         </Text>
-        <Text>{`status: ${String(result.responseStatus)}`}</Text>
         <Text>{`transaction: ${result.transactionId}`}</Text>
         {result.settled?.network !== undefined ? (
           <Text>{`settled via: ${result.settled.network}${result.settled.transaction !== undefined ? ` (${result.settled.transaction})` : ''}`}</Text>
         ) : null}
-        <Text>{`response size: ${String(result.bodySizeBytes)} bytes`}</Text>
         {result.outputSavedTo !== undefined ? (
           <Text>
             {'Saved to: '}
@@ -206,11 +235,9 @@ export const PayView: React.FC<PayViewProps> = ({ url, method, deps, onComplete 
         <Text color="red">
           ✗ Payment not accepted ({result.scheme} / {result.network})
         </Text>
-        <Text>{`status: ${String(result.responseStatus)}`}</Text>
         <Text>{`transaction: ${result.transactionId}`}</Text>
         <Text>{`approval: ${result.approvalId}`}</Text>
         <Text>{`approval url: ${result.approvalUrl}`}</Text>
-        <Text>{`response size: ${String(result.bodySizeBytes)} bytes`}</Text>
         {result.outputSavedTo !== undefined ? (
           <Text>
             {'Saved to: '}
@@ -232,8 +259,6 @@ export const PayView: React.FC<PayViewProps> = ({ url, method, deps, onComplete 
     return (
       <Box flexDirection="column">
         <Text color="green">✓ Seller accepted without payment</Text>
-        <Text>{`status: ${String(result.status)}`}</Text>
-        <Text>{`response size: ${String(result.bodySizeBytes)} bytes`}</Text>
         {result.outputSavedTo !== undefined ? (
           <Text>
             {'Saved to: '}

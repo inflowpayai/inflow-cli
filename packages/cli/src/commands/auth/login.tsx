@@ -1,8 +1,9 @@
 import { type AuthLoginPhase, type ConnectionSettings, type IAuth, reduceAuthLogin } from '@inflowpayai/inflow-core';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
 import { useEffect, useReducer } from 'react';
+import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { openUrl } from '../../utils/open-url.js';
 
 export interface LoginProps {
@@ -16,7 +17,7 @@ export interface LoginProps {
 export const Login: React.FC<LoginProps> = ({ auth, clientName, connection, priorRefreshToken, onComplete }) => {
   const initialPhase: AuthLoginPhase = { kind: 'init' };
   const [phase, dispatch] = useReducer(reduceAuthLogin, initialPhase);
-  const { exit } = useApp();
+  const { finish } = useFlowExit(onComplete);
 
   useInput(
     (_input, key) => {
@@ -50,10 +51,9 @@ export const Login: React.FC<LoginProps> = ({ auth, clientName, connection, prio
 
   useEffect(() => {
     if (phase.kind === 'success' || phase.kind === 'expired' || phase.kind === 'denied' || phase.kind === 'failed') {
-      onComplete();
-      exit();
+      finish();
     }
-  }, [phase, onComplete, exit]);
+  }, [phase, finish]);
 
   if (phase.kind === 'init') {
     return (

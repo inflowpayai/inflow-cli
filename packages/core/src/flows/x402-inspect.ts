@@ -76,8 +76,8 @@ export interface InspectPipelineDeps {
    */
   assetFilter?: string;
   /**
-   * Caller-supplied asset-name filter — matches `entry.extra.name`, the human-readable symbol/name the seller
-   * advertises (e.g. "USDC").
+   * Caller-supplied asset-name filter — matches `entry.extra.assetName`, the human-readable symbol the seller
+   * advertises (e.g. "USDC"). Present on every scheme including `balance`.
    */
   assetNameFilter?: string;
 }

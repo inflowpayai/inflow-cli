@@ -1,8 +1,9 @@
+import type { MppClient } from '@inflowpayai/mpp';
 import type { InflowClient as X402BuyerClient } from '@inflowpayai/x402-buyer';
 import { http, HttpResponse } from 'msw';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { Inflow, type IX402Resource, MemoryStorage } from '../../../src/index.js';
-import { augmentX402 } from '../../../src/flows/index.js';
+import { Inflow, type IMppResource, type IX402Resource, MemoryStorage } from '../../../src/index.js';
+import { augmentMpp, augmentX402 } from '../../../src/flows/index.js';
 import { BASE_URL, balancesHappy, depositAddressesHappy, userHappy } from '../fixtures/handlers.js';
 import { makeServer } from '../fixtures/server.js';
 
@@ -167,5 +168,141 @@ describe('augmentX402 — mutation contract', () => {
     (augmented as unknown as { cached: Promise<X402BuyerClient> }).cached = Promise.resolve(stubClient);
 
     await expect(augmented.client()).resolves.toBe(stubClient);
+  });
+});
+
+function stubMppClient(overrides: Partial<MppClient> = {}): MppClient {
+  return {
+    getSupported: vi.fn(async () => ({ kinds: [] })),
+    getTransaction: vi.fn(async () => ({ transactionId: 'tx-9', state: 'ready' as const, credential: 'CRED' })),
+    createTransaction: vi.fn(),
+    getConfig: vi.fn(),
+    ...overrides,
+  } as unknown as MppClient;
+}
+
+function rawMpp(client: MppClient, cancelApproval: () => Promise<void> = vi.fn(async () => undefined)): IMppResource {
+  return { client: () => Promise.resolve(client), cancelApproval };
+}
+
+async function drainEvents<E>(iterable: AsyncIterable<E>): Promise<E[]> {
+  const out: E[] = [];
+  for await (const event of iterable) out.push(event);
+  return out;
+}
+
+describe('augmentMpp — mutation contract', () => {
+  it('returns the same object it was given (no wrapper)', () => {
+    const raw = rawMpp(stubMppClient());
+    expect(augmentMpp(raw, 'https://api.example.test')).toBe(raw);
+  });
+
+  it('attaches the augmented operations to the input resource', () => {
+    const raw = rawMpp(stubMppClient());
+    augmentMpp(raw, 'https://api.example.test');
+    const handle = raw as unknown as Record<string, unknown>;
+    for (const op of ['inspect', 'supported', 'pay', 'status', 'cancel']) {
+      expect(typeof handle[op]).toBe('function');
+    }
+  });
+});
+
+describe('Inflow.mpp augmented operations', () => {
+  it('exposes the high-level MPP operations on the resource', () => {
+    const client = new Inflow({ apiBaseUrl: BASE_URL, accessToken: 'tk' });
+    for (const op of ['client', 'inspect', 'supported', 'pay', 'status', 'cancel']) {
+      expect(typeof (client.mpp as unknown as Record<string, unknown>)[op]).toBe('function');
+    }
+  });
+
+  it('mpp.supported pulls the capability cache from the lazy MPP client', async () => {
+    const supported = {
+      kinds: [
+        { method: 'inflow', intents: [{ intent: 'charge', rails: [{ rail: 'balance', currencies: ['USDC'] }] }] },
+      ],
+    };
+    const raw = rawMpp(stubMppClient({ getSupported: vi.fn(async () => supported) as MppClient['getSupported'] }));
+    const mpp = augmentMpp(raw, 'https://api.example.test');
+    await expect(mpp.supported()).resolves.toEqual(supported);
+  });
+
+  it('mpp.cancel delegates to cancelApproval and returns the best-effort frame', async () => {
+    const cancelApproval = vi.fn(async () => undefined);
+    const mpp = augmentMpp(rawMpp(stubMppClient(), cancelApproval), 'https://api.example.test');
+    await expect(mpp.cancel({ approvalId: 'ap-7' })).resolves.toEqual({
+      approval_id: 'ap-7',
+      cancelled: true,
+      note: 'best-effort; server-side state not verified',
+    });
+    expect(cancelApproval).toHaveBeenCalledWith('ap-7');
+  });
+
+  it('mpp.status drives the poll loop to a ready terminal', async () => {
+    const mpp = augmentMpp(rawMpp(stubMppClient()), 'https://api.example.test');
+    const events = await drainEvents(
+      mpp.status({ transactionId: 'tx-9', interval: 0.01, maxAttempts: 5, timeout: 30 }).events,
+    );
+    expect(events.at(-1)?.type).toBe('ready');
+  });
+
+  it('mpp.inspect drains the async-iterable to a no-payment terminal', async () => {
+    server.use(http.get('https://seller.test/api', () => new HttpResponse('free', { status: 200 })));
+    const mpp = augmentMpp(rawMpp(stubMppClient()), 'https://api.example.test');
+    const events = await drainEvents(
+      mpp.inspect({ url: 'https://seller.test/api', probeOptions: { method: 'GET', headers: {} } }).events,
+    );
+    expect(events.at(-1)?.type).toBe('no-payment');
+  });
+
+  it('mpp.pay short-circuits and defaults apiBaseUrl to the resolved value', async () => {
+    server.use(http.get('https://seller.test/api', () => new HttpResponse('free', { status: 200 })));
+    const mpp = augmentMpp(rawMpp(stubMppClient()), 'https://api.example.test');
+    const events = await drainEvents(
+      mpp.pay({
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        showBody: false,
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 0,
+      }).events,
+    );
+    expect(events.at(-1)?.type).toBe('short-circuited');
+  });
+});
+
+describe('wrapEmittingPipeline — error propagation through the MPP pay handle', () => {
+  it('rethrows an Error raised before the pipeline starts', async () => {
+    const raw: IMppResource = {
+      client: () => Promise.reject(new Error('client boom')),
+      cancelApproval: vi.fn(async () => undefined),
+    };
+    const mpp = augmentMpp(raw, 'https://api.example.test');
+    const run = mpp.pay({
+      url: 'https://seller.test/api',
+      probeOptions: { method: 'GET', headers: {} },
+      showBody: false,
+      interval: 0,
+      maxAttempts: 0,
+      timeout: 0,
+    });
+    await expect(drainEvents(run.events)).rejects.toThrow('client boom');
+  });
+
+  it('wraps a non-Error rejection in an InflowSdkError carrying its string form', async () => {
+    const raw: IMppResource = {
+      client: () => Promise.reject('weird-failure'),
+      cancelApproval: vi.fn(async () => undefined),
+    };
+    const mpp = augmentMpp(raw, 'https://api.example.test');
+    const run = mpp.pay({
+      url: 'https://seller.test/api',
+      probeOptions: { method: 'GET', headers: {} },
+      showBody: false,
+      interval: 0,
+      maxAttempts: 0,
+      timeout: 0,
+    });
+    await expect(drainEvents(run.events)).rejects.toThrow('weird-failure');
   });
 });

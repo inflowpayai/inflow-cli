@@ -32,6 +32,23 @@ INFLOW_API_KEY=inflow_... X402_SELLER_URL=https://seller.test/api \
 Optional environment overrides: `INFLOW_ENVIRONMENT` (`sandbox` | `production`, default `sandbox`), `INFLOW_BASE_URL`
 (override the SDK's environment-derived URL).
 
+## `programmatic-mpp-pay.ts`
+
+Drives the full MPP payment lifecycle (probe → parse `WWW-Authenticate: Payment` challenge(s) → create → poll to `ready`
+→ replay with the `Authorization: Payment` credential) against a real seller URL. The MPP analog of
+`programmatic-x402-pay.ts`: uses a static `apiKey` (no device flow), subscribes to `inflow.mpp.pay`'s async-iterable
+event stream, prints each phase transition, and exits non-zero on any terminal failure (`seller-rejected`, `errored`).
+
+Run:
+
+```bash
+INFLOW_API_KEY=inflow_... MPP_SELLER_URL=https://seller.test/api \
+  node --experimental-strip-types packages/core/examples/programmatic-mpp-pay.ts
+```
+
+Optional environment overrides: `INFLOW_ENVIRONMENT` (`sandbox` | `production`, default `sandbox`), `INFLOW_BASE_URL`
+(override the SDK's environment-derived URL).
+
 ## Why these aren't tests
 
 The unit suites in `packages/core/test/unit/` mock the network. The examples here hit real endpoints (`inflowpay.ai` and

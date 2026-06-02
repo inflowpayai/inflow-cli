@@ -1,6 +1,22 @@
+import {
+  type InflowAnonymousClientOptions,
+  type InflowBearerClientOptions,
+  type InflowClientOptions,
+  MppClient,
+} from '@inflowpayai/mpp';
+import { inflow as createInflowMppMethod } from '@inflowpayai/mpp-buyer';
 import { createInflowClient, type InflowClient as X402BuyerClient, type SignerOptions } from '@inflowpayai/x402-buyer';
 import { type InflowOptions, resolveApiBaseUrl, resolveInflowSdkConfig } from './config.js';
-import { augmentAuth, augmentUser, augmentX402, type IAuth, type IUser, type IX402 } from './flows/index.js';
+import {
+  augmentAuth,
+  augmentMpp,
+  augmentUser,
+  augmentX402,
+  type IAuth,
+  type IMpp,
+  type IUser,
+  type IX402,
+} from './flows/index.js';
 import { AuthResource } from './resources/auth.js';
 import { BalanceResource } from './resources/balance.js';
 import { DepositAddressResource } from './resources/deposit-address.js';
@@ -40,6 +56,50 @@ class X402Resource implements IX402Resource {
   }
 }
 
+/** The three auth shapes `MppClient`'s constructor accepts; the resolved value `MppResource` is primed with. */
+type MppClientOptions = InflowClientOptions | InflowAnonymousClientOptions | InflowBearerClientOptions;
+
+/**
+ * Lazy handle for the buyer-side MPP REST client (`MppClient` from `@inflowpayai/mpp`). `MppClient` is the role-twin of
+ * x402-buyer's `InflowClient`: it carries the granular buyer primitives the flows drive (`createTransaction`,
+ * `getTransaction`, `getConfig`). Unlike x402's `createInflowClient`, construction is synchronous (no capability-cache
+ * fetch), but `client()` still returns a cached `Promise` to mirror {@link IX402Resource} so the augmented handle is
+ * uniform.
+ *
+ * Approval cancellation is delegated to `@inflowpayai/mpp-buyer`'s `inflow` method (its `cancelApproval`), rather than
+ * re-issuing the `POST /v1/approvals/{id}/cancel` call here — the buyer SDK owns that call.
+ */
+export interface IMppResource {
+  /** Lazy-construct the underlying MPP REST client. Cached after first call. */
+  client(): Promise<MppClient>;
+  /**
+   * Best-effort cancel of a backing approval via the `@inflowpayai/mpp-buyer` method. Never rejects on a server
+   * outcome.
+   */
+  cancelApproval(approvalId: string): Promise<void>;
+}
+
+class MppResource implements IMppResource {
+  private cachedClient?: Promise<MppClient>;
+  private cachedMethod?: ReturnType<typeof createInflowMppMethod>;
+
+  constructor(private readonly opts: MppClientOptions) {}
+
+  client(): Promise<MppClient> {
+    if (!this.cachedClient) {
+      this.cachedClient = Promise.resolve(new MppClient(this.opts));
+    }
+    return this.cachedClient;
+  }
+
+  cancelApproval(approvalId: string): Promise<void> {
+    if (!this.cachedMethod) {
+      this.cachedMethod = createInflowMppMethod(this.opts);
+    }
+    return this.cachedMethod.cancelApproval(approvalId);
+  }
+}
+
 /**
  * Top-level InFlow client. Exposes one augmented handle per command group:
  *
@@ -49,6 +109,8 @@ class X402Resource implements IX402Resource {
  * - `inflow.balances` ({@link IBalanceResource}) — `list()`.
  * - `inflow.depositAddresses` ({@link IDepositAddressResource}) — `list()`.
  * - `inflow.x402` ({@link IX402}) — `client()` (raw buyer client) + `pay` / `status` / `cancel` / `inspect` / `supported`.
+ * - `inflow.mpp` ({@link IMpp}) — `client()` (raw `MppClient`) + `pay` / `status` / `cancel` / `inspect` / `decode` /
+ *   `supported`.
  *
  * Credential resolution is mode-exclusive:
  *
@@ -67,6 +129,7 @@ export class Inflow {
   readonly depositAddresses: IDepositAddressResource;
   readonly user: IUser;
   readonly x402: IX402;
+  readonly mpp: IMpp;
   /**
    * The effective API base URL this client will hit, after resolution against `options.apiBaseUrl`, `INFLOW_BASE_URL`,
    * and the environment-derived default. Exposed for callers (CLI, MCP transports, etc.) that need to display "what URL
@@ -103,6 +166,9 @@ export class Inflow {
 
     const x402Internal: IX402Resource = new X402Resource(this.resolveX402Options(options, dataOptions));
     this.x402 = augmentX402(x402Internal, this.resolvedApiBaseUrl);
+
+    const mppInternal: IMppResource = new MppResource(this.resolveMppOptions(options, dataOptions));
+    this.mpp = augmentMpp(mppInternal, this.resolvedApiBaseUrl);
 
     this.auth = augmentAuth(rawAuth, rawUser, options.authStorage);
   }
@@ -152,6 +218,26 @@ export class Inflow {
     // Anonymous variant — no credentials and no authStorage. The buyer client will fail at call time (the server requires auth on the
     // capability cache fetch), but construction is permitted so SDK consumers who only want, say, `inflow.user` aren't forced to
     // configure x402.
+    return connection;
+  }
+
+  private resolveMppOptions(options: InflowOptions, dataOptions: InflowOptions): MppClientOptions {
+    // Same mode-exclusive resolution as `resolveX402Options`: `MppClient` and the `@inflowpayai/mpp-buyer` method accept
+    // the identical three-way auth union, so a single resolved value drives both. The conditional spreads keep each
+    // property either present-with-T or entirely absent (required under `exactOptionalPropertyTypes`).
+    const connection = {
+      ...(options.environment !== undefined ? { environment: options.environment } : {}),
+      ...(options.apiBaseUrl !== undefined ? { baseUrl: options.apiBaseUrl } : {}),
+    };
+
+    if (options.apiKey !== undefined && options.apiKey.length > 0) {
+      return { ...connection, apiKey: options.apiKey };
+    }
+    if (dataOptions.getAccessToken !== undefined) {
+      const provider = dataOptions.getAccessToken;
+      return { ...connection, getAccessToken: () => provider() };
+    }
+    // Anonymous variant — construction permitted; buyer calls fail server-side without credentials.
     return connection;
   }
 }

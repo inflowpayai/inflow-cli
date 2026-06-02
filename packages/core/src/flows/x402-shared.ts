@@ -1,3 +1,4 @@
+import { EXTRA_KEYS } from '@inflowpayai/x402';
 import type { PaymentRequired } from '@x402/core/types';
 
 /** Error code emitted when a seller returns 402 but omits the PAYMENT-REQUIRED header. */
@@ -25,9 +26,10 @@ export const PAYMENT_NOT_ACCEPTED_CODE = 'PAYMENT_NOT_ACCEPTED';
 export const UNEXPECTED_PROBE_STATUS_CODE = 'UNEXPECTED_PROBE_STATUS';
 
 /**
- * Filters applied to a decoded {@link PaymentRequired} accepts list. Each field is matched independently against the
- * corresponding entry property; `assetName` matches `entry.extra.name` (the on-chain ERC-20 `name()` for EVM, the mint
- * name for SVM, etc.). All fields undefined returns the input unchanged.
+ * Filters applied to a decoded `PaymentRequired` accepts list. Each field is matched independently against the
+ * corresponding entry property; `assetName` matches `entry.extra.assetName` (the human-readable symbol the seller
+ * advertises, e.g. "USDC") — the same field every InFlow scheme carries, including `balance`. All fields undefined
+ * returns the input unchanged.
  */
 export interface AcceptsFilters {
   scheme?: string;
@@ -36,11 +38,11 @@ export interface AcceptsFilters {
   assetName?: string;
 }
 
-function extractExtraName(entry: PaymentRequired['accepts'][number]): string | undefined {
+function extractAssetName(entry: PaymentRequired['accepts'][number]): string | undefined {
   const extra = (entry as { extra?: Record<string, unknown> }).extra;
   if (extra === undefined || extra === null) return undefined;
-  const name = extra.name;
-  return typeof name === 'string' ? name : undefined;
+  const assetName = extra[EXTRA_KEYS.ASSET_NAME];
+  return typeof assetName === 'string' ? assetName : undefined;
 }
 
 function hasAnyFilter(filters: AcceptsFilters): boolean {
@@ -58,7 +60,9 @@ function hasAnyFilter(filters: AcceptsFilters): boolean {
  * are preserved verbatim so the downstream signing context is unaffected.
  *
  * `asset` matches the on-chain asset identifier (the ERC-20 contract address for EVM, the mint pubkey for SVM).
- * `assetName` matches `entry.extra.name` — the human-readable symbol/name the seller advertises (e.g. "USDC").
+ * `assetName` matches `entry.extra.assetName` — the human-readable symbol the seller advertises (e.g. "USDC"). This
+ * field is present on every InFlow scheme (including `balance`), unlike `extra.name` (the EIP-712 domain / on-chain
+ * `name()`), which only the foundation-signed `exact` schemes carry.
  */
 export function filterAccepts(decoded: PaymentRequired, filters: AcceptsFilters): PaymentRequired {
   if (!hasAnyFilter(filters)) return decoded;
@@ -70,7 +74,7 @@ export function filterAccepts(decoded: PaymentRequired, filters: AcceptsFilters)
         (scheme === undefined || entry.scheme === scheme) &&
         (network === undefined || entry.network === network) &&
         (asset === undefined || entry.asset === asset) &&
-        (assetName === undefined || extractExtraName(entry) === assetName),
+        (assetName === undefined || extractAssetName(entry) === assetName),
     ),
   };
 }
@@ -93,8 +97,8 @@ export function buildNoFilteredMatchMessage(decoded: PaymentRequired, filters: A
     .map((entry) => {
       const parts = [`${entry.scheme}/${entry.network}`];
       if (entry.asset !== undefined && entry.asset !== '') parts.push(`asset=${entry.asset}`);
-      const name = extractExtraName(entry);
-      if (name !== undefined && name !== '') parts.push(`name=${name}`);
+      const assetName = extractAssetName(entry);
+      if (assetName !== undefined && assetName !== '') parts.push(`assetName=${assetName}`);
       return parts.join(' ');
     })
     .join(', ');

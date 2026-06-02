@@ -7,10 +7,11 @@ import {
   runInspectPipeline,
 } from '@inflowpayai/inflow-core';
 import type { PaymentRequirements } from '@inflowpayai/x402';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
 import { useEffect, useReducer } from 'react';
+import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { Table, type TableColumn } from '../../utils/table.js';
 
 export {
@@ -57,9 +58,9 @@ export interface InspectViewProps {
 }
 
 export const InspectView: React.FC<InspectViewProps> = ({ url, method, deps, onComplete }) => {
-  const { exit } = useApp();
   const initial: InspectPhase = { kind: 'probing' };
   const [phase, dispatch] = useReducer(reduceX402Inspect, initial);
+  const { finish } = useFlowExit(onComplete);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,10 +74,9 @@ export const InspectView: React.FC<InspectViewProps> = ({ url, method, deps, onC
 
   useEffect(() => {
     if (phase.kind === 'accepts' || phase.kind === 'no-payment' || phase.kind === 'error') {
-      onComplete(phase);
-      exit();
+      finish(phase);
     }
-  }, [phase, onComplete, exit]);
+  }, [phase, finish]);
 
   if (phase.kind === 'probing') {
     return (
@@ -89,13 +89,9 @@ export const InspectView: React.FC<InspectViewProps> = ({ url, method, deps, onC
   }
 
   if (phase.kind === 'no-payment') {
-    const { result } = phase;
     return (
       <Box flexDirection="column">
         <Text color="green">✓ Seller accepted without payment</Text>
-        <Text>{`status: ${String(result.status)}`}</Text>
-        {result.contentType !== undefined ? <Text>{`content-type: ${result.contentType}`}</Text> : null}
-        <Text>{`response size: ${String(result.bodySizeBytes)} bytes`}</Text>
         <Text dimColor>Use `x402 pay` to fetch the body.</Text>
       </Box>
     );

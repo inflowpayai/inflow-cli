@@ -1,8 +1,9 @@
 import type { X402BuyerSupportedResponse } from '@inflowpayai/x402';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
 import { useCallback } from 'react';
+import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { useFlowState } from '../../hooks/use-flow-state.js';
 import { Table, type TableColumn } from '../../utils/table.js';
 
@@ -19,16 +20,9 @@ export interface SupportedViewProps {
 }
 
 export const SupportedView: React.FC<SupportedViewProps> = ({ load, onComplete }) => {
-  const { exit } = useApp();
   const action = useCallback(() => load(), [load]);
-  const handleComplete = useCallback(
-    (result: X402BuyerSupportedResponse | null) => {
-      onComplete(result);
-      exit();
-    },
-    [onComplete, exit],
-  );
-  const { status, data, error } = useFlowState(action, handleComplete);
+  const { finish } = useFlowExit(onComplete);
+  const { status, data, error } = useFlowState(action, finish);
 
   if (status === 'loading') {
     return (

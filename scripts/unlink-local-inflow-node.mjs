@@ -1,11 +1,19 @@
 #!/usr/bin/env node
 /**
- * Remove the local-inflow-node override block written by
- * `link-local-inflow-node.mjs` from `pnpm-workspace.yaml`, then reinstall
- * so the registry-resolved versions take effect.
+ * Revert the local-inflow-node overrides written by `link-local-inflow-node.mjs`.
  *
- * Also scrubs any leftover entries from earlier script revisions that
- * wrote to `package.json` (top-level `overrides` or legacy `pnpm.overrides`).
+ * Asymmetry worth understanding: `link` redirects all four buyer-side SDK
+ * packages to a local `inflow-node` checkout, but only some of them are
+ * published to npm. `unlink` can only revert a package to the registry if a
+ * registry version actually exists — so it reverts the PUBLISHED packages and
+ * deliberately KEEPS the UNPUBLISHED ones linked. Removing an unpublished
+ * package's override would leave an unresolvable spec and make `pnpm install`
+ * fail with ERR_PNPM_FETCH_404.
+ *
+ * When an UNPUBLISHED package later ships to npm, move it from `UNPUBLISHED`
+ * to `PUBLISHED` below and `unlink` will start reverting it too.
+ *
+ * Also scrubs stray override entries in `package.json` (top-level `overrides` or `pnpm.overrides`) if present.
  */
 import { promises as fs } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -16,7 +24,17 @@ import { fileURLToPath } from 'node:url';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_PKG_JSON = path.join(REPO_ROOT, 'package.json');
 const WORKSPACE_YAML = path.join(REPO_ROOT, 'pnpm-workspace.yaml');
-const LINKED = ['@inflowpayai/x402', '@inflowpayai/x402-buyer'];
+
+// Packages that exist on npm and therefore have a registry version to revert to.
+const PUBLISHED = [
+  '@inflowpayai/x402',
+  '@inflowpayai/x402-buyer',
+  '@inflowpayai/mpp',
+  '@inflowpayai/mpp-buyer',
+];
+// Packages not yet on npm — only resolvable via the local link, so `unlink` keeps them linked.
+const UNPUBLISHED = [];
+const LINKED = [...PUBLISHED, ...UNPUBLISHED];
 
 const BEGIN_MARK = '# >>> link-local-inflow-node:overrides';
 const END_MARK = '# <<< link-local-inflow-node:overrides';
@@ -36,18 +54,43 @@ function run(cmd, args, opts = {}) {
   });
 }
 
-async function stripFromWorkspaceYaml() {
+/**
+ * Rewrite the managed overrides block, dropping entries for PUBLISHED packages
+ * (reverted to registry) while preserving entries for UNPUBLISHED packages
+ * (kept linked). Removes the block entirely when nothing is left to keep.
+ */
+async function revertWorkspaceYaml() {
   const existing = await fs.readFile(WORKSPACE_YAML, 'utf-8');
-  const re = new RegExp(
-    `\\n?${escapeRe(BEGIN_MARK)}[\\s\\S]*?${escapeRe(END_MARK)}\\n?`,
-    'g',
-  );
-  const next = existing.replace(re, '\n').replace(/\n{3,}/g, '\n\n');
+  const blockRe = new RegExp(`\\n?${escapeRe(BEGIN_MARK)}([\\s\\S]*?)${escapeRe(END_MARK)}\\n?`);
+  const match = existing.match(blockRe);
+  if (match === null) {
+    return { changed: false, reverted: [], kept: [] };
+  }
+
+  const reverted = [];
+  const keptLines = [];
+  const kept = [];
+  for (const line of match[1].split('\n')) {
+    const entry = line.match(/^\s*'(@[^']+)':/);
+    if (entry === null) continue; // skip the `overrides:` header and blank lines
+    const name = entry[1];
+    if (UNPUBLISHED.includes(name)) {
+      keptLines.push(`  ${line.trim()}`);
+      kept.push(name);
+    } else {
+      reverted.push(name);
+    }
+  }
+
+  const replacement =
+    keptLines.length > 0 ? `\n${[BEGIN_MARK, 'overrides:', ...keptLines, END_MARK].join('\n')}\n` : '\n';
+  const next = existing.replace(blockRe, replacement).replace(/\n{3,}/g, '\n\n');
+
   if (next !== existing) {
     await fs.writeFile(WORKSPACE_YAML, next, 'utf-8');
-    return true;
+    return { changed: true, reverted, kept };
   }
-  return false;
+  return { changed: false, reverted, kept };
 }
 
 async function stripFromPackageJson() {
@@ -55,10 +98,9 @@ async function stripFromPackageJson() {
   const manifest = JSON.parse(raw);
   let mutated = false;
   for (const branch of ['overrides', 'pnpm']) {
-    const overridesObj =
-      branch === 'overrides' ? manifest.overrides : manifest.pnpm?.overrides;
+    const overridesObj = branch === 'overrides' ? manifest.overrides : manifest.pnpm?.overrides;
     if (overridesObj === undefined) continue;
-    for (const name of LINKED) {
+    for (const name of PUBLISHED) {
       if (overridesObj[name] !== undefined) {
         delete overridesObj[name];
         mutated = true;
@@ -79,13 +121,20 @@ async function stripFromPackageJson() {
   return mutated;
 }
 
-const yamlChanged = await stripFromWorkspaceYaml();
+const { changed: yamlChanged, reverted, kept } = await revertWorkspaceYaml();
 const pkgChanged = await stripFromPackageJson();
 
 if (!yamlChanged && !pkgChanged) {
-  process.stdout.write('unlink-local-inflow-node: no link overrides present; nothing to remove.\n');
+  process.stdout.write('unlink-local-inflow-node: no published-package link overrides present; nothing to revert.\n');
 } else {
-  process.stdout.write(`unlink-local-inflow-node: cleared overrides for ${LINKED.join(', ')}.\n`);
+  process.stdout.write(
+    `unlink-local-inflow-node: reverted ${reverted.length > 0 ? reverted.join(', ') : '(none)'} to the registry.\n`,
+  );
+}
+if (kept.length > 0) {
+  process.stdout.write(
+    `unlink-local-inflow-node: kept ${kept.join(', ')} linked — not yet published to npm (see UNPUBLISHED in this script).\n`,
+  );
 }
 
 await run('pnpm', ['install']);

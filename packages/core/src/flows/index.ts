@@ -1,5 +1,6 @@
+import type { MppSupportedResponse } from '@inflowpayai/mpp';
 import type { X402BuyerSupportedResponse } from '@inflowpayai/x402';
-import type { IX402Resource } from '../client.js';
+import type { IMppResource, IX402Resource } from '../client.js';
 import {
   type AuthSnapshotFrame,
   type AuthStatusFrame,
@@ -27,6 +28,11 @@ import { type PayEvent, type PayPipelineDeps, runPayPipeline } from './x402-pay.
 import { type X402CancelResult, runX402Cancel } from './x402-cancel.js';
 import { type X402StatusRun, runX402Status } from './x402-status.js';
 import { runX402Supported } from './x402-supported.js';
+import { type MppCancelResult, runMppCancel } from './mpp-cancel.js';
+import { type MppInspectEvent, type MppInspectPipelineDeps, runMppInspectPipeline } from './mpp-inspect.js';
+import { type MppPayEvent, type MppPayPipelineDeps, runMppPayPipeline } from './mpp-pay.js';
+import { type MppStatusRun, runMppStatus } from './mpp-status.js';
+import { runMppSupported } from './mpp-supported.js';
 
 /* -------------------------------------------------------------------------- */
 /* Request input types                                                        */
@@ -68,6 +74,25 @@ export interface X402CancelRequest {
 }
 
 export type X402InspectRequest = InspectPipelineDeps;
+
+/**
+ * Input shape for `inflow.mpp.pay`. `apiBaseUrl` is optional — the Inflow instance's resolved value is used when
+ * absent.
+ */
+export type MppPayRequest = Omit<MppPayPipelineDeps, 'client' | 'apiBaseUrl'> & { apiBaseUrl?: string };
+
+export interface MppStatusRequest {
+  transactionId: string;
+  interval: number;
+  maxAttempts: number;
+  timeout: number;
+}
+
+export interface MppCancelRequest {
+  approvalId: string;
+}
+
+export type MppInspectRequest = MppInspectPipelineDeps;
 
 /* -------------------------------------------------------------------------- */
 /* FlowRun: async-iterable wrapper for callback-style pipelines               */
@@ -211,6 +236,27 @@ export interface IX402 extends IX402Resource {
   cancel(input: X402CancelRequest): Promise<X402CancelResult>;
 }
 
+/**
+ * Augmented MPP handle. Extends the lazy-client wrapper with the high-level MPP operations the CLI's `inflow mpp ...`
+ * commands run. `decode` is intentionally absent — it is a pure codec function ({@link decodeMppValue}) the CLI calls
+ * directly, with no client.
+ */
+export interface IMpp extends IMppResource {
+  /** One-shot probe + decode of an MPP-protected URL's `WWW-Authenticate: Payment` challenge(s). */
+  inspect(input: MppInspectRequest): FlowRun<MppInspectEvent>;
+  /** Buyer capability (`GET /v1/transactions/mpp-supported`): methods → intents → rails → currencies. */
+  supported(): Promise<MppSupportedResponse>;
+  /**
+   * Full MPP payment lifecycle (probe → parse → select → create → poll → replay). Returns an async-iterable of events.
+   * `apiBaseUrl` defaults to the Inflow instance's resolved value.
+   */
+  pay(input: MppPayRequest): FlowRun<MppPayEvent>;
+  /** Poll the buyer-side state of an in-flight MPP transaction. */
+  status(input: MppStatusRequest): MppStatusRun;
+  /** Best-effort cancel of an in-flight MPP approval (delegated to `@inflowpayai/mpp-buyer`). */
+  cancel(input: MppCancelRequest): Promise<MppCancelResult>;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Factories used by the Inflow constructor                                   */
 /* -------------------------------------------------------------------------- */
@@ -321,6 +367,43 @@ export function augmentX402(x402Resource: IX402Resource, resolvedApiBaseUrl: str
   return augmented as IX402;
 }
 
+/**
+ * Build an {@link IMpp} handle by extending the raw lazy-client wrapper with the high-level MPP operations. Mutates
+ * `mppResource` in place (mirroring {@link augmentX402}) so the underlying cached client / method remain addressable on
+ * the returned handle. Construction site of the `inflow.mpp` handle on the Inflow instance.
+ *
+ * @internal
+ */
+export function augmentMpp(mppResource: IMppResource, resolvedApiBaseUrl: string): IMpp {
+  const augmented = mppResource as IMppResource & Partial<IMpp>;
+  augmented.inspect = (input) => wrapEmittingPipeline<MppInspectEvent>((emit) => runMppInspectPipeline(input, emit));
+  augmented.supported = async () => runMppSupported({ mpp: mppResource });
+  augmented.pay = (input) =>
+    wrapEmittingPipeline<MppPayEvent>(async (emit) => {
+      const client = await mppResource.client();
+      return runMppPayPipeline(
+        {
+          ...input,
+          client,
+          apiBaseUrl: input.apiBaseUrl ?? resolvedApiBaseUrl,
+        },
+        emit,
+      );
+    });
+  augmented.status = (input) =>
+    runMppStatus({
+      fetchOnce: async () => {
+        const client = await mppResource.client();
+        return client.getTransaction(input.transactionId);
+      },
+      interval: input.interval,
+      maxAttempts: input.maxAttempts,
+      timeout: input.timeout,
+    });
+  augmented.cancel = async (input) => runMppCancel({ mpp: mppResource, approvalId: input.approvalId });
+  return augmented as IMpp;
+}
+
 // Re-export internal types touched by IAuth/IUser/IX402 so consumers writing functions that accept these interfaces
 // have everything they need from a single import.
 export type {
@@ -343,4 +426,9 @@ export type {
   X402StatusRun,
   IBalanceResource,
   IDepositAddressResource,
+  MppSupportedResponse,
+  MppCancelResult,
+  MppInspectEvent,
+  MppPayEvent,
+  MppStatusRun,
 };

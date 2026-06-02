@@ -1,4 +1,5 @@
 import type { X402PayloadResponse } from '@inflowpayai/x402-buyer';
+import { userFacingErrorMessage } from './api-error.js';
 import { pollAsync } from '../utils/async-poll.js';
 
 /**
@@ -107,7 +108,7 @@ export function runX402Status(input: X402StatusInput): X402StatusRun {
         return;
       }
     } catch (err) {
-      yield { type: 'crashed', message: err instanceof Error ? err.message : String(err) };
+      yield { type: 'crashed', message: userFacingErrorMessage(err) };
     }
   }
 

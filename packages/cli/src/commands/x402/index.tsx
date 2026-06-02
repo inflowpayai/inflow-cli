@@ -295,6 +295,7 @@ async function* runPayCommand(
         onComplete={(phase) => {
           finalPhase = phase;
         }}
+        onCancel={(approvalId) => inflow.x402.cancel({ approvalId })}
       />,
     );
     if (finalPhase !== null) {

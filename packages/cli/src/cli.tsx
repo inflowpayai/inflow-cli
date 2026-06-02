@@ -4,6 +4,7 @@ import { Cli } from 'incur';
 import { createAuthCli } from './commands/auth/index.js';
 import { createBalancesCli } from './commands/balances/index.js';
 import { createDepositAddressesCli } from './commands/deposit-addresses/index.js';
+import { createMppCli } from './commands/mpp/index.js';
 import { createUserCli } from './commands/user/index.js';
 import { createX402Cli } from './commands/x402/index.js';
 import {
@@ -177,6 +178,7 @@ cli.command(createUserCli(inflow.user, authStorage, inflow));
 cli.command(createBalancesCli(inflow.balances, authStorage, inflow));
 cli.command(createDepositAddressesCli(inflow.depositAddresses, authStorage, inflow));
 cli.command(createX402Cli(inflow, authStorage, resolvedApiBaseUrl));
+cli.command(createMppCli(inflow, authStorage, resolvedApiBaseUrl));
 
 await cli.serve();
 

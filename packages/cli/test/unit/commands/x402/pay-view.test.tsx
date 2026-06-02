@@ -59,7 +59,7 @@ function prepared(
 
 function makeClient(overrides: Partial<X402InflowClient> = {}): X402InflowClient {
   const base = {
-    selectInflowRequirement: vi.fn(() => requirement()),
+    selectInflowRequirement: vi.fn(async () => requirement()),
     prepareInflowPayment: vi.fn(async () => prepared()),
     getSupported: vi.fn(async () => ({ kinds: [] })),
     getX402Payload: vi.fn(async () => ({ status: 'INITIATED' as const })),
@@ -107,7 +107,6 @@ describe('PayView', () => {
       expect(lastFrame()).toContain('Paid balance / inflow:1');
     });
     expect(lastFrame()).toContain('transaction: txn_1');
-    expect(lastFrame()).toContain('status: 200');
     expect(lastFrame()).toContain('response body:');
     unmount();
   });
@@ -137,7 +136,6 @@ describe('PayView', () => {
     await vi.waitFor(() => {
       expect(lastFrame()).toContain('Seller accepted without payment');
     });
-    expect(lastFrame()).toContain('status: 200');
     expect(lastFrame()).toContain('response body:');
     unmount();
   });
@@ -151,7 +149,7 @@ describe('PayView', () => {
       }),
     );
     const client = makeClient({
-      selectInflowRequirement: vi.fn(() => null),
+      selectInflowRequirement: vi.fn(async () => null),
     });
     const { lastFrame, unmount } = render(
       <PayView
@@ -205,7 +203,6 @@ describe('PayView', () => {
     const frame = lastFrame() ?? '';
     expect(frame).toContain('✗');
     expect(frame).not.toContain('✓ Paid');
-    expect(frame).toContain('status: 402');
     expect(frame).toContain('transaction: txn_1');
     expect(frame).toContain('approval: appr_1');
     expect(frame).toContain('approval url: https://app.inflowpay.ai/approvals/appr_1/view/');
