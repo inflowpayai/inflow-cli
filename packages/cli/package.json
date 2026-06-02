@@ -40,7 +40,7 @@
     "url": "https://github.com/inflowpayai/inflow-cli/issues"
   },
   "dependencies": {
-    "@inflowpayai/mpp": "^0.5.0",
+    "@inflowpayai/mpp": "^0.5.1",
     "@inflowpayai/mpp-buyer": "^0.5.0",
     "@inflowpayai/x402": "^0.8.0",
     "@inflowpayai/x402-buyer": "^0.7.0",

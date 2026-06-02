@@ -273,7 +273,6 @@ describe('runMppPayPipeline', () => {
       challengeId: 'chal-inflow',
       method: 'inflow',
       reference: 'ref-42',
-      settlement: { amount: '10', currency: 'USDC' },
       status: 'success',
       timestamp: '2025-01-01T00:00:00Z',
     };
@@ -300,8 +299,6 @@ describe('runMppPayPipeline', () => {
     if (terminal?.type === 'replayed') {
       expect(terminal.result.settled).toEqual({
         reference: 'ref-42',
-        amount: '10',
-        currency: 'USDC',
         status: 'success',
         timestamp: '2025-01-01T00:00:00Z',
       });
@@ -412,7 +409,6 @@ describe('buildSettlement', () => {
       challengeId: '',
       method: 'inflow',
       reference: '',
-      settlement: { amount: '', currency: '' },
       status: '',
       timestamp: '',
     };
@@ -425,15 +421,12 @@ describe('buildSettlement', () => {
       challengeId: 'chal-1',
       method: 'inflow',
       reference: 'ref-9',
-      settlement: { amount: '12', currency: 'EUR' },
       status: 'success',
       timestamp: '2025-02-02T00:00:00Z',
     };
     const headers = new Headers({ [HEADERS.PAYMENT_RECEIPT]: encode(receipt) });
     expect(buildSettlement(headers)).toEqual({
       reference: 'ref-9',
-      amount: '12',
-      currency: 'EUR',
       status: 'success',
       timestamp: '2025-02-02T00:00:00Z',
     });

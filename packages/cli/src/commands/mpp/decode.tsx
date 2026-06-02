@@ -68,7 +68,6 @@ export const DecodeView: React.FC<DecodeViewProps> = ({ result }) => {
           <Text color="green">{receipt.status}</Text>
         </Text>
         <Text>{`reference: ${receipt.reference}`}</Text>
-        <Text>{`settled: ${receipt.settlement.amount} ${receipt.settlement.currency}`}</Text>
         <Text dimColor>{`timestamp: ${receipt.timestamp}`}</Text>
       </Box>
     </Box>
