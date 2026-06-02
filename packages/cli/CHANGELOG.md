@@ -1,5 +1,16 @@
 # @inflowpayai/inflow
 
+## 0.6.1
+
+### Patch Changes
+
+- [#8](https://github.com/inflowpayai/inflow-cli/pull/8)
+  [`61c8a3b`](https://github.com/inflowpayai/inflow-cli/commit/61c8a3b956116cf09aae4f473cc1bad04ec6c074) Thanks
+  [@nkavian](https://github.com/nkavian)! - Drop the removed `settlement` field from MPP receipt handling.
+  `@inflowpayai/mpp`'s `MppReceipt` no longer carries `settlement` (amount/currency), so `mpp pay` no longer projects
+  `amount`/`currency` into its settlement summary, the `mpp decode` receipt view no longer prints a settled amount, and
+  the receipt discriminator now keys on `challengeId`.
+
 ## 0.6.0
 
 ### Minor Changes
