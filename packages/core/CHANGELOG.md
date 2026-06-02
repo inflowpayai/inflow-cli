@@ -1,4 +1,4 @@
-# @inflowpayai/inflow
+# @inflowpayai/inflow-core
 
 ## 0.6.0
 
@@ -13,11 +13,3 @@
   helpers). A `use-flow-exit` hook and `best-effort-cancel` util provide graceful cancellation on interrupt, and a
   programmatic MPP pay example is added to `@inflowpayai/inflow-core`. Also refreshes x402 flow internals, docs, plugin
   manifests, and the agentic-payments skill.
-
-## 0.5.2
-
-### Patch Changes
-
-- [#2](https://github.com/inflowpayai/inflow-cli/pull/2)
-  [`c1879a0`](https://github.com/inflowpayai/inflow-cli/commit/c1879a0a2a907ae469a779a5049996607cf0fef0) Thanks
-  [@nkavian](https://github.com/nkavian)! - Fix CI test races and pnpm-only settings leaking into npm.
