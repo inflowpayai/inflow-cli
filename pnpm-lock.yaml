@@ -78,11 +78,11 @@ importers:
         specifier: ^0.5.0
         version: 0.5.0(mppx@0.6.28(typescript@5.9.3)(viem@2.51.3(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/x402':
+        specifier: ^0.8.0
+        version: 0.8.0(@x402/core@2.13.0)
+      '@inflowpayai/x402-buyer':
         specifier: ^0.7.0
         version: 0.7.0(@x402/core@2.13.0)
-      '@inflowpayai/x402-buyer':
-        specifier: ^0.6.2
-        version: 0.6.2(@x402/core@2.13.0)
       '@x402/core':
         specifier: ^2.12.0
         version: 2.13.0
@@ -143,11 +143,11 @@ importers:
         specifier: ^0.5.0
         version: 0.5.0(mppx@0.6.28(typescript@5.9.3)(viem@2.51.3(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/x402':
+        specifier: ^0.8.0
+        version: 0.8.0(@x402/core@2.13.0)
+      '@inflowpayai/x402-buyer':
         specifier: ^0.7.0
         version: 0.7.0(@x402/core@2.13.0)
-      '@inflowpayai/x402-buyer':
-        specifier: ^0.6.2
-        version: 0.6.2(@x402/core@2.13.0)
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
@@ -786,14 +786,14 @@ packages:
     peerDependencies:
       mppx: ^0.6.28
 
-  '@inflowpayai/x402-buyer@0.6.2':
-    resolution: {integrity: sha512-PzLjwA5iHGy6BUPG/0jpfr/s0p7Azal+mmvRM7L7NT0tunivGOjHyli8p8AldyQpR3XVLZJFoQUQvsCp4aYVAA==}
+  '@inflowpayai/x402-buyer@0.7.0':
+    resolution: {integrity: sha512-yLCEE86nIKxNiW4TAAaySMTNY+gfkgeWsd1nWE3Bx1rq8TGJZ9kOzKfT7ieznH7PltvvfrmtbSctrC5DaCjhsQ==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@x402/core': ^2.12.0
 
-  '@inflowpayai/x402@0.7.0':
-    resolution: {integrity: sha512-LswPin6MUcsh8tIYncYKeiANctxmdoFmPe2K0qX4pGGtyUep3+puY8chphSCHcywW22HIEz7zXwZiX+WCV6Nfg==}
+  '@inflowpayai/x402@0.8.0':
+    resolution: {integrity: sha512-hpV32EuFORwPAuqYPVWFswXsFsf9yMIRSlGvisD+GkuRI1UJyxzh5soknkJMBJNR2PeiiH1ZGOSUVxKTUAIwLQ==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@x402/core': ^2.12.0
@@ -3555,13 +3555,13 @@ snapshots:
     dependencies:
       mppx: 0.6.28(typescript@5.9.3)(viem@2.51.3(typescript@5.9.3)(zod@4.4.3))
 
-  '@inflowpayai/x402-buyer@0.6.2(@x402/core@2.13.0)':
+  '@inflowpayai/x402-buyer@0.7.0(@x402/core@2.13.0)':
     dependencies:
-      '@inflowpayai/x402': 0.7.0(@x402/core@2.13.0)
+      '@inflowpayai/x402': 0.8.0(@x402/core@2.13.0)
       '@x402/core': 2.13.0
       bs58: 6.0.0
 
-  '@inflowpayai/x402@0.7.0(@x402/core@2.13.0)':
+  '@inflowpayai/x402@0.8.0(@x402/core@2.13.0)':
     dependencies:
       '@x402/core': 2.13.0
 
@@ -5204,7 +5204,7 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@5.9.3)(zod@4.4.3)
+      abitype: 1.2.4(typescript@5.9.3)(zod@4.4.3)
       eventemitter3: 5.0.1
     optionalDependencies:
       typescript: 5.9.3
