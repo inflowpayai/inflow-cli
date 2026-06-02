@@ -59,7 +59,6 @@ describe('DecodeView', () => {
         challengeId: 'chal-1',
         method: 'inflow',
         reference: 'ref-9',
-        settlement: { amount: '10', currency: 'USDC' },
         status: 'success',
         timestamp: '2025-01-01T00:00:00Z',
       },

@@ -49,8 +49,6 @@ export interface MppPayResultNoPayment extends MppPayResultBase {
 /** Compact projection of the `Payment-Receipt` header on a settled response. */
 export interface MppPaySettlement {
   reference?: string;
-  amount?: string;
-  currency?: string;
   status?: string;
   timestamp?: string;
 }
@@ -196,8 +194,6 @@ export function buildSettlement(headers: Headers): MppPaySettlement | undefined 
   }
   const out: MppPaySettlement = {};
   if (receipt.reference !== '') out.reference = receipt.reference;
-  if (receipt.settlement.amount !== '') out.amount = receipt.settlement.amount;
-  if (receipt.settlement.currency !== '') out.currency = receipt.settlement.currency;
   if (receipt.status !== '') out.status = receipt.status;
   if (receipt.timestamp !== '') out.timestamp = receipt.timestamp;
   return Object.keys(out).length > 0 ? out : undefined;

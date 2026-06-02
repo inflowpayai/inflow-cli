@@ -209,7 +209,7 @@ export const PayView: React.FC<PayViewProps> = ({ url, method, deps, onComplete,
         <Text>{`status: ${String(result.responseStatus)}`}</Text>
         <Text>{`transaction: ${result.transactionId}`}</Text>
         {result.settled !== undefined ? (
-          <Text>{`settled: ${result.settled.amount ?? '?'} ${result.settled.currency ?? ''} (ref ${result.settled.reference ?? '—'})`}</Text>
+          <Text>{`settled: ${result.settled.status ?? 'success'} (ref ${result.settled.reference ?? '—'})`}</Text>
         ) : null}
         <Text>{`response size: ${String(result.bodySizeBytes)} bytes`}</Text>
         {result.outputSavedTo !== undefined ? (

@@ -75,8 +75,8 @@ export type DecodeResult =
  *
  * - A `WWW-Authenticate: Payment …` header value (the `Payment ` scheme prefix or auth-param `key="value"` pairs) is
  *   parsed as a challenge.
- * - Otherwise the value is a base64url-JCS artifact: a `Payment-Receipt` (`settlement` / `challengeId` present) or an
- *   `Authorization: Payment` credential (`challenge` + `payload`).
+ * - Otherwise the value is a base64url-JCS artifact: a `Payment-Receipt` (`challengeId` present) or an `Authorization:
+ *   Payment` credential (`challenge` + `payload`).
  *
  * Throws when the value matches none of these shapes (the underlying codec raises a typed error).
  */
@@ -86,7 +86,7 @@ export function decodeMppValue(raw: string): DecodeResult {
     return { kind: 'challenge', challenge: summarizeChallenge(parseChallengeHeader(trimmed)) };
   }
   const probe = decode<Record<string, unknown>>(trimmed, 'value');
-  if ('settlement' in probe || 'challengeId' in probe) {
+  if ('challengeId' in probe) {
     return { kind: 'receipt', receipt: decodeReceipt(trimmed) };
   }
   return { kind: 'credential', credential: decodeCredential(trimmed) };
