@@ -5,15 +5,7 @@
   "author": {
     "name": "Jarwin, Inc."
   },
-  "keywords": [
-    "onboarding",
-    "payments",
-    "x402",
-    "mpp",
-    "agentic",
-    "inflow",
-    "wallet"
-  ],
+  "keywords": ["onboarding", "payments", "x402", "mpp", "agentic", "inflow", "wallet"],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json"
 }

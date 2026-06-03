@@ -9,30 +9,20 @@
   "homepage": "https://app.inflowpay.ai",
   "repository": "https://github.com/inflowpayai/inflow-cli",
   "license": "MIT",
-  "keywords": [
-    "onboarding",
-    "payments",
-    "x402",
-    "mpp",
-    "agentic",
-    "inflow",
-    "wallet"
-  ],
+  "keywords": ["onboarding", "payments", "x402", "mpp", "agentic", "inflow", "wallet"],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "InFlow",
     "shortDescription": "InFlow — agentic MPP / x402 payments from your machine.",
-    "longDescription": "Authenticate with InFlow, inspect balances and deposit addresses, and perform agent-native payments via x402 protocols. Runs as a local CLI binary or as an MCP server.",
+    "longDescription": "Authenticate with InFlow, inspect balances and deposit addresses, and perform agent-native payments via the x402 and MPP protocols. Runs as a local CLI binary or as an MCP server.",
     "developerName": "Jarwin, Inc.",
     "category": "Finance",
     "capabilities": [],
     "websiteURL": "https://app.inflowpay.ai",
     "privacyPolicyURL": "https://app.inflowpay.ai/privacy",
     "termsOfServiceURL": "https://app.inflowpay.ai/terms",
-    "defaultPrompt": [
-      "Use InFlow to pay this 402-protected URL"
-    ],
+    "defaultPrompt": ["Use InFlow to pay this 402-protected URL"],
     "screenshots": [],
     "composerIcon": "./assets/inflow.svg",
     "logo": "./assets/inflow.svg"

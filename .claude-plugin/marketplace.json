@@ -11,7 +11,7 @@
     {
       "name": "inflow",
       "source": "./plugins/inflow",
-      "description": "Authenticate with InFlow, inspect balances and deposit addresses, and perform agent-native payments via x402.",
+      "description": "Authenticate with InFlow, inspect balances and deposit addresses, and perform agent-native payments via x402 and MPP.",
       "author": { "name": "Jarwin, Inc." },
       "homepage": "https://app.inflowpay.ai",
       "repository": "https://github.com/inflowpayai/inflow-cli",

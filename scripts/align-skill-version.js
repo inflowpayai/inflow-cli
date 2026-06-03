@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 /**
- * Aligns the published CLI version into every artifact that carries a `version` string we ship outside the package.json
- * itself:
+ * Aligns the published CLI version into every artifact that carries a `version` string we ship outside the published
+ * package.json itself:
  *
+ * - Package.json — repo root manifest (private; kept in step with the published CLI version)
  * - Skills/agentic-payments/SKILL.md — YAML frontmatter `version:` line
  * - Plugins/inflow/.claude-plugin/plugin.json — Claude Code per-plugin manifest
+ * - Plugins/inflow/.cursor-plugin/plugin.json — Cursor per-plugin manifest
  * - .codex-plugin/plugin.json — Codex top-level manifest
  * - Plugins/inflow/.codex-plugin/plugin.json — Codex per-plugin manifest
+ *
+ * The root .cursor-plugin/marketplace.json and .agents/plugins/marketplace.json carry no `version` field and are
+ * intentionally not stamped.
  *
  * Source of truth: packages/cli/package.json `version`.
  *
@@ -54,8 +59,10 @@ function rewriteJsonVersion(relPath) {
   process.stdout.write(`align-skill-version: ${relPath} updated to ${version}\n`);
 }
 
+rewriteJsonVersion('package.json');
 rewriteSkill('skills/agentic-payments/SKILL.md');
 rewriteJsonVersion('plugins/inflow/.claude-plugin/plugin.json');
+rewriteJsonVersion('plugins/inflow/.cursor-plugin/plugin.json');
 rewriteJsonVersion('.codex-plugin/plugin.json');
 rewriteJsonVersion('plugins/inflow/.codex-plugin/plugin.json');
 

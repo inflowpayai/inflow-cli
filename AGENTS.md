@@ -24,9 +24,13 @@ A pnpm + Turborepo monorepo with two packages:
 
 - `packages/cli/` — `@inflowpayai/inflow`, the published binary.
 - `packages/core/` — `@inflowpayai/inflow-core`, the typed HTTP client.
-- `plugins/inflow/` — the plugin bundle: `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`.
+- `plugins/inflow/` — the plugin bundle: `.claude-plugin/plugin.json`, `.cursor-plugin/plugin.json`,
+  `.codex-plugin/plugin.json`, plus symlinks `skills → ../../skills`, `.mcp.json → ../../.mcp.json`,
+  `assets → ../../assets` (so each per-plugin manifest's `./skills/`, `./.mcp.json`, and `./assets/` paths resolve).
 - `skills/agentic-payments/SKILL.md` — the single skill file.
 - `.claude-plugin/marketplace.json` — Claude Code marketplace entry.
+- `.cursor-plugin/marketplace.json` — Cursor marketplace entry.
+- `.agents/plugins/marketplace.json` — agents marketplace entry.
 - `.codex-plugin/plugin.json` — Codex marketplace entry.
 - `.mcp.json` — raw MCP entry.
 - `scripts/` — repo-level dev/CI scripts.

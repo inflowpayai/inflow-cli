@@ -1,0 +1,17 @@
+{
+  "name": "inflow-cli",
+  "owner": {
+    "name": "Jarwin, Inc.",
+    "email": "support@inflowpay.ai"
+  },
+  "metadata": {
+    "description": "InFlow — agentic MPP / x402 payments from your machine. Lets agents get secure, user-approved payments to pay 402-protected resources on your behalf."
+  },
+  "plugins": [
+    {
+      "name": "inflow",
+      "source": "plugins/inflow",
+      "description": "Authenticate with InFlow and pay 402-protected resources via MPP and x402, so agents can complete user-approved purchases on your behalf."
+    }
+  ]
+}

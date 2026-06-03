@@ -14,6 +14,35 @@ the `x402` and `mpp` command groups, the global flags, and the agent (`--format`
 npm install -g @inflowpayai/inflow
 ```
 
+Or run directly with `npx`:
+
+```bash
+npx @inflowpayai/inflow
+```
+
+### Use with agents
+
+Install the `agentic-payments` skill into a skills-aware agent:
+
+```bash
+npx skills add inflowpayai/inflow-cli
+```
+
+The repo also ships as an installable plugin (skill + MCP server bundled) for plugin-aware hosts:
+
+- **Claude Code** — add the marketplace, then install the plugin:
+
+  ```
+  /plugin marketplace add inflowpayai/inflow-cli
+  /plugin install inflow@inflow-cli
+  ```
+
+- **Cursor / Codex** — point the host at this repo; it discovers `.cursor-plugin/marketplace.json`,
+  `.agents/plugins/marketplace.json`, and `.codex-plugin/plugin.json` respectively.
+
+In every case the plugin bundles the skill and the `inflow` MCP server (`.mcp.json`); the `inflow` binary must be on
+`PATH` (`npm install -g @inflowpayai/inflow`) for commands to run.
+
 ## Development
 
 This is a pnpm + Turborepo monorepo. Node >= 22 required.
