@@ -1,0 +1,20 @@
+{
+  "name": "inflow-plugins",
+  "interface": {
+    "displayName": "InFlow"
+  },
+  "plugins": [
+    {
+      "name": "inflow",
+      "source": {
+        "source": "local",
+        "path": "./plugins/inflow"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Finance"
+    }
+  ]
+}

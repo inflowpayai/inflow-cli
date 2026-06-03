@@ -1,7 +1,7 @@
 {
   "name": "inflow",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.6.1",
   "type": "module",
   "description": "InFlow — agentic MPP / x402 payments from your machine.",
   "repository": {
