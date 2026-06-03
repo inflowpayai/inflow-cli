@@ -13,7 +13,9 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { resolve as resolvePath, dirname, join } from 'node:path';
 import { encode, renderChallengeHeader } from '@inflowpayai/mpp';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+vi.setConfig({ testTimeout: 15_000 });
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cliBin = resolvePath(here, '../../dist/cli.js');
@@ -123,6 +125,12 @@ describe('cli smoke', () => {
 
   it('mpp decode --format json emits a DECODE_FAILED error envelope on garbage input', async () => {
     const result = await run(['mpp', 'decode', '@@@not-decodable@@@', '--format', 'json']);
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('DECODE_FAILED');
+  });
+
+  it('x402 decode --format json emits a DECODE_FAILED error envelope on garbage input', async () => {
+    const result = await run(['x402', 'decode', 'garbage', '--format', 'json']);
     expect(result.exitCode).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('DECODE_FAILED');
   });

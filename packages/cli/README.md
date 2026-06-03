@@ -7,28 +7,31 @@ Every command supports a TTY rendering (Ink) and an agent rendering via `--forma
 view is what you get by default in an interactive terminal; the structured formats are what an AI assistant or pipeline
 should request.
 
+For host-specific skill and MCP installation, see the repository's
+[surface install and testing guide](https://github.com/inflowpayai/inflow-cli/blob/main/docs/development/surfaces-and-testing.md).
+
 ## Command index
 
-| Command                              | Purpose                                                                                                                         |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `inflow auth login`                  | Run the OAuth device flow to authenticate. Saves a refreshable access token.                                                    |
-| `inflow auth logout`                 | Clear the saved access token and API key from local config.                                                                     |
-| `inflow auth status`                 | Show which credential the CLI would use, plus the active environment and resolved API URL.                                      |
-| `inflow user get`                    | Fetch the authenticated user's profile.                                                                                         |
-| `inflow balances list`               | List the authenticated user's balances.                                                                                         |
-| `inflow deposit-addresses list`      | List the user's configured deposit addresses, grouped by network.                                                               |
-| `inflow x402 pay <url>`              | Probe a seller; if it returns 402, drive the approval flow and replay the request with the signed `PAYMENT-SIGNATURE`.          |
-| `inflow x402 inspect <url>`          | Read-only probe. Show the seller's `PAYMENT-REQUIRED` accepts for a URL — no auth, no payment.                                  |
-| `inflow x402 status <transactionId>` | Poll the signing state of an in-flight transaction. Used to resume a previous `pay` across CLI invocations.                     |
-| `inflow x402 cancel <approvalId>`    | Best-effort cancel of an in-flight approval. Always reports success.                                                            |
-| `inflow x402 decode <header>`        | Decode a raw `PAYMENT-REQUIRED` header value. No auth required.                                                                 |
-| `inflow x402 supported`              | List the buyer-side `(scheme, network)` capability cache.                                                                       |
-| `inflow mpp pay <url>`               | Probe a seller; if it returns a `WWW-Authenticate: Payment` 402, fulfil the challenge and replay with `Authorization: Payment`. |
-| `inflow mpp inspect <url>`           | Read-only probe. Parse the seller's MPP `Payment` challenge(s) for a URL — no auth, no payment.                                 |
-| `inflow mpp status <transactionId>`  | Poll the buyer-side state of an in-flight MPP transaction. Used to resume a previous `pay` across CLI invocations.              |
-| `inflow mpp cancel <approvalId>`     | Best-effort cancel of an in-flight MPP approval. Always reports success.                                                        |
-| `inflow mpp decode <value>`          | Decode a `WWW-Authenticate: Payment` header, or a base64url credential / receipt. No auth required.                             |
-| `inflow mpp supported`               | List the methods the buyer can pay with — by intent, settlement rail, and currency.                                             |
+| Command                              | Purpose                                                                                                                           |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `inflow auth login`                  | Run the OAuth device flow to authenticate. Saves a refreshable access token.                                                      |
+| `inflow auth logout`                 | Clear the saved access token and API key from local config.                                                                       |
+| `inflow auth status`                 | Show which credential the CLI would use, plus the active environment and resolved API URL.                                        |
+| `inflow user get`                    | Fetch the authenticated user's profile.                                                                                           |
+| `inflow balances list`               | List the authenticated user's balances.                                                                                           |
+| `inflow deposit-addresses list`      | List the user's configured deposit addresses, grouped by network.                                                                 |
+| `inflow x402 pay <url>`              | Probe a seller; if it returns 402, drive the approval flow and replay the request with the signed `PAYMENT-SIGNATURE`.            |
+| `inflow x402 inspect <url>`          | Read-only probe. Show the seller's `PAYMENT-REQUIRED` accepts for a URL — no auth, no payment.                                    |
+| `inflow x402 status <transactionId>` | Poll the signing state of an in-flight transaction. Used to resume a previous `pay` across CLI invocations.                       |
+| `inflow x402 cancel <approvalId>`    | Best-effort cancel of an in-flight approval. Requires authentication; success does not verify the server-side approval state.     |
+| `inflow x402 decode <header>`        | Decode a raw `PAYMENT-REQUIRED` header value. No auth required.                                                                   |
+| `inflow x402 supported`              | List the buyer-side `(scheme, network)` capability cache.                                                                         |
+| `inflow mpp pay <url>`               | Probe a seller; if it returns a `WWW-Authenticate: Payment` 402, fulfil the challenge and replay with `Authorization: Payment`.   |
+| `inflow mpp inspect <url>`           | Read-only probe. Parse the seller's MPP `Payment` challenge(s) for a URL — no auth, no payment.                                   |
+| `inflow mpp status <transactionId>`  | Poll the buyer-side state of an in-flight MPP transaction. Used to resume a previous `pay` across CLI invocations.                |
+| `inflow mpp cancel <approvalId>`     | Best-effort cancel of an in-flight MPP approval. Requires authentication; success does not verify the server-side approval state. |
+| `inflow mpp decode <value>`          | Decode a `WWW-Authenticate: Payment` header, or a base64url credential / receipt. No auth required.                               |
+| `inflow mpp supported`               | List the methods the buyer can pay with — by intent, settlement rail, and currency.                                               |
 
 ## Global flags
 
@@ -310,8 +313,8 @@ Polls the signing state of an in-flight transaction. Use to resume a previous `p
 inflow x402 cancel appr_abc123
 ```
 
-Best-effort cancel of `POST /v1/approvals/{approvalId}/cancel`. Always reports success — the server-side approval may
-have already terminated; the SDK does not observe the difference.
+Best-effort cancel of `POST /v1/approvals/{approvalId}/cancel`. Requires authentication. On success, the CLI returns
+`cancelled: true`, but it does not poll for confirmation; the server-side approval may have already terminated.
 
 ### `x402 decode`
 

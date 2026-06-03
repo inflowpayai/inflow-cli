@@ -21,3 +21,8 @@ minimumReleaseAgeExclude:
 auto-install-peers: true
 
 strict-peer-dependencies: false
+
+allowUnusedPatches: false
+
+patchedDependencies:
+  incur: patches/incur.patch

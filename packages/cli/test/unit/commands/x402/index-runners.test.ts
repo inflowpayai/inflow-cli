@@ -132,6 +132,25 @@ function agentContext<A, O>(
   };
 }
 
+function agentContextReturningError<A, O>(
+  args: A,
+  options: O,
+): {
+  agent: boolean;
+  formatExplicit: boolean;
+  args: A;
+  options: O;
+  error: ErrorEmitter;
+} {
+  return {
+    agent: true,
+    formatExplicit: true,
+    args,
+    options,
+    error: vi.fn<ErrorEmitter>((err) => ({ code: err.code, message: err.message }) as never),
+  };
+}
+
 function agentContextNoOptions<A>(args: A): {
   agent: boolean;
   formatExplicit: boolean;
@@ -152,6 +171,15 @@ async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
   const out: T[] = [];
   for await (const v of gen) out.push(v);
   return out;
+}
+
+async function drainWithReturn<T>(gen: AsyncGenerator<T, unknown>): Promise<{ values: T[]; returnValue: unknown }> {
+  const values: T[] = [];
+  while (true) {
+    const next = await gen.next();
+    if (next.done) return { values, returnValue: next.value };
+    values.push(next.value);
+  }
 }
 
 afterEach(() => {
@@ -508,6 +536,18 @@ describe('runPayCommand (agent mode)', () => {
     expect(ctx.error).toHaveBeenCalledWith(expect.objectContaining({ code: 'INVALID_HEADER' }));
   });
 
+  it('runInspectCommand emits INVALID_HEADER when --header is malformed', async () => {
+    const ctx = agentContext(
+      { url: 'https://seller/api' },
+      {
+        method: 'GET',
+        header: ['bad-header'],
+      },
+    );
+    await expect(runInspectCommand(ctx)).rejects.toThrow();
+    expect(ctx.error).toHaveBeenCalledWith(expect.objectContaining({ code: 'INVALID_HEADER' }));
+  });
+
   it('emits INVALID_402 when the seller returns 402 without a PAYMENT-REQUIRED header', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('payment required', { status: 402 }));
     const ctx = agentContext(
@@ -686,6 +726,25 @@ describe('runStatusCommand (agent mode)', () => {
     const { inflow, storage } = authedResources(client);
     await expect(drain(runStatusCommand(ctx, inflow, storage))).rejects.toThrow();
     expect(ctx.error).toHaveBeenCalledWith(expect.objectContaining({ code: 'APPROVAL_FAILED' }));
+  });
+
+  it('returns the c.error sentinel when the final status is a terminal failure with no payload', async () => {
+    const client = makeClient({
+      getX402Payload: vi.fn(async () => ({ status: 'DECLINED' })),
+    });
+    const ctx = agentContextReturningError(
+      { transactionId: 'txn_x' },
+      {
+        interval: 0.01,
+        maxAttempts: 5,
+        timeout: 60,
+      },
+    );
+    const { inflow, storage } = authedResources(client);
+    const result = await drainWithReturn(runStatusCommand(ctx, inflow, storage));
+    expect(result.values).toHaveLength(1);
+    expect(result.values[0]).toMatchObject({ transaction_id: 'txn_x', status: 'DECLINED' });
+    expect(result.returnValue).toMatchObject({ code: 'APPROVAL_FAILED' });
   });
 
   it('completes successfully when the transaction reaches a signed state', async () => {

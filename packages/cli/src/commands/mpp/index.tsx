@@ -127,15 +127,11 @@ const POST_CREATE_INSTRUCTION =
 const POLLING_INSTRUCTION =
   'Approval polling is happening inline. The yield stream emits each state change; the final frame includes the result once the transaction is ready and replayed.';
 
-function parseHeaderFlagsOrFail(
-  c: { error: (err: ErrorOptions) => never },
-  flags: readonly string[],
-): Record<string, string> {
-  try {
-    return parseHeaderFlags(flags);
-  } catch (err) {
-    c.error({ code: 'INVALID_HEADER', message: err instanceof Error ? err.message : String(err) });
-  }
+function invalidHeaderError(err: unknown): ErrorOptions {
+  return {
+    code: 'INVALID_HEADER',
+    message: err instanceof Error ? err.message : String(err),
+  };
 }
 
 function decorateCredentialField(
@@ -155,17 +151,19 @@ function decorateCredentialField(
 }
 
 function probeOptionsFrom(c: PayContext | InspectCommandContext): SellerProbeOptions {
-  const headers = parseHeaderFlagsOrFail(c, c.options.header);
   return {
     method: c.options.method,
-    headers,
+    headers: parseHeaderFlags(c.options.header),
     ...(c.options.data !== undefined ? { data: c.options.data } : {}),
   };
 }
 
-function buildPayPipelineInput(c: PayContext): Omit<MppPayPipelineDeps, 'client' | 'apiBaseUrl'> {
+function buildPayPipelineInput(
+  c: PayContext,
+  probeOptions: SellerProbeOptions,
+): Omit<MppPayPipelineDeps, 'client' | 'apiBaseUrl'> {
   return {
-    probeOptions: probeOptionsFrom(c),
+    probeOptions,
     url: c.args.url,
     showBody: c.options.showBody,
     interval: c.options.interval,
@@ -284,6 +282,13 @@ async function* runPayCommand(
 ): AsyncGenerator<unknown> {
   assertSessionGuard(c, authStorage, inflow);
 
+  let probeOptions: SellerProbeOptions;
+  try {
+    probeOptions = probeOptionsFrom(c);
+  } catch (err) {
+    return c.error(invalidHeaderError(err));
+  }
+
   if (!c.agent && !c.formatExplicit) {
     const client = await inflow.mpp.client();
     let finalPhase: MppPayPhase | null = null;
@@ -292,7 +297,7 @@ async function* runPayCommand(
         url={c.args.url}
         method={c.options.method}
         deps={{
-          ...buildPayPipelineInput(c),
+          ...buildPayPipelineInput(c, probeOptions),
           client,
           apiBaseUrl,
           awaitPayment: true,
@@ -306,20 +311,20 @@ async function* runPayCommand(
     if (finalPhase !== null) {
       const phase = finalPhase as MppPayPhase;
       if (phase.kind === 'seller-rejected') {
-        c.error({
+        return c.error({
           code: MPP_PAYMENT_NOT_ACCEPTED_CODE,
           message: `Seller rejected the credential with status ${String(phase.result.responseStatus)}. The transaction was ready but the seller did not honour the payment.`,
         });
       }
       if (phase.kind === 'error') {
-        c.error({ code: phase.code, message: phase.message });
+        return c.error({ code: phase.code, message: phase.message });
       }
     }
     return;
   }
 
   const run = inflow.mpp.pay({
-    ...buildPayPipelineInput(c),
+    ...buildPayPipelineInput(c, probeOptions),
     awaitPayment: c.options.interval > 0,
   });
 
@@ -338,14 +343,13 @@ async function* runPayCommand(
     }
     if (event.type === 'rejected') {
       yield sanitizeDeep(rejectedFrameFromResult(event.result));
-      c.error({
+      return c.error({
         code: MPP_PAYMENT_NOT_ACCEPTED_CODE,
         message: `Seller rejected the credential with status ${String(event.result.responseStatus)}. The transaction was ready but the seller did not honour the payment; see the previous frame for details.`,
       });
-      return;
     }
     if (event.type === 'errored') {
-      c.error({ code: event.code, message: event.message });
+      return c.error({ code: event.code, message: event.message });
     }
     // 'decoded' is an intermediate phase signal; agent mode doesn't surface it.
   }
@@ -402,27 +406,27 @@ async function* runStatusCommand(
     }
     if (event.type === 'failed') {
       yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
-      c.error({
+      return c.error({
         code: 'PAYMENT_FAILED',
         message: event.response.problem?.detail ?? event.response.problem?.title ?? 'MPP transaction failed.',
       });
     }
     if (event.type === 'expired') {
       yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
-      c.error({ code: 'PAYMENT_EXPIRED', message: 'MPP transaction expired before it was ready.' });
+      return c.error({ code: 'PAYMENT_EXPIRED', message: 'MPP transaction expired before it was ready.' });
     }
     if (event.type === 'timedOut') {
       if (event.response !== undefined) {
         yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
       }
-      c.error({
+      return c.error({
         code: 'POLLING_TIMEOUT',
         message: 'Polling timed out before the transaction reached a ready state.',
         retryable: true,
       });
     }
     if (event.type === 'crashed') {
-      c.error({ code: 'PAYMENT_FAILED', message: event.message });
+      return c.error({ code: 'PAYMENT_FAILED', message: event.message });
     }
   }
 }
@@ -479,8 +483,15 @@ async function runSupportedCommand(
 }
 
 async function runInspectCommand(c: InspectCommandContext): Promise<Record<string, unknown> | undefined> {
+  let probeOptions: SellerProbeOptions;
+  try {
+    probeOptions = probeOptionsFrom(c);
+  } catch (err) {
+    return c.error(invalidHeaderError(err));
+  }
+
   const deps: MppInspectPipelineDeps = {
-    probeOptions: probeOptionsFrom(c),
+    probeOptions,
     url: c.args.url,
     ...(c.options.paymentMethod !== undefined ? { paymentMethodFilter: c.options.paymentMethod } : {}),
     ...(c.options.intent !== undefined ? { intentFilter: c.options.intent } : {}),
@@ -503,7 +514,7 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
     if (finalPhase !== null) {
       const phase = finalPhase as MppInspectPhase;
       if (phase.kind === 'error') {
-        c.error({ code: phase.code, message: phase.message });
+        return c.error({ code: phase.code, message: phase.message });
       }
     }
     return undefined;
