@@ -1,6 +1,6 @@
 {
   "name": "inflow",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "InFlow — agentic MPP / x402 payments from your machine.",
   "author": {
     "name": "Jarwin, Inc.",
@@ -9,7 +9,15 @@
   "homepage": "https://app.inflowpay.ai",
   "repository": "https://github.com/inflowpayai/inflow-cli",
   "license": "MIT",
-  "keywords": ["onboarding", "payments", "x402", "mpp", "agentic", "inflow", "wallet"],
+  "keywords": [
+    "onboarding",
+    "payments",
+    "x402",
+    "mpp",
+    "agentic",
+    "inflow",
+    "wallet"
+  ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
@@ -22,7 +30,9 @@
     "websiteURL": "https://app.inflowpay.ai",
     "privacyPolicyURL": "https://app.inflowpay.ai/privacy",
     "termsOfServiceURL": "https://app.inflowpay.ai/terms",
-    "defaultPrompt": ["Use InFlow to pay this 402-protected URL"],
+    "defaultPrompt": [
+      "Use InFlow to pay this 402-protected URL"
+    ],
     "screenshots": [],
     "composerIcon": "./assets/inflow.svg",
     "logo": "./assets/inflow.svg"

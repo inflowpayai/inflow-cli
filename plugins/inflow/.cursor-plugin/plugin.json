@@ -1,7 +1,7 @@
 {
   "name": "inflow",
   "displayName": "InFlow",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Authenticate with InFlow, inspect balances and deposit addresses, and perform agent-native payments via x402 and MPP.",
   "author": {
     "name": "Jarwin, Inc."
@@ -9,9 +9,24 @@
   "homepage": "https://app.inflowpay.ai",
   "repository": "https://github.com/inflowpayai/inflow-cli",
   "license": "MIT",
-  "keywords": ["payments", "inflow", "x402", "mpp", "agentic", "wallet", "mcp"],
+  "keywords": [
+    "payments",
+    "inflow",
+    "x402",
+    "mpp",
+    "agentic",
+    "wallet",
+    "mcp"
+  ],
   "category": "payments",
-  "tags": ["payments", "inflow", "x402", "mpp", "agents", "mcp"],
+  "tags": [
+    "payments",
+    "inflow",
+    "x402",
+    "mpp",
+    "agents",
+    "mcp"
+  ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json"
 }
