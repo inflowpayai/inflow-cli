@@ -1,5 +1,20 @@
 # @inflowpayai/inflow
 
+## 0.6.3
+
+### Patch Changes
+
+- [#12](https://github.com/inflowpayai/inflow-cli/pull/12)
+  [`8036cd1`](https://github.com/inflowpayai/inflow-cli/commit/8036cd1e37531cce85b2e21df4ab930827cc0cf0) Thanks
+  [@nkavian](https://github.com/nkavian)! - Unify plugin install naming and keep `pnpm verify` idempotent.
+  - Rename the Cursor and agents marketplaces to `inflow` (matching the Claude marketplace, the plugin, and the `inflow`
+    binary), so the install target is `inflow@inflow` on every host.
+  - Correct the README install command to `/plugin install inflow@inflow`, and note that `inflowpayai/inflow-cli` is
+    only the GitHub repo slug.
+  - Stamp the version in the manifest JSON files surgically (replace only the `version` value) instead of reserializing
+    with `JSON.stringify`, which reflowed arrays one-element-per-line and fought Prettier. `build` no longer leaves
+    manifests in a shape the next `format` rewrites, so the pipeline converges in one pass.
+
 ## 0.6.2
 
 ### Patch Changes
