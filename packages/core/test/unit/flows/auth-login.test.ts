@@ -99,6 +99,28 @@ describe('runAuthLogin', () => {
     expect(storage.getConnection()).toEqual({ environment: 'sandbox' });
   });
 
+  it('clears a pending device-auth record once tokens land', async () => {
+    const storage = new MemoryStorage();
+    storage.setPendingDeviceAuth({
+      device_code: sampleReq.device_code,
+      interval: sampleReq.interval,
+      expires_at: Date.now() + 600_000,
+      verification_url: sampleReq.verification_url_complete,
+      phrase: sampleReq.user_code,
+    });
+    const run = runAuthLogin({
+      authResource: makeAuth(),
+      authStorage: storage,
+      clientName: 'Test',
+      connection: { environment: 'sandbox' },
+      firstPollDelayMs: 0,
+      pollIntervalMs: 1,
+    });
+    await drain(run.events);
+    expect(storage.getPendingDeviceAuth()).toBeNull();
+    expect(storage.getAuth()?.access_token).toBe(sampleTokens.access_token);
+  });
+
   it('clears any prior api key on a successful login', async () => {
     const storage = new MemoryStorage();
     storage.setApiKey('inflow_old_key');
