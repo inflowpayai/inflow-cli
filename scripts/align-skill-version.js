@@ -52,8 +52,10 @@ function rewriteJsonVersion(relPath) {
     process.stdout.write(`align-skill-version: ${relPath} already at ${version}\n`);
     return;
   }
-  parsed.version = version;
-  const rewritten = `${JSON.stringify(parsed, null, 2)}\n`;
+  const rewritten = original.replace(/("version"\s*:\s*")[^"]*(")/, `$1${version}$2`);
+  if (rewritten === original) {
+    throw new Error(`align-skill-version: no "version" field found to update in ${relPath}`);
+  }
   writeFileSync(file, rewritten);
   touched++;
   process.stdout.write(`align-skill-version: ${relPath} updated to ${version}\n`);
