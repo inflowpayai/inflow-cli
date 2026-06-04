@@ -9,24 +9,9 @@
   "homepage": "https://app.inflowpay.ai",
   "repository": "https://github.com/inflowpayai/inflow-cli",
   "license": "MIT",
-  "keywords": [
-    "payments",
-    "inflow",
-    "x402",
-    "mpp",
-    "agentic",
-    "wallet",
-    "mcp"
-  ],
+  "keywords": ["payments", "inflow", "x402", "mpp", "agentic", "wallet", "mcp"],
   "category": "payments",
-  "tags": [
-    "payments",
-    "inflow",
-    "x402",
-    "mpp",
-    "agents",
-    "mcp"
-  ],
+  "tags": ["payments", "inflow", "x402", "mpp", "agents", "mcp"],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json"
 }

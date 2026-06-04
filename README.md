@@ -34,8 +34,11 @@ The repo also ships as an installable plugin (skill + MCP server bundled) for pl
 
   ```
   /plugin marketplace add inflowpayai/inflow-cli
-  /plugin install inflow@inflow-cli
+  /plugin install inflow@inflow
   ```
+
+  Here `inflowpayai/inflow-cli` is the GitHub repo slug; the marketplace, plugin, and binary are all named `inflow`, so
+  the install target is `inflow@inflow`.
 
 - **Cursor / Codex** — point the host at this repo; it discovers `.cursor-plugin/marketplace.json`,
   `.agents/plugins/marketplace.json`, and `.codex-plugin/plugin.json` respectively.

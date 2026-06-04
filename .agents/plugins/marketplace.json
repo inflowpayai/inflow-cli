@@ -1,5 +1,5 @@
 {
-  "name": "inflow-plugins",
+  "name": "inflow",
   "interface": {
     "displayName": "InFlow"
   },
