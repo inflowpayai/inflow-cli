@@ -104,6 +104,8 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000;
  * - `authStorage.setAuth(tokens)` — persists the new credentials.
  * - `authStorage.clearApiKey()` — device-flow login wins authoritatively over any prior API key on the same machine.
  * - `authStorage.setConnection(input.connection)` — pins the connection block alongside the credentials.
+ * - `authStorage.clearPendingDeviceAuth()` — drops the in-flight device-auth record now that the flow has resolved, so a
+ *   later `auth status` reports the saved tokens instead of a stale pending frame.
  * - `authResource.revokeToken(input.priorRefreshToken)` — best-effort; failures are swallowed (the orphan refresh expires
  *   server-side).
  *
@@ -168,6 +170,7 @@ export function runAuthLogin(input: AuthLoginInput): AuthLoginRun {
           input.authStorage.setAuth(outcome.value);
           input.authStorage.clearApiKey();
           input.authStorage.setConnection(input.connection);
+          input.authStorage.clearPendingDeviceAuth();
           if (input.priorRefreshToken !== undefined) {
             input.authResource.revokeToken(input.priorRefreshToken).catch(() => {
               // swallow; orphan refresh expires server-side
