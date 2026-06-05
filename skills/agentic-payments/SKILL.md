@@ -71,19 +71,22 @@ inflow auth login --client-name "<name>" --interval 5 --timeout 300
 
 ## Which protocol? — start here
 
-Before paying, decide which protocol the resource uses. **You do not choose it — the seller's 402 challenge header decides.** Detection is read-only and needs no auth.
+Before paying, decide which protocol the resource uses. **You do not choose it — the seller's 402 challenge decides.** Run one read-only, no-auth command and let it detect both:
 
-1. Get the 402 challenge header. If a prior HTTP call already returned a 402 (e.g. the browsing tool hit a paywall), use that response. Otherwise make a plain, **unauthenticated GET** to the URL and read the headers of the 402.
-2. Branch on the header — **check for MPP first:**
+```bash
+inflow inspect <url>
+```
 
-| 402 carries… | Protocol | Then |
-| --- | --- | --- |
-| `WWW-Authenticate: Payment` | **MPP** | Go to [§ Paying a 402 resource](#paying-a-402-resource); use the **MPP** column of the delta table |
-| `WWW-Authenticate: Payment` **and** `PAYMENT-REQUIRED` | **MPP** (MPP wins when both are present) | Go to [§ Paying a 402 resource](#paying-a-402-resource); use the **MPP** column |
-| `PAYMENT-REQUIRED` only | **x402** | Go to [§ Paying a 402 resource](#paying-a-402-resource); use the **x402** column |
-| neither header, or the response isn't a 402 | not InFlow-payable | Stop. Tell the user the resource isn't a supported 402 endpoint. |
+`inflow inspect` probes the URL **once** and decodes both MPP and x402 challenges from the same 402. Read its `detected` array to pick the pay rail:
 
-Note: the `inspect` and `decode` commands are protocol-specific (`inflow mpp …` vs `inflow x402 …`), which is why you detect the header *first*, then use that protocol's tools.
+| `detected` | Pay with |
+| --- | --- |
+| `["mpp"]` | `inflow mpp pay <url>` |
+| `["x402"]` | `inflow x402 pay <url>` |
+| `["mpp", "x402"]` | `inflow mpp pay <url>` — **MPP wins when both are present** |
+| `[]` (seller still returned 402) | Not InFlow-payable on this account. Stop and tell the user; check `warnings` for why. |
+
+If `inspect` returns `outcome: "no-payment-required"`, the URL isn't paywalled — there's nothing to pay.
 
 ---
 
@@ -99,7 +102,7 @@ One flow for both protocols. Prerequisite: you are authenticated (see [Authentic
 | --- | --- | --- |
 | Selected when the 402 carries | `WWW-Authenticate: Payment` | `PAYMENT-REQUIRED` (and no `WWW-Authenticate: Payment`) |
 | Command prefix | `inflow mpp …` | `inflow x402 …` |
-| Matching model | The seller's challenge **pins the rail** — the buyer does not choose scheme/network/asset | Pay where `inspect.accepts ∩ supported.kinds` is non-empty |
+| Matching model | The seller's challenge **pins the rail** — the buyer does not choose scheme/network/asset | Pay where the x402 `accepts` ∩ `supported.kinds` is non-empty |
 | Filter flags | `--payment-method`, `--intent`, `--currency`, `--rail`, `--instrument-id` | `--scheme`, `--network`, `--asset`, `--asset-name` |
 | Credential field (after approval) | `credential` (from `mpp status` when `state` is `ready`) | `encoded_payload` (from `x402 status` after approval) |
 | Replay header | `Authorization: Payment <credential>` | `PAYMENT-SIGNATURE: <encoded_payload>` |
@@ -113,20 +116,20 @@ Throughout this section `<mpp|x402>` means "use your protocol's prefix." For the
 ### Step 1: Pre-flight evaluation
 
 ```bash
-# 1. Parse what the seller will accept — read-only, no auth
-inflow <mpp|x402> inspect <url>
+# 1. Parse what the seller will accept — read-only, no auth (both protocols in one probe)
+inflow inspect <url>
 
-# (Already have the 402 header from a prior response? Decode it directly instead of re-probing:)
+# (Already have the raw 402 header from a prior response? Decode it directly instead of re-probing:)
 inflow <mpp|x402> decode '<402 header value>'
 
-# 2. List what the buyer's account can pay with
+# 2. List what the buyer's account can pay with (use the protocol from `detected`)
 inflow <mpp|x402> supported
 
 # 3. Check balances for the candidate currency/asset(s)
 inflow balances list
 ```
 
-`inspect` / `decode` return what the seller accepts — the price is the `amount` field (for x402 the human-readable symbol is `extra.assetName`); `decode` also accepts a base64url credential / receipt. `supported` returns what the account can pay with; `balances list` returns `available` per currency. Run the commands to see the exact shapes.
+`inflow inspect` returns what the seller accepts under its `mpp` and `x402` keys — the price is each challenge's `amount` field (raw atomic units for x402; the asset is the on-chain contract address, not a symbol). `decode` parses a single raw header you already hold (and also accepts a base64url credential / receipt). `supported` returns what the account can pay with; `balances list` returns `available` per currency. Run the commands to see the exact shapes.
 
 Decide whether you can pay (apply your protocol's matching model from the delta table):
 
@@ -136,7 +139,7 @@ Decide whether you can pay (apply your protocol's matching model from the delta 
 | A match exists, but `balances.available < amount` for every match | Right rail, not enough funds | Stop → run `inflow deposit-addresses list`, surface the address(es) in full, ask the user to fund a matching network. |
 | A match exists **and** ≥1 match has `balances.available ≥ amount` | Payable | Proceed to Step 2. |
 
-**Optional filters** narrow *which* offer to fulfil — optional, AND-combined, applied on both `pay` and `inspect`, and an empty result fails with `NO_FILTERED_MATCH` (it does not fall through to a default order). One non-obvious case: MPP's `--instrument-id` picks *how* to fund (an instrument-rail / fiat challenge), not which challenge. For the exact filter flags and accepted values per protocol, run `inflow <mpp|x402> pay --schema`.
+**Optional filters** narrow *which* offer to fulfil — optional, AND-combined, applied on `pay`, and an empty result fails with `NO_FILTERED_MATCH` (it does not fall through to a default order). One non-obvious case: MPP's `--instrument-id` picks *how* to fund (an instrument-rail / fiat challenge), not which challenge. For the exact filter flags and accepted values per protocol, run `inflow <mpp|x402> pay --schema`.
 
 **Decimal precision.** `balances.available` and the challenge/`amount` value are decimal strings preserving BigDecimal precision. **Never parse them to a JS `Number`** — that drops precision. Compare as strings, or use a `BigInt` / `decimal.js`-style library.
 
@@ -209,9 +212,9 @@ Once `status` reports the credential (MPP: `state: ready` with `credential`; x40
 
 ### Worked example (MPP)
 
-A user asks the agent to fetch a paywalled dataset at `https://api.foo.dev/dataset.csv` that answered 402 with `WWW-Authenticate: Payment`.
+A user asks the agent to fetch a paywalled dataset at `https://api.foo.dev/dataset.csv`.
 
-Pre-flight: `inflow mpp inspect <url>` (the seller's challenges), `inflow mpp supported` (methods the buyer can pay with), `inflow balances list`. The seller offers the `inflow` method in USDC; the user's 100.5 USDC balance covers the 0.10 USDC price. Summarize intent, then pay:
+Pre-flight: `inflow inspect <url>` reports `detected: ["mpp"]` with the seller's challenges; then `inflow mpp supported` (methods the buyer can pay with) and `inflow balances list`. The seller offers the `inflow` method in USDC; the user's 100.5 USDC balance covers the 0.10 USDC price. Summarize intent, then pay:
 
 ```bash
 inflow mpp pay https://api.foo.dev/dataset.csv --interval 5 --max-attempts 180 --output-file /tmp/dataset.csv --no-show-body
@@ -230,9 +233,9 @@ Once the result arrives:
 
 ### Worked example (x402)
 
-A user asks the agent to fetch a paywalled article at `https://api.foo.dev/article-3` that answered 402 with `PAYMENT-REQUIRED`.
+A user asks the agent to fetch a paywalled article at `https://api.foo.dev/article-3`.
 
-Pre-flight: the intersection lands on `exact` × `solana:mainnet`, and the user's 100.5 USDC balance easily covers the 0.10 USDC the seller requires. Proceed.
+Pre-flight: `inflow inspect <url>` reports `detected: ["x402"]`; the intersection lands on `exact` × `solana:mainnet`, and the user's 100.5 USDC balance easily covers the 0.10 USDC the seller requires. Proceed.
 
 > "I'm about to pay 0.10 USDC on Solana mainnet to api.foo.dev for /article-3.
 > Your balance is 100.5 USDC — plenty. Requesting approval next."
@@ -260,7 +263,7 @@ All errors in agent mode are JSON with `code` and `message` fields and exit code
 | --- | --- | --- |
 | `PAYMENT_FAILED` | `inflow mpp status <transaction_id>` for the precise state, then create a new transaction with `inflow mpp pay`. (Terminal `failed` state, or no credential produced.) | "The payment didn't go through — it was declined, underfunded, or the transaction failed. Want me to try again, switch funding, or stop?" |
 | `PAYMENT_EXPIRED` | Start a new `inflow mpp pay`. | "The payment window expired before it was ready to settle. Want me to start a new one, or stop here?" |
-| `PAYMENT_NOT_ACCEPTED` | `inflow mpp inspect <url>` to re-check the challenge; adjust and retry. | — |
+| `PAYMENT_NOT_ACCEPTED` | `inflow inspect <url>` to re-check the challenge; adjust and retry. | — |
 
 ### x402 errors
 
@@ -292,7 +295,7 @@ These apply to both protocols (in addition to each section's protocol-specific c
 | --- | --- | --- |
 | `NOT_AUTHENTICATED` | No saved device token and no `--api-key` / `INFLOW_API_KEY` configured. Run `inflow auth login` or set the API key env var. | — |
 | `NO_INFLOW_MATCH` | Seller's rails aren't supported by the account. Fund a matching method/chain, or use a different seller. | "The seller wants `<method/rail or scheme×network>`, but your account can't pay on that rail. Either fund a matching method, or pick a different seller." |
-| `NO_FILTERED_MATCH` | A filter emptied the candidate list. Loosen it, or re-check with `inflow <mpp|x402> inspect <url>` (filter flags per the delta table). | "Your filter removed every option the seller accepts. Loosen it or check the seller's options with `inflow <mpp|x402> inspect`." |
+| `NO_FILTERED_MATCH` | A `pay` filter emptied the candidate list. Loosen the filter (flags per the delta table), or re-check the seller's unfiltered options with `inflow inspect <url>`. | "Your filter removed every option the seller accepts. Loosen it or re-check the seller's options with `inflow inspect`." |
 | `INVALID_402` / `DECODE_FAILED` | Seller returned 402 but the protocol's header was missing (`INVALID_402`) or unparseable (`DECODE_FAILED`). Verify the URL is payable; pass the raw header to `inflow <mpp|x402> decode` for the detailed parse error. | — |
 | `POLLING_TIMEOUT` | `--interval` polling reached its max-attempts or timeout. Retryable — resume with `inflow <mpp|x402> status <transaction_id> --interval 5 --max-attempts 180`. | "Still waiting on your approval — want me to keep polling, or cancel the request? (`inflow <mpp|x402> cancel <approval_id>` cancels it.)" |
 | `api_error` | Non-2xx from the InFlow API on the plain data calls (`user`, `balances`, `deposit-addresses`); discriminate on `httpStatus`. `401` — saved auth rejected, re-run `inflow auth login`. `426` (`VERSION_UNSUPPORTED`) — upgrade and retry. `5xx` — server-side; wait and retry. (Note: `pay`/`status` rejections instead surface the server's own code, e.g. `INSUFFICIENT_FUNDS`, or the protocol's terminal code — not `api_error`.) | — |

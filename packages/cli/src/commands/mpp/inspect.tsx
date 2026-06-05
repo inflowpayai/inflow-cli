@@ -120,7 +120,7 @@ export const InspectView: React.FC<InspectViewProps> = ({ url, method, deps, onC
   );
 };
 
-function challengeToFrame(challenge: DecodedChallenge): Record<string, unknown> {
+export function challengeToFrame(challenge: DecodedChallenge): Record<string, unknown> {
   const row: Record<string, unknown> = {
     id: challenge.id,
     realm: challenge.realm,

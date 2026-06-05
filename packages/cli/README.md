@@ -20,6 +20,7 @@ For host-specific skill and MCP installation, see the repository's
 | `inflow user get`                    | Fetch the authenticated user's profile.                                                                                           |
 | `inflow balances list`               | List the authenticated user's balances.                                                                                           |
 | `inflow deposit-addresses list`      | List the user's configured deposit addresses, grouped by network.                                                                 |
+| `inflow inspect <url>`               | Detect a URL's payment protocol(s) and show MPP and x402 challenges together. Read-only probe — no auth, no payment.              |
 | `inflow x402 pay <url>`              | Probe a seller; if it returns 402, drive the approval flow and replay the request with the signed `PAYMENT-SIGNATURE`.            |
 | `inflow x402 inspect <url>`          | Read-only probe. Show the seller's `PAYMENT-REQUIRED` accepts for a URL — no auth, no payment.                                    |
 | `inflow x402 status <transactionId>` | Poll the signing state of an in-flight transaction. Used to resume a previous `pay` across CLI invocations.                       |
@@ -131,6 +132,75 @@ inflow deposit-addresses list --format json
 ```
 
 Lists the configured deposit addresses for the authenticated user. TTY groups by network with a deposit address per row.
+
+## `inspect`
+
+```bash
+inflow inspect https://seller.example.com/api/widgets
+```
+
+Protocol-agnostic, read-only pre-flight. Probes the URL **once** and decodes both MPP and x402 challenges from the same
+402 response — so you don't have to know the protocol before inspecting. **No authentication required.** This is the
+recommended first step: read `detected` to decide which `pay` rail to use (MPP wins when a seller advertises both).
+
+Unlike the per-protocol probes it carries only the probe-shape flags (`--method`, `--data`, `--header`) — it is
+deliberately unfiltered. For filtered probes or full per-protocol detail (pay-to, timeout, extras, challenge ids /
+digests), use [`inflow mpp inspect`](#mpp-inspect) / [`inflow x402 inspect`](#x402-inspect).
+
+TTY renders a `detected:` summary line, then one section per protocol. Each section shows a triage table or a dim "none
+advertised" line; a protocol whose header is present but undecodable shows a one-line warning rather than failing the
+command. The x402 `Amount` is the seller's raw atomic units (decimals are not carried on the wire), and `Asset` is the
+full on-chain contract address / mint rendered verbatim — it is not a token symbol.
+
+```
+PAYMENT-REQUIRED for https://seller.example.com/api/widgets  ·  detected: mpp, x402
+
+── MPP ──  WWW-Authenticate: Payment  ·  realm mpp.example  ·  1 challenge
+Method  Intent  Amount  Currency  Rail
+------  ------  ------  --------  -------
+inflow  charge  0.10    USDC      balance
+
+── x402 ──  PAYMENT-REQUIRED  ·  x402Version 2  ·  2 accepts
+Scheme  Network                                  Amount  Asset
+------  ---------------------------------------  ------  ------------------------------------------
+exact   eip155:84532                             10000   0x036CbD53842c5426634e7929541eC2318f3dCF7e
+exact   solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1  10000   4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+
+Full detail (pay-to, timeout, extras, ids/digests): `inflow mpp inspect` / `inflow x402 inspect`, or --format json.
+```
+
+Agent shape — fixed-shape arrays (`mpp` / `x402` are `[]` when a protocol is absent), with `detected` listing the
+protocols that have at least one entry:
+
+```jsonc
+{
+  "outcome": "inspected",
+  "url": "https://seller.example.com/api/widgets",
+  "method": "GET",
+  "detected": ["x402"],
+  "mpp": [],
+  "x402": [
+    {
+      "scheme": "exact",
+      "network": "eip155:84532",
+      "amount": "10000",
+      "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "pay_to": "0x2096...",
+      "max_timeout_seconds": 300,
+      "extra": { "name": "USDC", "version": "2" },
+    },
+  ],
+  "x402_resource": "https://www.seller.example.com/api/widgets",
+  "x402_version": 2,
+}
+```
+
+Section-level problems are surfaced (without failing the command) in an optional `warnings` array — for example an MPP
+header advertising no inflow-payable challenge (`NO_INFLOW_MATCH`), a present-but-undecodable header (`DECODE_FAILED`),
+or a 402 carrying neither protocol header (`NO_PAYMENT_CHALLENGE`).
+
+When the seller returns 2xx (no payment required), `inspect` yields `outcome: "no-payment-required"` with `status`,
+`content_type`, and `body_size_bytes` — never the body itself.
 
 ## `x402`
 

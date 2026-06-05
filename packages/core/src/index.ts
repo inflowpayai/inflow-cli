@@ -123,6 +123,19 @@ export {
 } from './flows/auth-login-api-key.js';
 export { type AuthLogoutInput, runAuthLogout } from './flows/auth-logout.js';
 export { type AuthStatusProbeInput, type AuthStatusProbeResult, probeAuthStatus } from './flows/auth-status.js';
+export {
+  buildMppSection,
+  buildX402Section,
+  type CombinedInspectEvent,
+  type CombinedInspectNoPayment,
+  type CombinedInspectPhase,
+  type CombinedInspectPipelineDeps,
+  type CombinedInspectResult,
+  type MppSection,
+  reduceCombinedInspect,
+  runCombinedInspectPipeline,
+  type X402Section,
+} from './flows/combined-inspect.js';
 export { type AcceptsSummary, decodeHeader, type DecodedHeader, summarizeAccepts } from './flows/x402-decode.js';
 export {
   type InspectEvent,
@@ -130,8 +143,10 @@ export {
   type InspectPipelineDeps,
   type InspectResultAccepts,
   type InspectResultNoPayment,
+  parseX402HeaderFromProbe,
   reduceX402Inspect,
   runInspectPipeline,
+  type X402HeaderParse,
 } from './flows/x402-inspect.js';
 export {
   type BodyAttachment,
@@ -168,11 +183,13 @@ export {
   summarizeChallenge,
 } from './flows/mpp-decode.js';
 export {
+  type MppHeaderParse,
   type MppInspectEvent,
   type MppInspectPhase,
   type MppInspectPipelineDeps,
   type MppInspectResultChallenges,
   type MppInspectResultNoPayment,
+  parseMppHeaderFromProbe,
   reduceMppInspect,
   runMppInspectPipeline,
 } from './flows/mpp-inspect.js';

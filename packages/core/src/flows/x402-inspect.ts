@@ -52,6 +52,30 @@ export type InspectEvent =
   | { type: 'no-payment'; result: InspectResultNoPayment }
   | { type: 'errored'; code: string; message: string };
 
+/**
+ * Outcome of reading + decoding the `PAYMENT-REQUIRED` header off a probe response, before any caller filtering. Shared
+ * by {@link runInspectPipeline} and the combined-inspect pipeline so both decode x402 requirements identically.
+ *
+ * - `absent` — no `PAYMENT-REQUIRED` header on the 402.
+ * - `parsed` — header present and decoded into the foundation `PaymentRequired` payload.
+ * - `error` — header present but the codec rejected it (`DECODE_FAILED`).
+ */
+export type X402HeaderParse =
+  | { kind: 'absent' }
+  | { kind: 'parsed'; decoded: PaymentRequired }
+  | { kind: 'error'; code: string; message: string };
+
+/** Read + decode the `PAYMENT-REQUIRED` header from a 402 probe response. Pure; performs no I/O and applies no filters. */
+export function parseX402HeaderFromProbe(probe: SellerProbeResult): X402HeaderParse {
+  const headerValue = readHeader(Object.fromEntries(probe.headers.entries()), HEADERS.PAYMENT_REQUIRED);
+  if (headerValue === undefined) return { kind: 'absent' };
+  try {
+    return { kind: 'parsed', decoded: decodePaymentRequiredHeader(headerValue) };
+  } catch (err) {
+    return { kind: 'error', code: 'DECODE_FAILED', message: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export function reduceX402Inspect(state: InspectPhase, event: InspectEvent): InspectPhase {
   switch (event.type) {
     case 'accepts':
@@ -129,8 +153,8 @@ export async function runInspectPipeline(
     return;
   }
 
-  const headerValue = readHeader(Object.fromEntries(probe.headers.entries()), HEADERS.PAYMENT_REQUIRED);
-  if (headerValue === undefined) {
+  const parse = parseX402HeaderFromProbe(probe);
+  if (parse.kind === 'absent') {
     emit({
       type: 'errored',
       code: INVALID_402_CODE,
@@ -138,18 +162,11 @@ export async function runInspectPipeline(
     });
     return;
   }
-
-  let decoded: PaymentRequired;
-  try {
-    decoded = decodePaymentRequiredHeader(headerValue);
-  } catch (err) {
-    emit({
-      type: 'errored',
-      code: 'DECODE_FAILED',
-      message: err instanceof Error ? err.message : String(err),
-    });
+  if (parse.kind === 'error') {
+    emit({ type: 'errored', code: parse.code, message: parse.message });
     return;
   }
+  const decoded = parse.decoded;
 
   const filters: AcceptsFilters = {
     ...(deps.schemeFilter !== undefined ? { scheme: deps.schemeFilter } : {}),
