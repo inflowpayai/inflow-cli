@@ -1,5 +1,5 @@
 ---
-version: 0.6.4
+version: 0.6.5
 name: agentic-payments
 description: Authenticate with InFlow and pay HTTP 402-protected resources via MPP (the `Payment` auth scheme) or x402. Use when the user invokes the `inflow` CLI or asks to log in / connect to InFlow.
 allowed-tools: ['Bash(inflow:*)', 'Bash(npx:*)', 'Bash(npm:*)']
