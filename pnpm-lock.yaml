@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  incur: 2a0dac7b59856806f076ec95993c2ddab76114be99656fe5040661773eab5749
+
 importers:
 
   .:
@@ -88,7 +91,7 @@ importers:
         version: 2.14.0
       incur:
         specifier: ^0.4.5
-        version: 0.4.8
+        version: 0.4.8(patch_hash=2a0dac7b59856806f076ec95993c2ddab76114be99656fe5040661773eab5749)
       ink:
         specifier: ^5.2.1
         version: 5.2.1(@types/react@18.3.29)(react@18.3.1)
@@ -4697,7 +4700,7 @@ snapshots:
 
   imurmurhash@0.1.4: {}
 
-  incur@0.4.8:
+  incur@0.4.8(patch_hash=2a0dac7b59856806f076ec95993c2ddab76114be99656fe5040661773eab5749):
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/server': 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
@@ -5115,7 +5118,7 @@ snapshots:
 
   mppx@0.6.28(typescript@5.9.3)(viem@2.52.0(typescript@5.9.3)(zod@4.4.3)):
     dependencies:
-      incur: 0.4.8
+      incur: 0.4.8(patch_hash=2a0dac7b59856806f076ec95993c2ddab76114be99656fe5040661773eab5749)
       ox: 0.14.22(typescript@5.9.3)(zod@4.4.3)
       viem: 2.52.0(typescript@5.9.3)(zod@4.4.3)
       zod: 4.4.3

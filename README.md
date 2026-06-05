@@ -8,6 +8,9 @@ via MPP and x402; humans hit the same functionality from MCP-integrated assistan
 New here? Start with the command reference in [`packages/cli/README.md`](./packages/cli/README.md) — it covers `auth`,
 the `x402` and `mpp` command groups, the global flags, and the agent (`--format`) renderings.
 
+Installing into an agent host? Use the per-surface guide:
+[`docs/development/surfaces-and-testing.md`](./docs/development/surfaces-and-testing.md).
+
 ## Install
 
 ```bash
@@ -43,8 +46,9 @@ The repo also ships as an installable plugin (skill + MCP server bundled) for pl
 - **Cursor / Codex** — point the host at this repo; it discovers `.cursor-plugin/marketplace.json`,
   `.agents/plugins/marketplace.json`, and `.codex-plugin/plugin.json` respectively.
 
-In every case the plugin bundles the skill and the `inflow` MCP server (`.mcp.json`); the `inflow` binary must be on
-`PATH` (`npm install -g @inflowpayai/inflow`) for commands to run.
+In every case the plugin bundles the skill and the `inflow` MCP server (`.mcp.json`). The default MCP entry runs
+`npx -y @inflowpayai/inflow --mcp`; install the binary globally only for direct CLI use or for hosts configured to run
+`inflow --mcp` from `PATH`.
 
 ## Development
 

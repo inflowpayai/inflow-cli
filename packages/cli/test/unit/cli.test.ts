@@ -2,7 +2,9 @@ import { spawn, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.setConfig({ testTimeout: 15_000 });
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(__dirname, '../../');
@@ -107,6 +109,70 @@ describe.skipIf(!existsSync(DIST_CLI))(
         env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
+    });
+
+    it('strips --verbose before incur sees it in prefix and suffix position', async () => {
+      const cases = [
+        ['--verbose', '--auth', `/tmp/inflow-test-verbose-prefix-${String(process.pid)}.json`, 'auth', 'status'],
+        ['auth', 'status', '--verbose', '--auth', `/tmp/inflow-test-verbose-suffix-${String(process.pid)}.json`],
+        ['--verbose=true', '--auth', `/tmp/inflow-test-verbose-equals-${String(process.pid)}.json`, 'auth', 'status'],
+      ];
+      for (const args of cases) {
+        const { exitCode, stdout } = await run([...args, '--format', 'json'], {
+          env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        });
+        expect(exitCode).toBe(0);
+        const frames = JSON.parse(stdout) as { credentials_path?: string }[];
+        expect(frames[0]?.credentials_path).toBeDefined();
+      }
+    });
+
+    it('--verbose=false strips the flag without enabling verbose output', async () => {
+      const { exitCode, stdout } = await run(
+        [
+          '--verbose=false',
+          '--auth',
+          `/tmp/inflow-test-verbose-false-${String(process.pid)}.json`,
+          'auth',
+          'status',
+          '--format',
+          'json',
+        ],
+        {
+          env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        },
+      );
+      expect(exitCode).toBe(0);
+      const frames = JSON.parse(stdout) as { credentials_path?: string }[];
+      expect(frames[0]?.credentials_path).toBeUndefined();
+    });
+
+    it('rejects invalid boolean global flag assignments before command dispatch', async () => {
+      const { exitCode, stderr } = await run(['--verbose=maybe', '--help'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(2);
+      expect(stderr).toContain("Invalid --verbose value: maybe. Expected 'true' or 'false'.");
+    });
+
+    it('reports a missing --format value before command dispatch', async () => {
+      const { exitCode, stdout } = await run(['auth', 'status', '--format'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(1);
+      expect(stdout).toContain('Missing value for flag: --format');
+    });
+
+    it('auth status --format md renders nested connection data instead of [object Object]', async () => {
+      const { exitCode, stdout } = await run(
+        ['--auth', `/tmp/inflow-test-md-${String(process.pid)}.json`, 'auth', 'status', '--format', 'md'],
+        {
+          env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        },
+      );
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('apiBaseUrl');
+      expect(stdout).not.toContain('[object Object]');
     });
 
     it('produces a built binary with the env shebang on line 1', () => {

@@ -45,9 +45,20 @@ function extractFlag(name: string): string | undefined {
 
 function extractBooleanFlag(name: string): boolean {
   const idx = process.argv.indexOf(name);
-  if (idx === -1) return false;
-  process.argv.splice(idx, 1);
-  return true;
+  if (idx !== -1) {
+    process.argv.splice(idx, 1);
+    return true;
+  }
+
+  const prefix = `${name}=`;
+  const assignmentIdx = process.argv.findIndex((arg) => arg.startsWith(prefix));
+  if (assignmentIdx === -1) return false;
+  const [arg] = process.argv.splice(assignmentIdx, 1);
+  const value = arg?.slice(prefix.length) ?? '';
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  process.stderr.write(`Invalid ${name} value: ${value}. Expected 'true' or 'false'.\n`);
+  process.exit(2);
 }
 
 const credentialFilePath = extractFlag('--auth') ?? process.env.INFLOW_AUTH_FILE;
@@ -58,7 +69,7 @@ const authBaseUrlFromFlag = extractFlag('--auth-base-url');
 const environmentFromFlag = extractFlag('--environment');
 const sandboxFlag = extractBooleanFlag('--sandbox');
 const apiKeyFromFlag = extractFlag('--api-key');
-const verbose = process.argv.includes('--verbose');
+const verbose = extractBooleanFlag('--verbose');
 
 const authStorage: AuthStorage = credentialFilePath ? new Storage({ configPath: credentialFilePath }) : storage;
 

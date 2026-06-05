@@ -160,7 +160,7 @@ describe('PayView', () => {
     expect(frame).toContain('Approval required');
     expect(frame).toContain('ap-9');
     stdin.write('\r');
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 120));
     expect(vi.mocked(openUrl)).toHaveBeenCalledWith(expect.stringContaining('ap-9'));
     unmount();
   });

@@ -134,18 +134,11 @@ function buildSignOptions(options: PayContext['options']): SignOptions {
   return out;
 }
 
-function parseHeaderFlagsOrFail(
-  c: { error: (err: ErrorOptions) => never },
-  flags: readonly string[],
-): Record<string, string> {
-  try {
-    return parseHeaderFlags(flags);
-  } catch (err) {
-    c.error({
-      code: 'INVALID_HEADER',
-      message: err instanceof Error ? err.message : String(err),
-    });
-  }
+function invalidHeaderError(err: unknown): ErrorOptions {
+  return {
+    code: 'INVALID_HEADER',
+    message: err instanceof Error ? err.message : String(err),
+  };
 }
 
 function decoratePayloadField(frame: Record<string, unknown>, encoded: string, payloadFile: string | undefined): void {
@@ -160,13 +153,18 @@ function decoratePayloadField(frame: Record<string, unknown>, encoded: string, p
   frame.encoded_payload = encoded;
 }
 
-function buildPayPipelineInput(c: PayContext): Omit<PayPipelineDeps, 'client' | 'apiBaseUrl'> {
-  const probeHeaders = parseHeaderFlagsOrFail(c, c.options.header);
-  const probeOptions: SellerProbeOptions = {
+function probeOptionsFrom(c: PayContext | InspectCommandContext): SellerProbeOptions {
+  return {
     method: c.options.method,
-    headers: probeHeaders,
+    headers: parseHeaderFlags(c.options.header),
     ...(c.options.data !== undefined ? { data: c.options.data } : {}),
   };
+}
+
+function buildPayPipelineInput(
+  c: PayContext,
+  probeOptions: SellerProbeOptions,
+): Omit<PayPipelineDeps, 'client' | 'apiBaseUrl'> {
   return {
     probeOptions,
     url: c.args.url,
@@ -266,14 +264,15 @@ async function* runPayCommand(
 ): AsyncGenerator<unknown> {
   assertSessionGuard(c, authStorage, inflow);
 
+  let probeOptions: SellerProbeOptions;
+  try {
+    probeOptions = probeOptionsFrom(c);
+  } catch (err) {
+    return c.error(invalidHeaderError(err));
+  }
+
   if (!c.agent && !c.formatExplicit) {
     const client = await inflow.x402.client();
-    const probeHeaders = parseHeaderFlagsOrFail(c, c.options.header);
-    const probeOptions: SellerProbeOptions = {
-      method: c.options.method,
-      headers: probeHeaders,
-      ...(c.options.data !== undefined ? { data: c.options.data } : {}),
-    };
     let finalPhase: PayPhase | null = null;
     await renderInkUntilExit(
       <PayView
@@ -301,20 +300,20 @@ async function* runPayCommand(
     if (finalPhase !== null) {
       const phase = finalPhase as PayPhase;
       if (phase.kind === 'replay-rejected') {
-        c.error({
+        return c.error({
           code: PAYMENT_NOT_ACCEPTED_CODE,
           message: `Seller rejected the signed payment with status ${String(phase.result.responseStatus)}. The approval was completed but the seller did not honour the payment.`,
         });
       }
       if (phase.kind === 'error') {
-        c.error({ code: phase.code, message: phase.message });
+        return c.error({ code: phase.code, message: phase.message });
       }
     }
     return;
   }
 
   const run = inflow.x402.pay({
-    ...buildPayPipelineInput(c),
+    ...buildPayPipelineInput(c, probeOptions),
     awaitPayment: c.options.interval > 0,
   });
 
@@ -333,14 +332,13 @@ async function* runPayCommand(
     }
     if (event.type === 'rejected') {
       yield sanitizeDeep(rejectedFrameFromResult(event.result));
-      c.error({
+      return c.error({
         code: PAYMENT_NOT_ACCEPTED_CODE,
         message: `Seller rejected the signed payment with status ${String(event.result.responseStatus)}. The approval was completed but the seller did not honour the payment; see approval_url in the previous frame for details.`,
       });
-      return;
     }
     if (event.type === 'errored') {
-      c.error({ code: event.code, message: event.message });
+      return c.error({ code: event.code, message: event.message });
     }
     // 'probed' / 'decoded' / 'matched' / 'awaited' are intermediate phase signals; agent mode doesn't surface them.
   }
@@ -392,7 +390,7 @@ async function* runStatusCommand(
     yield sanitizeDeep(toStatusFrame(c.args.transactionId, outcome.value, c.options.payloadFile));
     if (!outcome.terminal) continue;
     if (outcome.reason !== undefined) {
-      c.error({
+      return c.error({
         code: 'POLLING_TIMEOUT',
         message:
           outcome.reason === 'timeout'
@@ -402,7 +400,7 @@ async function* runStatusCommand(
       });
     }
     if (classifyPayloadResponse(outcome.value) === 'failed') {
-      c.error({
+      return c.error({
         code: 'APPROVAL_FAILED',
         message: `Transaction ${c.args.transactionId} terminated as ${outcome.value.status} with no payload.`,
       });
@@ -457,7 +455,7 @@ async function runDecodeCommand(c: DecodeCommandContext): Promise<DecodedHeader 
   try {
     decoded = decodeHeader(c.args.header);
   } catch (err) {
-    c.error({
+    return c.error({
       code: 'DECODE_FAILED',
       message: err instanceof Error ? err.message : String(err),
     });
@@ -486,12 +484,12 @@ async function runSupportedCommand(
 }
 
 async function runInspectCommand(c: InspectCommandContext): Promise<Record<string, unknown> | undefined> {
-  const probeHeaders = parseHeaderFlagsOrFail(c, c.options.header);
-  const probeOptions: SellerProbeOptions = {
-    method: c.options.method,
-    headers: probeHeaders,
-    ...(c.options.data !== undefined ? { data: c.options.data } : {}),
-  };
+  let probeOptions: SellerProbeOptions;
+  try {
+    probeOptions = probeOptionsFrom(c);
+  } catch (err) {
+    return c.error(invalidHeaderError(err));
+  }
   const deps: InspectPipelineDeps = {
     probeOptions,
     url: c.args.url,
@@ -516,7 +514,7 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
     if (finalPhase !== null) {
       const phase = finalPhase as InspectPhase;
       if (phase.kind === 'error') {
-        c.error({ code: phase.code, message: phase.message });
+        return c.error({ code: phase.code, message: phase.message });
       }
     }
     return undefined;
@@ -538,12 +536,12 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
   });
 
   if (finalEvent === null) {
-    c.error({ code: 'INSPECT_FAILED', message: 'Inspect pipeline produced no result.' });
+    return c.error({ code: 'INSPECT_FAILED', message: 'Inspect pipeline produced no result.' });
   }
   const { kind, payload } = finalEvent as { kind: string; payload: unknown };
   if (kind === 'error') {
     const err = payload as { code: string; message: string };
-    c.error({ code: err.code, message: err.message });
+    return c.error({ code: err.code, message: err.message });
   }
   if (kind === 'accepts') {
     return sanitizeDeep(buildAcceptsFrame(payload as Parameters<typeof buildAcceptsFrame>[0]));

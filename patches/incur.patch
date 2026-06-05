@@ -1,0 +1,53 @@
+diff --git a/dist/Cli.js b/dist/Cli.js
+index 4d3ac1f385f1d00095fffae9d5f0017a1715b976..d72d02bfa53b102253c6d6d62232dbe9cacff88c 100644
+--- a/dist/Cli.js
++++ b/dist/Cli.js
+@@ -1547,12 +1547,15 @@ function extractBuiltinFlags(argv, options = {}) {
+             format = 'json';
+             formatExplicit = true;
+         }
+-        else if (token === '--format' && argv[i + 1]) {
+-            if (!validFormats.has(argv[i + 1]))
++        else if (token === '--format') {
++            const value = argv[i + 1];
++            if (value === undefined)
++                throw new ParseError({ message: 'Missing value for flag: --format' });
++            if (!validFormats.has(value))
+                 throw new ParseError({
+-                    message: `Invalid format: "${argv[i + 1]}". Expected one of: ${[...validFormats].join(', ')}`,
++                    message: `Invalid format: "${value}". Expected one of: ${[...validFormats].join(', ')}`,
+                 });
+-            format = argv[i + 1];
++            format = value;
+             formatExplicit = true;
+             i++;
+         }
+diff --git a/dist/Formatter.js b/dist/Formatter.js
+index 82bc6e25713eb8578dd566c5b7bfcc2b956f6092..2b2ad0e2669ba5f059905eb087deefbdb2e27b33 100644
+--- a/dist/Formatter.js
++++ b/dist/Formatter.js
+@@ -53,15 +53,22 @@ function table(headers, rows) {
+     const body = rows.map((r) => `| ${headers.map((_, i) => pad(r[i] ?? '', i)).join(' | ')} |`);
+     return `${headerRow}\n${sep}\n${body.join('\n')}`;
+ }
++function cell(value) {
++    if (value === undefined)
++        return '';
++    if (isScalar(value))
++        return String(value);
++    return JSON.stringify(value);
++}
+ /** Renders a key-value table from a flat object. */
+ function kvTable(obj) {
+     const entries = Object.entries(obj);
+-    return table(['Key', 'Value'], entries.map(([k, v]) => [k, String(v)]));
++    return table(['Key', 'Value'], entries.map(([k, v]) => [k, cell(v)]));
+ }
+ /** Renders a columnar table from an array of objects. */
+ function columnarTable(items) {
+     const keys = [...new Set(items.flatMap(Object.keys))];
+-    return table(keys, items.map((item) => keys.map((k) => String(item[k] ?? ''))));
++    return table(keys, items.map((item) => keys.map((k) => cell(item[k]))));
+ }
+ /** Formats a value as Markdown, recursing into nested objects. */
+ function formatMarkdown(value, path = []) {

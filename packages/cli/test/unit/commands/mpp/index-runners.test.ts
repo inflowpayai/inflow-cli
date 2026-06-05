@@ -63,10 +63,31 @@ function agentCtx<A, O>(args: A, options: O) {
   };
 }
 
+function agentCtxReturningError<A, O>(args: A, options: O) {
+  return {
+    agent: true,
+    formatExplicit: true,
+    args,
+    options,
+    error: vi.fn(
+      (err: { code: string; message: string }): never => ({ code: err.code, message: err.message }) as never,
+    ),
+  };
+}
+
 async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
   const out: T[] = [];
   for await (const v of gen) out.push(v);
   return out;
+}
+
+async function drainWithReturn<T>(gen: AsyncGenerator<T, unknown>): Promise<{ values: T[]; returnValue: unknown }> {
+  const values: T[] = [];
+  while (true) {
+    const next = await gen.next();
+    if (next.done) return { values, returnValue: next.value };
+    values.push(next.value);
+  }
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -181,6 +202,19 @@ describe('mpp agent runners', () => {
     await expect(runInspectCommand(ctx as never)).rejects.toThrow('c.error: UNEXPECTED_PROBE_STATUS');
   });
 
+  it('runInspectCommand surfaces malformed --header through c.error', async () => {
+    const ctx = {
+      agent: true,
+      formatExplicit: true,
+      args: { url: SELLER },
+      options: { method: 'GET', header: ['bad-header'] },
+      error: vi.fn((err: { code: string }): never => {
+        throw new Error(`c.error: ${err.code}`);
+      }),
+    };
+    await expect(runInspectCommand(ctx as never)).rejects.toThrow('c.error: INVALID_HEADER');
+  });
+
   it('runPayCommand surfaces a seller-rejected replay through c.error after yielding the frame', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     fetchSpy.mockResolvedValueOnce(challenge402());
@@ -214,6 +248,32 @@ describe('mpp agent runners', () => {
     await expect(drain(runPayCommand(ctx as never, inflow, storage, 'https://app'))).rejects.toThrow(
       'c.error: NO_INFLOW_MATCH',
     );
+  });
+
+  it('runPayCommand returns the c.error sentinel when an awaited transaction expires', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(challenge402());
+    const client = makeClient({
+      createTransaction: vi.fn(async () => ({
+        state: 'pending',
+        transactionId: 'tx-expired',
+        approvalId: 'ap-expired',
+        approvalUrl: 'https://sandbox.inflowpay.ai/approvals/ap-expired/view/',
+        retryAfterSeconds: 1,
+      })) as MppClient['createTransaction'],
+      getTransaction: vi.fn(async () => ({
+        transactionId: 'tx-expired',
+        state: 'expired',
+      })) as MppClient['getTransaction'],
+    });
+    const { inflow, storage } = authed(client);
+    const ctx = agentCtxReturningError(
+      { url: SELLER },
+      { method: 'GET', header: [], interval: 0.01, maxAttempts: 0, timeout: 900, showBody: true },
+    );
+    const result = await drainWithReturn(runPayCommand(ctx as never, inflow, storage, 'https://app'));
+    expect(result.values).toHaveLength(1);
+    expect(result.values[0]).toMatchObject({ transaction_id: 'tx-expired', approval_id: 'ap-expired' });
+    expect(result.returnValue).toMatchObject({ code: 'PAYMENT_EXPIRED' });
   });
 
   it('runStatusCommand (interval > 0) errors PAYMENT_FAILED on a failed terminal', async () => {
