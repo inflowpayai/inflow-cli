@@ -1,4 +1,4 @@
-import { HEADERS, parseChallengeHeaders, readHeaderAll } from '@inflowpayai/mpp';
+import { HEADERS, type MppChallenge, parseChallengeHeaders, readHeaderAll } from '@inflowpayai/mpp';
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { type DecodedChallenge, summarizeChallenge } from './mpp-decode.js';
 import {
@@ -47,6 +47,31 @@ export type MppInspectEvent =
   | { type: 'challenges'; result: MppInspectResultChallenges }
   | { type: 'no-payment'; result: MppInspectResultNoPayment }
   | { type: 'errored'; code: string; message: string };
+
+/**
+ * Outcome of reading + decoding the `WWW-Authenticate: Payment` header(s) off a probe response, before any
+ * `inflow`-method or caller filtering. Shared by {@link runMppInspectPipeline} and the combined-inspect pipeline so both
+ * decode MPP challenges identically.
+ *
+ * - `absent` — no `WWW-Authenticate: Payment` header on the 402.
+ * - `parsed` — header(s) present and decoded into raw challenges (any method, pre-`inflow` filter).
+ * - `error` — header present but the codec rejected it (`DECODE_FAILED`).
+ */
+export type MppHeaderParse =
+  | { kind: 'absent' }
+  | { kind: 'parsed'; challenges: readonly MppChallenge[] }
+  | { kind: 'error'; code: string; message: string };
+
+/** Read + decode the MPP challenge header(s) from a 402 probe response. Pure; performs no I/O and applies no filters. */
+export function parseMppHeaderFromProbe(probe: SellerProbeResult): MppHeaderParse {
+  const headerValues = readHeaderAll(probe.headers, HEADERS.WWW_AUTHENTICATE);
+  if (headerValues.length === 0) return { kind: 'absent' };
+  try {
+    return { kind: 'parsed', challenges: parseChallengeHeaders(headerValues) };
+  } catch (err) {
+    return { kind: 'error', code: 'DECODE_FAILED', message: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 export function reduceMppInspect(state: MppInspectPhase, event: MppInspectEvent): MppInspectPhase {
   switch (event.type) {
@@ -113,8 +138,8 @@ export async function runMppInspectPipeline(
     return;
   }
 
-  const headerValues = readHeaderAll(probe.headers, HEADERS.WWW_AUTHENTICATE);
-  if (headerValues.length === 0) {
+  const parse = parseMppHeaderFromProbe(probe);
+  if (parse.kind === 'absent') {
     emit({
       type: 'errored',
       code: INVALID_402_CODE,
@@ -122,16 +147,12 @@ export async function runMppInspectPipeline(
     });
     return;
   }
-
-  let challenges: ReturnType<typeof parseChallengeHeaders>;
-  try {
-    challenges = parseChallengeHeaders(headerValues);
-  } catch (err) {
-    emit({ type: 'errored', code: 'DECODE_FAILED', message: err instanceof Error ? err.message : String(err) });
+  if (parse.kind === 'error') {
+    emit({ type: 'errored', code: parse.code, message: parse.message });
     return;
   }
 
-  const inflowChallenges = filterInflowChallenges(challenges);
+  const inflowChallenges = filterInflowChallenges(parse.challenges);
   if (inflowChallenges.length === 0) {
     emit({ type: 'errored', code: NO_INFLOW_MATCH_CODE, message: NO_INFLOW_MATCH_MESSAGE });
     return;

@@ -132,6 +132,19 @@ export const InspectView: React.FC<InspectViewProps> = ({ url, method, deps, onC
   );
 };
 
+export function acceptToFrame(entry: InspectRow): Record<string, unknown> {
+  const row: Record<string, unknown> = {
+    scheme: entry.scheme,
+    network: entry.network,
+    amount: entry.amount,
+    asset: entry.asset,
+    pay_to: entry.payTo,
+    max_timeout_seconds: entry.maxTimeoutSeconds,
+  };
+  if (entry.extra !== undefined) row.extra = entry.extra;
+  return row;
+}
+
 export function buildAcceptsFrame(result: InspectResultAccepts): Record<string, unknown> {
   const frame: Record<string, unknown> = {
     outcome: 'accepts',
@@ -139,18 +152,7 @@ export function buildAcceptsFrame(result: InspectResultAccepts): Record<string, 
     method: result.method,
     resource: result.resource,
     x402_version: result.x402Version,
-    accepts: result.accepts.map((entry) => {
-      const row: Record<string, unknown> = {
-        scheme: entry.scheme,
-        network: entry.network,
-        amount: entry.amount,
-        asset: entry.asset,
-        pay_to: entry.payTo,
-        max_timeout_seconds: entry.maxTimeoutSeconds,
-      };
-      if (entry.extra !== undefined) row.extra = entry.extra;
-      return row;
-    }),
+    accepts: result.accepts.map(acceptToFrame),
   };
   if (result.extensions !== undefined) frame.extensions = result.extensions;
   return frame;
