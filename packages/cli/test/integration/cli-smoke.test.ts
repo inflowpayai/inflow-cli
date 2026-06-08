@@ -9,10 +9,13 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { resolve as resolvePath, dirname, join } from 'node:path';
 import { encode, renderChallengeHeader } from '@inflowpayai/mpp';
+import { encodePaymentRequiredHeader } from '@x402/core/http';
+import type { PaymentRequired } from '@x402/core/types';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ testTimeout: 15_000 });
@@ -37,6 +40,8 @@ interface RunResult {
   stderr: string;
   exitCode: number;
 }
+
+type TestServerHandler = (req: IncomingMessage, res: ServerResponse) => void;
 
 function run(args: string[], env: NodeJS.ProcessEnv = {}): Promise<RunResult> {
   return new Promise((resolveResult, reject) => {
@@ -79,6 +84,32 @@ function parseAgentJson(out: string): unknown {
     if (last === undefined) throw new Error('no JSON lines in stdout');
     return JSON.parse(last);
   }
+}
+
+async function withSeller(handler: TestServerHandler, test: (url: string) => Promise<void>): Promise<void> {
+  const server = createServer(handler);
+  await new Promise<void>((resolveListening) => {
+    server.listen(0, '127.0.0.1', resolveListening);
+  });
+  const address = server.address();
+  if (typeof address !== 'object' || address === null) {
+    await closeServer(server);
+    throw new Error('test server did not expose a port');
+  }
+  try {
+    await test(`http://127.0.0.1:${address.port}/paywalled`);
+  } finally {
+    await closeServer(server);
+  }
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolveClosed, reject) => {
+    server.close((err) => {
+      if (err !== undefined) reject(err);
+      else resolveClosed();
+    });
+  });
 }
 
 describe('cli smoke', () => {
@@ -127,6 +158,69 @@ describe('cli smoke', () => {
     const result = await run(['mpp', 'decode', '@@@not-decodable@@@', '--format', 'json']);
     expect(result.exitCode).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('DECODE_FAILED');
+  });
+
+  it('mpp pay --format json propagates a delegated generator NO_FILTERED_MATCH error', async () => {
+    const header = renderChallengeHeader({
+      id: 'chal-1',
+      realm: 'mpp.test',
+      method: 'inflow',
+      intent: 'charge',
+      request: encode({ amount: '10', currency: 'USDC', methodDetails: { rail: 'balance' } }),
+    });
+    await withSeller(
+      (_req, res) => {
+        res.writeHead(402, { 'WWW-Authenticate': header });
+        res.end('payment required');
+      },
+      async (url) => {
+        const result = await run(
+          ['mpp', 'pay', url, '--rail', 'instrument', '--format', 'json', '--interval', '0', '--no-show-body'],
+          { INFLOW_API_KEY: 'test-api-key' },
+        );
+        expect(result.exitCode).toBe(1);
+        expect(`${result.stdout}${result.stderr}`).toContain('NO_FILTERED_MATCH');
+        expect(result.stdout.trim()).not.toBe('[]');
+      },
+    );
+  });
+
+  it('x402 pay --format json propagates a delegated generator NO_FILTERED_MATCH error', async () => {
+    const header = encodePaymentRequiredHeader({
+      x402Version: 2,
+      resource: { url: 'https://seller.test/api', mimeType: 'application/json' },
+      accepts: [
+        {
+          scheme: 'balance',
+          network: 'inflow:1',
+          amount: '500',
+          payTo: 'inflow:abc',
+          maxTimeoutSeconds: 60,
+          asset: 'USDC',
+          extra: {},
+        },
+      ],
+    } satisfies PaymentRequired);
+    await withSeller(
+      (req, res) => {
+        if (req.url === '/v1/transactions/x402-supported') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ kinds: [{ scheme: 'balance', network: 'inflow:1', x402Version: 2 }] }));
+          return;
+        }
+        res.writeHead(402, { 'PAYMENT-REQUIRED': header });
+        res.end('payment required');
+      },
+      async (url) => {
+        const result = await run(
+          ['x402', 'pay', url, '--scheme', 'exact', '--format', 'json', '--interval', '0', '--no-show-body'],
+          { INFLOW_API_KEY: 'test-api-key', INFLOW_BASE_URL: new URL(url).origin },
+        );
+        expect(result.exitCode).toBe(1);
+        expect(`${result.stdout}${result.stderr}`).toContain('NO_FILTERED_MATCH');
+        expect(result.stdout.trim()).not.toBe('[]');
+      },
+    );
   });
 
   it('x402 decode --format json emits a DECODE_FAILED error envelope on garbage input', async () => {

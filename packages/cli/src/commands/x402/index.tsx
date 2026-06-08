@@ -261,7 +261,7 @@ async function* runPayCommand(
   inflow: Inflow,
   authStorage: AuthStorage,
   apiBaseUrl: string,
-): AsyncGenerator<unknown> {
+): AsyncGenerator<unknown, unknown> {
   assertSessionGuard(c, authStorage, inflow);
 
   let probeOptions: SellerProbeOptions;
@@ -348,7 +348,7 @@ async function* runStatusCommand(
   c: StatusCommandContext,
   inflow: Inflow,
   authStorage: AuthStorage,
-): AsyncGenerator<unknown> {
+): AsyncGenerator<unknown, unknown> {
   assertSessionGuard(c, authStorage, inflow);
 
   if (!c.agent && !c.formatExplicit) {
@@ -560,7 +560,7 @@ export function createX402Cli(inflow: Inflow, authStorage: AuthStorage, apiBaseU
     options: payOptions,
     outputPolicy: 'agent-only' as const,
     async *run(c) {
-      yield* runPayCommand(c, inflow, authStorage, apiBaseUrl);
+      return yield* runPayCommand(c, inflow, authStorage, apiBaseUrl);
     },
   });
 
@@ -570,7 +570,7 @@ export function createX402Cli(inflow: Inflow, authStorage: AuthStorage, apiBaseU
     options: statusOptions,
     outputPolicy: 'agent-only' as const,
     async *run(c) {
-      yield* runStatusCommand(c, inflow, authStorage);
+      return yield* runStatusCommand(c, inflow, authStorage);
     },
   });
 
