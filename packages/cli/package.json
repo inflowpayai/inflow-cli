@@ -3,8 +3,8 @@
   "version": "0.6.6",
   "type": "module",
   "license": "MIT",
-  "description": "InFlow — agentic MPP / x402 payments from your machine.",
-  "homepage": "https://github.com/inflowpayai/inflow-cli#readme",
+  "description": "InFlow - agentic MPP / x402 payments from your machine.",
+  "homepage": "https://inflowcli.ai",
   "bin": {
     "inflow": "./dist/cli.js"
   },

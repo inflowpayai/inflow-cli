@@ -5,7 +5,7 @@
     "email": "support@inflowpay.ai"
   },
   "metadata": {
-    "description": "InFlow — agentic MPP / x402 payments from your machine. Lets agents get secure, user-approved payments to pay 402-protected resources on your behalf."
+    "description": "InFlow - agentic MPP / x402 payments from your machine. Lets agents get secure, user-approved payments to pay 402-protected resources on your behalf."
   },
   "plugins": [
     {

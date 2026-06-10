@@ -5,3 +5,4 @@ dist
 node_modules
 pnpm-lock.yaml
 skills/**/SKILL.md
+!skills/skill.md

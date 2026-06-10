@@ -593,7 +593,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
   });
 
   cli.command('supported', {
-    description: 'List the methods the buyer can pay with — by intent, settlement rail, and currency.',
+    description: 'List the methods the buyer can pay with - by intent, settlement rail, and currency.',
     outputPolicy: 'agent-only' as const,
     async run(c) {
       return runSupportedCommand(c, inflow, authStorage);
@@ -601,7 +601,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
   });
 
   cli.command('inspect', {
-    description: "Show the seller's MPP challenge(s) for a URL. Read-only probe — no auth, no payment.",
+    description: "Show the seller's MPP challenge(s) for a URL. Read-only probe - no auth, no payment.",
     args: inspectArgs,
     options: inspectOptions,
     outputPolicy: 'agent-only' as const,

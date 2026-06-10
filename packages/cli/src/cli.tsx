@@ -1,6 +1,6 @@
 import process from 'node:process';
 import { type AuthStorage, Inflow, Storage, storage } from '@inflowpayai/inflow-core';
-import { Cli } from 'incur';
+import { Cli, Help } from 'incur';
 import { createAuthCli } from './commands/auth/index.js';
 import { createBalancesCli } from './commands/balances/index.js';
 import { createDepositAddressesCli } from './commands/deposit-addresses/index.js';
@@ -17,15 +17,47 @@ import {
 
 declare const __CLI_VERSION__: string;
 declare const __CLI_NAME__: string;
-declare const __SKILL_BODY__: string;
+declare const __BOOTSTRAP_BODY__: string;
+declare const __SKILL_BODIES__: Record<string, string>;
 
 const cliVersion = __CLI_VERSION__;
 const cliName = __CLI_NAME__;
-const skillBody = __SKILL_BODY__;
+const bootstrapBody = __BOOTSTRAP_BODY__;
+const skillBodies = __SKILL_BODIES__;
 
-if (process.argv.includes('--skill')) {
-  process.stdout.write(skillBody.endsWith('\n') ? skillBody : `${skillBody}\n`);
+const DEFAULT_SKILL = 'agentic-payments';
+
+Help.registerGlobalFlags([
+  { flag: '--bootstrap', desc: 'Print the agent setup guide (install, authenticate, load a playbook)' },
+  { flag: '--skill [name]', desc: `Print a skill playbook (default: ${DEFAULT_SKILL})` },
+]);
+
+function printBody(body: string): never {
+  process.stdout.write(body.endsWith('\n') ? body : `${body}\n`);
   process.exit(0);
+}
+
+if (process.argv.includes('--bootstrap')) {
+  printBody(bootstrapBody);
+}
+
+const skillFlagIndex = process.argv.findIndex((arg) => arg === '--skill' || arg.startsWith('--skill='));
+if (skillFlagIndex !== -1) {
+  const flagArg = process.argv[skillFlagIndex] as string;
+  let name: string;
+  if (flagArg.startsWith('--skill=')) {
+    const value = flagArg.slice('--skill='.length);
+    name = value.length > 0 ? value : DEFAULT_SKILL;
+  } else {
+    const next = process.argv[skillFlagIndex + 1];
+    name = next !== undefined && !next.startsWith('-') ? next : DEFAULT_SKILL;
+  }
+  const body = skillBodies[name];
+  if (body === undefined) {
+    process.stderr.write(`Unknown skill '${name}'. Available: ${Object.keys(skillBodies).sort().join(', ')}\n`);
+    process.exit(1);
+  }
+  printBody(body);
 }
 
 const CLI_CLIENT_IDS: Record<'production' | 'sandbox', string> = {
@@ -158,7 +190,7 @@ if (isAgent) {
 }
 
 const cli = Cli.create('inflow', {
-  description: 'InFlow — agentic MPP / x402 payments from your machine.',
+  description: 'InFlow - agentic MPP / x402 payments from your machine.',
   version: cliVersion,
 });
 

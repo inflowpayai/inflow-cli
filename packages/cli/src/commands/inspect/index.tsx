@@ -169,7 +169,7 @@ export async function runCombinedInspectCommand(
 export function createInspectCommand() {
   return {
     description:
-      "Detect a URL's payment protocol(s) and show MPP and x402 challenges together. Read-only probe — no auth, no payment. Read `detected` to choose a pay rail (MPP wins when both are present).",
+      "Detect a URL's payment protocol(s) and show MPP and x402 challenges together. Read-only probe - no auth, no payment. Read `detected` to choose a pay rail (MPP wins when both are present).",
     args: inspectArgs,
     options: inspectOptions,
     outputPolicy: 'agent-only' as const,

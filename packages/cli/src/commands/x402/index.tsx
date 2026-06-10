@@ -601,7 +601,7 @@ export function createX402Cli(inflow: Inflow, authStorage: AuthStorage, apiBaseU
   });
 
   cli.command('inspect', {
-    description: "Show the seller's PAYMENT-REQUIRED accepts for a URL. Read-only probe — no auth, no payment.",
+    description: "Show the seller's PAYMENT-REQUIRED accepts for a URL. Read-only probe - no auth, no payment.",
     args: inspectArgs,
     options: inspectOptions,
     outputPolicy: 'agent-only' as const,

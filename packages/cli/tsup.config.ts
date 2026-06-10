@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'tsup';
@@ -13,9 +13,19 @@ interface CliManifest {
 
 const manifest = JSON.parse(readFileSync(resolve(here, 'package.json'), 'utf-8')) as CliManifest;
 
-const skillPath = resolve(repoRoot, 'skills/agentic-payments/SKILL.md');
-const skillRaw = readFileSync(skillPath, 'utf-8');
-const skillBody = extractSkillBody(skillRaw, skillPath);
+const skillsDir = resolve(repoRoot, 'skills');
+
+const bootstrapPath = resolve(skillsDir, 'skill.md');
+const bootstrapBody = extractSkillBody(readFileSync(bootstrapPath, 'utf-8'), bootstrapPath);
+
+const skillBodies: Record<string, string> = {};
+const skillEntries = readdirSync(skillsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+for (const entry of skillEntries) {
+  if (!entry.isDirectory()) continue;
+  const skillPath = resolve(skillsDir, entry.name, 'SKILL.md');
+  if (!existsSync(skillPath)) continue;
+  skillBodies[entry.name] = extractSkillBody(readFileSync(skillPath, 'utf-8'), skillPath);
+}
 
 function extractSkillBody(source: string, path: string): string {
   if (!source.startsWith('---\n') && !source.startsWith('---\r\n')) {
@@ -40,9 +50,10 @@ export default defineConfig({
   banner: { js: BUNDLE_BANNER },
   clean: true,
   define: {
+    __BOOTSTRAP_BODY__: JSON.stringify(bootstrapBody),
     __CLI_NAME__: JSON.stringify(manifest.name),
     __CLI_VERSION__: JSON.stringify(manifest.version),
-    __SKILL_BODY__: JSON.stringify(skillBody),
+    __SKILL_BODIES__: JSON.stringify(skillBodies),
   },
   esbuildOptions(options) {
     options.alias = {
