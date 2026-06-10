@@ -38,7 +38,7 @@ export const payOptions = z.object({
     .string()
     .optional()
     .describe(
-      'Funding instrument id (UUID) for an instrument-rail challenge. The buyer does not choose the rail — it is derived from the seller challenge; this is the only buyer-supplied payment option.',
+      'Funding instrument id (UUID) for an instrument-rail challenge. The buyer does not choose the rail - it is derived from the seller challenge; this is the only buyer-supplied payment option.',
     ),
   showBody: z
     .boolean()

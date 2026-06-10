@@ -19,7 +19,7 @@
   "packageManager": "pnpm@11.1.3",
   "scripts": {
     "cli": "node packages/cli/dist/cli.js",
-    "build": "turbo run build && node scripts/align-skill-version.js",
+    "build": "turbo run build && node scripts/align-skill-version.js && node scripts/publish-skills.mjs",
     "verify": "node scripts/clean-bundle-artifacts.mjs && pnpm format && pnpm typecheck && pnpm lint && pnpm test && pnpm typedoc && pnpm build",
     "dev": "turbo run dev --parallel",
     "test": "turbo run test",
@@ -31,7 +31,7 @@
     "typedoc": "typedoc",
     "changeset": "changeset",
     "version-packages": "changeset version && node scripts/align-skill-version.js",
-    "release": "turbo run build && node scripts/align-skill-version.js && changeset publish",
+    "release": "turbo run build && node scripts/align-skill-version.js && node scripts/publish-skills.mjs && changeset publish",
     "clean": "turbo run clean && rm -rf node_modules",
     "prepare": "husky"
   },

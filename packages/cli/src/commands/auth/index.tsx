@@ -53,7 +53,7 @@ function displayConnection(stored: ConnectionSettings | null, ctx: AuthCommandCo
 }
 
 const INSTRUCTION_NO_INTERVAL =
-  'Present the verification_url to the user and ask them to authorize. Then call `auth status --interval 5 --max-attempts 60` to poll until authenticated. Do not wait for the user to reply — start polling immediately.';
+  'Present the verification_url to the user and ask them to authorize. Then call `auth status --interval 5 --max-attempts 60` to poll until authenticated. Do not wait for the user to reply - start polling immediately.';
 
 const INSTRUCTION_WITH_INTERVAL =
   'Present the verification_url to the user and ask them to authorize in their browser. Polling has started automatically — no further action needed.';

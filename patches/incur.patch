@@ -51,3 +51,39 @@ index 82bc6e25713eb8578dd566c5b7bfcc2b956f6092..2b2ad0e2669ba5f059905eb087deefbd
  }
  /** Formats a value as Markdown, recursing into nested objects. */
  function formatMarkdown(value, path = []) {
+diff --git a/dist/Help.d.ts b/dist/Help.d.ts
+--- a/dist/Help.d.ts
++++ b/dist/Help.d.ts
+@@ -1,4 +1,9 @@
+ import { z } from 'zod';
++/** Registers app-level global flags to include in generated help output. */
++export declare function registerGlobalFlags(flags: ReadonlyArray<{
++    flag: string;
++    desc: string;
++}>): void;
+ /** Formats help text for a router CLI or command group. */
+ export declare function formatRoot(name: string, options?: formatRoot.Options): string;
+ export declare namespace formatRoot {
+diff --git a/dist/Help.js b/dist/Help.js
+--- a/dist/Help.js
++++ b/dist/Help.js
+@@ -3,6 +3,11 @@
+ import { toKebab } from './internal/helpers.js';
+ import { defaultEnvSource } from './Parser.js';
+ /** Formats help text for a router CLI or command group. */
++const extraGlobalFlags = [];
++/** Registers app-level global flags to include in generated help output. */
++export function registerGlobalFlags(flags) {
++    extraGlobalFlags.push(...flags);
++}
+ export function formatRoot(name, options = {}) {
+     const { aliases, configFlag, description, version, commands = [], root = false } = options;
+     const lines = [];
+@@ -276,6 +281,7 @@
+         lines.push('', 'Integrations:', ...builtins.map((b) => `  ${b.name}${' '.repeat(maxCmd - b.name.length)}  ${b.desc}`));
+     }
+     const flags = [
++        ...extraGlobalFlags,
+         ...(configFlag
+             ? [{ flag: `--${configFlag} <path>`, desc: 'Load JSON option defaults from a file' }]
+             : []),

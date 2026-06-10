@@ -198,6 +198,38 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(stdout.endsWith('\n')).toBe(true);
     });
 
+    it('--skill <name> and --skill=<name> match the default --skill output', async () => {
+      const env = { ...process.env, NO_UPDATE_NOTIFIER: '1' };
+      const bare = await run(['--skill'], { env });
+      const named = await run(['--skill', 'agentic-payments'], { env });
+      const assigned = await run(['--skill=agentic-payments'], { env });
+      expect(named.exitCode).toBe(0);
+      expect(assigned.exitCode).toBe(0);
+      expect(named.stdout).toBe(bare.stdout);
+      expect(assigned.stdout).toBe(bare.stdout);
+    });
+
+    it('--skill with an unknown name exits 1 and lists the available skills on stderr', async () => {
+      const { exitCode, stdout, stderr } = await run(['--skill', 'no-such-skill'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(1);
+      expect(stdout).toBe('');
+      expect(stderr).toContain("Unknown skill 'no-such-skill'");
+      expect(stderr).toContain('agentic-payments');
+    });
+
+    it('--bootstrap prints the agent setup guide and exits 0', async () => {
+      const { exitCode, stdout, stderr } = await run(['--bootstrap'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe('');
+      expect(stdout.startsWith('# InFlow - Agent Setup')).toBe(true);
+      expect(stdout).not.toMatch(/^---/);
+      expect(stdout.endsWith('\n')).toBe(true);
+    });
+
     it('--llms manifest lists the user get command', async () => {
       const { exitCode, stdout } = await run(['--llms', '--format', 'json'], {
         env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },

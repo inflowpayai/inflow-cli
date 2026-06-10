@@ -5,7 +5,7 @@
     "email": "support@inflowpay.ai"
   },
   "metadata": {
-    "description": "InFlow — agentic MPP / x402 payments from your machine."
+    "description": "InFlow - agentic MPP / x402 payments from your machine."
   },
   "plugins": [
     {
@@ -13,7 +13,7 @@
       "source": "./plugins/inflow",
       "description": "Authenticate with InFlow, inspect balances and deposit addresses, and perform agent-native payments via x402 and MPP.",
       "author": { "name": "Jarwin, Inc." },
-      "homepage": "https://app.inflowpay.ai",
+      "homepage": "https://inflowcli.ai",
       "repository": "https://github.com/inflowpayai/inflow-cli",
       "license": "MIT",
       "category": "finance",

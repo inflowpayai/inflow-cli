@@ -1,5 +1,7 @@
 # inflow
 
+[![skills.sh](https://skills.sh/b/inflowpayai/inflow-cli)](https://skills.sh/inflowpayai/inflow-cli)
+
 InFlow — agentic MPP (Machine Payments Protocol) / x402 payments from your machine.
 
 The agent-native and human-accessible command-line entry point to InFlow. Agentic buyers perform agent-native payments
