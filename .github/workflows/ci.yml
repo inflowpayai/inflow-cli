@@ -40,6 +40,13 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Upload coverage to Codecov
+        if: matrix.node == 22
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
+          files: packages/cli/coverage/lcov.info,packages/core/coverage/lcov.info
+
       - name: Typedoc
         run: pnpm typedoc
 
