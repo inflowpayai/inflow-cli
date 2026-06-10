@@ -1,5 +1,12 @@
 # inflow
 
+[![CI](https://github.com/inflowpayai/inflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/inflowpayai/inflow-cli/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@inflowpayai/inflow)](https://www.npmjs.com/package/@inflowpayai/inflow)
+[![npm downloads](https://img.shields.io/npm/dm/@inflowpayai/inflow)](https://www.npmjs.com/package/@inflowpayai/inflow)
+[![codecov](https://codecov.io/gh/inflowpayai/inflow-cli/branch/main/graph/badge.svg)](https://codecov.io/gh/inflowpayai/inflow-cli)
+[![node](https://img.shields.io/node/v/@inflowpayai/inflow)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Discord](https://img.shields.io/discord/1488618872461332562?logo=discord&logoColor=white&label=Discord)](https://discord.gg/Z9nmMAgaR4)
 [![skills.sh](https://skills.sh/b/inflowpayai/inflow-cli)](https://skills.sh/inflowpayai/inflow-cli)
 
 InFlow — agentic MPP (Machine Payments Protocol) / x402 payments from your machine.
