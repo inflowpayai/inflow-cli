@@ -1,6 +1,6 @@
 {
   "name": "@inflowpayai/inflow",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "type": "module",
   "license": "MIT",
   "description": "InFlow - agentic MPP / x402 payments from your machine.",
