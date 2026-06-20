@@ -29,6 +29,12 @@ const BASE: ConfiguredDepositAddress = {
   currencies: ['USDC'],
 };
 
+const TEMPO: ConfiguredDepositAddress = {
+  address: '0x0000000000000000000000000000000000004217',
+  blockchain: 'TEMPO',
+  currencies: ['USDC'],
+};
+
 describe('DepositAddressesList — render lifecycle', () => {
   it('shows the loading spinner before the action resolves', () => {
     const pending = resourceStub(() => new Promise<DepositAddresses>(() => undefined));
@@ -70,7 +76,7 @@ describe('DepositAddressesList — render lifecycle', () => {
   });
 
   it('renders header + separator + one row per configured address via the canonical table', async () => {
-    const resource = resourceStub(() => Promise.resolve({ configured: [SOLANA, BASE], unconfigured: [] }));
+    const resource = resourceStub(() => Promise.resolve({ configured: [SOLANA, BASE, TEMPO], unconfigured: [] }));
     const { lastFrame, unmount } = mount({
       depositAddressResource: resource,
       onComplete: NOOP,
@@ -86,8 +92,10 @@ describe('DepositAddressesList — render lifecycle', () => {
     expect(frame).toContain('Currencies');
     expect(frame).toContain('SOLANA');
     expect(frame).toContain('BASE');
+    expect(frame).toContain('TEMPO');
     expect(frame).toContain(SOLANA.address);
     expect(frame).toContain(BASE.address);
+    expect(frame).toContain(TEMPO.address);
     expect(frame).toContain('USDC, USDT');
     expect(frame).toMatch(/-{6,}\s+-{6,}\s+-{6,}/);
     unmount();

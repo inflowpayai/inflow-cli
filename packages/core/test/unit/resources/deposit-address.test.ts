@@ -19,8 +19,9 @@ describe('DepositAddressResource', () => {
       accessToken: 'tk',
     });
     const out = await r.list();
-    expect(out.configured).toHaveLength(1);
+    expect(out.configured).toHaveLength(2);
     expect(out.configured[0]?.blockchain).toBe('BASE');
+    expect(out.configured[1]?.blockchain).toBe('TEMPO');
     expect(out.unconfigured[0]?.currencies).toEqual(['USDC']);
   });
 

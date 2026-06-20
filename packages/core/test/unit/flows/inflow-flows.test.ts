@@ -73,7 +73,14 @@ describe('Inflow augmented surface', () => {
     server.use(depositAddressesHappy);
     const client = new Inflow({ apiBaseUrl: BASE_URL, accessToken: 'tk' });
     const out = await client.depositAddresses.list();
-    expect(out.configured).toEqual([{ address: '0xabc', blockchain: 'BASE', currencies: ['USDC'] }]);
+    expect(out.configured).toEqual([
+      { address: '0xabc', blockchain: 'BASE', currencies: ['USDC'] },
+      {
+        address: '0x0000000000000000000000000000000000004217',
+        blockchain: 'TEMPO',
+        currencies: ['USDC'],
+      },
+    ]);
     expect(out.unconfigured).toEqual([{ blockchain: 'SOLANA', currencies: ['USDC'] }]);
   });
 
