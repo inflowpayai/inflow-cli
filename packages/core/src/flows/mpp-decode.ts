@@ -10,9 +10,10 @@ import {
 } from '@inflowpayai/mpp';
 
 /**
- * Compact projection of an `inflow` MPP challenge for display. The opaque base64url-JCS `request` blob is decoded into
- * its `amount` / `currency` / rail fields; the top-level auth-params (`id`, `realm`, `method`, `intent`, `expires`,
- * `description`, `digest`) are surfaced verbatim.
+ * Compact projection of an MPP challenge for display. The opaque base64url-JCS `request` blob is decoded into its
+ * `amount` / `currency` / rail fields; the top-level auth-params (`id`, `realm`, `method`, `intent`, `expires`,
+ * `description`, `digest`) are surfaced verbatim. Every method's `amount` and `currency` are surfaced exactly as the
+ * seller put them on the wire — the CLI never translates token addresses or base units through a baked-in registry.
  */
 export interface DecodedChallenge {
   id: string;
@@ -30,8 +31,10 @@ export interface DecodedChallenge {
 }
 
 /**
- * Decode a challenge's base64url-JCS `request` into the `inflow` method's `InflowChallengeRequest`. Returns `undefined`
- * when the blob is absent or not decodable (e.g. a non-`inflow` method whose request shape differs).
+ * Decode a challenge's base64url-JCS `request` into its method request shape (typed against the `inflow` method's
+ * `InflowChallengeRequest`; the codec is a permissive JSON decode, so a `tempo` request decodes through the same path
+ * and exposes its `amount` / `currency` / `recipient` verbatim). Returns `undefined` when the blob is absent or not
+ * decodable.
  */
 export function decodeChallengeRequest(challenge: MppChallenge): InflowChallengeRequest | undefined {
   if (challenge.request === '') return undefined;

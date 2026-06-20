@@ -90,6 +90,25 @@ describe('runMppPayPipeline', () => {
     }
   });
 
+  it('pays a Tempo challenge when selected by payment method', async () => {
+    let createdMethod: string | undefined;
+    server.use(
+      sellerWithChallenge('tempo'),
+      http.post(`${INFLOW}/v1/transactions/mpp`, async ({ request }) => {
+        const body = (await request.json()) as { challenge?: { method?: string } };
+        createdMethod = body.challenge?.method;
+        return HttpResponse.json({ state: 'ready', credential: 'CRED-TEMPO', transactionId: 'tx-tempo' });
+      }),
+    );
+    const events = await collect(deps({ paymentMethodFilter: 'tempo' }));
+    const terminal = events.at(-1);
+    expect(createdMethod).toBe('tempo');
+    expect(terminal?.type).toBe('replayed');
+    if (terminal?.type === 'replayed') {
+      expect(terminal.result.challengeId).toBe('chal-tempo');
+    }
+  });
+
   it('polls a pending transaction to ready, then pays', async () => {
     let gets = 0;
     server.use(
@@ -171,7 +190,7 @@ describe('runMppPayPipeline', () => {
     if (terminal?.type === 'rejected') expect(terminal.result.outcome).toBe('seller-rejected');
   });
 
-  it('errors NO_INFLOW_MATCH when the 402 carries only non-inflow challenges', async () => {
+  it('errors NO_INFLOW_MATCH when the 402 carries only unsupported method challenges', async () => {
     server.use(sellerWithChallenge('other'));
     const terminal = (await collect(deps())).at(-1);
     expect(terminal?.type).toBe('errored');
@@ -212,7 +231,7 @@ describe('runMppPayPipeline', () => {
     expect(terminal?.type).toBe('replayed');
   });
 
-  it('errors NO_FILTERED_MATCH when --currency matches no inflow challenge', async () => {
+  it('errors NO_FILTERED_MATCH when --currency matches no supported MPP challenge', async () => {
     server.use(sellerWithChallenge());
     const terminal = (await collect(deps({ currencyFilter: 'EUR' }))).at(-1);
     expect(terminal).toMatchObject({ type: 'errored', code: 'NO_FILTERED_MATCH' });

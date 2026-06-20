@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildNoFilteredMatchMessage,
   filterChallenges,
-  filterInflowChallenges,
+  filterPayableChallenges,
   hasAnyChallengeFilter,
   isSuccessStatus,
 } from '../../../src/flows/mpp-shared.js';
@@ -47,15 +47,14 @@ describe('isSuccessStatus', () => {
   });
 });
 
-describe('filterInflowChallenges', () => {
-  it('keeps only inflow-method challenges', () => {
-    const out = filterInflowChallenges([challenge('inflow'), challenge('other'), challenge('inflow')]);
-    expect(out).toHaveLength(2);
-    expect(out.every((c) => c.method === 'inflow')).toBe(true);
+describe('filterPayableChallenges', () => {
+  it('keeps supported MPP method challenges', () => {
+    const out = filterPayableChallenges([challenge('inflow'), challenge('other'), challenge('tempo')]);
+    expect(out.map((c) => c.method)).toEqual(['inflow', 'tempo']);
   });
 
-  it('returns empty when no inflow challenge is present', () => {
-    expect(filterInflowChallenges([challenge('other')])).toEqual([]);
+  it('returns empty when no supported challenge method is present', () => {
+    expect(filterPayableChallenges([challenge('other')])).toEqual([]);
   });
 });
 

@@ -32,13 +32,18 @@ Help.registerGlobalFlags([
   { flag: '--skill [name]', desc: `Print a skill playbook (default: ${DEFAULT_SKILL})` },
 ]);
 
-function printBody(body: string): never {
-  process.stdout.write(body.endsWith('\n') ? body : `${body}\n`);
+async function printBody(body: string): Promise<never> {
+  const text = body.endsWith('\n') ? body : `${body}\n`;
+  await new Promise<void>((resolve) => {
+    process.stdout.write(text, () => {
+      resolve();
+    });
+  });
   process.exit(0);
 }
 
 if (process.argv.includes('--bootstrap')) {
-  printBody(bootstrapBody);
+  await printBody(bootstrapBody);
 }
 
 const skillFlagIndex = process.argv.findIndex((arg) => arg === '--skill' || arg.startsWith('--skill='));
@@ -57,7 +62,7 @@ if (skillFlagIndex !== -1) {
     process.stderr.write(`Unknown skill '${name}'. Available: ${Object.keys(skillBodies).sort().join(', ')}\n`);
     process.exit(1);
   }
-  printBody(body);
+  await printBody(body);
 }
 
 const CLI_CLIENT_IDS: Record<'production' | 'sandbox', string> = {

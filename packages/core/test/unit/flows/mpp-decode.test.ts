@@ -13,6 +13,22 @@ function inflowChallenge(): MppChallenge {
   };
 }
 
+function tempoChallenge(): MppChallenge {
+  return {
+    id: 'chal-tempo',
+    realm: 'mpp.test',
+    method: 'tempo',
+    intent: 'charge',
+    request: encode({
+      amount: '10000',
+      currency: '0x20c0000000000000000000000000000000000000',
+      methodDetails: { chainId: 42431, feePayer: false, supportedModes: ['pull'] },
+      recipient: '0x61d64bdb13debd1844defecd45cf737403de9813',
+    }),
+    expires: '2999-01-01T00:00:00Z',
+  };
+}
+
 describe('decodeChallengeRequest', () => {
   it('decodes the inflow challenge request blob', () => {
     const request = decodeChallengeRequest(inflowChallenge());
@@ -44,6 +60,19 @@ describe('summarizeChallenge', () => {
       rail: 'balance',
       expires: '2999-01-01T00:00:00Z',
     });
+  });
+
+  it('projects a Tempo challenge as its raw wire amount + currency (no CLI-side registry translation)', () => {
+    const out = summarizeChallenge(tempoChallenge());
+    expect(out).toMatchObject({
+      method: 'tempo',
+      amount: '10000',
+      currency: '0x20c0000000000000000000000000000000000000',
+      recipient: '0x61d64bdb13debd1844defecd45cf737403de9813',
+    });
+    // The CLI never translates a token address to a symbol or base units to a decimal.
+    expect(out).not.toHaveProperty('asset');
+    expect(out).not.toHaveProperty('chainId');
   });
 });
 

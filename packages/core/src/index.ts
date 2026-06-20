@@ -220,7 +220,7 @@ export {
 export { runMppCancel, type MppCancelInput, type MppCancelResult } from './flows/mpp-cancel.js';
 export { runMppSupported, type MppSupportedInput } from './flows/mpp-supported.js';
 export {
-  filterInflowChallenges,
+  filterPayableChallenges,
   INVALID_402_CODE as MPP_INVALID_402_CODE,
   NO_FILTERED_MATCH_CODE as MPP_NO_FILTERED_MATCH_CODE,
   NO_INFLOW_MATCH_CODE as MPP_NO_INFLOW_MATCH_CODE,

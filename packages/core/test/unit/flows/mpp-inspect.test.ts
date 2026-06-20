@@ -18,12 +18,21 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 function challenge(method = 'inflow'): MppChallenge {
+  const request =
+    method === 'tempo'
+      ? {
+          amount: '10000',
+          currency: '0x20c0000000000000000000000000000000000000',
+          methodDetails: { chainId: 42431, feePayer: false, supportedModes: ['pull'] },
+          recipient: '0x61d64bdb13debd1844defecd45cf737403de9813',
+        }
+      : { amount: '10', currency: 'USDC', methodDetails: { rail: 'balance' } };
   return {
     id: `chal-${method}`,
     realm: 'mpp.test',
     method,
     intent: 'charge',
-    request: encode({ amount: '10', currency: 'USDC', methodDetails: { rail: 'balance' } }),
+    request: encode(request),
     expires: '2999-01-01T00:00:00Z',
   };
 }
@@ -50,6 +59,27 @@ describe('runMppInspectPipeline', () => {
     if (event?.type === 'challenges') {
       expect(event.result.challenges[0]?.amount).toBe('10');
       expect(event.result.challenges[0]?.currency).toBe('USDC');
+    }
+  });
+
+  it('parses Tempo challenges from a 402', async () => {
+    server.use(
+      http.get(
+        SELLER,
+        () =>
+          new HttpResponse(null, {
+            status: 402,
+            headers: { 'WWW-Authenticate': renderChallengeHeader(challenge('tempo')) },
+          }),
+      ),
+    );
+    const [event] = await collect();
+    expect(event?.type).toBe('challenges');
+    if (event?.type === 'challenges') {
+      expect(event.result.challenges[0]?.method).toBe('tempo');
+      // Surfaced verbatim from the wire — no base-unit/symbol translation in the CLI.
+      expect(event.result.challenges[0]?.amount).toBe('10000');
+      expect(event.result.challenges[0]?.currency).toBe('0x20c0000000000000000000000000000000000000');
     }
   });
 
@@ -91,7 +121,7 @@ describe('runMppInspectPipeline', () => {
     expect(event).toEqual({ type: 'errored', code: 'INVALID_402', message: expect.any(String) });
   });
 
-  it('errors NO_INFLOW_MATCH when the 402 carries only non-inflow challenges', async () => {
+  it('errors NO_INFLOW_MATCH when the 402 carries only unsupported method challenges', async () => {
     server.use(
       http.get(
         SELLER,

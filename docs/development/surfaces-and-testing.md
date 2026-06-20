@@ -33,6 +33,7 @@ The current CLI command inventory is:
 - `auth status`
 - `balances list`
 - `deposit-addresses list`
+- `inspect`
 - `user get`
 - `x402 inspect`
 - `x402 pay`
@@ -47,13 +48,15 @@ The current CLI command inventory is:
 - `mpp decode`
 - `mpp supported`
 
-The MCP tool names are derived from those command names. The current tool inventory is:
+The MCP tool names are derived from those command names by replacing spaces with underscores; hyphens inside command
+words are preserved. The current tool inventory is:
 
 - `auth_login`
 - `auth_logout`
 - `auth_status`
 - `balances_list`
 - `deposit-addresses_list`
+- `inspect`
 - `user_get`
 - `x402_inspect`
 - `x402_pay`

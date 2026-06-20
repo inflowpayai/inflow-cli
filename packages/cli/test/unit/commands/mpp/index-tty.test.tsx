@@ -110,7 +110,7 @@ describe('mpp TTY runners (renderInkUntilExit paths)', () => {
     );
   });
 
-  it('runPayCommand calls c.error when the pipeline errors (no inflow challenge)', async () => {
+  it('runPayCommand calls c.error when the pipeline errors (no supported MPP challenge)', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(challenge402('other'));
     const { inflow, storage } = authed(makeClient());
     const ctx = ttyCtx(

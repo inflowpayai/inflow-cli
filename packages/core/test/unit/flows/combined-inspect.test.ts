@@ -103,13 +103,22 @@ describe('runCombinedInspectPipeline', () => {
     expect(event.result.x402.kind).toBe('absent');
   });
 
-  it('MPP header present but only non-inflow challenges: none-inflow, carrying the offered method(s)', async () => {
+  it('MPP header present with Tempo challenge: MPP section carries Tempo', async () => {
     mock402({ 'WWW-Authenticate': renderChallengeHeader(mppChallenge('tempo')) });
     const [event] = await collect();
     expect(event?.type).toBe('inspected');
     if (event?.type !== 'inspected') return;
+    expect(event.result.mpp.kind).toBe('challenges');
+    if (event.result.mpp.kind === 'challenges') expect(event.result.mpp.challenges[0]?.method).toBe('tempo');
+  });
+
+  it('MPP header present but only unsupported method challenges: none-inflow, carrying the offered method(s)', async () => {
+    mock402({ 'WWW-Authenticate': renderChallengeHeader(mppChallenge('other')) });
+    const [event] = await collect();
+    expect(event?.type).toBe('inspected');
+    if (event?.type !== 'inspected') return;
     expect(event.result.mpp.kind).toBe('none-inflow');
-    if (event.result.mpp.kind === 'none-inflow') expect(event.result.mpp.methods).toEqual(['tempo']);
+    if (event.result.mpp.kind === 'none-inflow') expect(event.result.mpp.methods).toEqual(['other']);
   });
 
   it('one side malformed surfaces as a section error, not a whole-command failure', async () => {

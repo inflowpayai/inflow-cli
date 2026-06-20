@@ -128,7 +128,7 @@ describe('PayView', () => {
     unmount();
   });
 
-  it('renders the error frame when no inflow challenge is offered', async () => {
+  it('renders the error frame when no supported MPP challenge is offered', async () => {
     server.use(
       http.get(SELLER, () => {
         const other: MppChallenge = { ...challenge(), id: 'chal-other', method: 'other' };

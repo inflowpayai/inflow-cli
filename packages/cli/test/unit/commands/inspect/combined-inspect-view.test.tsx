@@ -12,12 +12,21 @@ afterEach(() => {
 });
 
 function mppHeader(method = 'inflow'): string {
+  const request =
+    method === 'tempo'
+      ? {
+          amount: '10000',
+          currency: '0x20c0000000000000000000000000000000000000',
+          methodDetails: { chainId: 42431, feePayer: false, supportedModes: ['pull'] },
+          recipient: '0x61d64bdb13debd1844defecd45cf737403de9813',
+        }
+      : { amount: '0.10', currency: 'USDC', methodDetails: { rail: 'balance' } };
   const challenge: MppChallenge = {
     id: `chal-${method}`,
     realm: 'mpp.test',
     method,
     intent: 'charge',
-    request: encode({ amount: '0.10', currency: 'USDC', methodDetails: { rail: 'balance' } }),
+    request: encode(request),
     expires: '2999-01-01T00:00:00Z',
   };
   return renderChallengeHeader(challenge);
@@ -94,16 +103,29 @@ describe('CombinedInspectView', () => {
     unmount();
   });
 
-  it('names the advertised non-inflow method(s) in the none-inflow line', async () => {
+  it('shows Tempo as an MPP challenge', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response('payment required', { status: 402, headers: { 'WWW-Authenticate': mppHeader('tempo') } }),
     );
     const { lastFrame, unmount } = renderView();
     await settle();
     const frame = lastFrame() ?? '';
+    expect(frame).toContain('detected: mpp');
+    expect(frame).toContain('tempo');
+    // Raw wire amount — the CLI does not translate base units to a decimal.
+    expect(frame).toContain('10000');
+    unmount();
+  });
+
+  it('names the advertised unsupported method(s) in the none-inflow line', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('payment required', { status: 402, headers: { 'WWW-Authenticate': mppHeader('other') } }),
+    );
+    const { lastFrame, unmount } = renderView();
+    await settle();
+    const frame = lastFrame() ?? '';
     expect(frame).toContain('detected: none');
-    expect(frame).toContain('not payable by InFlow: tempo');
-    expect(frame).toContain('only `inflow` is supported');
+    expect(frame).toContain('not payable by InFlow: other');
     unmount();
   });
 
