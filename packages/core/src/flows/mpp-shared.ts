@@ -1,17 +1,14 @@
-import { METHOD_INFLOW, type MppChallenge } from '@inflowpayai/mpp';
+import { METHOD_INFLOW, METHOD_TEMPO, type MppChallenge } from '@inflowpayai/mpp';
 import { decodeChallengeRequest } from './mpp-decode.js';
 
 /** Error code emitted when a seller returns 402 but carries no `WWW-Authenticate: Payment` challenge header. */
 export const INVALID_402_CODE = 'INVALID_402';
 
-/**
- * Error code emitted when none of the seller's parsed challenges use the `inflow` method — the InFlow buyer cannot
- * fulfil a challenge minted for another method.
- */
+/** Error code emitted when none of the seller's parsed challenges use a method the InFlow buyer can fulfil. */
 export const NO_INFLOW_MATCH_CODE = 'NO_INFLOW_MATCH';
 
 export const NO_INFLOW_MATCH_MESSAGE =
-  "Seller's 402 carries no `inflow`-method MPP challenge; the InFlow buyer cannot fulfil it.";
+  "Seller's 402 carries no InFlow-supported MPP challenge method; the InFlow buyer cannot fulfil it.";
 
 /** Error code emitted when the `--currency` filter narrows the `inflow` challenge set to empty. */
 export const NO_FILTERED_MATCH_CODE = 'NO_FILTERED_MATCH';
@@ -27,13 +24,13 @@ export function isSuccessStatus(status: number): boolean {
   return status >= 200 && status < 300;
 }
 
-/** Keep only the challenges minted for the `inflow` method (the only method the InFlow buyer can fulfil). */
-export function filterInflowChallenges(challenges: readonly MppChallenge[]): MppChallenge[] {
-  return challenges.filter((challenge) => challenge.method === METHOD_INFLOW);
+/** Keep only the challenges minted for methods the InFlow buyer can fulfil (`inflow` and `tempo`). */
+export function filterPayableChallenges(challenges: readonly MppChallenge[]): MppChallenge[] {
+  return challenges.filter((challenge) => challenge.method === METHOD_INFLOW || challenge.method === METHOD_TEMPO);
 }
 
 /**
- * Filters applied to the seller's `inflow` challenges. Each field is matched independently; `paymentMethod` and
+ * Filters applied to the seller's supported MPP challenges. Each field is matched independently; `paymentMethod` and
  * `intent` match the challenge's top-level fields, `currency` and `rail` the decoded request. All fields undefined
  * returns the input unchanged.
  */
@@ -98,5 +95,5 @@ export function buildNoFilteredMatchMessage(challenges: readonly MppChallenge[],
       return parts.join(' ');
     })
     .join(', ');
-  return `Seller has no \`inflow\` challenge matching ${filterDescription}. Available: ${available || '(none)'}.`;
+  return `Seller has no supported MPP challenge matching ${filterDescription}. Available: ${available || '(none)'}.`;
 }

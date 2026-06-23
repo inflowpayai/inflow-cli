@@ -236,7 +236,7 @@ describe('mpp agent runners', () => {
     );
   });
 
-  it('runPayCommand surfaces a pipeline error (no inflow challenge) through c.error', async () => {
+  it('runPayCommand surfaces a pipeline error (no supported MPP challenge) through c.error', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(challenge('other')) } }),
     );

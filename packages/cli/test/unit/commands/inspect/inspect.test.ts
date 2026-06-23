@@ -15,12 +15,21 @@ afterEach(() => {
 });
 
 function mppHeader(method = 'inflow'): string {
+  const request =
+    method === 'tempo'
+      ? {
+          amount: '10000',
+          currency: '0x20c0000000000000000000000000000000000000',
+          methodDetails: { chainId: 42431, feePayer: false, supportedModes: ['pull'] },
+          recipient: '0x61d64bdb13debd1844defecd45cf737403de9813',
+        }
+      : { amount: '0.10', currency: 'USDC', methodDetails: { rail: 'balance' } };
   const challenge: MppChallenge = {
     id: `chal-${method}`,
     realm: 'mpp.test',
     method,
     intent: 'charge',
-    request: encode({ amount: '0.10', currency: 'USDC', methodDetails: { rail: 'balance' } }),
+    request: encode(request),
     expires: '2999-01-01T00:00:00Z',
   };
   return renderChallengeHeader(challenge);
@@ -120,13 +129,13 @@ describe('buildCombinedFrame', () => {
     expect(warnings.some((w) => w.code === 'NO_PAYMENT_CHALLENGE')).toBe(true);
   });
 
-  it('none-inflow + x402 decode error: warnings carry both, name the offered method, detected empty', () => {
+  it('unsupported MPP method + x402 decode error: warnings carry both, name the offered method, detected empty', () => {
     const result: CombinedInspectResult = {
       outcome: 'inspected',
       url: URL,
       method: 'GET',
       status: 402,
-      mpp: { kind: 'none-inflow', methods: ['tempo'] },
+      mpp: { kind: 'none-inflow', methods: ['other'] },
       x402: { kind: 'error', code: 'DECODE_FAILED', message: 'bad header' },
     };
     const frame = buildCombinedFrame(result);
@@ -134,8 +143,8 @@ describe('buildCombinedFrame', () => {
     const warnings = frame.warnings as Array<{ protocol: string; code: string; message: string; methods?: string[] }>;
     const mppWarning = warnings.find((w) => w.protocol === 'mpp' && w.code === 'NO_INFLOW_MATCH');
     expect(mppWarning).toBeDefined();
-    expect(mppWarning?.methods).toEqual(['tempo']);
-    expect(mppWarning?.message).toContain('tempo');
+    expect(mppWarning?.methods).toEqual(['other']);
+    expect(mppWarning?.message).toContain('other');
     expect(warnings.some((w) => w.protocol === 'x402' && w.code === 'DECODE_FAILED')).toBe(true);
   });
 });

@@ -3,7 +3,7 @@ import { fromFoundationRequirements } from '@inflowpayai/x402-buyer';
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { type DecodedChallenge, summarizeChallenge } from './mpp-decode.js';
 import { parseMppHeaderFromProbe } from './mpp-inspect.js';
-import { filterInflowChallenges } from './mpp-shared.js';
+import { filterPayableChallenges } from './mpp-shared.js';
 import { isSuccessStatus, UNEXPECTED_PROBE_STATUS_CODE } from './x402-shared.js';
 import { parseX402HeaderFromProbe } from './x402-inspect.js';
 
@@ -18,12 +18,11 @@ import { parseX402HeaderFromProbe } from './x402-inspect.js';
 export type MppSection =
   /** No `WWW-Authenticate: Payment` header on the 402. */
   | { kind: 'absent' }
-  /** Header present and ≥1 `inflow`-method challenge decoded. */
+  /** Header present and at least one supported MPP challenge decoded. */
   | { kind: 'challenges'; realm: string; challenges: readonly DecodedChallenge[] }
   /**
-   * Header present and decoded, but advertised no `inflow`-method challenge (nothing the InFlow buyer can fulfil).
-   * `methods` lists the distinct non-`inflow` payment methods the seller did offer (e.g. `["tempo"]`), so the caller
-   * can explain _why_ nothing was payable rather than dead-ending.
+   * Header present and decoded, but advertised no method the InFlow buyer can fulfil. `methods` lists the distinct
+   * unsupported payment methods the seller did offer, so the caller can explain why nothing was payable.
    */
   | { kind: 'none-inflow'; methods: readonly string[] }
   /** Header present but the codec rejected it. */
@@ -92,18 +91,18 @@ export interface CombinedInspectPipelineDeps {
   url: string;
 }
 
-/** Build the MPP section from a 402 probe — decode header, then classify against the `inflow`-method filter. */
+/** Build the MPP section from a 402 probe — decode header, then classify against the supported-method filter. */
 export function buildMppSection(probe: SellerProbeResult): MppSection {
   const parse = parseMppHeaderFromProbe(probe);
   if (parse.kind === 'absent') return { kind: 'absent' };
   if (parse.kind === 'error') return { kind: 'error', code: parse.code, message: parse.message };
-  const inflowChallenges = filterInflowChallenges(parse.challenges);
-  if (inflowChallenges.length === 0) {
+  const supportedChallenges = filterPayableChallenges(parse.challenges);
+  if (supportedChallenges.length === 0) {
     const methods = [...new Set(parse.challenges.map((c) => c.method))].sort((a, b) => a.localeCompare(b));
     return { kind: 'none-inflow', methods };
   }
-  const realm = inflowChallenges[0]?.realm ?? '';
-  return { kind: 'challenges', realm, challenges: inflowChallenges.map(summarizeChallenge) };
+  const realm = supportedChallenges[0]?.realm ?? '';
+  return { kind: 'challenges', realm, challenges: supportedChallenges.map(summarizeChallenge) };
 }
 
 /** Build the x402 section from a 402 probe — decode the `PAYMENT-REQUIRED` header into the buyer-facing accepts. */

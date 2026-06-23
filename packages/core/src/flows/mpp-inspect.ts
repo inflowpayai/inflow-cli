@@ -5,7 +5,7 @@ import {
   buildNoFilteredMatchMessage,
   type ChallengeFilters,
   filterChallenges,
-  filterInflowChallenges,
+  filterPayableChallenges,
   hasAnyChallengeFilter,
   INVALID_402_CODE,
   isSuccessStatus,
@@ -28,7 +28,7 @@ export interface MppInspectResultNoPayment {
   bodySizeBytes: number;
 }
 
-/** Result frame when the seller responds 402 and at least one `inflow` challenge decoded cleanly. */
+/** Result frame when the seller responds 402 and at least one supported MPP challenge decoded cleanly. */
 export interface MppInspectResultChallenges {
   outcome: 'challenges';
   url: string;
@@ -50,11 +50,11 @@ export type MppInspectEvent =
 
 /**
  * Outcome of reading + decoding the `WWW-Authenticate: Payment` header(s) off a probe response, before any
- * `inflow`-method or caller filtering. Shared by {@link runMppInspectPipeline} and the combined-inspect pipeline so both
+ * method-support or caller filtering. Shared by {@link runMppInspectPipeline} and the combined-inspect pipeline so both
  * decode MPP challenges identically.
  *
  * - `absent` — no `WWW-Authenticate: Payment` header on the 402.
- * - `parsed` — header(s) present and decoded into raw challenges (any method, pre-`inflow` filter).
+ * - `parsed` — header(s) present and decoded into raw challenges.
  * - `error` — header present but the codec rejected it (`DECODE_FAILED`).
  */
 export type MppHeaderParse =
@@ -152,8 +152,8 @@ export async function runMppInspectPipeline(
     return;
   }
 
-  const inflowChallenges = filterInflowChallenges(parse.challenges);
-  if (inflowChallenges.length === 0) {
+  const supportedChallenges = filterPayableChallenges(parse.challenges);
+  if (supportedChallenges.length === 0) {
     emit({ type: 'errored', code: NO_INFLOW_MATCH_CODE, message: NO_INFLOW_MATCH_MESSAGE });
     return;
   }
@@ -164,12 +164,12 @@ export async function runMppInspectPipeline(
     ...(deps.currencyFilter !== undefined ? { currency: deps.currencyFilter } : {}),
     ...(deps.railFilter !== undefined ? { rail: deps.railFilter } : {}),
   };
-  const filtered = filterChallenges(inflowChallenges, filters);
+  const filtered = filterChallenges(supportedChallenges, filters);
   if (hasAnyChallengeFilter(filters) && filtered.length === 0) {
     emit({
       type: 'errored',
       code: NO_FILTERED_MATCH_CODE,
-      message: buildNoFilteredMatchMessage(inflowChallenges, filters),
+      message: buildNoFilteredMatchMessage(supportedChallenges, filters),
     });
     return;
   }

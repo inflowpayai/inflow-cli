@@ -21,7 +21,7 @@ import {
   buildNoFilteredMatchMessage,
   type ChallengeFilters,
   filterChallenges,
-  filterInflowChallenges,
+  filterPayableChallenges,
   hasAnyChallengeFilter,
   INVALID_402_CODE,
   isSuccessStatus,
@@ -225,7 +225,7 @@ async function resolveTransaction(
 }
 
 /**
- * Drives the full `mpp pay` pipeline: probe → parse `WWW-Authenticate: Payment` challenge(s) → select the `inflow`
+ * Drives the full `mpp pay` pipeline: probe → parse `WWW-Authenticate: Payment` challenge(s) → select a supported
  * challenge → `POST /v1/transactions/mpp` → (poll `GET …/{id}/mpp` to `ready`) → resubmit with `Authorization: Payment
  * <credential>` → report. Emits an event per phase transition (and exactly one terminal event) via `emit`.
  */
@@ -274,8 +274,8 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
       return;
     }
 
-    const inflowChallenges = filterInflowChallenges(challenges);
-    if (inflowChallenges.length === 0) {
+    const supportedChallenges = filterPayableChallenges(challenges);
+    if (supportedChallenges.length === 0) {
       emit({ type: 'errored', code: NO_INFLOW_MATCH_CODE, message: NO_INFLOW_MATCH_MESSAGE });
       return;
     }
@@ -286,12 +286,12 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
       ...(deps.currencyFilter !== undefined ? { currency: deps.currencyFilter } : {}),
       ...(deps.railFilter !== undefined ? { rail: deps.railFilter } : {}),
     };
-    const selected = filterChallenges(inflowChallenges, filters);
+    const selected = filterChallenges(supportedChallenges, filters);
     if (hasAnyChallengeFilter(filters) && selected.length === 0) {
       emit({
         type: 'errored',
         code: NO_FILTERED_MATCH_CODE,
-        message: buildNoFilteredMatchMessage(inflowChallenges, filters),
+        message: buildNoFilteredMatchMessage(supportedChallenges, filters),
       });
       return;
     }

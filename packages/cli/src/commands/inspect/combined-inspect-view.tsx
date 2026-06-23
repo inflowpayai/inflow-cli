@@ -64,8 +64,7 @@ const MppSectionView: React.FC<{ section: MppSection }> = ({ section }) => {
     const methods = section.methods.length > 0 ? section.methods.join(', ') : '(unknown)';
     return (
       <Text>
-        <Text bold>── MPP ──</Text>{' '}
-        <Text dimColor>{`advertised method(s) not payable by InFlow: ${methods} (only \`inflow\` is supported)`}</Text>
+        <Text bold>── MPP ──</Text> <Text dimColor>{`advertised method(s) not payable by InFlow: ${methods}`}</Text>
       </Text>
     );
   }

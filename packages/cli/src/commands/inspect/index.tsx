@@ -26,6 +26,19 @@ interface InspectCommandContext {
   error: (options: { code: string; message: string; retryable?: boolean; exitCode?: number }) => never;
 }
 
+interface InspectCommandDefinition {
+  description: string;
+  args: typeof inspectArgs;
+  options: typeof inspectOptions;
+  outputPolicy: 'agent-only';
+  examples: {
+    args: { url: string };
+    options?: { method: string; data: string };
+    description: string;
+  }[];
+  run: (c: InspectCommandContext) => Promise<Record<string, unknown> | undefined>;
+}
+
 function parseHeaderFlagsOrFail(c: InspectCommandContext, flags: string[]): Record<string, string> {
   try {
     return parseHeaderFlags(flags);
@@ -38,14 +51,14 @@ interface FrameWarning {
   protocol: 'mpp' | 'x402' | 'none';
   code: string;
   message: string;
-  /** For `NO_INFLOW_MATCH`: the non-`inflow` MPP methods the seller advertised (e.g. `["tempo"]`). */
+  /** For `NO_INFLOW_MATCH`: the unsupported MPP methods the seller advertised. */
   methods?: readonly string[];
 }
 
 /**
  * Project the combined result into the agent frame: `{ url, detected, mpp[], x402[] }` with fixed-shape arrays (empty
  * when a protocol is absent). Section-level problems (a present-but-undecodable header, or an MPP header with no
- * inflow-payable challenge) are surfaced in an optional `warnings` array rather than failing the whole command.
+ * supported challenge method) are surfaced in an optional `warnings` array rather than failing the whole command.
  */
 export function buildCombinedFrame(result: CombinedInspectResult): Record<string, unknown> {
   const warnings: FrameWarning[] = [];
@@ -56,7 +69,7 @@ export function buildCombinedFrame(result: CombinedInspectResult): Record<string
     warnings.push({
       protocol: 'mpp',
       code: 'NO_INFLOW_MATCH',
-      message: `WWW-Authenticate: Payment present, but no challenge uses the \`inflow\` method (only one the InFlow buyer can pay). Method(s) advertised: ${offered}.`,
+      message: `WWW-Authenticate: Payment present, but no challenge uses a method the InFlow buyer can pay. Method(s) advertised: ${offered}.`,
       methods: result.mpp.methods,
     });
   } else if (result.mpp.kind === 'error') {
@@ -166,7 +179,7 @@ export async function runCombinedInspectCommand(
   return sanitizeDeep(buildNoPaymentFrame(payload as CombinedInspectNoPayment));
 }
 
-export function createInspectCommand() {
+export function createInspectCommand(): InspectCommandDefinition {
   return {
     description:
       "Detect a URL's payment protocol(s) and show MPP and x402 challenges together. Read-only probe - no auth, no payment. Read `detected` to choose a pay rail (MPP wins when both are present).",
