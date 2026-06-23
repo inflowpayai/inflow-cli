@@ -1,6 +1,6 @@
 {
   "name": "inflow",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Authenticate with InFlow, inspect balances and deposit addresses, and perform agent-native payments via x402 and MPP.",
   "author": {
     "name": "Jarwin, Inc."
