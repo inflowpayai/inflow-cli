@@ -1,5 +1,17 @@
 # @inflowpayai/inflow
 
+## 0.8.0
+
+### Minor Changes
+
+- [#26](https://github.com/inflowpayai/inflow-cli/pull/26)
+  [`30f0b97`](https://github.com/inflowpayai/inflow-cli/commit/30f0b976849ee2d424324c572f881dd37ce126b4) Thanks
+  [@nkavian](https://github.com/nkavian)! - Surface Tempo MPP challenges in the `inspect`, `mpp inspect`, and `mpp pay`
+  flows. Tempo challenges are projected and selected by their on-the-wire `amount` and `currency` — the same compact
+  projection used for the `inflow` method — and can be paid with `--payment-method tempo`. The CLI carries no Tempo
+  asset registry and no x402 concepts in the MPP path; currency/rail filters read the decoded challenge request
+  directly. Also covers Tempo deposit-address data.
+
 ## 0.7.0
 
 ### Minor Changes
