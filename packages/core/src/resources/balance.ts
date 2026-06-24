@@ -2,6 +2,7 @@ import { type InflowOptions, type ResolvedInflowSdkConfig, resolveInflowSdkConfi
 import { InflowApiError } from '../errors.js';
 import type { Balance } from '../types/index.js';
 import { InflowApiClient } from '../utils/api-client.js';
+import { normalizeDecimalString } from '../utils/decimal.js';
 import { redactRawBody } from '../utils/redact.js';
 import type { IBalanceResource } from './interfaces.js';
 
@@ -31,6 +32,9 @@ export class BalanceResource implements IBalanceResource {
       );
     }
     const body = data as BalancesResponse | null;
-    return body?.balances ?? [];
+    return (body?.balances ?? []).map((balance) => ({
+      ...balance,
+      available: normalizeDecimalString(balance.available),
+    }));
   }
 }
