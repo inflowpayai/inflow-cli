@@ -19,7 +19,7 @@ describe('resolveInflowSdkConfig', () => {
   it('defaults environment to production and apiBaseUrl', () => {
     const c = resolveInflowSdkConfig();
     expect(c.environment).toBe('production');
-    expect(c.apiBaseUrl).toBe('https://app.inflowpay.ai');
+    expect(c.apiBaseUrl).toBe('https://api.inflowpay.ai');
     expect(c.authBaseUrl).toBe('https://app.inflowpay.ai');
     expect(c.clientName).toBe('InFlow');
   });
@@ -44,6 +44,13 @@ describe('resolveInflowSdkConfig', () => {
   it('authBaseUrl falls back to apiBaseUrl', () => {
     const c = resolveInflowSdkConfig({ apiBaseUrl: 'https://opt' });
     expect(c.authBaseUrl).toBe('https://opt');
+  });
+
+  it('INFLOW_BASE_URL alone redirects both apiBaseUrl and authBaseUrl', () => {
+    process.env['INFLOW_BASE_URL'] = 'https://dev.inflowpay.ai';
+    const c = resolveInflowSdkConfig();
+    expect(c.apiBaseUrl).toBe('https://dev.inflowpay.ai');
+    expect(c.authBaseUrl).toBe('https://dev.inflowpay.ai');
   });
 
   it('authBaseUrl env overrides default', () => {
