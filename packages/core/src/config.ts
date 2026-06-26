@@ -45,7 +45,13 @@ export interface ResolvedInflowSdkConfig {
 type AuthMode = ResolvedInflowSdkConfig['authMode'];
 
 /** @internal */
-export const ENVIRONMENT_BASE_URLS: Record<InflowEnvironment, string> = {
+export const ENVIRONMENT_API_BASE_URLS: Record<InflowEnvironment, string> = {
+  production: 'https://api.inflowpay.ai',
+  sandbox: 'https://sandbox.inflowpay.ai',
+};
+
+/** @internal */
+export const ENVIRONMENT_AUTH_BASE_URLS: Record<InflowEnvironment, string> = {
   production: 'https://app.inflowpay.ai',
   sandbox: 'https://sandbox.inflowpay.ai',
 };
@@ -58,7 +64,7 @@ export const ENVIRONMENT_BASE_URLS: Record<InflowEnvironment, string> = {
  */
 export function resolveApiBaseUrl(options: Pick<InflowOptions, 'apiBaseUrl' | 'environment'>): string {
   return (
-    options.apiBaseUrl ?? process.env.INFLOW_BASE_URL ?? ENVIRONMENT_BASE_URLS[options.environment ?? 'production']
+    options.apiBaseUrl ?? process.env.INFLOW_BASE_URL ?? ENVIRONMENT_API_BASE_URLS[options.environment ?? 'production']
   );
 }
 
@@ -139,9 +145,10 @@ export function resolveInflowSdkConfig(options: InflowOptions = {}): ResolvedInf
   const logger = options.logger ?? createDefaultLogger(verbose);
   const environment: InflowEnvironment = options.environment ?? 'production';
 
-  const apiBaseUrl = options.apiBaseUrl ?? process.env.INFLOW_BASE_URL ?? ENVIRONMENT_BASE_URLS[environment];
+  const explicitApiBaseUrl = options.apiBaseUrl ?? process.env.INFLOW_BASE_URL;
+  const apiBaseUrl = explicitApiBaseUrl ?? ENVIRONMENT_API_BASE_URLS[environment];
 
-  const authBaseUrl = options.authBaseUrl ?? process.env.INFLOW_AUTH_BASE_URL ?? apiBaseUrl;
+  const authBaseUrl = options.authBaseUrl ?? process.env.INFLOW_AUTH_BASE_URL ?? explicitApiBaseUrl ?? ENVIRONMENT_AUTH_BASE_URLS[environment];
 
   const cliClientId = options.cliClientId ?? process.env.INFLOW_CLI_CLIENT_ID;
 

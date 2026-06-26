@@ -107,7 +107,7 @@ describe('Inflow augmented surface', () => {
 
   it('resolvedApiBaseUrl defaults to the environment-derived URL when no explicit apiBaseUrl is set', () => {
     const prodClient = new Inflow({ environment: 'production' });
-    expect(prodClient.resolvedApiBaseUrl).toBe('https://app.inflowpay.ai');
+    expect(prodClient.resolvedApiBaseUrl).toBe('https://api.inflowpay.ai');
     const sandboxClient = new Inflow({ environment: 'sandbox' });
     expect(sandboxClient.resolvedApiBaseUrl).toBe('https://sandbox.inflowpay.ai');
   });

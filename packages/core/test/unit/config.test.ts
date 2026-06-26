@@ -19,7 +19,7 @@ describe('resolveInflowSdkConfig', () => {
   it('defaults environment to production and apiBaseUrl', () => {
     const c = resolveInflowSdkConfig();
     expect(c.environment).toBe('production');
-    expect(c.apiBaseUrl).toBe('https://app.inflowpay.ai');
+    expect(c.apiBaseUrl).toBe('https://api.inflowpay.ai');
     expect(c.authBaseUrl).toBe('https://app.inflowpay.ai');
     expect(c.clientName).toBe('InFlow');
   });
