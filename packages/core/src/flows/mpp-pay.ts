@@ -51,6 +51,8 @@ export interface MppPaySettlement {
   reference?: string;
   status?: string;
   timestamp?: string;
+  amount?: string;
+  currency?: string;
 }
 
 export interface MppPayResultSuccess extends MppPayResultBase {
@@ -196,6 +198,8 @@ export function buildSettlement(headers: Headers): MppPaySettlement | undefined 
   if (receipt.reference !== '') out.reference = receipt.reference;
   if (receipt.status !== '') out.status = receipt.status;
   if (receipt.timestamp !== '') out.timestamp = receipt.timestamp;
+  if (receipt.amount !== undefined) out.amount = receipt.amount;
+  if (receipt.currency !== undefined) out.currency = receipt.currency;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

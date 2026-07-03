@@ -74,6 +74,15 @@ describe('summarizeChallenge', () => {
     expect(out).not.toHaveProperty('asset');
     expect(out).not.toHaveProperty('chainId');
   });
+
+  it('surfaces the opaque correlation blob when the challenge carries one', () => {
+    const out = summarizeChallenge({ ...inflowChallenge(), opaque: 'eyJpc3MiOiJpbmZsb3cifQ' });
+    expect(out.opaque).toBe('eyJpc3MiOiJpbmZsb3cifQ');
+  });
+
+  it('omits opaque when the challenge has none', () => {
+    expect(summarizeChallenge(inflowChallenge())).not.toHaveProperty('opaque');
+  });
 });
 
 describe('decodeMppValue', () => {

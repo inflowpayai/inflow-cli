@@ -450,4 +450,24 @@ describe('buildSettlement', () => {
       timestamp: '2025-02-02T00:00:00Z',
     });
   });
+
+  it('includes settled amount and currency when the receipt carries them', () => {
+    const receipt: MppReceipt = {
+      challengeId: 'chal-2',
+      method: 'inflow',
+      reference: 'ref-10',
+      status: 'success',
+      timestamp: '2025-02-02T00:00:00Z',
+      amount: '10.5',
+      currency: 'USDC',
+    };
+    const headers = new Headers({ [HEADERS.PAYMENT_RECEIPT]: encode(receipt) });
+    expect(buildSettlement(headers)).toEqual({
+      reference: 'ref-10',
+      status: 'success',
+      timestamp: '2025-02-02T00:00:00Z',
+      amount: '10.5',
+      currency: 'USDC',
+    });
+  });
 });

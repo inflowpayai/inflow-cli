@@ -28,6 +28,7 @@ export interface DecodedChallenge {
   expires?: string;
   description?: string;
   digest?: string;
+  opaque?: string;
 }
 
 /**
@@ -64,6 +65,7 @@ export function summarizeChallenge(challenge: MppChallenge): DecodedChallenge {
   if (challenge.expires !== undefined) out.expires = challenge.expires;
   if (challenge.description !== undefined) out.description = challenge.description;
   if (challenge.digest !== undefined) out.digest = challenge.digest;
+  if (challenge.opaque !== undefined) out.opaque = challenge.opaque;
   return out;
 }
 
