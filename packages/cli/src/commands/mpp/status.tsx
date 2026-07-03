@@ -31,15 +31,15 @@ export const MppStatusView: React.FC<MppStatusProps> = ({
 
   useEffect(() => {
     const run = runMppStatus({ fetchOnce, interval, maxAttempts, timeout });
-    let cancelled = false;
+    const state = { cancelled: false };
     void (async () => {
       for await (const event of run.events) {
-        if (cancelled) return;
+        if (state.cancelled) return;
         dispatch(event);
       }
     })();
     return () => {
-      cancelled = true;
+      state.cancelled = true;
     };
   }, [fetchOnce, interval, maxAttempts, timeout]);
 
@@ -82,9 +82,7 @@ export const MppStatusView: React.FC<MppStatusProps> = ({
     return (
       <Box flexDirection="column">
         <Text color="red">✗ Transaction failed</Text>
-        {phase.response.problem !== undefined ? (
-          <Text color="red">{phase.response.problem.detail ?? phase.response.problem.title}</Text>
-        ) : null}
+        {phase.response.problem !== undefined ? <Text color="red">{phase.response.problem.detail}</Text> : null}
       </Box>
     );
   }

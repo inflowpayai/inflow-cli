@@ -229,9 +229,9 @@ describe('cli smoke', () => {
     expect(`${result.stdout}${result.stderr}`).toContain('DECODE_FAILED');
   });
 
-  describe.skipIf(process.env.INFLOW_SMOKE_SANDBOX !== '1')('live sandbox', () => {
+  describe.skipIf(process.env['INFLOW_SMOKE_SANDBOX'] !== '1')('live sandbox', () => {
     it('user get --format json returns a userId when INFLOW_API_KEY is valid', async () => {
-      const apiKey = process.env.INFLOW_API_KEY;
+      const apiKey = process.env['INFLOW_API_KEY'];
       if (apiKey === undefined || apiKey.length === 0) {
         throw new Error('INFLOW_SMOKE_SANDBOX=1 requires INFLOW_API_KEY to be set');
       }
@@ -246,7 +246,7 @@ describe('cli smoke', () => {
     });
 
     it('balances list --format json returns an array', async () => {
-      const apiKey = process.env.INFLOW_API_KEY;
+      const apiKey = process.env['INFLOW_API_KEY'];
       if (apiKey === undefined || apiKey.length === 0) {
         throw new Error('INFLOW_SMOKE_SANDBOX=1 requires INFLOW_API_KEY to be set');
       }

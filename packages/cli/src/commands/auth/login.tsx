@@ -35,16 +35,16 @@ export const Login: React.FC<LoginProps> = ({ auth, clientName, connection, prio
       ...(priorRefreshToken !== undefined ? { priorRefreshToken } : {}),
     });
 
-    let cancelled = false;
+    const state = { cancelled: false };
     void (async () => {
       for await (const event of run.events) {
-        if (cancelled) return;
+        if (state.cancelled) return;
         dispatch(event);
       }
     })();
 
     return () => {
-      cancelled = true;
+      state.cancelled = true;
       run.cancel();
     };
   }, [auth, clientName, connection, priorRefreshToken]);

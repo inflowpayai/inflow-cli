@@ -116,11 +116,15 @@ export function runAuthLogin(input: AuthLoginInput): AuthLoginRun {
   const firstPollDelayMs = input.firstPollDelayMs ?? DEFAULT_FIRST_POLL_DELAY_MS;
   const pollIntervalMs = input.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
-  let cancelled = false;
+  const state: { cancelled: boolean } = { cancelled: false };
   let cancelSleep: (() => void) | null = null;
 
+  function isCancelled(): boolean {
+    return state.cancelled;
+  }
+
   function cancel(): void {
-    cancelled = true;
+    state.cancelled = true;
     cancelSleep?.();
   }
 
@@ -143,11 +147,11 @@ export function runAuthLogin(input: AuthLoginInput): AuthLoginRun {
       yield { type: 'initiateFailed', message: error instanceof Error ? error.message : String(error) };
       return;
     }
-    if (cancelled) return;
+    if (isCancelled()) return;
     yield { type: 'initiated', req };
 
     await sleepCancellable(firstPollDelayMs);
-    if (cancelled) return;
+    if (isCancelled()) return;
 
     try {
       const effectiveTimeout =
@@ -161,7 +165,7 @@ export function runAuthLogin(input: AuthLoginInput): AuthLoginRun {
         maxAttempts: input.pollMaxAttempts ?? 0,
         timeout: effectiveTimeout,
       })) {
-        if (cancelled) return;
+        if (isCancelled()) return;
         if (outcome.terminal && outcome.reason !== undefined) {
           yield { type: 'pollTimedOut', reason: outcome.reason };
           return;
@@ -181,7 +185,7 @@ export function runAuthLogin(input: AuthLoginInput): AuthLoginRun {
         }
       }
     } catch (error) {
-      if (cancelled) return;
+      if (isCancelled()) return;
       if (error instanceof InflowApiError && error.code === 'expired_token') {
         yield { type: 'pollExpired' };
         return;

@@ -147,10 +147,10 @@ function decoratePayloadField(frame: Record<string, unknown>, encoded: string, p
     writeFileSync(absolute, Buffer.from(encoded, 'utf-8'), { mode: 0o600 });
     // Enforce 0o600 on overwrite — writeFileSync only sets mode on file creation.
     chmodSync(absolute, 0o600);
-    frame.payload_saved_to = absolute;
+    frame['payload_saved_to'] = absolute;
     return;
   }
-  frame.encoded_payload = encoded;
+  frame['encoded_payload'] = encoded;
 }
 
 function probeOptionsFrom(c: PayContext | InspectCommandContext): SellerProbeOptions {
@@ -182,10 +182,10 @@ function attachBodyFields(
   frame: Record<string, unknown>,
   result: Pick<PayResultNoPayment, 'bodySizeBytes' | 'body' | 'bodyBase64' | 'outputSavedTo'>,
 ): void {
-  frame.body_size_bytes = result.bodySizeBytes;
-  if (result.body !== undefined) frame.body = result.body;
-  if (result.bodyBase64 !== undefined) frame.body_base64 = result.bodyBase64;
-  if (result.outputSavedTo !== undefined) frame.output_saved_to = result.outputSavedTo;
+  frame['body_size_bytes'] = result.bodySizeBytes;
+  if (result.body !== undefined) frame['body'] = result.body;
+  if (result.bodyBase64 !== undefined) frame['body_base64'] = result.bodyBase64;
+  if (result.outputSavedTo !== undefined) frame['output_saved_to'] = result.outputSavedTo;
 }
 
 function noPaymentFrameFromResult(result: PayResultNoPayment): Record<string, unknown> {
@@ -193,7 +193,7 @@ function noPaymentFrameFromResult(result: PayResultNoPayment): Record<string, un
     outcome: 'no-payment-required',
     status: result.status,
   };
-  if (result.contentType !== undefined) frame.content_type = result.contentType;
+  if (result.contentType !== undefined) frame['content_type'] = result.contentType;
   attachBodyFields(frame, result);
   return frame;
 }
@@ -212,11 +212,11 @@ function initialPayFrame(
     network: event.requirement.network,
     instruction: interval > 0 ? POLLING_INSTRUCTION : POST_PAY_INSTRUCTION,
   };
-  if (event.requirement.amount !== '') frame.amount = event.requirement.amount;
-  if (event.requirement.asset !== '') frame.asset = event.requirement.asset;
+  if (event.requirement.amount !== '') frame['amount'] = event.requirement.amount;
+  if (event.requirement.asset !== '') frame['asset'] = event.requirement.asset;
   if (interval <= 0) {
     const max = maxAttempts > 0 ? maxAttempts : 60;
-    frame._next = {
+    frame['_next'] = {
       command: `x402 status ${event.prepared.transactionId} --interval 5 --max-attempts ${String(max)}`,
       poll_interval_seconds: 5,
       until: 'encoded_payload is present',
@@ -235,8 +235,8 @@ function paidFrameFromResult(result: PayResultSuccess, payloadFile: string | und
     response_status: result.responseStatus,
   };
   decoratePayloadField(frame, result.encodedPayload, payloadFile);
-  if (result.responseContentType !== undefined) frame.response_content_type = result.responseContentType;
-  if (result.settled !== undefined) frame.settled = result.settled;
+  if (result.responseContentType !== undefined) frame['response_content_type'] = result.responseContentType;
+  if (result.settled !== undefined) frame['settled'] = result.settled;
   attachBodyFields(frame, result);
   return frame;
 }
@@ -251,7 +251,7 @@ function rejectedFrameFromResult(result: PayResultReplayRejected): Record<string
     network: result.network,
     response_status: result.responseStatus,
   };
-  if (result.responseContentType !== undefined) frame.response_content_type = result.responseContentType;
+  if (result.responseContentType !== undefined) frame['response_content_type'] = result.responseContentType;
   attachBodyFields(frame, result);
   return frame;
 }
@@ -273,7 +273,7 @@ async function* runPayCommand(
 
   if (!c.agent && !c.formatExplicit) {
     const client = await inflow.x402.client();
-    let finalPhase: PayPhase | null = null;
+    const captured: { finalPhase: PayPhase | null } = { finalPhase: null };
     await renderInkUntilExit(
       <PayView
         url={c.args.url}
@@ -292,13 +292,13 @@ async function* runPayCommand(
           ...(c.options.assetName !== undefined ? { assetNameFilter: c.options.assetName } : {}),
         }}
         onComplete={(phase) => {
-          finalPhase = phase;
+          captured.finalPhase = phase;
         }}
         onCancel={(approvalId) => inflow.x402.cancel({ approvalId })}
       />,
     );
-    if (finalPhase !== null) {
-      const phase = finalPhase as PayPhase;
+    if (captured.finalPhase !== null) {
+      const phase = captured.finalPhase;
       if (phase.kind === 'replay-rejected') {
         return c.error({
           code: PAYMENT_NOT_ACCEPTED_CODE,
@@ -421,7 +421,7 @@ export function toStatusFrame(
   if (response.encodedPayload !== undefined) {
     decoratePayloadField(frame, response.encodedPayload, payloadFile);
   }
-  if (response.paymentPayload !== undefined) frame.payment_payload = response.paymentPayload;
+  if (response.paymentPayload !== undefined) frame['payment_payload'] = response.paymentPayload;
   return frame;
 }
 
@@ -500,19 +500,19 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
   };
 
   if (!c.agent && !c.formatExplicit) {
-    let finalPhase: InspectPhase | null = null;
+    const captured: { finalPhase: InspectPhase | null } = { finalPhase: null };
     await renderInkUntilExit(
       <InspectView
         url={c.args.url}
         method={c.options.method}
         deps={deps}
         onComplete={(phase) => {
-          finalPhase = phase;
+          captured.finalPhase = phase;
         }}
       />,
     );
-    if (finalPhase !== null) {
-      const phase = finalPhase as InspectPhase;
+    if (captured.finalPhase !== null) {
+      const phase = captured.finalPhase;
       if (phase.kind === 'error') {
         return c.error({ code: phase.code, message: phase.message });
       }
@@ -520,25 +520,23 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
     return undefined;
   }
 
-  let finalEvent: { kind: string; payload: unknown } | null = null;
+  const captured: { finalEvent: { kind: string; payload: unknown } | null } = { finalEvent: null };
   await runInspectPipeline(deps, (event) => {
     if (event.type === 'errored') {
-      finalEvent = { kind: 'error', payload: event };
+      captured.finalEvent = { kind: 'error', payload: event };
       return;
     }
     if (event.type === 'accepts') {
-      finalEvent = { kind: 'accepts', payload: event.result };
+      captured.finalEvent = { kind: 'accepts', payload: event.result };
       return;
     }
-    if (event.type === 'no-payment') {
-      finalEvent = { kind: 'no-payment', payload: event.result };
-    }
+    captured.finalEvent = { kind: 'no-payment', payload: event.result };
   });
 
-  if (finalEvent === null) {
+  if (captured.finalEvent === null) {
     return c.error({ code: 'INSPECT_FAILED', message: 'Inspect pipeline produced no result.' });
   }
-  const { kind, payload } = finalEvent as { kind: string; payload: unknown };
+  const { kind, payload } = captured.finalEvent;
   if (kind === 'error') {
     const err = payload as { code: string; message: string };
     return c.error({ code: err.code, message: err.message });

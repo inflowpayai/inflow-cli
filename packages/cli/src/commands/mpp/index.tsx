@@ -144,10 +144,10 @@ function decorateCredentialField(
     writeFileSync(absolute, Buffer.from(credential, 'utf-8'), { mode: 0o600 });
     // Enforce 0o600 on overwrite — writeFileSync only sets mode on file creation.
     chmodSync(absolute, 0o600);
-    frame.credential_saved_to = absolute;
+    frame['credential_saved_to'] = absolute;
     return;
   }
-  frame.credential = credential;
+  frame['credential'] = credential;
 }
 
 function probeOptionsFrom(c: PayContext | InspectCommandContext): SellerProbeOptions {
@@ -182,10 +182,10 @@ function attachBodyFields(
   frame: Record<string, unknown>,
   result: Pick<MppPayResultNoPayment, 'bodySizeBytes' | 'body' | 'bodyBase64' | 'outputSavedTo'>,
 ): void {
-  frame.body_size_bytes = result.bodySizeBytes;
-  if (result.body !== undefined) frame.body = result.body;
-  if (result.bodyBase64 !== undefined) frame.body_base64 = result.bodyBase64;
-  if (result.outputSavedTo !== undefined) frame.output_saved_to = result.outputSavedTo;
+  frame['body_size_bytes'] = result.bodySizeBytes;
+  if (result.body !== undefined) frame['body'] = result.body;
+  if (result.bodyBase64 !== undefined) frame['body_base64'] = result.bodyBase64;
+  if (result.outputSavedTo !== undefined) frame['output_saved_to'] = result.outputSavedTo;
 }
 
 function challengeFields(challenge: DecodedChallenge): Record<string, unknown> {
@@ -194,15 +194,15 @@ function challengeFields(challenge: DecodedChallenge): Record<string, unknown> {
     method: challenge.method,
     intent: challenge.intent,
   };
-  if (challenge.amount !== undefined) out.amount = challenge.amount;
-  if (challenge.currency !== undefined) out.currency = challenge.currency;
-  if (challenge.rail !== undefined) out.rail = challenge.rail;
+  if (challenge.amount !== undefined) out['amount'] = challenge.amount;
+  if (challenge.currency !== undefined) out['currency'] = challenge.currency;
+  if (challenge.rail !== undefined) out['rail'] = challenge.rail;
   return out;
 }
 
 function noPaymentFrameFromResult(result: MppPayResultNoPayment): Record<string, unknown> {
   const frame: Record<string, unknown> = { outcome: 'no-payment-required', status: result.status };
-  if (result.contentType !== undefined) frame.content_type = result.contentType;
+  if (result.contentType !== undefined) frame['content_type'] = result.contentType;
   attachBodyFields(frame, result);
   return frame;
 }
@@ -215,13 +215,13 @@ function createdFrameFromEvent(created: MppPayCreated, interval: number, maxAtte
     challenge: challengeFields(created.challenge),
     instruction: interval > 0 ? POLLING_INSTRUCTION : POST_CREATE_INSTRUCTION,
   };
-  if (created.approvalId !== undefined) frame.approval_id = created.approvalId;
-  if (created.approvalUrl !== undefined) frame.approval_url = created.approvalUrl;
-  if (created.retryAfterSeconds !== undefined) frame.retry_after_seconds = created.retryAfterSeconds;
-  if (created.expires !== undefined) frame.expires = created.expires;
+  if (created.approvalId !== undefined) frame['approval_id'] = created.approvalId;
+  if (created.approvalUrl !== undefined) frame['approval_url'] = created.approvalUrl;
+  if (created.retryAfterSeconds !== undefined) frame['retry_after_seconds'] = created.retryAfterSeconds;
+  if (created.expires !== undefined) frame['expires'] = created.expires;
   if (pending && interval <= 0) {
     const max = maxAttempts > 0 ? maxAttempts : 60;
-    frame._next = {
+    frame['_next'] = {
       command: `mpp status ${created.transactionId} --interval 5 --max-attempts ${String(max)}`,
       poll_interval_seconds: 5,
       until: 'state is ready (credential present)',
@@ -239,8 +239,8 @@ function paidFrameFromResult(result: MppPayResultSuccess, credentialFile: string
     response_status: result.responseStatus,
   };
   decorateCredentialField(frame, result.credential, credentialFile);
-  if (result.responseContentType !== undefined) frame.response_content_type = result.responseContentType;
-  if (result.settled !== undefined) frame.settled = result.settled;
+  if (result.responseContentType !== undefined) frame['response_content_type'] = result.responseContentType;
+  if (result.settled !== undefined) frame['settled'] = result.settled;
   attachBodyFields(frame, result);
   return frame;
 }
@@ -252,7 +252,7 @@ function rejectedFrameFromResult(result: MppPayResultRejected): Record<string, u
     challenge_id: result.challengeId,
     response_status: result.responseStatus,
   };
-  if (result.responseContentType !== undefined) frame.response_content_type = result.responseContentType;
+  if (result.responseContentType !== undefined) frame['response_content_type'] = result.responseContentType;
   attachBodyFields(frame, result);
   return frame;
 }
@@ -264,13 +264,13 @@ export function toStatusFrame(response: MppTransactionResponse, credentialFile?:
   };
   if (response.state === 'ready' && response.credential !== undefined) {
     decorateCredentialField(frame, response.credential, credentialFile);
-    if (response.expires !== undefined) frame.expires = response.expires;
+    if (response.expires !== undefined) frame['expires'] = response.expires;
   }
   if (response.state === 'pending') {
-    if (response.approvalId !== undefined) frame.approval_id = response.approvalId;
-    if (response.retryAfterSeconds !== undefined) frame.retry_after_seconds = response.retryAfterSeconds;
+    if (response.approvalId !== undefined) frame['approval_id'] = response.approvalId;
+    if (response.retryAfterSeconds !== undefined) frame['retry_after_seconds'] = response.retryAfterSeconds;
   }
-  if (response.problem !== undefined) frame.problem = response.problem;
+  if (response.problem !== undefined) frame['problem'] = response.problem;
   return frame;
 }
 
@@ -291,7 +291,7 @@ async function* runPayCommand(
 
   if (!c.agent && !c.formatExplicit) {
     const client = await inflow.mpp.client();
-    let finalPhase: MppPayPhase | null = null;
+    const captured: { finalPhase: MppPayPhase | null } = { finalPhase: null };
     await renderInkUntilExit(
       <PayView
         url={c.args.url}
@@ -303,13 +303,13 @@ async function* runPayCommand(
           awaitPayment: true,
         }}
         onComplete={(phase) => {
-          finalPhase = phase;
+          captured.finalPhase = phase;
         }}
         onCancel={(approvalId) => inflow.mpp.cancel({ approvalId })}
       />,
     );
-    if (finalPhase !== null) {
-      const phase = finalPhase as MppPayPhase;
+    if (captured.finalPhase !== null) {
+      const phase = captured.finalPhase;
       if (phase.kind === 'seller-rejected') {
         return c.error({
           code: MPP_PAYMENT_NOT_ACCEPTED_CODE,
@@ -425,9 +425,7 @@ async function* runStatusCommand(
         retryable: true,
       });
     }
-    if (event.type === 'crashed') {
-      return c.error({ code: 'PAYMENT_FAILED', message: event.message });
-    }
+    return c.error({ code: 'PAYMENT_FAILED', message: event.message });
   }
 }
 
@@ -500,19 +498,19 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
   };
 
   if (!c.agent && !c.formatExplicit) {
-    let finalPhase: MppInspectPhase | null = null;
+    const captured: { finalPhase: MppInspectPhase | null } = { finalPhase: null };
     await renderInkUntilExit(
       <InspectView
         url={c.args.url}
         method={c.options.method}
         deps={deps}
         onComplete={(phase) => {
-          finalPhase = phase;
+          captured.finalPhase = phase;
         }}
       />,
     );
-    if (finalPhase !== null) {
-      const phase = finalPhase as MppInspectPhase;
+    if (captured.finalPhase !== null) {
+      const phase = captured.finalPhase;
       if (phase.kind === 'error') {
         return c.error({ code: phase.code, message: phase.message });
       }
@@ -520,25 +518,23 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
     return undefined;
   }
 
-  let finalEvent: { kind: string; payload: unknown } | null = null;
+  const captured: { finalEvent: { kind: string; payload: unknown } | null } = { finalEvent: null };
   await runMppInspectPipeline(deps, (event) => {
     if (event.type === 'errored') {
-      finalEvent = { kind: 'error', payload: event };
+      captured.finalEvent = { kind: 'error', payload: event };
       return;
     }
     if (event.type === 'challenges') {
-      finalEvent = { kind: 'challenges', payload: event.result };
+      captured.finalEvent = { kind: 'challenges', payload: event.result };
       return;
     }
-    if (event.type === 'no-payment') {
-      finalEvent = { kind: 'no-payment', payload: event.result };
-    }
+    captured.finalEvent = { kind: 'no-payment', payload: event.result };
   });
 
-  if (finalEvent === null) {
+  if (captured.finalEvent === null) {
     return c.error({ code: 'INSPECT_FAILED', message: 'Inspect pipeline produced no result.' });
   }
-  const { kind, payload } = finalEvent as { kind: string; payload: unknown };
+  const { kind, payload } = captured.finalEvent;
   if (kind === 'error') {
     const err = payload as { code: string; message: string };
     return c.error({ code: err.code, message: err.message });

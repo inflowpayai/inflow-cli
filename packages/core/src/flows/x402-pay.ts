@@ -251,7 +251,10 @@ export function buildSettledMeta(headers: Headers): PaySettledMeta | undefined {
   const responseHeader = readHeader(Object.fromEntries(headers.entries()), HEADERS.PAYMENT_RESPONSE);
   if (responseHeader === undefined) return undefined;
   try {
-    const decoded = decodePaymentResponseHeader(responseHeader);
+    const decoded = decodePaymentResponseHeader(responseHeader) as {
+      network?: string;
+      transaction?: string;
+    };
     const meta: PaySettledMeta = {};
     if (decoded.network !== undefined) meta.network = decoded.network;
     if (decoded.transaction !== undefined) meta.transaction = decoded.transaction;

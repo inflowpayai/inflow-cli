@@ -132,6 +132,9 @@ export class AuthResource implements IAuthResource {
             rawBody,
             details: data,
           });
+        case undefined:
+          // No OAuth error code present; fall through to the generic token-poll failure below.
+          break;
       }
     }
 

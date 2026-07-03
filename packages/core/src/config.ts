@@ -58,7 +58,7 @@ export const ENVIRONMENT_BASE_URLS: Record<InflowEnvironment, string> = {
  */
 export function resolveApiBaseUrl(options: Pick<InflowOptions, 'apiBaseUrl' | 'environment'>): string {
   return (
-    options.apiBaseUrl ?? process.env.INFLOW_BASE_URL ?? ENVIRONMENT_BASE_URLS[options.environment ?? 'production']
+    options.apiBaseUrl ?? process.env['INFLOW_BASE_URL'] ?? ENVIRONMENT_BASE_URLS[options.environment ?? 'production']
   );
 }
 
@@ -139,11 +139,11 @@ export function resolveInflowSdkConfig(options: InflowOptions = {}): ResolvedInf
   const logger = options.logger ?? createDefaultLogger(verbose);
   const environment: InflowEnvironment = options.environment ?? 'production';
 
-  const apiBaseUrl = options.apiBaseUrl ?? process.env.INFLOW_BASE_URL ?? ENVIRONMENT_BASE_URLS[environment];
+  const apiBaseUrl = options.apiBaseUrl ?? process.env['INFLOW_BASE_URL'] ?? ENVIRONMENT_BASE_URLS[environment];
 
-  const authBaseUrl = options.authBaseUrl ?? process.env.INFLOW_AUTH_BASE_URL ?? apiBaseUrl;
+  const authBaseUrl = options.authBaseUrl ?? process.env['INFLOW_AUTH_BASE_URL'] ?? apiBaseUrl;
 
-  const cliClientId = options.cliClientId ?? process.env.INFLOW_CLI_CLIENT_ID;
+  const cliClientId = options.cliClientId ?? process.env['INFLOW_CLI_CLIENT_ID'];
 
   const authMode = resolveAuthMode(options);
 
@@ -152,7 +152,7 @@ export function resolveInflowSdkConfig(options: InflowOptions = {}): ResolvedInf
     throw new InflowConfigurationError('No fetch implementation available. Pass `fetch` in InFlow SDK options.');
   }
 
-  const proxyUrl = process.env.INFLOW_HTTP_PROXY;
+  const proxyUrl = process.env['INFLOW_HTTP_PROXY'];
   const proxyFetch = proxyUrl && options.fetch === undefined ? createProxyFetch(baseFetch, proxyUrl) : baseFetch;
   const effectiveFetch =
     options.defaultHeaders && Object.keys(options.defaultHeaders).length > 0

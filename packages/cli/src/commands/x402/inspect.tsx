@@ -141,7 +141,7 @@ export function acceptToFrame(entry: InspectRow): Record<string, unknown> {
     pay_to: entry.payTo,
     max_timeout_seconds: entry.maxTimeoutSeconds,
   };
-  if (entry.extra !== undefined) row.extra = entry.extra;
+  if (entry.extra !== undefined) row['extra'] = entry.extra;
   return row;
 }
 
@@ -154,7 +154,7 @@ export function buildAcceptsFrame(result: InspectResultAccepts): Record<string, 
     x402_version: result.x402Version,
     accepts: result.accepts.map(acceptToFrame),
   };
-  if (result.extensions !== undefined) frame.extensions = result.extensions;
+  if (result.extensions !== undefined) frame['extensions'] = result.extensions;
   return frame;
 }
 
@@ -166,6 +166,6 @@ export function buildNoPaymentFrame(result: InspectResultNoPayment): Record<stri
     status: result.status,
     body_size_bytes: result.bodySizeBytes,
   };
-  if (result.contentType !== undefined) frame.content_type = result.contentType;
+  if (result.contentType !== undefined) frame['content_type'] = result.contentType;
   return frame;
 }

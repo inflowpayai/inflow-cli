@@ -25,15 +25,15 @@ export const LoginApiKey: React.FC<LoginApiKeyProps> = ({ apiKey, auth, connecti
 
   useEffect(() => {
     const run = auth.loginApiKey({ apiKey, connection });
-    let cancelled = false;
+    const state = { cancelled: false };
     void (async () => {
       for await (const event of run.events) {
-        if (cancelled) return;
+        if (state.cancelled) return;
         dispatch(event);
       }
     })();
     return () => {
-      cancelled = true;
+      state.cancelled = true;
     };
   }, [apiKey, auth, connection]);
 

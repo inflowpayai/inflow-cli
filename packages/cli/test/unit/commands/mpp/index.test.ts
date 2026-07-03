@@ -67,23 +67,23 @@ function challengeHeader(): string {
 describe('createdFrameFromEvent', () => {
   it('includes _next + post-create instruction for a pending tx at interval 0', () => {
     const frame = createdFrameFromEvent(created(), 0, 0);
-    expect(frame.transaction_id).toBe('tx-1');
-    expect(frame.state).toBe('pending');
-    expect(frame.approval_id).toBe('ap-1');
-    const next = frame._next as { command: string };
+    expect(frame['transaction_id']).toBe('tx-1');
+    expect(frame['state']).toBe('pending');
+    expect(frame['approval_id']).toBe('ap-1');
+    const next = frame['_next'] as { command: string };
     expect(next.command).toContain('mpp status tx-1');
-    expect(frame.instruction).toContain('Present the approval_url');
+    expect(frame['instruction']).toContain('Present the approval_url');
   });
 
   it('omits _next and uses the polling instruction at interval > 0', () => {
     const frame = createdFrameFromEvent(created(), 5, 60);
-    expect(frame._next).toBeUndefined();
-    expect(frame.instruction).toContain('polling');
+    expect(frame['_next']).toBeUndefined();
+    expect(frame['instruction']).toContain('polling');
   });
 
   it('omits _next for a ready (non-pending) transaction', () => {
     const frame = createdFrameFromEvent(created({ state: 'ready' }), 0, 0);
-    expect(frame._next).toBeUndefined();
+    expect(frame['_next']).toBeUndefined();
   });
 });
 
@@ -104,9 +104,9 @@ describe('paidFrameFromResult', () => {
 
   it('inlines the credential when no credential file is given', () => {
     const frame = paidFrameFromResult(success, undefined);
-    expect(frame.credential).toBe('CRED-B64');
-    expect(frame.outcome).toBe('paid');
-    expect(frame.body).toBe('PAID');
+    expect(frame['credential']).toBe('CRED-B64');
+    expect(frame['outcome']).toBe('paid');
+    expect(frame['body']).toBe('PAID');
   });
 
   it('writes the credential to a 0o600 file and swaps to credential_saved_to', () => {
@@ -114,8 +114,8 @@ describe('paidFrameFromResult', () => {
     try {
       const path = join(dir, 'cred.txt');
       const frame = paidFrameFromResult(success, path);
-      expect(frame.credential).toBeUndefined();
-      expect(frame.credential_saved_to).toBe(path);
+      expect(frame['credential']).toBeUndefined();
+      expect(frame['credential_saved_to']).toBe(path);
       expect(readFileSync(path, 'utf-8')).toBe('CRED-B64');
       expect(statSync(path).mode & 0o777).toBe(0o600);
     } finally {
@@ -137,9 +137,9 @@ describe('rejectedFrameFromResult', () => {
       bodySizeBytes: 0,
     };
     const frame = rejectedFrameFromResult(rejected);
-    expect(frame.outcome).toBe('seller-rejected');
-    expect(frame.transaction_id).toBe('tx-1');
-    expect(frame.credential).toBeUndefined();
+    expect(frame['outcome']).toBe('seller-rejected');
+    expect(frame['transaction_id']).toBe('tx-1');
+    expect(frame['credential']).toBeUndefined();
   });
 });
 
@@ -181,14 +181,14 @@ describe('toStatusFrame', () => {
   it('surfaces approval_id + retry_after_seconds on a pending transaction', () => {
     const frame = toStatusFrame(tx({ state: 'pending', approvalId: 'ap-1', retryAfterSeconds: 5 }));
     expect(frame).toMatchObject({ state: 'pending', approval_id: 'ap-1', retry_after_seconds: 5 });
-    expect(frame.credential).toBeUndefined();
+    expect(frame['credential']).toBeUndefined();
   });
 });
 
 describe('runDecodeCommand (agent mode)', () => {
   it('decodes a WWW-Authenticate: Payment header to a challenge', async () => {
     const out = (await runDecodeCommand(decodeCtx(challengeHeader()))) as Record<string, unknown>;
-    expect(out.kind).toBe('challenge');
+    expect(out['kind']).toBe('challenge');
   });
 
   it('calls c.error with DECODE_FAILED on garbage input', async () => {

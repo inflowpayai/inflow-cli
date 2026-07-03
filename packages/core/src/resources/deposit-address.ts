@@ -26,10 +26,7 @@ export class DepositAddressResource implements IDepositAddressResource {
         },
       );
     }
-    const body = (data as DepositAddresses | null) ?? {
-      configured: [],
-      unconfigured: [],
-    };
+    const body = (data as Partial<DepositAddresses> | null) ?? {};
     return {
       configured: body.configured ?? [],
       unconfigured: body.unconfigured ?? [],

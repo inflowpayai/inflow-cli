@@ -86,7 +86,7 @@ export const AuthStatus: React.FC<AuthStatusProps> = ({
   const { finish } = useFlowExit(onComplete);
 
   useEffect(() => {
-    let cancelled = false;
+    const state = { cancelled: false };
     const options = composeOptions({ apiKey, displayConnection, verbose });
     const snapshot = auth.snapshot(options);
 
@@ -98,11 +98,11 @@ export const AuthStatus: React.FC<AuthStatusProps> = ({
     dispatch({ type: 'probeStart', frame: snapshot });
     void (async () => {
       const result = await auth.probeStatus({ composeOptions: options });
-      if (!cancelled) dispatch({ type: 'probeResult', result });
+      if (!state.cancelled) dispatch({ type: 'probeResult', result });
     })();
 
     return () => {
-      cancelled = true;
+      state.cancelled = true;
     };
   }, [auth, probe, apiKey, displayConnection, verbose]);
 
