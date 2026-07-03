@@ -34,7 +34,7 @@ function makeClient(overrides: Partial<MppClient> = {}): MppClient {
 
 function authed(
   client: MppClient,
-  cancelApproval = vi.fn(async () => undefined),
+  cancelApproval = vi.fn(() => Promise.resolve(undefined)),
 ): { inflow: Inflow; storage: AuthStorage } {
   const storage = new MemoryStorage({
     access_token: 'a',
@@ -83,7 +83,7 @@ async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
 
 async function drainWithReturn<T>(gen: AsyncGenerator<T, unknown>): Promise<{ values: T[]; returnValue: unknown }> {
   const values: T[] = [];
-  while (true) {
+  for (;;) {
     const next = await gen.next();
     if (next.done) return { values, returnValue: next.value };
     values.push(next.value);
@@ -99,16 +99,14 @@ describe('mpp agent runners', () => {
         { method: 'inflow', intents: [{ intent: 'charge', rails: [{ rail: 'balance', currencies: ['USDC'] }] }] },
       ],
     };
-    const { inflow, storage } = authed(
-      makeClient({ getSupported: vi.fn(async () => supported) as MppClient['getSupported'] }),
-    );
+    const { inflow, storage } = authed(makeClient({ getSupported: vi.fn(() => Promise.resolve(supported)) }));
     const ctx = { agent: true, formatExplicit: true, error: vi.fn() };
     const out = await runSupportedCommand(ctx as never, inflow, storage);
     expect(out).toEqual(supported);
   });
 
   it('runCancelCommand delegates to cancelApproval', async () => {
-    const cancelApproval = vi.fn(async () => undefined);
+    const cancelApproval = vi.fn(() => Promise.resolve(undefined));
     const { inflow, storage } = authed(makeClient(), cancelApproval);
     const ctx = { agent: true, formatExplicit: true, args: { approvalId: 'ap-1' }, error: vi.fn() };
     const out = await runCancelCommand(ctx as never, inflow, storage);
@@ -118,11 +116,13 @@ describe('mpp agent runners', () => {
 
   it('runStatusCommand (interval 0) yields a single ready snapshot', async () => {
     const client = makeClient({
-      getTransaction: vi.fn(async () => ({
-        transactionId: 'tx-1',
-        state: 'ready',
-        credential: 'CRED',
-      })) as MppClient['getTransaction'],
+      getTransaction: vi.fn(() =>
+        Promise.resolve({
+          transactionId: 'tx-1',
+          state: 'ready',
+          credential: 'CRED',
+        }),
+      ) as MppClient['getTransaction'],
     });
     const { inflow, storage } = authed(client);
     const ctx = agentCtx({ transactionId: 'tx-1' }, { interval: 0, maxAttempts: 0, timeout: 900 });
@@ -147,11 +147,13 @@ describe('mpp agent runners', () => {
     fetchSpy.mockResolvedValueOnce(challenge402());
     fetchSpy.mockResolvedValueOnce(new Response('PAID', { status: 200 }));
     const client = makeClient({
-      createTransaction: vi.fn(async () => ({
-        state: 'ready',
-        credential: 'CRED',
-        transactionId: 'tx-1',
-      })) as MppClient['createTransaction'],
+      createTransaction: vi.fn(() =>
+        Promise.resolve({
+          state: 'ready',
+          credential: 'CRED',
+          transactionId: 'tx-1',
+        }),
+      ) as MppClient['createTransaction'],
     });
     const { inflow, storage } = authed(client);
     const ctx = agentCtx(
@@ -220,11 +222,13 @@ describe('mpp agent runners', () => {
     fetchSpy.mockResolvedValueOnce(challenge402());
     fetchSpy.mockResolvedValueOnce(new Response('nope', { status: 402 }));
     const client = makeClient({
-      createTransaction: vi.fn(async () => ({
-        state: 'ready',
-        credential: 'CRED',
-        transactionId: 'tx-1',
-      })) as MppClient['createTransaction'],
+      createTransaction: vi.fn(() =>
+        Promise.resolve({
+          state: 'ready',
+          credential: 'CRED',
+          transactionId: 'tx-1',
+        }),
+      ) as MppClient['createTransaction'],
     });
     const { inflow, storage } = authed(client);
     const ctx = agentCtx(
@@ -253,17 +257,21 @@ describe('mpp agent runners', () => {
   it('runPayCommand returns the c.error sentinel when an awaited transaction expires', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(challenge402());
     const client = makeClient({
-      createTransaction: vi.fn(async () => ({
-        state: 'pending',
-        transactionId: 'tx-expired',
-        approvalId: 'ap-expired',
-        approvalUrl: 'https://sandbox.inflowpay.ai/approvals/ap-expired/view/',
-        retryAfterSeconds: 1,
-      })) as MppClient['createTransaction'],
-      getTransaction: vi.fn(async () => ({
-        transactionId: 'tx-expired',
-        state: 'expired',
-      })) as MppClient['getTransaction'],
+      createTransaction: vi.fn(() =>
+        Promise.resolve({
+          state: 'pending',
+          transactionId: 'tx-expired',
+          approvalId: 'ap-expired',
+          approvalUrl: 'https://sandbox.inflowpay.ai/approvals/ap-expired/view/',
+          retryAfterSeconds: 1,
+        }),
+      ) as MppClient['createTransaction'],
+      getTransaction: vi.fn(() =>
+        Promise.resolve({
+          transactionId: 'tx-expired',
+          state: 'expired',
+        }),
+      ) as MppClient['getTransaction'],
     });
     const { inflow, storage } = authed(client);
     const ctx = agentCtxReturningError(
@@ -277,30 +285,34 @@ describe('mpp agent runners', () => {
   });
 
   it('runStatusCommand (interval > 0) errors PAYMENT_FAILED on a failed terminal', async () => {
-    const getTransaction = vi.fn(async () => ({
-      transactionId: 'tx-1',
-      state: 'failed' as const,
-      problem: {
-        type: 'https://paymentauth.org/problems/verification-failed',
-        title: 'fail',
-        status: 402,
-        detail: 'declined',
-      },
-    }));
-    const { inflow, storage } = authed(makeClient({ getTransaction: getTransaction as MppClient['getTransaction'] }));
+    const getTransaction = vi.fn(() =>
+      Promise.resolve({
+        transactionId: 'tx-1',
+        state: 'failed' as const,
+        problem: {
+          type: 'https://paymentauth.org/problems/verification-failed',
+          title: 'fail',
+          status: 402,
+          detail: 'declined',
+        },
+      }),
+    );
+    const { inflow, storage } = authed(makeClient({ getTransaction: getTransaction }));
     const ctx = agentCtx({ transactionId: 'tx-1' }, { interval: 0.01, maxAttempts: 0, timeout: 900 });
     await expect(drain(runStatusCommand(ctx as never, inflow, storage))).rejects.toThrow('c.error: PAYMENT_FAILED');
   });
 
   it('runStatusCommand (interval > 0) errors PAYMENT_EXPIRED on an expired terminal', async () => {
-    const getTransaction = vi.fn(async () => ({ transactionId: 'tx-1', state: 'expired' }));
+    const getTransaction = vi.fn(() => Promise.resolve({ transactionId: 'tx-1', state: 'expired' }));
     const { inflow, storage } = authed(makeClient({ getTransaction: getTransaction as MppClient['getTransaction'] }));
     const ctx = agentCtx({ transactionId: 'tx-1' }, { interval: 0.01, maxAttempts: 0, timeout: 900 });
     await expect(drain(runStatusCommand(ctx as never, inflow, storage))).rejects.toThrow('c.error: PAYMENT_EXPIRED');
   });
 
   it('runStatusCommand (interval > 0) errors POLLING_TIMEOUT when max attempts are exhausted', async () => {
-    const getTransaction = vi.fn(async () => ({ transactionId: 'tx-1', state: 'pending', retryAfterSeconds: 0 }));
+    const getTransaction = vi.fn(() =>
+      Promise.resolve({ transactionId: 'tx-1', state: 'pending', retryAfterSeconds: 0 }),
+    );
     const { inflow, storage } = authed(makeClient({ getTransaction: getTransaction as MppClient['getTransaction'] }));
     const ctx = agentCtx({ transactionId: 'tx-1' }, { interval: 0.01, maxAttempts: 2, timeout: 900 });
     await expect(drain(runStatusCommand(ctx as never, inflow, storage))).rejects.toThrow('c.error: POLLING_TIMEOUT');

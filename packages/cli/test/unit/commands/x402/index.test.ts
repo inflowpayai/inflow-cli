@@ -31,10 +31,10 @@ function preparedEvent(overrides: Record<string, unknown> = {}): Extract<PayEven
       awaitPayload: () => Promise.reject(new Error('not called in this test')),
       status: () => Promise.resolve('INITIATED' as const),
       cancel: () => Promise.resolve(),
-    } as Extract<PayEvent, { type: 'prepared' }>['prepared'],
+    },
     approvalUrl: 'https://app.inflowpay.ai/approvals/appr_1/view/',
   };
-  return { ...base, ...overrides } as Extract<PayEvent, { type: 'prepared' }>;
+  return { ...base, ...overrides };
 }
 
 describe('initialPayFrame', () => {

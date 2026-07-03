@@ -348,7 +348,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
       }
       const { exitCode, stdout } = await run(
         ['--auth', '/tmp/inflow-test-no-auth.json', 'user', 'get', '--format', 'json'],
-        { env: cleanEnv as NodeJS.ProcessEnv },
+        { env: cleanEnv },
       );
       expect(exitCode).toBe(1);
       const payload = JSON.parse(stdout) as {

@@ -26,13 +26,13 @@ describe('classifyPayloadResponse', () => {
 
   it('classifies terminal failure statuses as failed', () => {
     for (const status of TERMINAL_FAILURE_STATUSES) {
-      expect(classifyPayloadResponse({ status } as unknown as X402PayloadResponse)).toBe('failed');
+      expect(classifyPayloadResponse({ status })).toBe('failed');
     }
   });
 
   it('classifies everything else as pending', () => {
-    expect(classifyPayloadResponse({ status: 'INITIATED' } as unknown as X402PayloadResponse)).toBe('pending');
-    expect(classifyPayloadResponse({ status: 'AWAITING_SIGNATURE' } as unknown as X402PayloadResponse)).toBe('pending');
+    expect(classifyPayloadResponse({ status: 'INITIATED' })).toBe('pending');
+    expect(classifyPayloadResponse({ status: 'AWAITING_SIGNATURE' })).toBe('pending');
   });
 });
 

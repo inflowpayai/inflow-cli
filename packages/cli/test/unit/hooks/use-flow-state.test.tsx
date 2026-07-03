@@ -14,12 +14,6 @@ function Probe({ action, onComplete }: ProbeProps): React.ReactElement {
   return <Text>{`status=${status};data=${String(data)};error=${error}`}</Text>;
 }
 
-async function flushMicrotasks(rounds = 8): Promise<void> {
-  for (let i = 0; i < rounds; i++) {
-    await Promise.resolve();
-  }
-}
-
 describe('useFlowState', () => {
   it('transitions loading -> success and calls onComplete with the result', async () => {
     const onComplete = vi.fn();

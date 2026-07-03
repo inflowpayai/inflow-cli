@@ -59,11 +59,11 @@ function prepared(
 
 function makeClient(overrides: Partial<X402InflowClient> = {}): X402InflowClient {
   const base = {
-    selectInflowRequirement: vi.fn(async () => requirement()),
-    prepareInflowPayment: vi.fn(async () => prepared()),
-    getSupported: vi.fn(async () => ({ kinds: [] })),
-    getX402Payload: vi.fn(async () => ({ status: 'INITIATED' as const })),
-    cancelApproval: vi.fn(async () => undefined),
+    selectInflowRequirement: vi.fn(() => Promise.resolve(requirement())),
+    prepareInflowPayment: vi.fn(() => Promise.resolve(prepared())),
+    getSupported: vi.fn(() => Promise.resolve({ kinds: [] })),
+    getX402Payload: vi.fn(() => Promise.resolve({ status: 'INITIATED' as const })),
+    cancelApproval: vi.fn(() => Promise.resolve(undefined)),
   };
   return { ...base, ...overrides } as unknown as X402InflowClient;
 }
@@ -149,7 +149,7 @@ describe('PayView', () => {
       }),
     );
     const client = makeClient({
-      selectInflowRequirement: vi.fn(async () => null),
+      selectInflowRequirement: vi.fn(() => Promise.resolve(null)),
     });
     const { lastFrame, unmount } = render(
       <PayView

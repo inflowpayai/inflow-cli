@@ -29,7 +29,7 @@ function decodableChallenge(over: {
       currency: over.currency ?? 'USDC',
       methodDetails: { rail: over.rail ?? 'balance' },
     }),
-  } as unknown as MppChallenge;
+  };
 }
 
 const usdcBalance = decodableChallenge({ id: 'a', currency: 'USDC', rail: 'balance' });

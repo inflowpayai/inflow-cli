@@ -85,12 +85,14 @@ afterEach(() => {
 
 describe('runUserGet (tty mode)', () => {
   it('returns the user when renderInkUntilExit produces a success outcome', async () => {
-    renderMock.mockImplementation(async (_element, resolveResult) => {
+    renderMock.mockImplementation((_element, resolveResult) => {
       const resolver = resolveResult as (() => unknown) | undefined;
-      return resolver ? (resolver() ?? { kind: 'success', user: sampleUser }) : { kind: 'success', user: sampleUser };
+      return Promise.resolve(
+        resolver ? (resolver() ?? { kind: 'success', user: sampleUser }) : { kind: 'success', user: sampleUser },
+      );
     });
-    renderMock.mockImplementation(async (_element) => {
-      return { kind: 'success', user: sampleUser } as const;
+    renderMock.mockImplementation((_element) => {
+      return Promise.resolve({ kind: 'success', user: sampleUser } as const);
     });
 
     const ctx = ttyCtx();
@@ -108,7 +110,7 @@ describe('runUserGet (tty mode)', () => {
   });
 
   it('throws an IncurError when the TTY frame produced no result (null outcome)', async () => {
-    renderMock.mockImplementation(async () => null);
+    renderMock.mockImplementation(() => Promise.resolve(null));
 
     const ctx = ttyCtx();
     const storage = new MemoryStorage(tokens);
@@ -122,10 +124,12 @@ describe('runUserGet (tty mode)', () => {
   });
 
   it('throws an IncurError surfacing the error message when the TTY frame produced an error outcome', async () => {
-    renderMock.mockImplementation(async () => ({
-      kind: 'error',
-      message: 'boom',
-    }));
+    renderMock.mockImplementation(() =>
+      Promise.resolve({
+        kind: 'error',
+        message: 'boom',
+      }),
+    );
     const ctx = ttyCtx();
     const storage = new MemoryStorage(tokens);
     await expect(

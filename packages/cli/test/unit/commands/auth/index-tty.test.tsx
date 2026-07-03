@@ -206,7 +206,7 @@ describe('runAuthLogin (tty mode)', () => {
       }),
     };
     const gen = runAuthLogin(
-      ctx as never,
+      ctx,
       {
         authResource: authStub(),
         userResource: userStub(),
@@ -248,7 +248,7 @@ describe('runAuthStatus (tty + agent details)', () => {
     };
     const storage = new MemoryStorage(sampleTokens);
     const gen = runAuthStatus(
-      ctx as never,
+      ctx,
       {
         authResource: authStub(),
         userResource: userStub(),
@@ -275,7 +275,7 @@ describe('runAuthStatus (tty + agent details)', () => {
     const storage = new MemoryStorage(sampleTokens);
     const failingUser = userStub(() => Promise.reject(new Error('network')));
     const gen = runAuthStatus(
-      ctx as never,
+      ctx,
       {
         authResource: authStub({}, storage, failingUser),
         userResource: failingUser,
@@ -359,7 +359,7 @@ describe('runAuthLogin error envelope', () => {
     await expect(
       (async () => {
         for await (const frame of runAuthLogin(
-          ctx as never,
+          ctx,
           {
             authResource: auth,
             userResource: userStub(),
@@ -394,7 +394,7 @@ describe('runAuthLogin error envelope', () => {
     await expect(
       (async () => {
         for await (const _frame of runAuthLogin(
-          ctx as never,
+          ctx,
           {
             authResource: auth,
             userResource: userStub(),

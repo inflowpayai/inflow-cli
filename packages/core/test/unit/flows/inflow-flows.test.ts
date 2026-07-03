@@ -1,4 +1,5 @@
 import type { MppClient } from '@inflowpayai/mpp';
+import type * as X402BuyerModule from '@inflowpayai/x402-buyer';
 import type { InflowClient as X402BuyerClient } from '@inflowpayai/x402-buyer';
 import { http, HttpResponse } from 'msw';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -8,16 +9,18 @@ import { BASE_URL, balancesHappy, depositAddressesHappy, userHappy } from '../fi
 import { makeServer } from '../fixtures/server.js';
 
 vi.mock('@inflowpayai/x402-buyer', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@inflowpayai/x402-buyer')>();
+  const actual = await importOriginal<typeof X402BuyerModule>();
   return {
     ...actual,
-    createInflowClient: vi.fn(async () => ({
-      getSupported: vi.fn(async () => ({ kinds: [] })),
-      selectInflowRequirement: () => null,
-      getX402Payload: vi.fn(async () => ({ status: 'INITIATED' as const })),
-      cancelApproval: vi.fn(async () => undefined),
-      prepareInflowPayment: vi.fn(),
-    })),
+    createInflowClient: vi.fn(() =>
+      Promise.resolve({
+        getSupported: vi.fn(() => Promise.resolve({ kinds: [] })),
+        selectInflowRequirement: () => null,
+        getX402Payload: vi.fn(() => Promise.resolve({ status: 'INITIATED' as const })),
+        cancelApproval: vi.fn(() => Promise.resolve(undefined)),
+        prepareInflowPayment: vi.fn(),
+      }),
+    ),
   };
 });
 
@@ -180,15 +183,20 @@ describe('augmentX402 — mutation contract', () => {
 
 function stubMppClient(overrides: Partial<MppClient> = {}): MppClient {
   return {
-    getSupported: vi.fn(async () => ({ kinds: [] })),
-    getTransaction: vi.fn(async () => ({ transactionId: 'tx-9', state: 'ready' as const, credential: 'CRED' })),
+    getSupported: vi.fn(() => Promise.resolve({ kinds: [] })),
+    getTransaction: vi.fn(() =>
+      Promise.resolve({ transactionId: 'tx-9', state: 'ready' as const, credential: 'CRED' }),
+    ),
     createTransaction: vi.fn(),
     getConfig: vi.fn(),
     ...overrides,
   } as unknown as MppClient;
 }
 
-function rawMpp(client: MppClient, cancelApproval: () => Promise<void> = vi.fn(async () => undefined)): IMppResource {
+function rawMpp(
+  client: MppClient,
+  cancelApproval: () => Promise<void> = vi.fn(() => Promise.resolve(undefined)),
+): IMppResource {
   return { client: () => Promise.resolve(client), cancelApproval };
 }
 
@@ -228,13 +236,13 @@ describe('Inflow.mpp augmented operations', () => {
         { method: 'inflow', intents: [{ intent: 'charge', rails: [{ rail: 'balance', currencies: ['USDC'] }] }] },
       ],
     };
-    const raw = rawMpp(stubMppClient({ getSupported: vi.fn(async () => supported) as MppClient['getSupported'] }));
+    const raw = rawMpp(stubMppClient({ getSupported: vi.fn(() => Promise.resolve(supported)) }));
     const mpp = augmentMpp(raw, 'https://api.example.test');
     await expect(mpp.supported()).resolves.toEqual(supported);
   });
 
   it('mpp.cancel delegates to cancelApproval and returns the best-effort frame', async () => {
-    const cancelApproval = vi.fn(async () => undefined);
+    const cancelApproval = vi.fn(() => Promise.resolve(undefined));
     const mpp = augmentMpp(rawMpp(stubMppClient(), cancelApproval), 'https://api.example.test');
     await expect(mpp.cancel({ approvalId: 'ap-7' })).resolves.toEqual({
       approval_id: 'ap-7',
@@ -282,7 +290,7 @@ describe('wrapEmittingPipeline — error propagation through the MPP pay handle'
   it('rethrows an Error raised before the pipeline starts', async () => {
     const raw: IMppResource = {
       client: () => Promise.reject(new Error('client boom')),
-      cancelApproval: vi.fn(async () => undefined),
+      cancelApproval: vi.fn(() => Promise.resolve(undefined)),
     };
     const mpp = augmentMpp(raw, 'https://api.example.test');
     const run = mpp.pay({
@@ -297,9 +305,12 @@ describe('wrapEmittingPipeline — error propagation through the MPP pay handle'
   });
 
   it('wraps a non-Error rejection in an InflowSdkError carrying its string form', async () => {
+    // The pipeline is expected to wrap non-Error rejections; cast preserves the
+    // runtime string value while satisfying prefer-promise-reject-errors.
+    const nonErrorReason = 'weird-failure' as unknown as Error;
     const raw: IMppResource = {
-      client: () => Promise.reject('weird-failure'),
-      cancelApproval: vi.fn(async () => undefined),
+      client: () => Promise.reject(nonErrorReason),
+      cancelApproval: vi.fn(() => Promise.resolve(undefined)),
     };
     const mpp = augmentMpp(raw, 'https://api.example.test');
     const run = mpp.pay({

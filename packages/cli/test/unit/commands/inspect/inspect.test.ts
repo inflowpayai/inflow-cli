@@ -62,7 +62,7 @@ function ctx(): InspectCommandContext {
     error: (o: { code: string; message: string }) => {
       throw new Error(`${o.code}: ${o.message}`);
     },
-  } as InspectCommandContext;
+  };
 }
 
 describe('buildCombinedFrame', () => {

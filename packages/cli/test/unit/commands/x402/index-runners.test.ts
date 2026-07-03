@@ -64,21 +64,25 @@ function makePrepared(
 
 function makeClient(overrides: Partial<X402InflowClient> = {}): X402InflowClient {
   const base = {
-    selectInflowRequirement: vi.fn(async () => ({
-      scheme: 'balance',
-      network: 'inflow:1',
-      amount: '500',
-      payTo: 'inflow:abc',
-      maxTimeoutSeconds: 60,
-      asset: 'USDC',
-      extra: {},
-    })),
-    prepareInflowPayment: vi.fn(async () => makePrepared()),
-    getSupported: vi.fn(async () => ({
-      kinds: [{ scheme: 'balance', network: 'inflow:1', x402Version: 2 }],
-    })),
-    getX402Payload: vi.fn(async () => ({ status: 'INITIATED' as const })),
-    cancelApproval: vi.fn(async () => undefined),
+    selectInflowRequirement: vi.fn(() =>
+      Promise.resolve({
+        scheme: 'balance',
+        network: 'inflow:1',
+        amount: '500',
+        payTo: 'inflow:abc',
+        maxTimeoutSeconds: 60,
+        asset: 'USDC',
+        extra: {},
+      }),
+    ),
+    prepareInflowPayment: vi.fn(() => Promise.resolve(makePrepared())),
+    getSupported: vi.fn(() =>
+      Promise.resolve({
+        kinds: [{ scheme: 'balance', network: 'inflow:1', x402Version: 2 }],
+      }),
+    ),
+    getX402Payload: vi.fn(() => Promise.resolve({ status: 'INITIATED' as const })),
+    cancelApproval: vi.fn(() => Promise.resolve(undefined)),
   };
   return { ...base, ...overrides } as unknown as X402InflowClient;
 }
@@ -175,7 +179,7 @@ async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
 
 async function drainWithReturn<T>(gen: AsyncGenerator<T, unknown>): Promise<{ values: T[]; returnValue: unknown }> {
   const values: T[] = [];
-  while (true) {
+  for (;;) {
     const next = await gen.next();
     if (next.done) return { values, returnValue: next.value };
     values.push(next.value);
@@ -305,9 +309,7 @@ describe('runPayCommand (agent mode)', () => {
       }),
     );
     const client = makeClient({
-      prepareInflowPayment: vi.fn(async () => {
-        throw new X402PaymentIdFormatError('bad-id');
-      }),
+      prepareInflowPayment: vi.fn(() => Promise.reject(new X402PaymentIdFormatError('bad-id'))),
     });
     const ctx = agentContext(
       { url: 'https://seller/api' },
@@ -333,15 +335,17 @@ describe('runPayCommand (agent mode)', () => {
         headers: { 'PAYMENT-REQUIRED': header },
       }),
     );
-    const selectSpy = vi.fn(async () => ({
-      scheme: 'balance' as const,
-      network: 'inflow:1',
-      amount: '500',
-      payTo: 'inflow:abc',
-      maxTimeoutSeconds: 60,
-      asset: 'USDC',
-      extra: {},
-    }));
+    const selectSpy = vi.fn(() =>
+      Promise.resolve({
+        scheme: 'balance' as const,
+        network: 'inflow:1',
+        amount: '500',
+        payTo: 'inflow:abc',
+        maxTimeoutSeconds: 60,
+        asset: 'USDC',
+        extra: {},
+      }),
+    );
     const client = makeClient({ selectInflowRequirement: selectSpy });
     const ctx = agentContext(
       { url: 'https://seller/api' },
@@ -393,15 +397,17 @@ describe('runPayCommand (agent mode)', () => {
         headers: { 'PAYMENT-REQUIRED': header },
       }),
     );
-    const selectSpy = vi.fn(async (_decoded: PaymentRequired) => ({
-      scheme: 'exact' as const,
-      network: 'eip155:84532',
-      amount: '500',
-      payTo: '0xabc',
-      maxTimeoutSeconds: 60,
-      asset: 'USDC',
-      extra: {},
-    }));
+    const selectSpy = vi.fn((_decoded: PaymentRequired) =>
+      Promise.resolve({
+        scheme: 'exact' as const,
+        network: 'eip155:84532',
+        amount: '500',
+        payTo: '0xabc',
+        maxTimeoutSeconds: 60,
+        asset: 'USDC',
+        extra: {},
+      }),
+    );
     const client = makeClient({ selectInflowRequirement: selectSpy });
     const ctx = agentContext(
       { url: 'https://seller/api' },
@@ -437,7 +443,7 @@ describe('runPayCommand (agent mode)', () => {
       }),
     );
     const client = makeClient({
-      selectInflowRequirement: vi.fn(async () => null),
+      selectInflowRequirement: vi.fn(() => Promise.resolve(null)),
     });
     const ctx = agentContext(
       { url: 'https://seller/api' },
@@ -464,9 +470,7 @@ describe('runPayCommand (agent mode)', () => {
       }),
     );
     const client = makeClient({
-      prepareInflowPayment: vi.fn(async () => {
-        throw new X402AdapterRoutingError('balance', 'inflow:1');
-      }),
+      prepareInflowPayment: vi.fn(() => Promise.reject(new X402AdapterRoutingError('balance', 'inflow:1'))),
     });
     const ctx = agentContext(
       { url: 'https://seller/api' },
@@ -493,7 +497,9 @@ describe('runPayCommand (agent mode)', () => {
       }),
     );
     const client = makeClient({
-      prepareInflowPayment: vi.fn(async () => makePrepared(new X402ApprovalFailedError('appr_1', 'DECLINED'))),
+      prepareInflowPayment: vi.fn(() =>
+        Promise.resolve(makePrepared(new X402ApprovalFailedError('appr_1', 'DECLINED'))),
+      ),
     });
     const ctx = agentContext(
       { url: 'https://seller/api' },
@@ -607,7 +613,7 @@ describe('runPayCommand (agent mode)', () => {
     const { inflow, storage } = authedResources(makeClient());
     await drain(runPayCommand(ctx, inflow, storage, 'https://api.inflowpay.ai'));
     const [, init] = fetchSpy.mock.calls[0] ?? [];
-    expect((init as RequestInit | undefined)?.body).toBe('{"x":1}');
+    expect(init?.body).toBe('{"x":1}');
   });
 
   it('yields replay-rejected frame and emits PAYMENT_NOT_ACCEPTED when the seller returns 402 on replay', async () => {
@@ -678,7 +684,7 @@ describe('runPayCommand (agent mode)', () => {
 describe('runStatusCommand (agent mode)', () => {
   it('yields a single status frame when interval=0 (snapshot mode)', async () => {
     const client = makeClient({
-      getX402Payload: vi.fn(async () => ({ status: 'INITIATED' })),
+      getX402Payload: vi.fn(() => Promise.resolve({ status: 'INITIATED' })),
     });
     const ctx = agentContext(
       { transactionId: 'txn_1' },
@@ -696,7 +702,7 @@ describe('runStatusCommand (agent mode)', () => {
 
   it('emits POLLING_TIMEOUT when polling exhausts max_attempts', async () => {
     const client = makeClient({
-      getX402Payload: vi.fn(async () => ({ status: 'INITIATED' })),
+      getX402Payload: vi.fn(() => Promise.resolve({ status: 'INITIATED' })),
     });
     const ctx = agentContext(
       { transactionId: 'txn_x' },
@@ -713,7 +719,7 @@ describe('runStatusCommand (agent mode)', () => {
 
   it('emits APPROVAL_FAILED when the final status is a terminal failure with no payload', async () => {
     const client = makeClient({
-      getX402Payload: vi.fn(async () => ({ status: 'DECLINED' })),
+      getX402Payload: vi.fn(() => Promise.resolve({ status: 'DECLINED' })),
     });
     const ctx = agentContext(
       { transactionId: 'txn_x' },
@@ -730,7 +736,7 @@ describe('runStatusCommand (agent mode)', () => {
 
   it('returns the c.error sentinel when the final status is a terminal failure with no payload', async () => {
     const client = makeClient({
-      getX402Payload: vi.fn(async () => ({ status: 'DECLINED' })),
+      getX402Payload: vi.fn(() => Promise.resolve({ status: 'DECLINED' })),
     });
     const ctx = agentContextReturningError(
       { transactionId: 'txn_x' },
@@ -769,7 +775,7 @@ describe('runStatusCommand (agent mode)', () => {
       },
     ];
     const client = makeClient({
-      getX402Payload: vi.fn(async () => responses.shift() ?? { status: 'INITIATED' }),
+      getX402Payload: vi.fn(() => Promise.resolve(responses.shift() ?? { status: 'INITIATED' })),
     });
     const ctx = agentContext(
       { transactionId: 'txn_x' },
@@ -788,7 +794,7 @@ describe('runStatusCommand (agent mode)', () => {
 
 describe('runCancelCommand', () => {
   it('returns the best-effort cancel envelope in agent mode', async () => {
-    const cancelApproval = vi.fn(async () => undefined);
+    const cancelApproval = vi.fn(() => Promise.resolve(undefined));
     const client = makeClient({ cancelApproval });
     const ctx = agentContextNoOptions({ approvalId: 'appr_1' });
     const { inflow, storage } = authedResources(client);
@@ -796,7 +802,7 @@ describe('runCancelCommand', () => {
     expect(result).toEqual({
       approval_id: 'appr_1',
       cancelled: true,
-      note: expect.any(String),
+      note: expect.any(String) as string,
     });
     expect(cancelApproval).toHaveBeenCalledWith('appr_1');
   });
@@ -835,7 +841,7 @@ describe('runSupportedCommand', () => {
     const ctx = agentContextNoOptions({});
     const { inflow, storage } = authedResources(makeClient());
     const result = await runSupportedCommand(ctx, inflow, storage);
-    expect(result?.kinds?.[0]?.scheme).toBe('balance');
+    expect(result?.kinds[0]?.scheme).toBe('balance');
   });
 
   it('short-circuits via c.error when not authenticated', async () => {

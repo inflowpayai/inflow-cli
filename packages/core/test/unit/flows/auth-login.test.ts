@@ -138,7 +138,8 @@ describe('runAuthLogin', () => {
 
   it('best-effort revokes the prior refresh token after the new tokens land', async () => {
     const storage = new MemoryStorage();
-    const auth = makeAuth();
+    const revokeToken = vi.fn().mockResolvedValue(undefined);
+    const auth = makeAuth({ revokeToken });
     const run = runAuthLogin({
       authResource: auth,
       authStorage: storage,
@@ -150,7 +151,7 @@ describe('runAuthLogin', () => {
     });
     await drain(run.events);
     await vi.waitFor(() => {
-      expect(auth.revokeToken).toHaveBeenCalledWith('old-refresh');
+      expect(revokeToken).toHaveBeenCalledWith('old-refresh');
     });
   });
 
