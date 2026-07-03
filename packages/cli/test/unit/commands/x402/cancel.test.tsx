@@ -19,7 +19,7 @@ describe('CancelView', () => {
   it('still surfaces the confirmation when the underlying cancel rejects (fire-and-forget)', async () => {
     const onComplete = vi.fn();
     const cancel = vi.fn(() => Promise.reject(new Error('server 500')));
-    const { lastFrame, unmount } = render(<CancelView approvalId="appr_500" cancel={cancel} onComplete={onComplete} />);
+    const { unmount } = render(<CancelView approvalId="appr_500" cancel={cancel} onComplete={onComplete} />);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(cancel).toHaveBeenCalledTimes(1);
     unmount();

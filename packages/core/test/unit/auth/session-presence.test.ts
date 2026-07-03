@@ -26,7 +26,7 @@ describe('hasSession', () => {
   it('short-circuits on api key: never calls storage.isAuthenticated when hasApiKey() is true', () => {
     let storageCalls = 0;
     const storage = new MemoryStorage();
-    const wrapped: typeof storage = Object.create(storage);
+    const wrapped = Object.create(storage) as typeof storage;
     wrapped.isAuthenticated = () => {
       storageCalls++;
       return false;

@@ -56,8 +56,11 @@ describe('Login — extra branches', () => {
   });
 
   it('surfaces an authentication failure when initiateDeviceAuth rejects with a bare string', async () => {
+    // Reject with a runtime non-Error to exercise the String(error) fallback path,
+    // while typing it as Error to satisfy prefer-promise-reject-errors.
+    const bareStringFail: Error = 'bare-string-fail' as unknown as Error;
     const auth = authStub({
-      initiateDeviceAuth: vi.fn(() => Promise.reject('bare-string-fail')),
+      initiateDeviceAuth: vi.fn(() => Promise.reject(bareStringFail)),
     });
     const { lastFrame, unmount } = render(
       <Login auth={auth} clientName="Test" connection={{ environment: 'production' }} onComplete={() => undefined} />,
@@ -70,8 +73,11 @@ describe('Login — extra branches', () => {
   });
 
   it('falls back to the failed frame with a string message when polling rejects with a non-Error value', async () => {
+    // Reject with a runtime non-Error to exercise the String(error) fallback path,
+    // while typing it as Error to satisfy prefer-promise-reject-errors.
+    const bootFromServer: Error = 'boom-from-server' as unknown as Error;
     const auth = authStub({
-      pollDeviceAuth: vi.fn(() => Promise.reject('boom-from-server')),
+      pollDeviceAuth: vi.fn(() => Promise.reject(bootFromServer)),
     });
     const { lastFrame, unmount } = render(
       <Login auth={auth} clientName="Test" connection={{ environment: 'production' }} onComplete={() => undefined} />,

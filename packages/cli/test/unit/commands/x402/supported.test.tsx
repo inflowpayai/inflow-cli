@@ -13,11 +13,13 @@ describe('SupportedView', () => {
     const onComplete = vi.fn();
     const { lastFrame, unmount } = render(
       <SupportedView
-        load={async () =>
-          makeResponse([
-            { scheme: 'balance', network: 'inflow:1', x402Version: 2 },
-            { scheme: 'exact', network: 'eip155:8453', x402Version: 2 },
-          ])
+        load={() =>
+          Promise.resolve(
+            makeResponse([
+              { scheme: 'balance', network: 'inflow:1', x402Version: 2 },
+              { scheme: 'exact', network: 'eip155:8453', x402Version: 2 },
+            ]),
+          )
         }
         onComplete={onComplete}
       />,
@@ -38,7 +40,7 @@ describe('SupportedView', () => {
   it('renders an empty-state message when kinds is []', async () => {
     const onComplete = vi.fn();
     const { lastFrame, unmount } = render(
-      <SupportedView load={async () => makeResponse([])} onComplete={onComplete} />,
+      <SupportedView load={() => Promise.resolve(makeResponse([]))} onComplete={onComplete} />,
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(lastFrame() ?? '').toContain('No supported');
@@ -48,12 +50,7 @@ describe('SupportedView', () => {
   it('shows the error message when load rejects', async () => {
     const onComplete = vi.fn();
     const { lastFrame, unmount } = render(
-      <SupportedView
-        load={async () => {
-          throw new Error('server unavailable');
-        }}
-        onComplete={onComplete}
-      />,
+      <SupportedView load={() => Promise.reject(new Error('server unavailable'))} onComplete={onComplete} />,
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(lastFrame() ?? '').toContain('server unavailable');

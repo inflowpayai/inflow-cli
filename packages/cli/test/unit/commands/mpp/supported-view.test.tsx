@@ -25,7 +25,9 @@ function supported(): MppSupportedResponse {
 
 describe('SupportedView', () => {
   it('renders a method/intent/rail/currencies table', async () => {
-    const { lastFrame, unmount } = render(<SupportedView load={async () => supported()} onComplete={vi.fn()} />);
+    const { lastFrame, unmount } = render(
+      <SupportedView load={() => Promise.resolve(supported())} onComplete={vi.fn()} />,
+    );
     await new Promise((r) => setTimeout(r, 50));
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Method');
@@ -41,7 +43,9 @@ describe('SupportedView', () => {
     const response: MppSupportedResponse = {
       kinds: [{ method: 'inflow', intents: [{ intent: 'charge', rails: [{ rail: 'balance', currencies: [] }] }] }],
     };
-    const { lastFrame, unmount } = render(<SupportedView load={async () => response} onComplete={vi.fn()} />);
+    const { lastFrame, unmount } = render(
+      <SupportedView load={() => Promise.resolve(response)} onComplete={vi.fn()} />,
+    );
     await new Promise((r) => setTimeout(r, 50));
     const frame = lastFrame() ?? '';
     expect(frame).toContain('balance');
@@ -50,7 +54,9 @@ describe('SupportedView', () => {
   });
 
   it('renders an empty-state message when there are no kinds', async () => {
-    const { lastFrame, unmount } = render(<SupportedView load={async () => ({ kinds: [] })} onComplete={vi.fn()} />);
+    const { lastFrame, unmount } = render(
+      <SupportedView load={() => Promise.resolve({ kinds: [] })} onComplete={vi.fn()} />,
+    );
     await new Promise((r) => setTimeout(r, 50));
     expect(lastFrame() ?? '').toContain('No supported MPP methods');
     unmount();
@@ -58,12 +64,7 @@ describe('SupportedView', () => {
 
   it('shows the error message when load rejects', async () => {
     const { lastFrame, unmount } = render(
-      <SupportedView
-        load={async () => {
-          throw new Error('network down');
-        }}
-        onComplete={vi.fn()}
-      />,
+      <SupportedView load={() => Promise.reject(new Error('network down'))} onComplete={vi.fn()} />,
     );
     await new Promise((r) => setTimeout(r, 50));
     expect(lastFrame() ?? '').toContain('network down');

@@ -26,11 +26,12 @@ describe('runAuthLogout', () => {
     const storage = new MemoryStorage(sampleTokens);
     storage.setApiKey('inflow_old_key');
     storage.setConnection({ environment: 'sandbox' });
-    const auth = makeAuth();
+    const revokeToken = vi.fn().mockResolvedValue(undefined);
+    const auth = makeAuth({ revokeToken });
 
     await runAuthLogout({ authResource: auth, authStorage: storage });
 
-    expect(auth.revokeToken).toHaveBeenCalledWith('r');
+    expect(revokeToken).toHaveBeenCalledWith('r');
     expect(storage.getAuth()).toBeNull();
     expect(storage.getApiKey()).toBeNull();
     expect(storage.getConnection()).toBeNull();
@@ -49,11 +50,12 @@ describe('runAuthLogout', () => {
   it('skips revokeToken when no refresh_token is present in storage', async () => {
     const storage = new MemoryStorage();
     storage.setApiKey('inflow_api_key_only');
-    const auth = makeAuth();
+    const revokeToken = vi.fn().mockResolvedValue(undefined);
+    const auth = makeAuth({ revokeToken });
 
     await runAuthLogout({ authResource: auth, authStorage: storage });
 
-    expect(auth.revokeToken).not.toHaveBeenCalled();
+    expect(revokeToken).not.toHaveBeenCalled();
     expect(storage.getApiKey()).toBeNull();
   });
 });

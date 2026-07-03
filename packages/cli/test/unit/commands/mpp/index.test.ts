@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encode, type MppChallenge, type MppTransactionResponse, renderChallengeHeader } from '@inflowpayai/mpp';
 import type { MppPayCreated, MppPayResultRejected, MppPayResultSuccess } from '@inflowpayai/inflow-core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { __testing } from '../../../../src/commands/mpp/index.js';
 
 const {

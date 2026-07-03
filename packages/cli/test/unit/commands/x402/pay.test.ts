@@ -115,11 +115,11 @@ function makePrepared(
 
 function makeClient(overrides: Partial<X402InflowClient> = {}): X402InflowClient {
   const base = {
-    selectInflowRequirement: vi.fn(async () => makeRequirement()),
-    prepareInflowPayment: vi.fn(async () => makePrepared()),
-    getSupported: vi.fn(async () => ({ kinds: [{ scheme: 'balance', network: 'inflow:1', x402Version: 2 }] })),
-    getX402Payload: vi.fn(async () => ({ status: 'INITIATED' })),
-    cancelApproval: vi.fn(async () => undefined),
+    selectInflowRequirement: vi.fn(() => Promise.resolve(makeRequirement())),
+    prepareInflowPayment: vi.fn(() => Promise.resolve(makePrepared())),
+    getSupported: vi.fn(() => Promise.resolve({ kinds: [{ scheme: 'balance', network: 'inflow:1', x402Version: 2 }] })),
+    getX402Payload: vi.fn(() => Promise.resolve({ status: 'INITIATED' })),
+    cancelApproval: vi.fn(() => Promise.resolve(undefined)),
   };
   return { ...base, ...overrides } as unknown as X402InflowClient;
 }
@@ -223,8 +223,8 @@ describe('runPayPipeline', () => {
       }),
     );
     const client = makeClient({
-      selectInflowRequirement: vi.fn(async () => null),
-    } as Partial<X402InflowClient>);
+      selectInflowRequirement: vi.fn(() => Promise.resolve(null)),
+    });
     const { emit, events } = captureEvents();
     await runPayPipeline(
       {
@@ -288,8 +288,10 @@ describe('runPayPipeline', () => {
       }),
     );
     const client = makeClient({
-      prepareInflowPayment: vi.fn(async () => makePrepared(new X402ApprovalFailedError('appr_1', 'DECLINED'))),
-    } as Partial<X402InflowClient>);
+      prepareInflowPayment: vi.fn(() =>
+        Promise.resolve(makePrepared(new X402ApprovalFailedError('appr_1', 'DECLINED'))),
+      ),
+    });
     const { emit, events } = captureEvents();
     await runPayPipeline(
       {
@@ -650,10 +652,10 @@ describe('runPayPipeline with --scheme / --network / --asset / --asset-name filt
       }),
     );
     fetchSpy.mockResolvedValueOnce(new Response('paid-body', { status: 200 }));
-    const selectSpy = vi.fn(async (_decoded: PaymentRequired) => makeRequirement());
+    const selectSpy = vi.fn((_decoded: PaymentRequired) => Promise.resolve(makeRequirement()));
     const client = makeClient({
       selectInflowRequirement: selectSpy,
-    } as Partial<X402InflowClient>);
+    });
     const { emit, events } = captureEvents();
     await runPayPipeline(
       {
@@ -685,10 +687,10 @@ describe('runPayPipeline with --scheme / --network / --asset / --asset-name filt
         headers: { 'PAYMENT-REQUIRED': header },
       }),
     );
-    const selectSpy = vi.fn(async (_decoded: PaymentRequired) => makeRequirement());
+    const selectSpy = vi.fn((_decoded: PaymentRequired) => Promise.resolve(makeRequirement()));
     const client = makeClient({
       selectInflowRequirement: selectSpy,
-    } as Partial<X402InflowClient>);
+    });
     const { emit, events } = captureEvents();
     await runPayPipeline(
       {
@@ -748,10 +750,10 @@ describe('runPayPipeline with --scheme / --network / --asset / --asset-name filt
         headers: { 'PAYMENT-REQUIRED': header },
       }),
     );
-    const selectSpy = vi.fn(async (_decoded: PaymentRequired) => makeRequirement());
+    const selectSpy = vi.fn((_decoded: PaymentRequired) => Promise.resolve(makeRequirement()));
     const client = makeClient({
       selectInflowRequirement: selectSpy,
-    } as Partial<X402InflowClient>);
+    });
     const { emit, events } = captureEvents();
     await runPayPipeline(
       {
@@ -786,10 +788,10 @@ describe('runPayPipeline with --scheme / --network / --asset / --asset-name filt
         headers: { 'PAYMENT-REQUIRED': header },
       }),
     );
-    const selectSpy = vi.fn(async (_decoded: PaymentRequired) => makeRequirement());
+    const selectSpy = vi.fn((_decoded: PaymentRequired) => Promise.resolve(makeRequirement()));
     const client = makeClient({
       selectInflowRequirement: selectSpy,
-    } as Partial<X402InflowClient>);
+    });
     const { emit, events } = captureEvents();
     await runPayPipeline(
       {
@@ -820,8 +822,8 @@ describe('runPayPipeline with --scheme / --network / --asset / --asset-name filt
       }),
     );
     const client = makeClient({
-      selectInflowRequirement: vi.fn(async () => null),
-    } as Partial<X402InflowClient>);
+      selectInflowRequirement: vi.fn(() => Promise.resolve(null)),
+    });
     const { emit, events } = captureEvents();
     await runPayPipeline(
       {

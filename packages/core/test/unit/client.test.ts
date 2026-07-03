@@ -1,3 +1,4 @@
+import type * as X402BuyerModule from '@inflowpayai/x402-buyer';
 import { http, HttpResponse } from 'msw';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Inflow, MemoryStorage } from '../../src/index.js';
@@ -5,7 +6,7 @@ import { BASE_URL, balancesHappy, userHappy } from './fixtures/handlers.js';
 import { makeServer } from './fixtures/server.js';
 
 vi.mock('@inflowpayai/x402-buyer', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@inflowpayai/x402-buyer')>();
+  const actual = await importOriginal<typeof X402BuyerModule>();
   const calls: Array<Record<string, unknown>> = [];
   return {
     ...actual,
@@ -172,7 +173,7 @@ describe('Inflow auto-wiring of device-token provider', () => {
     });
 
     server.use(
-      http.post(`${BASE_URL}/v1/oauth2/token`, async () =>
+      http.post(`${BASE_URL}/v1/oauth2/token`, () =>
         HttpResponse.json({
           access_token: 'fresh',
           refresh_token: 'r1',

@@ -118,7 +118,7 @@ describe('runMppInspectPipeline', () => {
   it('errors INVALID_402 when the 402 carries no WWW-Authenticate header', async () => {
     server.use(http.get(SELLER, () => new HttpResponse(null, { status: 402 })));
     const [event] = await collect();
-    expect(event).toEqual({ type: 'errored', code: 'INVALID_402', message: expect.any(String) });
+    expect(event).toEqual({ type: 'errored', code: 'INVALID_402', message: expect.any(String) as string });
   });
 
   it('errors NO_INFLOW_MATCH when the 402 carries only unsupported method challenges', async () => {

@@ -139,7 +139,10 @@ describe('X402StatusView', () => {
   });
 
   it('renders the error frame with a string fallback when fetchOnce throws a non-Error', async () => {
-    const fetchOnce = vi.fn(() => Promise.reject('bare-string-failure'));
+    // Reject with a runtime non-Error to exercise the String(error) fallback path,
+    // while typing it as Error to satisfy prefer-promise-reject-errors.
+    const bareStringFailure: Error = 'bare-string-failure' as unknown as Error;
+    const fetchOnce = vi.fn(() => Promise.reject(bareStringFailure));
     const { lastFrame, unmount } = render(
       <X402StatusView
         transactionId="txn_e2"

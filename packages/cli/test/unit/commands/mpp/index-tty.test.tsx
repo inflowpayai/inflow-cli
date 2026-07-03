@@ -43,7 +43,7 @@ function authed(client: MppClient): { inflow: Inflow; storage: AuthStorage } {
   const inflow = new Inflow({ authStorage: storage, environment: 'sandbox', cliClientId: 'test' });
   (inflow.mpp as unknown as { cachedClient: Promise<MppClient> }).cachedClient = Promise.resolve(client);
   (inflow.mpp as unknown as { cachedMethod: { cancelApproval: () => Promise<void> } }).cachedMethod = {
-    cancelApproval: vi.fn(async () => undefined),
+    cancelApproval: vi.fn(() => Promise.resolve(undefined)),
   };
   return { inflow, storage };
 }
@@ -74,11 +74,13 @@ describe('mpp TTY runners (renderInkUntilExit paths)', () => {
     fetchSpy.mockResolvedValueOnce(challenge402());
     fetchSpy.mockResolvedValueOnce(new Response('PAID', { status: 200 }));
     const client = makeClient({
-      createTransaction: vi.fn(async () => ({
-        state: 'ready',
-        credential: 'CRED',
-        transactionId: 'tx-1',
-      })) as MppClient['createTransaction'],
+      createTransaction: vi.fn(() =>
+        Promise.resolve({
+          state: 'ready',
+          credential: 'CRED',
+          transactionId: 'tx-1',
+        }),
+      ) as MppClient['createTransaction'],
     });
     const { inflow, storage } = authed(client);
     const ctx = ttyCtx(
@@ -94,11 +96,13 @@ describe('mpp TTY runners (renderInkUntilExit paths)', () => {
     fetchSpy.mockResolvedValueOnce(challenge402());
     fetchSpy.mockResolvedValueOnce(new Response('nope', { status: 402 }));
     const client = makeClient({
-      createTransaction: vi.fn(async () => ({
-        state: 'ready',
-        credential: 'CRED',
-        transactionId: 'tx-1',
-      })) as MppClient['createTransaction'],
+      createTransaction: vi.fn(() =>
+        Promise.resolve({
+          state: 'ready',
+          credential: 'CRED',
+          transactionId: 'tx-1',
+        }),
+      ) as MppClient['createTransaction'],
     });
     const { inflow, storage } = authed(client);
     const ctx = ttyCtx(
@@ -124,11 +128,13 @@ describe('mpp TTY runners (renderInkUntilExit paths)', () => {
 
   it('runStatusCommand renders the status view to completion', async () => {
     const client = makeClient({
-      getTransaction: vi.fn(async () => ({
-        transactionId: 'tx-1',
-        state: 'ready',
-        credential: 'CRED',
-      })) as MppClient['getTransaction'],
+      getTransaction: vi.fn(() =>
+        Promise.resolve({
+          transactionId: 'tx-1',
+          state: 'ready',
+          credential: 'CRED',
+        }),
+      ) as MppClient['getTransaction'],
     });
     const { inflow, storage } = authed(client);
     const ctx = ttyCtx({ transactionId: 'tx-1' }, { interval: 0, maxAttempts: 0, timeout: 900 });
@@ -139,28 +145,30 @@ describe('mpp TTY runners (renderInkUntilExit paths)', () => {
   it('runCancelCommand renders the cancel view and returns the best-effort frame', async () => {
     const { inflow, storage } = authed(makeClient());
     const ctx = ttyCtx({ approvalId: 'ap-1' }, {});
-    const out = await runCancelCommand(ctx as never, inflow, storage);
+    const out = await runCancelCommand(ctx, inflow, storage);
     expect(out).toMatchObject({ approval_id: 'ap-1', cancelled: true });
   });
 
   it('runSupportedCommand renders the supported view and returns undefined', async () => {
     const client = makeClient({
-      getSupported: vi.fn(async () => ({
-        kinds: [
-          { method: 'inflow', intents: [{ intent: 'charge', rails: [{ rail: 'balance', currencies: ['USDC'] }] }] },
-        ],
-      })) as MppClient['getSupported'],
+      getSupported: vi.fn(() =>
+        Promise.resolve({
+          kinds: [
+            { method: 'inflow', intents: [{ intent: 'charge', rails: [{ rail: 'balance', currencies: ['USDC'] }] }] },
+          ],
+        }),
+      ),
     });
     const { inflow, storage } = authed(client);
     const ctx = ttyCtx({}, {});
-    const out = await runSupportedCommand(ctx as never, inflow, storage);
+    const out = await runSupportedCommand(ctx, inflow, storage);
     expect(out).toBeUndefined();
   });
 
   it('runInspectCommand renders the inspect view and returns undefined on a 2xx probe', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('FREE', { status: 200 }));
     const ctx = ttyCtx({ url: SELLER }, { method: 'GET', header: [] });
-    const out = await runInspectCommand(ctx as never);
+    const out = await runInspectCommand(ctx);
     expect(out).toBeUndefined();
     expect(ctx.error).not.toHaveBeenCalled();
   });

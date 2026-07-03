@@ -217,9 +217,12 @@ describe('AuthStatus', () => {
 
   it('renders the probe-failed frame with a string fallback when probe rejects with a non-Error', async () => {
     const storage = new MemoryStorage(tokens);
+    // Reject with a runtime non-Error to exercise the String(error) fallback path,
+    // while typing it as Error to satisfy prefer-promise-reject-errors.
+    const nonErrorBoom: Error = 'boom' as unknown as Error;
     const auth = makeAuth({
       storage,
-      userImpl: () => Promise.reject('boom'),
+      userImpl: () => Promise.reject(nonErrorBoom),
     });
     const { lastFrame, unmount } = render(<AuthStatus auth={auth} probe={true} onComplete={() => undefined} />);
     await vi.waitFor(() => {

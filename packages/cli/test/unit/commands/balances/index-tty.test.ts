@@ -63,7 +63,7 @@ afterEach(() => {
 describe('runBalancesList (tty mode)', () => {
   it('returns the resolved balances when the TTY renderer surfaces them', async () => {
     const fixture: Balance[] = [{ available: '1.0', currency: 'USDC' }];
-    renderMock.mockImplementation(async () => fixture);
+    renderMock.mockImplementation(() => Promise.resolve(fixture));
 
     const ctx = ttyCtx();
     const storage = new MemoryStorage(tokens);
@@ -92,7 +92,7 @@ describe('runBalancesList (tty mode)', () => {
 describe('createBalancesCli', () => {
   it('returns a Cli scoped to balance commands', () => {
     const storage = new MemoryStorage(tokens);
-    const cli = createBalancesCli(balanceStub() as IBalanceResource, storage, makeInflow(storage));
+    const cli = createBalancesCli(balanceStub(), storage, makeInflow(storage));
     const description = (cli as unknown as { description?: string }).description;
     expect(description).toContain('Balance commands');
   });
