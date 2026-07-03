@@ -10,7 +10,7 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.d.ts'],
       reporter: ['text', 'lcov'],
-      reportsDirectory: process.env.COVERAGE_DIR ?? 'coverage',
+      reportsDirectory: process.env['COVERAGE_DIR'] ?? 'coverage',
       thresholds: {
         statements: 91,
         branches: 85,

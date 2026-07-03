@@ -68,8 +68,8 @@ describe('Inflow.auth augmented operations (with storage configured)', () => {
     );
     expect(frames.length).toBeGreaterThan(0);
     const terminal = frames.at(-1) as unknown as Record<string, unknown>;
-    expect(terminal.authenticated).toBe(false);
-    expect(terminal.reason).toBe('max_attempts');
+    expect(terminal['authenticated']).toBe(false);
+    expect(terminal['reason']).toBe('max_attempts');
   });
 });
 

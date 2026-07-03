@@ -34,8 +34,8 @@ function requireEnv(name: string): string {
 async function main(): Promise<void> {
   const apiKey = requireEnv('INFLOW_API_KEY');
   const sellerUrl = requireEnv('MPP_SELLER_URL');
-  const environment = (process.env.INFLOW_ENVIRONMENT ?? 'sandbox') as 'sandbox' | 'production';
-  const apiBaseUrl = process.env.INFLOW_BASE_URL;
+  const environment = (process.env['INFLOW_ENVIRONMENT'] ?? 'sandbox') as 'sandbox' | 'production';
+  const apiBaseUrl = process.env['INFLOW_BASE_URL'];
 
   const inflow = new Inflow({
     apiKey,

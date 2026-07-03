@@ -868,14 +868,14 @@ describe('runInspectCommand (agent mode)', () => {
       },
     );
     const result = await runInspectCommand(ctx);
-    expect(result?.outcome).toBe('accepts');
-    expect(result?.resource).toBe('https://seller/api');
-    const accepts = result?.accepts as Array<Record<string, unknown>>;
+    expect(result?.['outcome']).toBe('accepts');
+    expect(result?.['resource']).toBe('https://seller/api');
+    const accepts = result?.['accepts'] as Array<Record<string, unknown>>;
     expect(accepts).toHaveLength(1);
-    expect(accepts[0]?.scheme).toBe('balance');
-    expect(accepts[0]?.network).toBe('inflow:1');
-    expect(accepts[0]?.pay_to).toBe('inflow:abc');
-    expect(accepts[0]?.max_timeout_seconds).toBe(60);
+    expect(accepts[0]?.['scheme']).toBe('balance');
+    expect(accepts[0]?.['network']).toBe('inflow:1');
+    expect(accepts[0]?.['pay_to']).toBe('inflow:abc');
+    expect(accepts[0]?.['max_timeout_seconds']).toBe(60);
   });
 
   it('yields a no-payment-required frame on a 2xx probe', async () => {
@@ -887,10 +887,10 @@ describe('runInspectCommand (agent mode)', () => {
     );
     const ctx = agentContext({ url: 'https://seller/api' }, { method: 'GET', header: [] });
     const result = await runInspectCommand(ctx);
-    expect(result?.outcome).toBe('no-payment-required');
-    expect(result?.status).toBe(200);
-    expect(result?.content_type).toBe('text/plain');
-    expect(result?.body_size_bytes).toBe(5);
+    expect(result?.['outcome']).toBe('no-payment-required');
+    expect(result?.['status']).toBe(200);
+    expect(result?.['content_type']).toBe('text/plain');
+    expect(result?.['body_size_bytes']).toBe(5);
     expect('body' in (result ?? {})).toBe(false);
   });
 
@@ -936,10 +936,10 @@ describe('runInspectCommand (agent mode)', () => {
       },
     );
     const result = await runInspectCommand(ctx);
-    const rows = result?.accepts as Array<Record<string, unknown>>;
+    const rows = result?.['accepts'] as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.scheme).toBe('exact');
-    expect(rows[0]?.extra).toEqual({ name: 'USD Coin' });
+    expect(rows[0]?.['scheme']).toBe('exact');
+    expect(rows[0]?.['extra']).toEqual({ name: 'USD Coin' });
   });
 
   it('routes a NO_FILTERED_MATCH filter to c.error', async () => {
@@ -972,7 +972,7 @@ describe('runInspectCommand (agent mode)', () => {
     );
     const ctx = agentContext({ url: 'https://seller/api' }, { method: 'GET', header: [] });
     const result = await runInspectCommand(ctx);
-    expect(result?.outcome).toBe('accepts');
+    expect(result?.['outcome']).toBe('accepts');
     expect(ctx.error).not.toHaveBeenCalled();
   });
 });

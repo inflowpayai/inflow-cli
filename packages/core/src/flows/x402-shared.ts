@@ -39,7 +39,7 @@ export interface AcceptsFilters {
 }
 
 function extractAssetName(entry: PaymentRequired['accepts'][number]): string | undefined {
-  const extra = (entry as { extra?: Record<string, unknown> }).extra;
+  const extra = (entry as { extra?: Record<string, unknown> | null }).extra;
   if (extra === undefined || extra === null) return undefined;
   const assetName = extra[EXTRA_KEYS.ASSET_NAME];
   return typeof assetName === 'string' ? assetName : undefined;
@@ -96,7 +96,7 @@ export function buildNoFilteredMatchMessage(decoded: PaymentRequired, filters: A
   const available = decoded.accepts
     .map((entry) => {
       const parts = [`${entry.scheme}/${entry.network}`];
-      if (entry.asset !== undefined && entry.asset !== '') parts.push(`asset=${entry.asset}`);
+      if (entry.asset !== '') parts.push(`asset=${entry.asset}`);
       const assetName = extractAssetName(entry);
       if (assetName !== undefined && assetName !== '') parts.push(`assetName=${assetName}`);
       return parts.join(' ');

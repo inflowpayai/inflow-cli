@@ -109,6 +109,6 @@ describe('buildNoPaymentFrame', () => {
       contentType: undefined,
       bodySizeBytes: 0,
     });
-    expect(frame.content_type).toBeUndefined();
+    expect(frame['content_type']).toBeUndefined();
   });
 });

@@ -51,7 +51,7 @@ export async function* pollAsync<T>(options: PollOptions<T>): AsyncGenerator<Pol
   let attempts = 0;
   let lastYielded: { value: T } | undefined;
 
-  while (true) {
+  for (;;) {
     const value = await fn();
 
     if (runOnce || isTerminal(value)) {

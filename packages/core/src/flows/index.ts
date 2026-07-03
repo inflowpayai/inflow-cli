@@ -149,7 +149,7 @@ function wrapEmittingPipeline<E>(run: (emit: (event: E) => void) => Promise<void
 
   async function* iterate(): AsyncGenerator<E> {
     start();
-    while (true) {
+    for (;;) {
       while (buffer.length > 0) {
         yield buffer.shift() as E;
       }
@@ -157,7 +157,7 @@ function wrapEmittingPipeline<E>(run: (emit: (event: E) => void) => Promise<void
         if (finished !== null) await finished;
         if (error !== undefined) {
           if (error instanceof Error) throw error;
-          const message = typeof error === 'string' ? error : (JSON.stringify(error) ?? 'Unknown error');
+          const message = typeof error === 'string' ? error : JSON.stringify(error);
           throw new InflowSdkError(message, { cause: error });
         }
         return;

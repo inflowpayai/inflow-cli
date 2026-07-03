@@ -48,7 +48,7 @@ interface SdkApiErrorShape {
 function isSdkApiError(err: unknown): err is SdkApiErrorShape {
   if (typeof err !== 'object' || err === null) return false;
   const e = err as Record<string, unknown>;
-  return typeof e.code === 'string' && typeof e.endpoint === 'string' && typeof e.message === 'string';
+  return typeof e['code'] === 'string' && typeof e['endpoint'] === 'string' && typeof e['message'] === 'string';
 }
 
 /**

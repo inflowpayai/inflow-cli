@@ -127,14 +127,14 @@ export function challengeToFrame(challenge: DecodedChallenge): Record<string, un
     method: challenge.method,
     intent: challenge.intent,
   };
-  if (challenge.amount !== undefined) row.amount = challenge.amount;
-  if (challenge.currency !== undefined) row.currency = challenge.currency;
-  if (challenge.recipient !== undefined) row.recipient = challenge.recipient;
-  if (challenge.rail !== undefined) row.rail = challenge.rail;
-  if (challenge.instrumentId !== undefined) row.instrument_id = challenge.instrumentId;
-  if (challenge.expires !== undefined) row.expires = challenge.expires;
-  if (challenge.description !== undefined) row.description = challenge.description;
-  if (challenge.digest !== undefined) row.digest = challenge.digest;
+  if (challenge.amount !== undefined) row['amount'] = challenge.amount;
+  if (challenge.currency !== undefined) row['currency'] = challenge.currency;
+  if (challenge.recipient !== undefined) row['recipient'] = challenge.recipient;
+  if (challenge.rail !== undefined) row['rail'] = challenge.rail;
+  if (challenge.instrumentId !== undefined) row['instrument_id'] = challenge.instrumentId;
+  if (challenge.expires !== undefined) row['expires'] = challenge.expires;
+  if (challenge.description !== undefined) row['description'] = challenge.description;
+  if (challenge.digest !== undefined) row['digest'] = challenge.digest;
   return row;
 }
 
@@ -156,6 +156,6 @@ export function buildNoPaymentFrame(result: MppInspectResultNoPayment): Record<s
     status: result.status,
     body_size_bytes: result.bodySizeBytes,
   };
-  if (result.contentType !== undefined) frame.content_type = result.contentType;
+  if (result.contentType !== undefined) frame['content_type'] = result.contentType;
   return frame;
 }

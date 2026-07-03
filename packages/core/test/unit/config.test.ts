@@ -6,10 +6,10 @@ describe('resolveInflowSdkConfig', () => {
   const ORIGINAL_ENV = { ...process.env };
 
   beforeEach(() => {
-    delete process.env.INFLOW_BASE_URL;
-    delete process.env.INFLOW_AUTH_BASE_URL;
-    delete process.env.INFLOW_CLI_CLIENT_ID;
-    delete process.env.INFLOW_HTTP_PROXY;
+    delete process.env['INFLOW_BASE_URL'];
+    delete process.env['INFLOW_AUTH_BASE_URL'];
+    delete process.env['INFLOW_CLI_CLIENT_ID'];
+    delete process.env['INFLOW_HTTP_PROXY'];
   });
 
   afterEach(() => {
@@ -30,13 +30,13 @@ describe('resolveInflowSdkConfig', () => {
   });
 
   it('apiBaseUrl option beats env and environment', () => {
-    process.env.INFLOW_BASE_URL = 'https://env-host';
+    process.env['INFLOW_BASE_URL'] = 'https://env-host';
     const c = resolveInflowSdkConfig({ apiBaseUrl: 'https://opt-host' });
     expect(c.apiBaseUrl).toBe('https://opt-host');
   });
 
   it('INFLOW_BASE_URL env beats environment default', () => {
-    process.env.INFLOW_BASE_URL = 'https://env-host';
+    process.env['INFLOW_BASE_URL'] = 'https://env-host';
     const c = resolveInflowSdkConfig();
     expect(c.apiBaseUrl).toBe('https://env-host');
   });
@@ -47,19 +47,19 @@ describe('resolveInflowSdkConfig', () => {
   });
 
   it('authBaseUrl env overrides default', () => {
-    process.env.INFLOW_AUTH_BASE_URL = 'https://auth.test';
+    process.env['INFLOW_AUTH_BASE_URL'] = 'https://auth.test';
     const c = resolveInflowSdkConfig();
     expect(c.authBaseUrl).toBe('https://auth.test');
   });
 
   it('cliClientId resolves from INFLOW_CLI_CLIENT_ID', () => {
-    process.env.INFLOW_CLI_CLIENT_ID = 'env-client';
+    process.env['INFLOW_CLI_CLIENT_ID'] = 'env-client';
     const c = resolveInflowSdkConfig();
     expect(c.cliClientId).toBe('env-client');
   });
 
   it('cliClientId option beats env', () => {
-    process.env.INFLOW_CLI_CLIENT_ID = 'env-client';
+    process.env['INFLOW_CLI_CLIENT_ID'] = 'env-client';
     const c = resolveInflowSdkConfig({ cliClientId: 'opt-client' });
     expect(c.cliClientId).toBe('opt-client');
   });
@@ -152,7 +152,7 @@ describe('resolveInflowSdkConfig', () => {
   });
 
   it('proxy-fetch wrapper surfaces InflowConfigurationError when undici import fails', async () => {
-    process.env.INFLOW_HTTP_PROXY = 'http://proxy.test';
+    process.env['INFLOW_HTTP_PROXY'] = 'http://proxy.test';
     const c = resolveInflowSdkConfig();
     await expect(c.fetch('https://x/')).rejects.toBeInstanceOf(InflowConfigurationError);
   });

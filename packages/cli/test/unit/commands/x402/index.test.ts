@@ -40,28 +40,28 @@ function preparedEvent(overrides: Record<string, unknown> = {}): Extract<PayEven
 describe('initialPayFrame', () => {
   it('includes _next.command and POST_PAY_INSTRUCTION when interval=0', () => {
     const frame = initialPayFrame(preparedEvent(), 0, 0);
-    expect(frame.transaction_id).toBe('txn_1');
-    expect(frame.approval_id).toBe('appr_1');
-    expect(frame.approval_url).toBe('https://app.inflowpay.ai/approvals/appr_1/view/');
-    expect(frame.scheme).toBe('balance');
-    expect(frame.network).toBe('inflow:1');
-    expect(frame.amount).toBe('500');
-    expect(frame.asset).toBe('USDC');
-    const next = frame._next as { command: string; poll_interval_seconds: number };
+    expect(frame['transaction_id']).toBe('txn_1');
+    expect(frame['approval_id']).toBe('appr_1');
+    expect(frame['approval_url']).toBe('https://app.inflowpay.ai/approvals/appr_1/view/');
+    expect(frame['scheme']).toBe('balance');
+    expect(frame['network']).toBe('inflow:1');
+    expect(frame['amount']).toBe('500');
+    expect(frame['asset']).toBe('USDC');
+    const next = frame['_next'] as { command: string; poll_interval_seconds: number };
     expect(next.command).toContain('x402 status txn_1');
     expect(next.poll_interval_seconds).toBe(5);
-    expect(frame.instruction).toContain('Present the approval_url');
+    expect(frame['instruction']).toContain('Present the approval_url');
   });
 
   it('omits _next when interval > 0 and uses the polling instruction', () => {
     const frame = initialPayFrame(preparedEvent(), 5, 60);
-    expect(frame._next).toBeUndefined();
-    expect(frame.instruction).toContain('inline');
+    expect(frame['_next']).toBeUndefined();
+    expect(frame['instruction']).toContain('inline');
   });
 
   it('uses maxAttempts > 0 in the next command when supplied', () => {
     const frame = initialPayFrame(preparedEvent(), 0, 120);
-    const next = frame._next as { command: string };
+    const next = frame['_next'] as { command: string };
     expect(next.command).toContain('--max-attempts 120');
   });
 
@@ -81,8 +81,8 @@ describe('initialPayFrame', () => {
       0,
       0,
     );
-    expect(frame.amount).toBeUndefined();
-    expect(frame.asset).toBeUndefined();
+    expect(frame['amount']).toBeUndefined();
+    expect(frame['asset']).toBeUndefined();
   });
 });
 
@@ -98,11 +98,11 @@ describe('noPaymentFrameFromResult', () => {
       body: 'hello',
     };
     const frame = noPaymentFrameFromResult(result);
-    expect(frame.outcome).toBe('no-payment-required');
-    expect(frame.status).toBe(200);
-    expect(frame.body).toBe('hello');
-    expect(frame.body_size_bytes).toBe(5);
-    expect(frame.content_type).toBe('text/plain');
+    expect(frame['outcome']).toBe('no-payment-required');
+    expect(frame['status']).toBe(200);
+    expect(frame['body']).toBe('hello');
+    expect(frame['body_size_bytes']).toBe(5);
+    expect(frame['content_type']).toBe('text/plain');
   });
 
   it('uses body_base64 when the body is binary', () => {
@@ -116,8 +116,8 @@ describe('noPaymentFrameFromResult', () => {
       bodyBase64: 'AP4=',
     };
     const frame = noPaymentFrameFromResult(result);
-    expect(frame.body).toBeUndefined();
-    expect(frame.body_base64).toBe('AP4=');
+    expect(frame['body']).toBeUndefined();
+    expect(frame['body_base64']).toBe('AP4=');
   });
 
   it('omits body and body_base64 when neither is present', () => {
@@ -130,9 +130,9 @@ describe('noPaymentFrameFromResult', () => {
       bodySizeBytes: 5,
     };
     const frame = noPaymentFrameFromResult(result);
-    expect(frame.body).toBeUndefined();
-    expect(frame.body_base64).toBeUndefined();
-    expect(frame.body_size_bytes).toBe(5);
+    expect(frame['body']).toBeUndefined();
+    expect(frame['body_base64']).toBeUndefined();
+    expect(frame['body_size_bytes']).toBe(5);
   });
 
   it('surfaces output_saved_to when the result was streamed to disk', () => {
@@ -146,9 +146,9 @@ describe('noPaymentFrameFromResult', () => {
       outputSavedTo: '/tmp/out.pdf',
     };
     const frame = noPaymentFrameFromResult(result);
-    expect(frame.output_saved_to).toBe('/tmp/out.pdf');
-    expect(frame.body).toBeUndefined();
-    expect(frame.body_base64).toBeUndefined();
+    expect(frame['output_saved_to']).toBe('/tmp/out.pdf');
+    expect(frame['body']).toBeUndefined();
+    expect(frame['body_base64']).toBeUndefined();
   });
 });
 
@@ -174,17 +174,17 @@ describe('paidFrameFromResult', () => {
 
   it('surfaces encoded_payload inline when payloadFile is undefined', () => {
     const frame = paidFrameFromResult(makePaid(), undefined);
-    expect(frame.outcome).toBe('paid');
-    expect(frame.encoded_payload).toBe('enc-bytes');
-    expect(frame.payload_saved_to).toBeUndefined();
-    expect(frame.response_status).toBe(200);
-    expect(frame.body).toBe('hello');
-    expect(frame.body_size_bytes).toBe(5);
+    expect(frame['outcome']).toBe('paid');
+    expect(frame['encoded_payload']).toBe('enc-bytes');
+    expect(frame['payload_saved_to']).toBeUndefined();
+    expect(frame['response_status']).toBe(200);
+    expect(frame['body']).toBe('hello');
+    expect(frame['body_size_bytes']).toBe(5);
   });
 
   it('omits response_content_type when undefined', () => {
     const frame = paidFrameFromResult(makePaid({ responseContentType: undefined }), undefined);
-    expect(frame.response_content_type).toBeUndefined();
+    expect(frame['response_content_type']).toBeUndefined();
   });
 
   it('includes settled when the result carries it', () => {
@@ -192,7 +192,7 @@ describe('paidFrameFromResult', () => {
       makePaid({ settled: { network: 'inflow:1', transaction: 'tx-hash' } }),
       undefined,
     );
-    expect(frame.settled).toEqual({ network: 'inflow:1', transaction: 'tx-hash' });
+    expect(frame['settled']).toEqual({ network: 'inflow:1', transaction: 'tx-hash' });
   });
 });
 
@@ -213,14 +213,14 @@ describe('rejectedFrameFromResult', () => {
       body: '{}',
     };
     const frame = rejectedFrameFromResult(result);
-    expect(frame.outcome).toBe('replay-rejected');
-    expect(frame.transaction_id).toBe('txn_1');
-    expect(frame.approval_id).toBe('appr_1');
-    expect(frame.approval_url).toBe('https://app.inflowpay.ai/approvals/appr_1/view/');
-    expect(frame.response_status).toBe(402);
-    expect(frame.response_content_type).toBe('application/json');
-    expect(frame.body).toBe('{}');
-    expect(frame.body_size_bytes).toBe(2);
+    expect(frame['outcome']).toBe('replay-rejected');
+    expect(frame['transaction_id']).toBe('txn_1');
+    expect(frame['approval_id']).toBe('appr_1');
+    expect(frame['approval_url']).toBe('https://app.inflowpay.ai/approvals/appr_1/view/');
+    expect(frame['response_status']).toBe(402);
+    expect(frame['response_content_type']).toBe('application/json');
+    expect(frame['body']).toBe('{}');
+    expect(frame['body_size_bytes']).toBe(2);
   });
 });
 
@@ -250,8 +250,8 @@ describe('toStatusFrame', () => {
         payload: {},
       },
     });
-    expect(frame.encoded_payload).toBe('enc');
-    expect(frame.payment_payload).toBeDefined();
+    expect(frame['encoded_payload']).toBe('enc');
+    expect(frame['payment_payload']).toBeDefined();
   });
 
   describe('--payload-file', () => {
@@ -268,8 +268,8 @@ describe('toStatusFrame', () => {
     it('writes encoded_payload to disk with mode 0o600 and replaces it with payload_saved_to', () => {
       const target = join(tmp, 'payment.payload');
       const frame = toStatusFrame('txn_3', { status: 'APPROVED', encodedPayload: 'enc-bytes' }, target);
-      expect(frame.encoded_payload).toBeUndefined();
-      expect(frame.payload_saved_to).toBe(target);
+      expect(frame['encoded_payload']).toBeUndefined();
+      expect(frame['payload_saved_to']).toBe(target);
       expect(readFileSync(target, 'utf-8')).toBe('enc-bytes');
       const mode = statSync(target).mode & 0o777;
       expect(mode).toBe(0o600);
@@ -281,21 +281,21 @@ describe('toStatusFrame', () => {
       chmodSync(target, 0o644);
       expect(statSync(target).mode & 0o777).toBe(0o644);
       const frame = toStatusFrame('txn_4', { status: 'APPROVED', encodedPayload: 'fresh' }, target);
-      expect(frame.payload_saved_to).toBe(target);
+      expect(frame['payload_saved_to']).toBe(target);
       expect(readFileSync(target, 'utf-8')).toBe('fresh');
       expect(statSync(target).mode & 0o777).toBe(0o600);
     });
 
     it('leaves encoded_payload inline when payloadFile is undefined', () => {
       const frame = toStatusFrame('txn_5', { status: 'APPROVED', encodedPayload: 'inline' });
-      expect(frame.encoded_payload).toBe('inline');
-      expect(frame.payload_saved_to).toBeUndefined();
+      expect(frame['encoded_payload']).toBe('inline');
+      expect(frame['payload_saved_to']).toBeUndefined();
     });
 
     it('leaves encoded_payload inline when payloadFile is an empty string', () => {
       const frame = toStatusFrame('txn_6', { status: 'APPROVED', encodedPayload: 'inline' }, '');
-      expect(frame.encoded_payload).toBe('inline');
-      expect(frame.payload_saved_to).toBeUndefined();
+      expect(frame['encoded_payload']).toBe('inline');
+      expect(frame['payload_saved_to']).toBeUndefined();
     });
   });
 });

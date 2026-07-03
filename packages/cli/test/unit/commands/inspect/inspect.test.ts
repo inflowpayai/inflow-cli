@@ -105,10 +105,10 @@ describe('buildCombinedFrame', () => {
       },
     };
     const frame = buildCombinedFrame(result);
-    expect(frame.detected).toEqual(['mpp', 'x402']);
-    expect((frame.mpp as unknown[]).length).toBe(1);
-    expect((frame.x402 as unknown[]).length).toBe(1);
-    expect(frame.x402_version).toBe(2);
+    expect(frame['detected']).toEqual(['mpp', 'x402']);
+    expect((frame['mpp'] as unknown[]).length).toBe(1);
+    expect((frame['x402'] as unknown[]).length).toBe(1);
+    expect(frame['x402_version']).toBe(2);
     expect('warnings' in frame).toBe(false);
   });
 
@@ -122,10 +122,10 @@ describe('buildCombinedFrame', () => {
       x402: { kind: 'absent' },
     };
     const frame = buildCombinedFrame(result);
-    expect(frame.detected).toEqual([]);
-    expect(frame.mpp).toEqual([]);
-    expect(frame.x402).toEqual([]);
-    const warnings = frame.warnings as Array<{ protocol: string; code: string }>;
+    expect(frame['detected']).toEqual([]);
+    expect(frame['mpp']).toEqual([]);
+    expect(frame['x402']).toEqual([]);
+    const warnings = frame['warnings'] as Array<{ protocol: string; code: string }>;
     expect(warnings.some((w) => w.code === 'NO_PAYMENT_CHALLENGE')).toBe(true);
   });
 
@@ -139,8 +139,13 @@ describe('buildCombinedFrame', () => {
       x402: { kind: 'error', code: 'DECODE_FAILED', message: 'bad header' },
     };
     const frame = buildCombinedFrame(result);
-    expect(frame.detected).toEqual([]);
-    const warnings = frame.warnings as Array<{ protocol: string; code: string; message: string; methods?: string[] }>;
+    expect(frame['detected']).toEqual([]);
+    const warnings = frame['warnings'] as Array<{
+      protocol: string;
+      code: string;
+      message: string;
+      methods?: string[];
+    }>;
     const mppWarning = warnings.find((w) => w.protocol === 'mpp' && w.code === 'NO_INFLOW_MATCH');
     expect(mppWarning).toBeDefined();
     expect(mppWarning?.methods).toEqual(['other']);
@@ -158,9 +163,9 @@ describe('runCombinedInspectCommand (agent path)', () => {
       }),
     );
     const frame = await runCombinedInspectCommand(ctx());
-    expect(frame?.detected).toEqual(['mpp', 'x402']);
-    expect((frame?.mpp as unknown[]).length).toBe(1);
-    expect((frame?.x402 as unknown[]).length).toBe(1);
+    expect(frame?.['detected']).toEqual(['mpp', 'x402']);
+    expect((frame?.['mpp'] as unknown[]).length).toBe(1);
+    expect((frame?.['x402'] as unknown[]).length).toBe(1);
   });
 
   it('returns a no-payment frame on a 2xx probe', async () => {
@@ -168,8 +173,8 @@ describe('runCombinedInspectCommand (agent path)', () => {
       new Response('hi', { status: 200, headers: { 'content-type': 'text/plain' } }),
     );
     const frame = await runCombinedInspectCommand(ctx());
-    expect(frame?.outcome).toBe('no-payment-required');
-    expect(frame?.status).toBe(200);
+    expect(frame?.['outcome']).toBe('no-payment-required');
+    expect(frame?.['status']).toBe(200);
   });
 
   it('errors UNEXPECTED_PROBE_STATUS on a 500', async () => {

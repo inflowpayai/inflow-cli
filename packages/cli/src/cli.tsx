@@ -99,7 +99,7 @@ function extractBooleanFlag(name: string): boolean {
   process.exit(2);
 }
 
-const credentialFilePath = extractFlag('--auth') ?? process.env.INFLOW_AUTH_FILE;
+const credentialFilePath = extractFlag('--auth') ?? process.env['INFLOW_AUTH_FILE'];
 const baseUrlFromFlag = extractFlag('--base-url');
 const apiBaseUrlAliasFromFlag = extractFlag('--api-base-url');
 const apiBaseUrlFromFlag = baseUrlFromFlag ?? apiBaseUrlAliasFromFlag;
@@ -111,7 +111,7 @@ const verbose = extractBooleanFlag('--verbose');
 
 const authStorage: AuthStorage = credentialFilePath ? new Storage({ configPath: credentialFilePath }) : storage;
 
-const apiKeyFromEnv = process.env.INFLOW_API_KEY;
+const apiKeyFromEnv = process.env['INFLOW_API_KEY'];
 function readSavedApiKey(): string | undefined {
   try {
     return authStorage.getApiKey() ?? undefined;
@@ -144,7 +144,7 @@ const isAgent = process.argv.includes('--format') || process.argv.includes('--mc
 const rawEnvironment =
   environmentFromFlag ??
   (sandboxFlag ? 'sandbox' : undefined) ??
-  process.env.INFLOW_ENVIRONMENT ??
+  process.env['INFLOW_ENVIRONMENT'] ??
   savedConnection.environment ??
   'production';
 
@@ -160,9 +160,9 @@ if (!isValidEnvironment(rawEnvironment)) {
 }
 
 const environment: Environment = rawEnvironment;
-const apiBaseUrl = apiBaseUrlFromFlag ?? process.env.INFLOW_BASE_URL ?? savedConnection.apiBaseUrl;
-const authBaseUrl = authBaseUrlFromFlag ?? process.env.INFLOW_AUTH_BASE_URL ?? savedConnection.authBaseUrl;
-const cliClientId = process.env.INFLOW_CLI_CLIENT_ID ?? CLI_CLIENT_IDS[environment];
+const apiBaseUrl = apiBaseUrlFromFlag ?? process.env['INFLOW_BASE_URL'] ?? savedConnection.apiBaseUrl;
+const authBaseUrl = authBaseUrlFromFlag ?? process.env['INFLOW_AUTH_BASE_URL'] ?? savedConnection.authBaseUrl;
+const cliClientId = process.env['INFLOW_CLI_CLIENT_ID'] ?? CLI_CLIENT_IDS[environment];
 
 const defaultHeaders = { 'User-Agent': `inflow/${cliVersion}` };
 

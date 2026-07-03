@@ -172,7 +172,7 @@ describe('mpp agent runners', () => {
       error: vi.fn(),
     };
     const out = (await runInspectCommand(ctx as never)) as Record<string, unknown>;
-    expect(out.outcome).toBe('challenges');
+    expect(out['outcome']).toBe('challenges');
   });
 
   it('runInspectCommand returns the no-payment frame on a 2xx probe', async () => {
@@ -185,7 +185,7 @@ describe('mpp agent runners', () => {
       error: vi.fn(),
     };
     const out = (await runInspectCommand(ctx as never)) as Record<string, unknown>;
-    expect(out.outcome).toBe('no-payment-required');
+    expect(out['outcome']).toBe('no-payment-required');
   });
 
   it('runInspectCommand surfaces a probe error through c.error', async () => {

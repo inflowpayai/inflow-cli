@@ -276,13 +276,13 @@ describe('buildAcceptsFrame', () => {
       ],
     };
     const frame = buildAcceptsFrame(result);
-    expect(frame.outcome).toBe('accepts');
-    expect(frame.x402_version).toBe(2);
-    expect(frame.method).toBe('GET');
-    const rows = frame.accepts as Array<Record<string, unknown>>;
-    expect(rows[0]?.pay_to).toBe('0xabc');
-    expect(rows[0]?.max_timeout_seconds).toBe(60);
-    expect(rows[0]?.extra).toEqual({ name: 'USD Coin' });
+    expect(frame['outcome']).toBe('accepts');
+    expect(frame['x402_version']).toBe(2);
+    expect(frame['method']).toBe('GET');
+    const rows = frame['accepts'] as Array<Record<string, unknown>>;
+    expect(rows[0]?.['pay_to']).toBe('0xabc');
+    expect(rows[0]?.['max_timeout_seconds']).toBe(60);
+    expect(rows[0]?.['extra']).toEqual({ name: 'USD Coin' });
   });
 
   it('omits the row-level extra key when undefined (no `extra: undefined`)', () => {
@@ -304,7 +304,7 @@ describe('buildAcceptsFrame', () => {
       ],
     };
     const frame = buildAcceptsFrame(result);
-    const rows = frame.accepts as Array<Record<string, unknown>>;
+    const rows = frame['accepts'] as Array<Record<string, unknown>>;
     expect(rows[0]).toBeDefined();
     expect('extra' in (rows[0] ?? {})).toBe(false);
   });
@@ -325,7 +325,7 @@ describe('buildAcceptsFrame', () => {
       extensions: { 'payment-identifier': { required: true } },
     };
     const frame = buildAcceptsFrame(withExt);
-    expect(frame.extensions).toEqual({
+    expect(frame['extensions']).toEqual({
       'payment-identifier': { required: true },
     });
   });
@@ -342,10 +342,10 @@ describe('buildNoPaymentFrame', () => {
       bodySizeBytes: 17,
     };
     const frame = buildNoPaymentFrame(result);
-    expect(frame.outcome).toBe('no-payment-required');
-    expect(frame.status).toBe(200);
-    expect(frame.content_type).toBe('application/json');
-    expect(frame.body_size_bytes).toBe(17);
+    expect(frame['outcome']).toBe('no-payment-required');
+    expect(frame['status']).toBe(200);
+    expect(frame['content_type']).toBe('application/json');
+    expect(frame['body_size_bytes']).toBe(17);
     expect('body' in frame).toBe(false);
     expect('body_base64' in frame).toBe(false);
     expect('output_saved_to' in frame).toBe(false);

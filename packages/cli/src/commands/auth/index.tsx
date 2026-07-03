@@ -163,7 +163,7 @@ export const InteractiveLoginShell: React.FC<InteractiveLoginShellProps> = ({
   const { finish } = useFlowExit(onComplete);
 
   useEffect(() => {
-    let cancelled = false;
+    const state = { cancelled: false };
     const auth = authStorage.getAuth();
     if (!auth) {
       setStage({ kind: 'flow' });
@@ -173,7 +173,7 @@ export const InteractiveLoginShell: React.FC<InteractiveLoginShellProps> = ({
       const result = await probeSession(userResource, {
         timeoutMs: PROBE_TIMEOUT_MS,
       });
-      if (cancelled) return;
+      if (state.cancelled) return;
       if (result.ok) {
         setStage({
           kind: 'prompt',
@@ -185,7 +185,7 @@ export const InteractiveLoginShell: React.FC<InteractiveLoginShellProps> = ({
       setStage({ kind: 'flow' });
     })();
     return () => {
-      cancelled = true;
+      state.cancelled = true;
     };
   }, [authStorage, userResource]);
 
@@ -455,8 +455,8 @@ async function* runAuthStatus(
     }
     if (result.kind === 'invalid') {
       const rejected: Record<string, unknown> = { ...result.frame };
-      if (ctx.verbose) rejected.credentials_path = deps.authStorage.getPath();
-      if (update !== undefined) rejected.update = update;
+      if (ctx.verbose) rejected['credentials_path'] = deps.authStorage.getPath();
+      if (update !== undefined) rejected['update'] = update;
       yield sanitizeDeep(rejected);
       return;
     }

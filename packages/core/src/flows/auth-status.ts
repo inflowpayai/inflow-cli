@@ -40,7 +40,7 @@ export async function probeAuthStatus(input: AuthStatusProbeInput): Promise<Auth
   const snapshot = composeAuthSnapshot(input.authStorage, input.composeOptions ?? {});
 
   if (!snapshot.authenticated) {
-    if ('pending' in snapshot && snapshot.pending === true) {
+    if ('pending' in snapshot) {
       return { kind: 'pending', frame: snapshot };
     }
     return { kind: 'unauthenticated', frame: snapshot };
@@ -60,7 +60,7 @@ export async function probeAuthStatus(input: AuthStatusProbeInput): Promise<Auth
             : 'Local token failed server validation. Clear with "inflow auth logout" or re-authenticate with "inflow auth login".',
       };
       if (snapshot.connection !== undefined) {
-        rejected.connection = snapshot.connection;
+        rejected['connection'] = snapshot.connection;
       }
       return { kind: 'invalid', frame: rejected };
     }

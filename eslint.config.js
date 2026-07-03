@@ -44,10 +44,23 @@ export default tseslint.config(
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
       '@typescript-eslint/no-non-null-assertion': 'error',
+      '@typescript-eslint/no-unnecessary-condition': 'error',
       '@typescript-eslint/prefer-readonly': 'warn',
+      '@typescript-eslint/switch-exhaustiveness-check': 'error',
       '@typescript-eslint/consistent-type-imports': [
         'error',
         { prefer: 'type-imports', fixStyle: 'separate-type-imports' },
+      ],
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@inflowpayai/*/src', '@inflowpayai/*/src/*'],
+              message: "Import from the package public API instead of another package's src internals.",
+            },
+          ],
+        },
       ],
     },
   },
@@ -56,6 +69,8 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
+      '@typescript-eslint/no-unnecessary-condition': 'error',
+      '@typescript-eslint/switch-exhaustiveness-check': 'error',
       '@typescript-eslint/consistent-type-imports': [
         'error',
         { prefer: 'type-imports', fixStyle: 'separate-type-imports' },
@@ -109,6 +124,10 @@ export default tseslint.config(
           patterns: [
             { group: ['react/*'], message: 'react is a CLI-only dep; core must stay headless.' },
             { group: ['ink/*'], message: 'ink is a CLI-only dep; core must stay headless.' },
+            {
+              group: ['@inflowpayai/*/src', '@inflowpayai/*/src/*'],
+              message: "Import from the package public API instead of another package's src internals.",
+            },
           ],
         },
       ],

@@ -78,8 +78,8 @@ describe('probeAuthStatus', () => {
     });
     expect(result.kind).toBe('invalid');
     if (result.kind === 'invalid') {
-      expect(result.frame.probed_invalid).toBe(true);
-      expect(String(result.frame.note)).toContain('Local token failed server validation');
+      expect(result.frame['probed_invalid']).toBe(true);
+      expect(String(result.frame['note'])).toContain('Local token failed server validation');
     }
   });
 
@@ -94,7 +94,7 @@ describe('probeAuthStatus', () => {
     });
     expect(result.kind).toBe('invalid');
     if (result.kind === 'invalid') {
-      expect(String(result.frame.note)).toContain('API key failed server validation');
+      expect(String(result.frame['note'])).toContain('API key failed server validation');
     }
   });
 

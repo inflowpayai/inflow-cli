@@ -37,15 +37,15 @@ export const X402StatusView: React.FC<X402StatusProps> = ({
 
   useEffect(() => {
     const run = runX402Status({ fetchOnce, interval, maxAttempts, timeout });
-    let cancelled = false;
+    const state = { cancelled: false };
     void (async () => {
       for await (const event of run.events) {
-        if (cancelled) return;
+        if (state.cancelled) return;
         dispatch(event);
       }
     })();
     return () => {
-      cancelled = true;
+      state.cancelled = true;
     };
   }, [fetchOnce, interval, maxAttempts, timeout]);
 

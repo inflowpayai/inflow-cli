@@ -33,9 +33,9 @@ export function makeBackgroundUpdateProbe(packageName: string, cliVersion: strin
   }
 
   async function checkUpstreamVersion(): Promise<UpdateInfo | undefined> {
-    const priorFlag = process.env.NO_UPDATE_NOTIFIER;
+    const priorFlag = process.env['NO_UPDATE_NOTIFIER'];
     try {
-      process.env.NO_UPDATE_NOTIFIER = '1';
+      process.env['NO_UPDATE_NOTIFIER'] = '1';
       const notifier = updateNotifier({
         pkg: { name: packageName, version: cliVersion },
       });
@@ -50,9 +50,9 @@ export function makeBackgroundUpdateProbe(packageName: string, cliVersion: strin
       return undefined;
     } finally {
       if (priorFlag === undefined) {
-        delete process.env.NO_UPDATE_NOTIFIER;
+        delete process.env['NO_UPDATE_NOTIFIER'];
       } else {
-        process.env.NO_UPDATE_NOTIFIER = priorFlag;
+        process.env['NO_UPDATE_NOTIFIER'] = priorFlag;
       }
     }
   }
@@ -64,7 +64,7 @@ export function makeBackgroundUpdateProbe(packageName: string, cliVersion: strin
     if (cache !== undefined && cache.expiresAt > Date.now()) {
       return Promise.resolve(cache.value);
     }
-    if (process.env.NO_UPDATE_NOTIFIER !== undefined) {
+    if (process.env['NO_UPDATE_NOTIFIER'] !== undefined) {
       return Promise.resolve(undefined);
     }
     if (!inflight) {

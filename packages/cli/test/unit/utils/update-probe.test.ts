@@ -15,11 +15,11 @@ vi.mock('update-notifier', () => ({
 
 beforeEach(() => {
   fetchInfoMock.mockReset();
-  delete process.env.NO_UPDATE_NOTIFIER;
+  delete process.env['NO_UPDATE_NOTIFIER'];
 });
 
 afterEach(() => {
-  delete process.env.NO_UPDATE_NOTIFIER;
+  delete process.env['NO_UPDATE_NOTIFIER'];
 });
 
 describe('makeBackgroundUpdateProbe', () => {
@@ -61,7 +61,7 @@ describe('makeBackgroundUpdateProbe', () => {
   });
 
   it('short-circuits to undefined when NO_UPDATE_NOTIFIER is set', async () => {
-    process.env.NO_UPDATE_NOTIFIER = '1';
+    process.env['NO_UPDATE_NOTIFIER'] = '1';
     const probe = makeBackgroundUpdateProbe('@inflowpayai/inflow', '1.0.0');
     expect(await probe({ polling: false })).toBeUndefined();
     expect(fetchInfoMock).not.toHaveBeenCalled();

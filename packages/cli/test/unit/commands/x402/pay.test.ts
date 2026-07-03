@@ -334,11 +334,11 @@ describe('runPayPipeline', () => {
       (e): e is { type: 'rejected'; result: Record<string, unknown> } => (e as { type?: string }).type === 'rejected',
     );
     expect(rejected).toBeDefined();
-    expect(rejected?.result.outcome).toBe('replay-rejected');
-    expect(rejected?.result.responseStatus).toBe(402);
-    expect(rejected?.result.transactionId).toBe('txn_1');
-    expect(rejected?.result.approvalId).toBe('appr_1');
-    expect(rejected?.result.approvalUrl).toBe('https://app.inflowpay.ai/approvals/appr_1/view/');
+    expect(rejected?.result['outcome']).toBe('replay-rejected');
+    expect(rejected?.result['responseStatus']).toBe(402);
+    expect(rejected?.result['transactionId']).toBe('txn_1');
+    expect(rejected?.result['approvalId']).toBe('appr_1');
+    expect(rejected?.result['approvalUrl']).toBe('https://app.inflowpay.ai/approvals/appr_1/view/');
     const replayed = events.find((e) => (e as { type?: string }).type === 'replayed');
     expect(replayed).toBeUndefined();
   });
@@ -368,7 +368,7 @@ describe('runPayPipeline', () => {
     const rejected = events.find(
       (e): e is { type: 'rejected'; result: Record<string, unknown> } => (e as { type?: string }).type === 'rejected',
     );
-    expect(rejected?.result.responseStatus).toBe(503);
+    expect(rejected?.result['responseStatus']).toBe(503);
   });
 
   it('emits UNEXPECTED_PROBE_STATUS (not "short-circuited") when the probe returns a non-2xx, non-402 status', async () => {

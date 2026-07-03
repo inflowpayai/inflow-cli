@@ -98,11 +98,11 @@ export function buildCombinedFrame(result: CombinedInspectResult): Record<string
     x402: x402Rows,
   };
   if (result.x402.kind === 'accepts') {
-    frame.x402_resource = result.x402.resource;
-    frame.x402_version = result.x402.x402Version;
-    if (result.x402.extensions !== undefined) frame.x402_extensions = result.x402.extensions;
+    frame['x402_resource'] = result.x402.resource;
+    frame['x402_version'] = result.x402.x402Version;
+    if (result.x402.extensions !== undefined) frame['x402_extensions'] = result.x402.extensions;
   }
-  if (warnings.length > 0) frame.warnings = warnings;
+  if (warnings.length > 0) frame['warnings'] = warnings;
   return frame;
 }
 
@@ -114,7 +114,7 @@ export function buildNoPaymentFrame(result: CombinedInspectNoPayment): Record<st
     status: result.status,
     body_size_bytes: result.bodySizeBytes,
   };
-  if (result.contentType !== undefined) frame.content_type = result.contentType;
+  if (result.contentType !== undefined) frame['content_type'] = result.contentType;
   return frame;
 }
 
@@ -130,19 +130,19 @@ export async function runCombinedInspectCommand(
   const deps: CombinedInspectPipelineDeps = { probeOptions, url: c.args.url };
 
   if (!c.agent && !c.formatExplicit) {
-    let finalPhase: CombinedInspectPhase | null = null;
+    const captured: { finalPhase: CombinedInspectPhase | null } = { finalPhase: null };
     await renderInkUntilExit(
       <CombinedInspectView
         url={c.args.url}
         method={c.options.method}
         deps={deps}
         onComplete={(phase) => {
-          finalPhase = phase;
+          captured.finalPhase = phase;
         }}
       />,
     );
-    if (finalPhase !== null) {
-      const phase = finalPhase as CombinedInspectPhase;
+    if (captured.finalPhase !== null) {
+      const phase = captured.finalPhase;
       if (phase.kind === 'error') {
         c.error({ code: phase.code, message: phase.message });
       }
@@ -150,25 +150,23 @@ export async function runCombinedInspectCommand(
     return undefined;
   }
 
-  let finalEvent: { kind: string; payload: unknown } | null = null;
+  const captured: { finalEvent: { kind: string; payload: unknown } | null } = { finalEvent: null };
   await runCombinedInspectPipeline(deps, (event) => {
     if (event.type === 'errored') {
-      finalEvent = { kind: 'error', payload: event };
+      captured.finalEvent = { kind: 'error', payload: event };
       return;
     }
     if (event.type === 'inspected') {
-      finalEvent = { kind: 'inspected', payload: event.result };
+      captured.finalEvent = { kind: 'inspected', payload: event.result };
       return;
     }
-    if (event.type === 'no-payment') {
-      finalEvent = { kind: 'no-payment', payload: event.result };
-    }
+    captured.finalEvent = { kind: 'no-payment', payload: event.result };
   });
 
-  if (finalEvent === null) {
+  if (captured.finalEvent === null) {
     return c.error({ code: 'INSPECT_FAILED', message: 'Inspect pipeline produced no result.' });
   }
-  const { kind, payload } = finalEvent as { kind: string; payload: unknown };
+  const { kind, payload } = captured.finalEvent;
   if (kind === 'error') {
     const err = payload as { code: string; message: string };
     return c.error({ code: err.code, message: err.message });

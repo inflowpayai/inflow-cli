@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const inflow = new Inflow({
     authStorage,
     environment: 'sandbox',
-    cliClientId: process.env.INFLOW_CLI_CLIENT_ID ?? '19ba1cd46402cf2695c3056da0ac03ab',
+    cliClientId: process.env['INFLOW_CLI_CLIENT_ID'] ?? '19ba1cd46402cf2695c3056da0ac03ab',
   });
 
   const run = inflow.auth.login({
