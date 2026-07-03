@@ -1,5 +1,33 @@
 # @inflowpayai/inflow
 
+## 0.9.0
+
+### Minor Changes
+
+- [#33](https://github.com/inflowpayai/inflow-cli/pull/33)
+  [`f7d709d`](https://github.com/inflowpayai/inflow-cli/commit/f7d709d43b9a6ee9765479e1d95ffcad6df6cfd6) Thanks
+  [@nkavian](https://github.com/nkavian)! - Surface the MPP challenge `opaque` blob in `mpp decode` output and the
+  settled `amount`/`currency` on the pay result.
+
+### Patch Changes
+
+- [#28](https://github.com/inflowpayai/inflow-cli/pull/28)
+  [`c5a6e9d`](https://github.com/inflowpayai/inflow-cli/commit/c5a6e9d75b99aef7c4ecd0a2b332fc53742e3e18) Thanks
+  [@mnebliienko](https://github.com/mnebliienko)! - Normalize balance decimal response strings before rendering CLI
+  output.
+
+- [#34](https://github.com/inflowpayai/inflow-cli/pull/34)
+  [`c27ea56`](https://github.com/inflowpayai/inflow-cli/commit/c27ea56e85d69337be7843a189e5237c6578e261) Thanks
+  [@nkavian](https://github.com/nkavian)! - Bump `@inflowpayai/mpp` to `^0.7.0` and `@inflowpayai/mpp-buyer` to
+  `^0.6.1`.
+
+- [#29](https://github.com/inflowpayai/inflow-cli/pull/29)
+  [`15f963c`](https://github.com/inflowpayai/inflow-cli/commit/15f963cbaf8a895c518d2fac9eb0908286dd88c7) Thanks
+  [@mnebliienko](https://github.com/mnebliienko)! - Default the production API base URL to `https://api.inflowpay.ai`
+  for data endpoints, while OAuth/device auth keeps using `https://app.inflowpay.ai`. A single `INFLOW_BASE_URL` (or
+  `apiBaseUrl`) override still redirects both hosts, so pointing the CLI at another environment stays a one-variable
+  change.
+
 ## 0.8.0
 
 ### Minor Changes
