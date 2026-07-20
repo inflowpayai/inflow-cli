@@ -13,7 +13,7 @@ export interface PollAuthStatusOptions {
 export interface UpdateBlock {
   current_version: string;
   latest_version: string;
-  update_command: string;
+  update_url: string;
 }
 
 /**
