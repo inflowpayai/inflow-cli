@@ -7,6 +7,8 @@ import {
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
   replayPaymentRequest,
+  SellerAuthenticationError,
+  type SellerRequestTransport,
 } from './payment-fetch.js';
 
 export interface X402FetchSuccess {
@@ -55,6 +57,7 @@ export interface X402FetchInput {
   timeout: number;
   showBody: boolean;
   outputFile?: string;
+  sellerTransport?: SellerRequestTransport;
 }
 
 export interface X402FetchRun {
@@ -168,8 +171,18 @@ export function runX402Fetch(input: X402FetchInput): X402FetchRun {
         paymentHeaderValue: signed.encodedPayload,
         showBody: input.showBody,
         ...(input.outputFile !== undefined ? { outputFile: input.outputFile } : {}),
+        ...(input.sellerTransport !== undefined ? { sellerTransport: input.sellerTransport } : {}),
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof SellerAuthenticationError) {
+        yield {
+          type: 'errored',
+          code: err.code,
+          message: err.message,
+          ...(err.retryable !== undefined ? { retryable: err.retryable } : {}),
+        };
+        return;
+      }
       yield {
         type: 'errored',
         code: PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,

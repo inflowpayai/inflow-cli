@@ -5,6 +5,8 @@ import {
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
   replayPaymentRequest,
+  SellerAuthenticationError,
+  type SellerRequestTransport,
 } from './payment-fetch.js';
 import type { SellerProbeOptions } from '@inflowpayai/x402-buyer/probe';
 
@@ -54,6 +56,7 @@ export interface MppFetchInput {
   timeout: number;
   showBody: boolean;
   outputFile?: string;
+  sellerTransport?: SellerRequestTransport;
 }
 
 export interface MppFetchRun {
@@ -162,8 +165,18 @@ export function runMppFetch(input: MppFetchInput): MppFetchRun {
         paymentHeaderValue: `${SCHEME_PAYMENT} ${ready.credential}`,
         showBody: input.showBody,
         ...(input.outputFile !== undefined ? { outputFile: input.outputFile } : {}),
+        ...(input.sellerTransport !== undefined ? { sellerTransport: input.sellerTransport } : {}),
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof SellerAuthenticationError) {
+        yield {
+          type: 'errored',
+          code: err.code,
+          message: err.message,
+          ...(err.retryable !== undefined ? { retryable: err.retryable } : {}),
+        };
+        return;
+      }
       yield {
         type: 'errored',
         code: PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,

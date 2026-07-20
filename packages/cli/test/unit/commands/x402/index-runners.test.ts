@@ -313,7 +313,15 @@ describe('runPayCommand (agent mode)', () => {
   });
 
   it('runFetchCommand fetches a signed transaction without preparing a new payment or exposing encoded payload', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response('payment required', {
+          status: 402,
+          headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(makePaymentRequired()) },
+        }),
+      )
+      .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
     const prepareInflowPayment = vi.fn();
     const client = makeClient({
       prepareInflowPayment,
@@ -341,7 +349,7 @@ describe('runPayCommand (agent mode)', () => {
     const frames = await drain(runFetchCommand(ctx as never, inflow, storage));
 
     expect(prepareInflowPayment).not.toHaveBeenCalled();
-    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(frames.at(-1)).toMatchObject({
       protocol: 'x402',
       outcome: 'paid',
@@ -350,12 +358,20 @@ describe('runPayCommand (agent mode)', () => {
       body: 'DONE',
     });
     expect(frames.at(-1)).not.toHaveProperty('encoded_payload');
-    const [, init] = fetchSpy.mock.calls[0] ?? [];
+    const [, init] = fetchSpy.mock.calls.at(-1) ?? [];
     expect(new Headers(init?.headers).get('PAYMENT-SIGNATURE')).toBe('ENC');
   });
 
   it('runFetchCommand renders the human fetch path for signed transactions', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response('payment required', {
+          status: 402,
+          headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(makePaymentRequired()) },
+        }),
+      )
+      .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
     const client = makeClient({
       getX402Payload: vi.fn(() =>
         Promise.resolve({
@@ -378,7 +394,7 @@ describe('runPayCommand (agent mode)', () => {
 
     expect(result.values).toEqual([]);
     expect(ctx.error).not.toHaveBeenCalled();
-    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it('runFetchCommand stops terminal failures before contacting the seller', async () => {
@@ -717,6 +733,12 @@ describe('runPayCommand (agent mode)', () => {
   it('yields replay-rejected frame and emits PAYMENT_NOT_ACCEPTED when the seller returns 402 on replay', async () => {
     const header = encodePaymentRequiredHeader(makePaymentRequired());
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy.mockResolvedValueOnce(
+      new Response('payment required', {
+        status: 402,
+        headers: { 'PAYMENT-REQUIRED': header },
+      }),
+    );
     fetchSpy.mockResolvedValueOnce(
       new Response('payment required', {
         status: 402,

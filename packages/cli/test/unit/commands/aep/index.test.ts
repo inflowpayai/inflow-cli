@@ -1,0 +1,889 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AepFetchError, AepStorage, MemoryStorage } from '@inflowpayai/inflow-core';
+import { AepCommandError, AepInspectError } from '@aep-foundation/agent';
+import type { InspectServiceResult } from '@aep-foundation/agent';
+import type * as InflowCore from '@inflowpayai/inflow-core';
+
+const platformRecovery = vi.hoisted<{
+  identity: unknown;
+  identityNotFoundOnSign: boolean;
+  notRecognized: boolean;
+  provisioned: boolean;
+}>(() => ({
+  identity: undefined,
+  identityNotFoundOnSign: false,
+  notRecognized: false,
+  provisioned: false,
+}));
+
+const fetchScenario = vi.hoisted(() => ({
+  run: (_input: unknown): Promise<unknown> =>
+    Promise.resolve({
+      authentication: { method: null, outcome: 'not-required' },
+      body: 'anonymous',
+      bodySizeBytes: 9,
+      contentType: 'text/plain',
+      finalUrl: 'https://service.example/resource',
+      redirected: false,
+      requestedUrl: 'https://service.example/resource',
+      responseSizeBytes: 9,
+      status: 200,
+    }),
+}));
+
+const probeScenario = vi.hoisted<{ calls: number; classification: string; status: number }>(() => ({
+  calls: 0,
+  classification: 'success',
+  status: 204,
+}));
+
+const openApiScenario = vi.hoisted<{
+  policy:
+    | {
+        freshness: 'fresh' | 'revalidated' | 'fetched';
+        matchedOperation?: { method: string; pathTemplate: string };
+        methods: string[];
+        source: 'openapi';
+        state: 'public' | 'required' | 'fallback';
+        strictSlashSuggestion?: string;
+      }
+    | undefined;
+}>(() => ({
+  policy: undefined,
+}));
+
+vi.mock('@inflowpayai/inflow-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof InflowCore>();
+  return { ...actual, runAepFetch: (input: unknown) => fetchScenario.run(input) };
+});
+
+const identity = {
+  agentDid: 'did:web:platform.example:agents:one',
+  identityKind: 'platform-hosted' as const,
+  serviceDid: 'did:web:service.example',
+  signingAlgorithms: ['ES256'],
+};
+const inspect: InspectServiceResult = {
+  commandUrl: (command: string) => new URL(`https://service.example/aep/${command}`),
+  document: {
+    aep_version: '1.0',
+    bindings: { supported: ['http'] },
+    claims: { optional: [], preferred: [], required: [] },
+    commands: { grant_types: ['oauth-bearer'], supported: ['inspect', 'enroll', 'grant', 'revoke', 'status'] },
+    core: { signing_algorithms: ['ES256'] },
+    http: { endpoint_base: '/aep' },
+    identity: { methods: ['did:web'] },
+    service: { did: identity.serviceDid },
+  },
+  finalUrl: new URL('https://service.example/.well-known/aep'),
+  inspectUrl: new URL('https://service.example/.well-known/aep'),
+};
+
+vi.mock('@aep-foundation/agent', () => {
+  class AepCommandError extends Error {
+    problem?: { code: string };
+
+    constructor(message?: string, _status?: number, problem?: { code: string }) {
+      super(message);
+      if (problem !== undefined) this.problem = problem;
+    }
+  }
+  class AepInspectError extends Error {
+    constructor(
+      message: string,
+      readonly code = 'http_error',
+      readonly status?: number,
+    ) {
+      super(message);
+    }
+  }
+  class AepPendingSignError extends Error {}
+  class AepServiceReferenceError extends Error {}
+  const signer = (_claims: unknown, context: { platformContext?: Record<string, unknown> }) => {
+    if (platformRecovery.identityNotFoundOnSign) {
+      platformRecovery.identityNotFoundOnSign = false;
+      const error = new AepCommandError();
+      error.problem = { code: 'agent_identity_not_found' };
+      throw error;
+    }
+    if (context.platformContext?.['claims'] !== undefined || context.platformContext?.['grant_type'] !== undefined) {
+      return { platformContext: { approval_id: 'approval-1' }, retryAfterSeconds: 1, status: 'pending' as const };
+    }
+    return {
+      clientAssertion: 'assertion',
+      platformContext: { approved_claims: { 'contact.email': 'agent@example.test' } },
+      status: 'completed' as const,
+    };
+  };
+  return {
+    AepCommandError,
+    AepInspectError,
+    AepPendingSignError,
+    AepServiceReferenceError,
+    buildClientAssertionClaims: ({ command }: { command: string }) => ({ op: command }),
+    createPlatformIdentityProvider: () => ({
+      findIdentityByServiceDid: () => platformRecovery.identity,
+      getOrCreateIdentity: () => {
+        platformRecovery.provisioned = platformRecovery.identity === undefined;
+        return platformRecovery.identity ?? identity;
+      },
+      signerFor: () => signer,
+    }),
+    enrollService: () => ({ body: { status: 'active' } }),
+    grantService: () => ({
+      body: { credential_id: 'credential-1', expires_at: '2999-01-01T00:00:00.000Z', scopes: ['read'] },
+    }),
+    inspectOpenApiPolicy: () =>
+      openApiScenario.policy ?? {
+        freshness: 'fetched',
+        methods: [],
+        source: 'openapi',
+        state: 'fallback',
+      },
+    probeProtectedResource: () => {
+      probeScenario.calls += 1;
+      return {
+        classification: probeScenario.classification,
+        response: new Response(null, { status: probeScenario.status }),
+      };
+    },
+    resolveServiceReference: (reference: string) => new URL(`https://${reference.split('/')[0]}`),
+    revokeService: () => ({}),
+    sessionCredentialRecordFromGrantResult: () => ({
+      credential: { scopes: ['read'] },
+      credentialId: 'credential-1',
+      expiresAt: '2999-01-01T00:00:00.000Z',
+      grantType: 'oauth-bearer',
+      issuedAt: '2026-01-01T00:00:00.000Z',
+      serviceDid: identity.serviceDid,
+    }),
+    statusService: () => {
+      if (platformRecovery.notRecognized || platformRecovery.provisioned) {
+        platformRecovery.provisioned = false;
+        const error = new AepCommandError();
+        error.problem = { code: 'not_recognized' };
+        throw error;
+      }
+      return { body: { status: 'active' } };
+    },
+  };
+});
+
+const { __testing, createAepCli } = await import('../../../../src/commands/aep/index.js');
+
+function context(options: Record<string, unknown> = {}) {
+  return {
+    agent: true,
+    args: { serviceReference: 'service.example' },
+    error: (error: { code: string }) => {
+      throw new Error(error.code);
+    },
+    formatExplicit: true,
+    options,
+  };
+}
+
+function inflow() {
+  return {
+    aep: { inspect: () => inspect },
+    hasApiKey: () => false,
+    platformAuthenticationHeaders: () => ({ 'X-API-KEY': 'key' }),
+    resolvedApiBaseUrl: 'https://platform.example',
+    user: { retrieve: () => ({ userId: 'user-1' }) },
+  } as never;
+}
+
+afterEach(() => {
+  platformRecovery.identity = undefined;
+  platformRecovery.identityNotFoundOnSign = false;
+  platformRecovery.notRecognized = false;
+  platformRecovery.provisioned = false;
+  probeScenario.classification = 'success';
+  probeScenario.calls = 0;
+  probeScenario.status = 204;
+  openApiScenario.policy = undefined;
+  fetchScenario.run = (_input: unknown) =>
+    Promise.resolve({
+      authentication: { method: null, outcome: 'not-required' },
+      body: 'anonymous',
+      bodySizeBytes: 9,
+      contentType: 'text/plain',
+      finalUrl: 'https://service.example/resource',
+      redirected: false,
+      requestedUrl: 'https://service.example/resource',
+      responseSizeBytes: 9,
+      status: 200,
+    });
+  vi.restoreAllMocks();
+});
+
+describe('aep commands', () => {
+  it('registers the public AEP command group', async () => {
+    const cli = createAepCli(inflow(), new MemoryStorage());
+    const output: string[] = [];
+    const exit = vi.fn();
+
+    await cli.serve(['--help'], {
+      exit,
+      stdout: (chunk) => {
+        output.push(chunk);
+      },
+    });
+
+    const help = output.join('');
+    expect(exit).not.toHaveBeenCalled();
+    for (const command of ['inspect', 'enroll', 'fetch', 'status', 'grant', 'revoke']) {
+      expect(help).toContain(command);
+    }
+  });
+
+  it('passes persistent caching through the standalone Inspect helper', async () => {
+    const cache = { delete: vi.fn(), get: vi.fn(), set: vi.fn() };
+    const client = inflow() as unknown as { aep: { inspect: (options: unknown) => typeof inspect } };
+    const inspectCall = vi.spyOn(client.aep, 'inspect');
+
+    await expect(__testing.inspected(client as never, 'service.example', 30, cache)).resolves.toBe(inspect);
+    expect(inspectCall).toHaveBeenCalledWith(expect.objectContaining({ publicDocumentCache: cache }));
+    await expect(__testing.inspected(client as never, 'service.example', 0, cache)).rejects.toThrow(
+      'Inspect timeout must be between 1 and 300 seconds.',
+    );
+  });
+
+  it('supplies an existing persistent Inspect cache to the Inspect command', async () => {
+    const backing = new MemoryStorage();
+    const persisted = new AepStorage(backing, {
+      platformOrigin: 'https://platform.example',
+      userId: 'user-1',
+    });
+    await persisted.inspectCache().set('https://service.example/', {
+      ...inspect,
+      cachedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const client = inflow() as unknown as { aep: { inspect: (options: unknown) => typeof inspect } };
+    const inspectCall = vi.spyOn(client.aep, 'inspect');
+
+    await __testing.runInspect(context({ timeout: 30 }), client as never, backing);
+
+    const options = inspectCall.mock.calls[0]?.[0];
+    expect(typeof options === 'object' && options !== null && 'publicDocumentCache' in options).toBe(true);
+  });
+
+  it('uses definitive OpenAPI Inspect policy without probing the protected resource', async () => {
+    openApiScenario.policy = {
+      freshness: 'fresh',
+      matchedOperation: { method: 'GET', pathTemplate: '/resource' },
+      methods: ['aep-jwt'],
+      source: 'openapi',
+      state: 'required',
+    };
+
+    const result = await __testing.runInspect(context({ method: 'GET', timeout: 30 }), inflow(), new MemoryStorage());
+
+    expect(probeScenario.calls).toBe(0);
+    expect(result).toMatchObject({
+      resource_authentication: {
+        openapi: {
+          accepted_methods: ['aep-jwt'],
+          freshness: 'fresh',
+          matched_operation: { method: 'GET', path_template: '/resource' },
+          state: 'required',
+        },
+        result: 'aep-authenticatable',
+        source: 'openapi',
+      },
+    });
+  });
+
+  it('presents strict trailing-slash suggestions while preserving anonymous probe fallback', async () => {
+    openApiScenario.policy = {
+      freshness: 'fresh',
+      methods: [],
+      source: 'openapi',
+      state: 'fallback',
+      strictSlashSuggestion: '/resource',
+    };
+
+    const result = await __testing.runInspect(
+      { ...context({ method: 'GET', timeout: 30 }), args: { serviceReference: 'service.example/resource/' } },
+      inflow(),
+      new MemoryStorage(),
+    );
+
+    expect(probeScenario.calls).toBe(1);
+    expect(result).toMatchObject({
+      resource_authentication: {
+        openapi: {
+          freshness: 'fresh',
+          state: 'fallback',
+          strict_slash_suggestion: '/resource',
+        },
+        result: 'not-required',
+        source: 'anonymous_probe',
+        status: 204,
+      },
+    });
+  });
+
+  it('maps Inspect and unexpected failures to stable command errors', () => {
+    expect(__testing.commandError(new AepInspectError('failed', 'response_too_large'))).toEqual({
+      code: 'AEP_INSPECT_RESPONSE_TOO_LARGE',
+      message: 'AEP Service Inspect failed.',
+      retryable: true,
+    });
+    expect(__testing.commandError(new Error('failed'))).toEqual({
+      code: 'AEP_INTERNAL_ERROR',
+      message: 'The AEP command failed unexpectedly.',
+    });
+  });
+
+  it('returns the complete anonymous fetch JSON contract without requiring a session', async () => {
+    const result = await __testing.runFetch(
+      {
+        ...context({
+          header: ['X-Test: one'],
+          maxRedirects: 5,
+          maxResponseBytes: 1024,
+          method: 'GET',
+          showBody: true,
+          timeout: 30,
+        }),
+        args: { resourceUrl: 'https://service.example/resource' },
+      },
+      inflow(),
+      new MemoryStorage(),
+    );
+    expect(result).toEqual({
+      authentication: { method: null, outcome: 'not-required' },
+      body: 'anonymous',
+      content_type: 'text/plain',
+      final_url: 'https://service.example/resource',
+      redirects: { occurred: false },
+      requested_url: 'https://service.example/resource',
+      response_size_bytes: 9,
+      status: 200,
+    });
+  });
+
+  it('supplies InFlow Grant context through the generic Agent provider', async () => {
+    fetchScenario.run = async (rawInput: unknown) => {
+      const input = rawInput as {
+        agentOptions: {
+          platformContextProvider(input: {
+            command: 'grant';
+            grantType: string;
+            identity: typeof identity;
+            requestedScopes: string[];
+            serviceDid: string;
+          }): Promise<Record<string, unknown> | undefined> | Record<string, unknown> | undefined;
+        };
+      };
+      await expect(
+        Promise.resolve(
+          input.agentOptions.platformContextProvider({
+            command: 'grant',
+            grantType: 'api-key',
+            identity,
+            requestedScopes: ['read:resource'],
+            serviceDid: identity.serviceDid,
+          }),
+        ),
+      ).resolves.toEqual({ grant_type: 'api-key', requested_scopes: ['read:resource'] });
+      return {
+        authentication: { method: null, outcome: 'not-required' },
+        body: 'anonymous',
+        finalUrl: 'https://service.example/resource',
+        redirected: false,
+        requestedUrl: 'https://service.example/resource',
+        responseSizeBytes: 9,
+        status: 200,
+      };
+    };
+
+    await __testing.runFetch(
+      {
+        ...context({
+          header: [],
+          maxRedirects: 5,
+          maxResponseBytes: 1024,
+          method: 'GET',
+          showBody: true,
+          timeout: 30,
+        }),
+        args: { resourceUrl: 'https://service.example/resource' },
+      },
+      inflow(),
+      new MemoryStorage(),
+    );
+  });
+
+  it('validates fetch bounds and header syntax with stable errors', async () => {
+    const base = {
+      ...context({ header: [], maxRedirects: 5, maxResponseBytes: 1024, method: 'GET', showBody: true, timeout: 0 }),
+      args: { resourceUrl: 'https://service.example/resource' },
+    };
+    await expect(__testing.runFetch(base, inflow(), new MemoryStorage())).rejects.toThrow('AEP_FETCH_TIMEOUT_INVALID');
+    await expect(
+      __testing.runFetch(
+        { ...base, options: { ...base.options, header: ['invalid'], timeout: 30 } },
+        inflow(),
+        new MemoryStorage(),
+      ),
+    ).rejects.toThrow('INVALID_HEADER');
+  });
+
+  it('maps core fetch failures to their typed CLI code', async () => {
+    fetchScenario.run = () => Promise.reject(new AepFetchError('AEP_RESPONSE_TOO_LARGE', 'too large'));
+    await expect(
+      __testing.runFetch(
+        {
+          ...context({ header: [], maxRedirects: 5, maxResponseBytes: 1, method: 'GET', showBody: true, timeout: 30 }),
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        new MemoryStorage(),
+      ),
+    ).rejects.toThrow('AEP_RESPONSE_TOO_LARGE');
+  });
+
+  it.each(['not_recognized', 'agent_identity_not_found'])(
+    'maps %s Fetch failures to the not-enrolled error',
+    async (code) => {
+      fetchScenario.run = () => {
+        return Promise.reject(
+          new AepCommandError('not enrolled', 404, {
+            code,
+            status: 404,
+            title: 'Not recognized',
+            type: `urn:aep:error:${code}`,
+          }),
+        );
+      };
+      await expect(
+        __testing.runFetch(
+          {
+            ...context({
+              header: [],
+              maxRedirects: 5,
+              maxResponseBytes: 1024,
+              method: 'GET',
+              showBody: true,
+              timeout: 30,
+            }),
+            args: { resourceUrl: 'https://service.example/resource' },
+          },
+          inflow(),
+          new MemoryStorage(),
+        ),
+      ).rejects.toThrow('AEP_NOT_ENROLLED');
+    },
+  );
+
+  it('projects binary and saved response attachments', async () => {
+    fetchScenario.run = () =>
+      Promise.resolve({
+        authentication: { method: null, outcome: 'not-required' },
+        bodyBase64: 'AAE=',
+        bodySizeBytes: 2,
+        finalUrl: 'https://service.example/resource',
+        outputSavedTo: '/tmp/resource.bin',
+        redirected: true,
+        requestedUrl: 'https://service.example/resource',
+        responseSizeBytes: 2,
+        status: 200,
+      });
+    await expect(
+      __testing.runFetch(
+        {
+          ...context({
+            header: [],
+            maxRedirects: 5,
+            maxResponseBytes: 1024,
+            method: 'GET',
+            showBody: true,
+            timeout: 30,
+          }),
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        new MemoryStorage(),
+      ),
+    ).resolves.toMatchObject({
+      body_base64: 'AAE=',
+      output_saved_to: '/tmp/resource.bin',
+      redirects: { occurred: true },
+    });
+  });
+
+  it('uses the SDK pending resolver for approved authenticate signing', async () => {
+    platformRecovery.identity = identity;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 }))),
+    );
+    fetchScenario.run = async (rawInput: unknown) => {
+      const input = rawInput as {
+        agentOptions: {
+          credentialStore: {
+            deleteCredential(serviceDid: string, credentialId: string): Promise<void>;
+            findCredential(serviceDid: string, credentialId: string): Promise<unknown>;
+            findUsableCredential(serviceDid: string): Promise<unknown>;
+            listCredentials(serviceDid: string): Promise<unknown>;
+            saveCredential(record: unknown): Promise<unknown>;
+          };
+          identityProvider: {
+            getOrCreateIdentity(input: unknown): Promise<unknown>;
+            signerFor(identity: unknown): Promise<unknown>;
+          };
+          identityStore: {
+            findByServiceDid(serviceDid: string): Promise<unknown>;
+            saveIdentity(identity: unknown): Promise<unknown>;
+          };
+          inspectCache: {
+            delete(serviceUrl: string): Promise<void>;
+            get(serviceUrl: string): Promise<unknown>;
+            set(serviceUrl: string, result: unknown): Promise<void>;
+          };
+          pendingSignResolver: (input: {
+            continueSign(): Promise<{ clientAssertion: string; status: 'completed' }>;
+            pending: { platformContext: Record<string, unknown>; retryAfterSeconds: number; status: 'pending' };
+          }) => Promise<unknown>;
+        };
+      };
+      await input.agentOptions.identityProvider.getOrCreateIdentity({
+        inspect: inspect.document,
+        serviceDid: identity.serviceDid,
+        serviceUrl: 'https://service.example',
+      });
+      await input.agentOptions.identityProvider.signerFor(identity);
+      await input.agentOptions.identityStore.saveIdentity(identity);
+      await input.agentOptions.identityStore.findByServiceDid(identity.serviceDid);
+      await input.agentOptions.inspectCache.set('https://service.example/', {
+        ...inspect,
+        cachedAt: '2026-01-01T00:00:00.000Z',
+      });
+      expect(await input.agentOptions.inspectCache.get('https://service.example/')).toMatchObject({
+        cachedAt: '2026-01-01T00:00:00.000Z',
+      });
+      await input.agentOptions.inspectCache.delete('https://service.example/');
+      const record = {
+        credential: { access_token: 'secret', credential_id: 'credential-1', expires_at: '2999-01-01T00:00:00Z' },
+        credentialId: 'credential-1',
+        expiresAt: '2999-01-01T00:00:00Z',
+        grantType: 'oauth-bearer',
+        issuedAt: '2026-01-01T00:00:00Z',
+        serviceDid: identity.serviceDid,
+      };
+      await input.agentOptions.credentialStore.saveCredential(record);
+      await input.agentOptions.credentialStore.findCredential(identity.serviceDid, 'credential-1');
+      await input.agentOptions.credentialStore.findUsableCredential(identity.serviceDid);
+      await input.agentOptions.credentialStore.listCredentials(identity.serviceDid);
+      await input.agentOptions.credentialStore.deleteCredential(identity.serviceDid, 'credential-1');
+      const completed = await input.agentOptions.pendingSignResolver({
+        continueSign: () => Promise.resolve({ clientAssertion: 'jwt', status: 'completed' }),
+        pending: { platformContext: { approval_id: 'approval-1' }, retryAfterSeconds: 1, status: 'pending' },
+      });
+      expect(completed).toMatchObject({ status: 'completed' });
+      return {
+        authentication: {
+          credentialId: 'credential-1',
+          grantType: 'oauth-bearer',
+          method: 'credential',
+          operation: 'grant',
+          outcome: 'authenticated',
+        },
+        bodySizeBytes: 0,
+        finalUrl: 'https://service.example/resource',
+        redirected: false,
+        requestedUrl: 'https://service.example/resource',
+        responseSizeBytes: 0,
+        serviceDid: 'did:web:service.example',
+        status: 204,
+      };
+    };
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    await expect(
+      __testing.runFetch(
+        {
+          ...context({
+            header: [],
+            maxRedirects: 5,
+            maxResponseBytes: 1024,
+            method: 'GET',
+            showBody: true,
+            timeout: 30,
+          }),
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        storage,
+      ),
+    ).resolves.toMatchObject({
+      authentication: {
+        credential_id: 'credential-1',
+        grant_type: 'oauth-bearer',
+        method: 'credential',
+        operation: 'grant',
+        outcome: 'authenticated',
+      },
+      service_did: 'did:web:service.example',
+      status: 204,
+    });
+  });
+
+  it.each([
+    ['DECLINED', 'AEP_APPROVAL_DENIED'],
+    ['CANCELLED', 'APPROVAL_CANCELLED'],
+  ])('maps %s pending Sign outcomes', async (status, code) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status }), { status: 200 }))),
+    );
+    fetchScenario.run = async (rawInput: unknown) => {
+      const input = rawInput as {
+        agentOptions: {
+          pendingSignResolver: (input: {
+            continueSign(): Promise<never>;
+            pending: { platformContext: Record<string, unknown>; retryAfterSeconds: number; status: 'pending' };
+          }) => Promise<unknown>;
+        };
+      };
+      return input.agentOptions.pendingSignResolver({
+        continueSign: () => Promise.reject(new Error('must not continue')),
+        pending: { platformContext: { approval_id: 'approval-1' }, retryAfterSeconds: 1, status: 'pending' },
+      });
+    };
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    await expect(
+      __testing.runFetch(
+        {
+          ...context({
+            header: [],
+            maxRedirects: 5,
+            maxResponseBytes: 1024,
+            method: 'GET',
+            showBody: true,
+            timeout: 30,
+          }),
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        storage,
+      ),
+    ).rejects.toThrow(code);
+  });
+
+  it('maps approval server failures without calling continuation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('failed', { status: 500 }))),
+    );
+    fetchScenario.run = async (rawInput: unknown) => {
+      const input = rawInput as {
+        agentOptions: {
+          pendingSignResolver: (input: {
+            continueSign(): Promise<never>;
+            pending: { platformContext: Record<string, unknown>; retryAfterSeconds: number; status: 'pending' };
+          }) => Promise<unknown>;
+        };
+      };
+      return input.agentOptions.pendingSignResolver({
+        continueSign: () => Promise.reject(new Error('must not continue')),
+        pending: { platformContext: { approval_id: 'approval-1' }, retryAfterSeconds: 1, status: 'pending' },
+      });
+    };
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    await expect(
+      __testing.runFetch(
+        {
+          ...context({
+            header: [],
+            maxRedirects: 5,
+            maxResponseBytes: 1024,
+            method: 'GET',
+            showBody: true,
+            timeout: 30,
+          }),
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        storage,
+      ),
+    ).rejects.toThrow('AEP_APPROVAL_SERVER_ERROR');
+  });
+  it('runs inspect, enrollment, status, grant, and revoke without exposing credentials', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 }))),
+    );
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const client = inflow();
+
+    await expect(__testing.runInspect(context({ timeout: 30 }), client)).resolves.toMatchObject({ schema_version: 1 });
+    await expect(
+      __testing.runEnroll(context({ interval: 1, maxAttempts: 1, timeout: 1 }), client, storage),
+    ).resolves.toEqual({ status: 'active' });
+    await expect(__testing.runStatus(context(), client, storage)).resolves.toMatchObject({
+      local: { grants: [] },
+      service: { status: 'active' },
+    });
+    await expect(__testing.runGrant(context({ scope: ['read', 'read'] }), client, storage)).resolves.toEqual({
+      credential_id: 'credential-1',
+      expires_at: '2999-01-01T00:00:00.000Z',
+      grant_type: 'oauth-bearer',
+      granted: true,
+      service_did: 'did:web:service.example',
+      scopes: ['read'],
+    });
+    await expect(__testing.runRevoke(context(), client, storage)).resolves.toEqual({
+      all_grant_types: true,
+      revoked: true,
+    });
+  });
+
+  it('reports AEP and unrelated authentication classifications for the exact resource', async () => {
+    probeScenario.classification = 'aep-challenge';
+    probeScenario.status = 401;
+    await expect(__testing.runInspect(context({ timeout: 30 }), inflow())).resolves.toMatchObject({
+      resource_authentication: { result: 'aep-authenticatable', status: 401 },
+    });
+
+    probeScenario.classification = 'unrelated-authentication';
+    await expect(__testing.runInspect(context({ timeout: 30 }), inflow())).resolves.toMatchObject({
+      resource_authentication: { result: 'other-authentication-required', status: 401 },
+    });
+  });
+
+  it('maps local identity and invalid command inputs to stable errors', async () => {
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const client = inflow();
+
+    await expect(
+      __testing.runEnroll(context({ interval: 0, maxAttempts: 0, timeout: 900 }), client, storage),
+    ).rejects.toThrow('AEP_INTERNAL_ERROR');
+    await expect(__testing.runStatus(context(), client, storage)).resolves.toEqual({
+      enrolled: false,
+      local: { grants: [] },
+      service: null,
+    });
+    await expect(
+      __testing.runGrant(context({ grantType: 'not-advertised', scope: [] }), client, storage),
+    ).rejects.toThrow('AEP_GRANT_TYPE_UNSUPPORTED');
+    await expect(
+      __testing.runRevoke(context({ credentialId: 'credential-1', grantType: 'oauth-bearer' }), client, storage),
+    ).rejects.toThrow('AEP_INTERNAL_ERROR');
+  });
+
+  it('treats Grant as a graceful no-op when the Service advertises no grant types', async () => {
+    const advertised = inspect.document.commands.grant_types ?? [];
+    inspect.document.commands.grant_types = [];
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    try {
+      await expect(__testing.runGrant(context({ scope: [] }), inflow(), storage)).resolves.toEqual({
+        authentication: 'aep-jwt',
+        grant_available: false,
+        granted: false,
+      });
+    } finally {
+      inspect.document.commands.grant_types = advertised;
+    }
+  });
+
+  it('checks Status and skips approval when enrolling an existing identity', async () => {
+    const approvalFetch = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 })),
+    );
+    vi.stubGlobal('fetch', approvalFetch);
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const client = inflow();
+    const options = context({ interval: 1, maxAttempts: 1, timeout: 1 });
+
+    await __testing.runEnroll(options, client, storage);
+    const approvalRequests = approvalFetch.mock.calls.length;
+    await expect(__testing.runEnroll(options, client, storage)).resolves.toEqual({ status: 'active' });
+    expect(approvalFetch).toHaveBeenCalledTimes(approvalRequests);
+  });
+
+  it('rehydrates a missing local identity from the Platform before checking Status', async () => {
+    platformRecovery.identity = identity;
+    const approvalFetch = vi.fn();
+    vi.stubGlobal('fetch', approvalFetch);
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+
+    await expect(
+      __testing.runEnroll(context({ interval: 1, maxAttempts: 1, timeout: 1 }), inflow(), storage),
+    ).resolves.toEqual({ status: 'active' });
+    expect(approvalFetch).not.toHaveBeenCalled();
+    expect(storage.getAepState()?.identities[identity.serviceDid]).toMatchObject(identity);
+  });
+
+  it('enrolls a recovered Platform identity when the Service does not recognize it', async () => {
+    platformRecovery.identity = identity;
+    platformRecovery.notRecognized = true;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 }))),
+    );
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+
+    await expect(
+      __testing.runEnroll(context({ interval: 1, maxAttempts: 1, timeout: 1 }), inflow(), storage),
+    ).resolves.toEqual({ status: 'active' });
+  });
+
+  it('replaces a stale local identity when Platform Sign cannot find it', async () => {
+    platformRecovery.identityNotFoundOnSign = true;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 }))),
+    );
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const persisted = new AepStorage(storage, {
+      platformOrigin: 'https://platform.example',
+      userId: 'user-1',
+    });
+    await persisted.identities().saveIdentity({ ...identity, agentDid: 'did:web:platform.example:agents:deleted' });
+
+    await expect(
+      __testing.runEnroll(context({ interval: 1, maxAttempts: 1, timeout: 1 }), inflow(), storage),
+    ).resolves.toEqual({ status: 'active' });
+    expect(storage.getAepState()?.identities[identity.serviceDid]?.agentDid).toBe(identity.agentDid);
+  });
+
+  it('maps a declined approval to the AEP approval-denied error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'DECLINED' }), { status: 200 }))),
+    );
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+
+    await expect(
+      __testing.runEnroll(context({ interval: 1, maxAttempts: 1, timeout: 1 }), inflow(), storage),
+    ).rejects.toThrow('AEP_APPROVAL_DENIED');
+  });
+
+  it('reports a missing Inspect endpoint as a Service that does not advertise AEP', async () => {
+    const client = inflow() as { aep: { inspect: () => never } };
+    const { AepInspectError } = await import('@aep-foundation/agent');
+    client.aep.inspect = () => {
+      throw new AepInspectError('Not found', 'http_error', 404);
+    };
+
+    await expect(__testing.runInspect(context({ timeout: 30 }), client as never)).resolves.toEqual({
+      outcome: 'not-advertised',
+      schema_version: 1,
+      service_url: 'https://service.example/',
+      status: 404,
+    });
+  });
+});

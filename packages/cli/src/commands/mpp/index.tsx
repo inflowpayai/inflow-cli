@@ -21,11 +21,13 @@ import { Cli } from 'incur';
 import { assertSessionGuard } from '../../utils/assert-session.js';
 import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
+import { createAepAwareInspectProbe, createAepAwareSellerTransport } from '../aep/runtime.js';
 import { PaymentFetchView, type PaymentFetchPhase } from '../payment-fetch.js';
 import { CancelView } from './cancel.js';
 import { DecodeView, decodeMppValue } from './decode.js';
 import {
   buildChallengesFrame,
+  buildBlockedFrame,
   buildNoPaymentFrame as buildInspectNoPaymentFrame,
   type MppInspectPhase,
   type MppInspectPipelineDeps,
@@ -187,6 +189,16 @@ function fetchProbeOptionsFrom(c: FetchCommandContext): SellerProbeOptions {
     headers: parseHeaderFlags(c.options.header),
     ...(c.options.data !== undefined ? { data: c.options.data } : {}),
   };
+}
+
+function createSellerTransport(c: PayContext | FetchCommandContext, inflow: Inflow, authStorage: AuthStorage) {
+  return createAepAwareSellerTransport({
+    authStorage,
+    context: c,
+    inflow,
+    timeout: c.options.timeout,
+    ...(c.options.interval > 0 ? { interval: c.options.interval } : {}),
+  });
 }
 
 function buildPayPipelineInput(
@@ -357,6 +369,7 @@ async function* runPayCommand(
     return c.error(invalidHeaderError(err));
   }
 
+  const sellerTransport = createSellerTransport(c, inflow, authStorage);
   if (!c.agent && !c.formatExplicit) {
     const client = await inflow.mpp.client();
     const captured: { finalPhase: MppPayPhase | null } = { finalPhase: null };
@@ -369,6 +382,7 @@ async function* runPayCommand(
           client,
           apiBaseUrl,
           awaitPayment: true,
+          sellerTransport,
         }}
         onComplete={(phase) => {
           captured.finalPhase = phase;
@@ -394,6 +408,7 @@ async function* runPayCommand(
   const run = inflow.mpp.pay({
     ...buildPayPipelineInput(c, probeOptions),
     awaitPayment: c.options.interval > 0,
+    sellerTransport,
   });
 
   for await (const event of run.events) {
@@ -437,6 +452,7 @@ async function* runFetchCommand(
     return c.error(invalidHeaderError(err));
   }
 
+  const sellerTransport = createSellerTransport(c, inflow, authStorage);
   if (!c.agent && !c.formatExplicit) {
     const captured: { finalPhase: PaymentFetchPhase | null } = { finalPhase: null };
     await renderInkUntilExit(
@@ -455,6 +471,7 @@ async function* runFetchCommand(
             maxAttempts: c.options.maxAttempts,
             timeout: c.options.timeout,
             showBody: c.options.showBody,
+            sellerTransport,
             ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
           }).events
         }
@@ -490,6 +507,7 @@ async function* runFetchCommand(
     maxAttempts: c.options.maxAttempts,
     timeout: c.options.timeout,
     showBody: c.options.showBody,
+    sellerTransport,
     ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
   });
 
@@ -640,7 +658,11 @@ async function runSupportedCommand(
   return sanitizeDeep(response);
 }
 
-async function runInspectCommand(c: InspectCommandContext): Promise<Record<string, unknown> | undefined> {
+async function runInspectCommand(
+  c: InspectCommandContext,
+  inflow?: Inflow,
+  authStorage?: AuthStorage,
+): Promise<Record<string, unknown> | undefined> {
   let probeOptions: SellerProbeOptions;
   try {
     probeOptions = probeOptionsFrom(c);
@@ -650,6 +672,9 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
 
   const deps: MppInspectPipelineDeps = {
     probeOptions,
+    ...(inflow === undefined || authStorage === undefined
+      ? {}
+      : { probe: createAepAwareInspectProbe({ authStorage, context: c, inflow, timeout: 30 }) }),
     url: c.args.url,
     ...(c.options.paymentMethod !== undefined ? { paymentMethodFilter: c.options.paymentMethod } : {}),
     ...(c.options.intent !== undefined ? { intentFilter: c.options.intent } : {}),
@@ -688,6 +713,10 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
       captured.finalEvent = { kind: 'challenges', payload: event.result };
       return;
     }
+    if (event.type === 'blocked') {
+      captured.finalEvent = { kind: 'blocked', payload: event.result };
+      return;
+    }
     captured.finalEvent = { kind: 'no-payment', payload: event.result };
   });
 
@@ -701,6 +730,9 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
   }
   if (kind === 'challenges') {
     return sanitizeDeep(buildChallengesFrame(payload as Parameters<typeof buildChallengesFrame>[0]));
+  }
+  if (kind === 'blocked') {
+    return sanitizeDeep(buildBlockedFrame(payload as Parameters<typeof buildBlockedFrame>[0]));
   }
   return sanitizeDeep(buildInspectNoPaymentFrame(payload as Parameters<typeof buildInspectNoPaymentFrame>[0]));
 }
@@ -772,7 +804,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
     options: inspectOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
-      return runInspectCommand(c);
+      return runInspectCommand(c, inflow, authStorage);
     },
   });
 

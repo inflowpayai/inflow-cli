@@ -167,6 +167,44 @@ describe('runPayPipeline — full lifecycle', () => {
     expect(new Headers(replayInit?.headers).get(HEADERS.PAYMENT_SIGNATURE)).toBe('ENC-PAYLOAD');
   });
 
+  it('prepares payment only after the shared seller transport returns a payment requirement', async () => {
+    const order: string[] = [];
+    const request = (input: {
+      additionalAuthenticationHeaders?: Record<string, string>;
+      headers: Record<string, string>;
+      method: string;
+      url: string;
+    }) => {
+      order.push(input.additionalAuthenticationHeaders === undefined ? 'aep-then-payment-requirement' : 'paid-replay');
+      if (input.additionalAuthenticationHeaders !== undefined) {
+        expect(input.additionalAuthenticationHeaders).toEqual({ [HEADERS.PAYMENT_SIGNATURE]: 'ENC-PAYLOAD' });
+        return Promise.resolve({
+          bytes: new Uint8Array(Buffer.from('paid')),
+          contentType: 'text/plain',
+          headers: new Headers(),
+          status: 200,
+        });
+      }
+      return Promise.resolve({
+        bytes: new Uint8Array(),
+        contentType: undefined,
+        headers: new Headers({ [HEADERS.PAYMENT_REQUIRED]: encodePaymentRequiredHeader(paymentRequired()) }),
+        status: 402,
+      });
+    };
+    const client = payingClient({
+      prepareInflowPayment: vi.fn(() => {
+        order.push('payment-prepared');
+        return Promise.resolve(preparedPayment());
+      }),
+    });
+
+    const terminal = (await collect(deps({ client: client as never, sellerTransport: { request } }))).at(-1);
+
+    expect(order).toEqual(['aep-then-payment-requirement', 'payment-prepared', 'paid-replay']);
+    expect(terminal?.type).toBe('replayed');
+  });
+
   it('passes the decoded signing context (resource + version + extensions) to prepareInflowPayment', async () => {
     mockSeller();
     const client = payingClient() as {

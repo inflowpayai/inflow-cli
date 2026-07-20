@@ -1,14 +1,20 @@
+import { inspectOpenApiPolicy } from '@aep-foundation/agent';
+import { sellerProbe } from '@inflowpayai/x402-buyer/probe';
 import {
   type CombinedInspectNoPayment,
   type CombinedInspectPhase,
   type CombinedInspectPipelineDeps,
   type CombinedInspectResult,
+  type AuthStorage,
+  type Inflow,
   parseHeaderFlags,
   runCombinedInspectPipeline,
   sanitizeDeep,
   type SellerProbeOptions,
 } from '@inflowpayai/inflow-core';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
+import { persistedAepPublicDocumentCache } from '../../utils/aep-public-document-cache.js';
+import { storedAepCredentialAuthenticationHeaders } from '../aep/runtime.js';
 import { challengeToFrame } from '../mpp/inspect.js';
 import { acceptToFrame } from '../x402/inspect.js';
 import { CombinedInspectView, detectedProtocols } from './combined-inspect-view.js';
@@ -48,11 +54,26 @@ function parseHeaderFlagsOrFail(c: InspectCommandContext, flags: string[]): Reco
 }
 
 interface FrameWarning {
-  protocol: 'mpp' | 'x402' | 'none';
+  protocol: 'aep' | 'mpp' | 'x402' | 'none';
   code: string;
   message: string;
   /** For `NO_INFLOW_MATCH`: the unsupported MPP methods the seller advertised. */
   methods?: readonly string[];
+}
+
+type OpenApiPolicy = Awaited<ReturnType<typeof inspectOpenApiPolicy>>;
+
+function openApiPolicyFrame(policy: OpenApiPolicy): Record<string, unknown> {
+  const operation = policy.matchedOperation;
+  return {
+    accepted_methods: policy.methods,
+    freshness: policy.freshness,
+    ...(operation === undefined
+      ? {}
+      : { matched_operation: { method: operation.method, path_template: operation.pathTemplate } }),
+    ...(policy.strictSlashSuggestion === undefined ? {} : { strict_slash_suggestion: policy.strictSlashSuggestion }),
+    state: policy.state,
+  };
 }
 
 /**
@@ -62,6 +83,65 @@ interface FrameWarning {
  */
 export function buildCombinedFrame(result: CombinedInspectResult): Record<string, unknown> {
   const warnings: FrameWarning[] = [];
+
+  let aep: Record<string, unknown> = { required: false, source: 'not_checked' };
+  if (result.aep.kind === 'service') {
+    const inspect = result.aep.inspect;
+    aep = {
+      required: true,
+      source: 'challenge',
+      ...(result.aep.reason === undefined ? {} : { challenge: { reason: result.aep.reason } }),
+      ...(result.aep.openApiPolicy === undefined ? {} : { openapi: openApiPolicyFrame(result.aep.openApiPolicy) }),
+      inspect: {
+        document: inspect.document,
+        service_url: String(inspect.finalUrl ?? inspect.inspectUrl).replace('/.well-known/aep', ''),
+      },
+    };
+  } else if (result.aep.kind === 'openapi') {
+    const inspect = result.aep.inspect;
+    aep = {
+      required: result.aep.policy.state === 'required',
+      source: 'openapi',
+      openapi: openApiPolicyFrame(result.aep.policy),
+      inspect: {
+        document: inspect.document,
+        service_url: String(inspect.finalUrl ?? inspect.inspectUrl).replace('/.well-known/aep', ''),
+      },
+    };
+  } else if (result.aep.kind === 'blocked') {
+    const inspect = result.aep.inspect;
+    aep = {
+      required: true,
+      source: 'openapi',
+      blocked: true,
+      message: result.aep.message,
+      openapi: openApiPolicyFrame(result.aep.policy),
+      inspect: {
+        document: inspect.document,
+        service_url: String(inspect.finalUrl ?? inspect.inspectUrl).replace('/.well-known/aep', ''),
+      },
+    };
+    warnings.push({
+      protocol: 'aep',
+      code: 'AEP_PAYMENT_INSPECT_BLOCKED',
+      message: result.aep.message,
+    });
+  } else if (result.aep.kind === 'absent') {
+    aep = {
+      required: false,
+      source: result.aep.source,
+      ...(result.aep.openApiPolicy === undefined ? {} : { openapi: openApiPolicyFrame(result.aep.openApiPolicy) }),
+    };
+  } else {
+    aep = {
+      required: true,
+      source: result.aep.source,
+      ...(result.aep.reason === undefined ? {} : { challenge: { reason: result.aep.reason } }),
+      ...(result.aep.openApiPolicy === undefined ? {} : { openapi: openApiPolicyFrame(result.aep.openApiPolicy) }),
+      error: { code: result.aep.code, message: result.aep.message },
+    };
+    warnings.push({ protocol: 'aep', code: result.aep.code, message: result.aep.message });
+  }
 
   const mppRows = result.mpp.kind === 'challenges' ? result.mpp.challenges.map(challengeToFrame) : [];
   if (result.mpp.kind === 'none-inflow') {
@@ -81,7 +161,7 @@ export function buildCombinedFrame(result: CombinedInspectResult): Record<string
     warnings.push({ protocol: 'x402', code: result.x402.code, message: result.x402.message });
   }
 
-  if (result.mpp.kind === 'absent' && result.x402.kind === 'absent') {
+  if (result.aep.kind === 'absent' && result.mpp.kind === 'absent' && result.x402.kind === 'absent') {
     warnings.push({
       protocol: 'none',
       code: 'NO_PAYMENT_CHALLENGE',
@@ -93,10 +173,12 @@ export function buildCombinedFrame(result: CombinedInspectResult): Record<string
     outcome: 'inspected',
     url: result.url,
     method: result.method,
-    detected: detectedProtocols(result.mpp, result.x402),
+    detected: detectedProtocols(result.aep, result.mpp, result.x402),
+    aep,
     mpp: mppRows,
     x402: x402Rows,
   };
+  if (result.status !== undefined) frame['status'] = result.status;
   if (result.x402.kind === 'accepts') {
     frame['x402_resource'] = result.x402.resource;
     frame['x402_version'] = result.x402.x402Version;
@@ -113,6 +195,7 @@ export function buildNoPaymentFrame(result: CombinedInspectNoPayment): Record<st
     method: result.method,
     status: result.status,
     body_size_bytes: result.bodySizeBytes,
+    aep: { required: false, source: 'anonymous_probe' },
   };
   if (result.contentType !== undefined) frame['content_type'] = result.contentType;
   return frame;
@@ -120,6 +203,8 @@ export function buildNoPaymentFrame(result: CombinedInspectNoPayment): Record<st
 
 export async function runCombinedInspectCommand(
   c: InspectCommandContext,
+  inflow?: Inflow,
+  authStorage?: AuthStorage,
 ): Promise<Record<string, unknown> | undefined> {
   const probeHeaders = parseHeaderFlagsOrFail(c, c.options.header);
   const probeOptions: SellerProbeOptions = {
@@ -127,7 +212,56 @@ export async function runCombinedInspectCommand(
     headers: probeHeaders,
     ...(c.options.data !== undefined ? { data: c.options.data } : {}),
   };
-  const deps: CombinedInspectPipelineDeps = { probeOptions, url: c.args.url };
+  const deps: CombinedInspectPipelineDeps = {
+    probeOptions,
+    url: c.args.url,
+    ...(inflow === undefined
+      ? {}
+      : {
+          inspectAep: (serviceUrl: string) => {
+            const publicDocumentCache =
+              authStorage === undefined ? undefined : persistedAepPublicDocumentCache(authStorage);
+            return inflow.aep.inspect({
+              serviceUrl,
+              signal: AbortSignal.timeout(30_000),
+              ...(publicDocumentCache === undefined ? {} : { publicDocumentCache }),
+            });
+          },
+          inspectAepPolicy: (inspect, input) => {
+            const publicDocumentCache =
+              authStorage === undefined ? undefined : persistedAepPublicDocumentCache(authStorage);
+            return inspectOpenApiPolicy({
+              inspect,
+              method: input.method,
+              ...(publicDocumentCache === undefined ? {} : { publicDocumentCache }),
+              signal: AbortSignal.timeout(30_000),
+              url: input.url,
+            });
+          },
+          authenticatedProbe: async (inspect, input) => {
+            if (authStorage === undefined) return undefined;
+            try {
+              const headers = await storedAepCredentialAuthenticationHeaders(
+                {
+                  authStorage,
+                  context: c,
+                  inflow,
+                  timeout: 30,
+                },
+                inspect,
+              );
+              if (headers === undefined) return undefined;
+              return sellerProbe(input.url, {
+                method: input.method,
+                headers: { ...input.headers, ...headers },
+                ...(input.data === undefined ? {} : { data: input.data }),
+              });
+            } catch {
+              return undefined;
+            }
+          },
+        }),
+  };
 
   if (!c.agent && !c.formatExplicit) {
     const captured: { finalPhase: CombinedInspectPhase | null } = { finalPhase: null };
@@ -177,17 +311,17 @@ export async function runCombinedInspectCommand(
   return sanitizeDeep(buildNoPaymentFrame(payload as CombinedInspectNoPayment));
 }
 
-export function createInspectCommand(): InspectCommandDefinition {
+export function createInspectCommand(inflow: Inflow, authStorage?: AuthStorage): InspectCommandDefinition {
   return {
     description:
-      "Detect a URL's payment protocol(s) and show MPP and x402 challenges together. Read-only probe - no auth, no payment. Read `detected` to choose a pay rail (MPP wins when both are present).",
+      "Detect a URL's AEP authentication and payment requirements. Read-only probe - no authentication and no payment.",
     args: inspectArgs,
     options: inspectOptions,
     outputPolicy: 'agent-only' as const,
     examples: [
       {
         args: { url: 'https://api.foo.dev/dataset.csv' },
-        description: 'Probe a URL and show every MPP and x402 challenge it advertises.',
+        description: 'Probe a URL and show its AEP, MPP, and x402 requirements.',
       },
       {
         args: { url: 'https://api.foo.dev/widgets' },
@@ -196,7 +330,7 @@ export function createInspectCommand(): InspectCommandDefinition {
       },
     ],
     async run(c: InspectCommandContext) {
-      return runCombinedInspectCommand(c);
+      return runCombinedInspectCommand(c, inflow, authStorage);
     },
   };
 }

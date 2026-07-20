@@ -1,7 +1,7 @@
 import type { MppClient } from '@inflowpayai/mpp';
 import type { InflowClient as X402InflowClient } from '@inflowpayai/x402-buyer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runMppFetch, runX402Fetch } from '../../../src/index.js';
+import { runMppFetch, runX402Fetch, SellerAuthenticationError } from '../../../src/index.js';
 
 function mppClient(response: Awaited<ReturnType<MppClient['getTransaction']>>): MppClient {
   return {
@@ -53,6 +53,67 @@ describe('payment fetch replay safety', () => {
     expect(events.at(-1)).toMatchObject({
       type: 'replayed',
       result: { protocol: 'mpp', outcome: 'paid', transactionId: 'tx-1', body: 'paid' },
+    });
+  });
+
+  it('MPP ready fetch passes payment through the shared transport as additional authentication', async () => {
+    const request = vi.fn().mockResolvedValue({
+      bytes: new Uint8Array(Buffer.from('paid')),
+      contentType: 'text/plain',
+      headers: new Headers(),
+      status: 200,
+    });
+
+    const events = await drain(
+      runMppFetch({
+        client: mppClient({ transactionId: 'tx-1', state: 'ready', credential: 'CRED' }),
+        transactionId: 'tx-1',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: { Authorization: 'Bearer caller' } },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: true,
+        sellerTransport: { request },
+      }).events,
+    );
+
+    expect(request).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledWith({
+      additionalAuthenticationHeaders: { Authorization: 'Payment CRED' },
+      headers: {},
+      method: 'GET',
+      url: 'https://seller.test/api',
+    });
+    expect(events.at(-1)).toMatchObject({ type: 'replayed', result: { body: 'paid' } });
+  });
+
+  it('authentication failures from the shared transport stay distinct from outcome-unknown replay failures', async () => {
+    const events = await drain(
+      runX402Fetch({
+        client: x402Client({
+          status: 'APPROVED',
+          encodedPayload: 'ENC',
+          paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
+        }),
+        transactionId: 'txn-1',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: false,
+        sellerTransport: {
+          request: () =>
+            Promise.reject(new SellerAuthenticationError('AEP_APPROVAL_DENIED', 'The approval was denied.')),
+        },
+      }).events,
+    );
+
+    expect(events.at(-1)).toEqual({
+      type: 'errored',
+      code: 'AEP_APPROVAL_DENIED',
+      message: 'The approval was denied.',
     });
   });
 

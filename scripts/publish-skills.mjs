@@ -25,8 +25,9 @@ const dest = resolve(repoRoot, '../inflow-server/src/main/resources/static/cli')
 
 const LLMS_HEADER = `# InFlow CLI
 
-> Agentic MPP / x402 payments from your machine. A wallet for your agents to onboard and pay.
+> Agent Enrollment Protocol access and MPP / x402 payments from your machine.
 > Agent setup: https://inflowcli.ai/skill.md
+> Enrollment playbook: https://inflowcli.ai/skills/agentic-enrollment.md
 > Payments playbook: https://inflowcli.ai/skills/agentic-payments.md
 > Source: https://github.com/inflowpayai/inflow-cli
 

@@ -48,6 +48,12 @@ describe('sanitizeDeep', () => {
     expect(out).toEqual(['a', 'b', 1]);
   });
 
+  it('preserves URL instances', () => {
+    const url = new URL('https://service.example/.well-known/aep');
+
+    expect(sanitizeDeep(url)).toBe(url);
+  });
+
   it('walks nested objects', () => {
     const out = sanitizeDeep({
       name: '\x1b[31mhi\x1b[0m',

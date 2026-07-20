@@ -1,6 +1,7 @@
 import { HEADERS, type MppChallenge, parseChallengeHeaders, readHeaderAll } from '@inflowpayai/mpp';
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { type DecodedChallenge, summarizeChallenge } from './mpp-decode.js';
+import { PaymentInspectionBlockedError, type PaymentInspectionBlocked } from './payment-fetch.js';
 import {
   buildNoFilteredMatchMessage,
   type ChallengeFilters,
@@ -41,11 +42,13 @@ export type MppInspectPhase =
   | { kind: 'probing' }
   | { kind: 'challenges'; result: MppInspectResultChallenges }
   | { kind: 'no-payment'; result: MppInspectResultNoPayment }
+  | { kind: 'blocked'; result: PaymentInspectionBlocked }
   | { kind: 'error'; code: string; message: string };
 
 export type MppInspectEvent =
   | { type: 'challenges'; result: MppInspectResultChallenges }
   | { type: 'no-payment'; result: MppInspectResultNoPayment }
+  | { type: 'blocked'; result: PaymentInspectionBlocked }
   | { type: 'errored'; code: string; message: string };
 
 /**
@@ -79,6 +82,8 @@ export function reduceMppInspect(state: MppInspectPhase, event: MppInspectEvent)
       return { kind: 'challenges', result: event.result };
     case 'no-payment':
       return { kind: 'no-payment', result: event.result };
+    case 'blocked':
+      return { kind: 'blocked', result: event.result };
     case 'errored':
       return { kind: 'error', code: event.code, message: event.message };
     default:
@@ -89,6 +94,7 @@ export function reduceMppInspect(state: MppInspectPhase, event: MppInspectEvent)
 export interface MppInspectPipelineDeps {
   probeOptions: SellerProbeOptions;
   url: string;
+  probe?: (url: string, options: SellerProbeOptions) => Promise<SellerProbeResult>;
   /** Caller-supplied `--payment-method` filter — matches a challenge's `method`. Empty filtered set ⇒ NO_FILTERED_MATCH. */
   paymentMethodFilter?: string;
   /** Caller-supplied `--intent` filter — matches a challenge's `intent`. */
@@ -109,8 +115,12 @@ export async function runMppInspectPipeline(
 ): Promise<void> {
   let probe: SellerProbeResult;
   try {
-    probe = await sellerProbe(deps.url, deps.probeOptions);
+    probe = await (deps.probe ?? sellerProbe)(deps.url, deps.probeOptions);
   } catch (err) {
+    if (err instanceof PaymentInspectionBlockedError) {
+      emit({ type: 'blocked', result: err.blocked });
+      return;
+    }
     emit({ type: 'errored', code: 'INSPECT_FAILED', message: err instanceof Error ? err.message : String(err) });
     return;
   }

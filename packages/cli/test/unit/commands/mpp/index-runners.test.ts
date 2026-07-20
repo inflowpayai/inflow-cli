@@ -166,7 +166,10 @@ describe('mpp agent runners', () => {
   });
 
   it('runFetchCommand fetches a ready transaction without creating a transaction or exposing the credential', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(challenge402())
+      .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
     const createTransaction = vi.fn();
     const client = makeClient({
       createTransaction: createTransaction as MppClient['createTransaction'],
@@ -187,7 +190,7 @@ describe('mpp agent runners', () => {
     const frames = await drain(runFetchCommand(ctx as never, inflow, storage));
 
     expect(createTransaction).not.toHaveBeenCalled();
-    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(frames.at(-1)).toMatchObject({
       protocol: 'mpp',
       outcome: 'paid',
@@ -196,12 +199,15 @@ describe('mpp agent runners', () => {
       body: 'DONE',
     });
     expect(frames.at(-1)).not.toHaveProperty('credential');
-    const [, init] = fetchSpy.mock.calls[0] ?? [];
+    const [, init] = fetchSpy.mock.calls.at(-1) ?? [];
     expect(new Headers(init?.headers).get('Authorization')).toBe('Payment CRED');
   });
 
   it('runFetchCommand renders the human fetch path for ready transactions', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(challenge402())
+      .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
     const client = makeClient({
       getTransaction: vi.fn(() =>
         Promise.resolve({
@@ -224,7 +230,7 @@ describe('mpp agent runners', () => {
 
     expect(result.values).toEqual([]);
     expect(ctx.error).not.toHaveBeenCalled();
-    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it('runFetchCommand stops terminal failures before contacting the seller', async () => {
@@ -302,6 +308,7 @@ describe('mpp agent runners', () => {
 
   it('runPayCommand surfaces a seller-rejected replay through c.error after yielding the frame', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy.mockResolvedValueOnce(challenge402());
     fetchSpy.mockResolvedValueOnce(challenge402());
     fetchSpy.mockResolvedValueOnce(new Response('nope', { status: 402 }));
     const client = makeClient({

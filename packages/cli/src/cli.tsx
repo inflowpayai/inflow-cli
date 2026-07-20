@@ -2,6 +2,7 @@ import process from 'node:process';
 import { type AuthStorage, Inflow, Storage, storage } from '@inflowpayai/inflow-core';
 import { Cli, Help } from 'incur';
 import { createAuthCli } from './commands/auth/index.js';
+import { createAepCli } from './commands/aep/index.js';
 import { createBalancesCli } from './commands/balances/index.js';
 import { createDepositAddressesCli } from './commands/deposit-addresses/index.js';
 import { createInspectCommand } from './commands/inspect/index.js';
@@ -195,7 +196,7 @@ if (isAgent) {
 }
 
 const cli = Cli.create('inflow', {
-  description: 'InFlow - agentic MPP / x402 payments from your machine.',
+  description: 'InFlow - agent enrollment and agentic payments from your machine.',
   version: cliVersion,
 });
 
@@ -228,7 +229,8 @@ cli.command(createBalancesCli(inflow.balances, authStorage, inflow));
 cli.command(createDepositAddressesCli(inflow.depositAddresses, authStorage, inflow));
 cli.command(createX402Cli(inflow, authStorage, resolvedApiBaseUrl));
 cli.command(createMppCli(inflow, authStorage, resolvedApiBaseUrl));
-cli.command('inspect', createInspectCommand());
+cli.command(createAepCli(inflow, authStorage));
+cli.command('inspect', createInspectCommand(inflow, authStorage));
 
 await cli.serve();
 

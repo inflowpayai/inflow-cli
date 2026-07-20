@@ -101,7 +101,7 @@ export class InflowApiClient {
     return `${this.baseUrl}${path}`;
   }
 
-  private async buildAuthHeaders(): Promise<Record<string, string>> {
+  async authenticationHeaders(): Promise<Record<string, string>> {
     const mode = this.config.authMode;
     switch (mode.type) {
       case 'apiKey':
@@ -197,7 +197,7 @@ export class InflowApiClient {
         if (overrideAuthHeader !== undefined) {
           attemptHeaders['Authorization'] = overrideAuthHeader;
         } else {
-          Object.assign(attemptHeaders, await this.buildAuthHeaders());
+          Object.assign(attemptHeaders, await this.authenticationHeaders());
         }
       }
 
