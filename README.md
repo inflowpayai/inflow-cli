@@ -61,7 +61,7 @@ In every case the plugin bundles the skill and the `inflow` MCP server (`.mcp.js
 
 ## Development
 
-This is a pnpm + Turborepo monorepo. Node >= 22 required.
+This is a pnpm + Turborepo monorepo. Node >= 24.15.0 required.
 
 ```bash
 pnpm install

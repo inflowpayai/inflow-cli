@@ -68,5 +68,5 @@ export default defineConfig({
   platform: 'node',
   splitting: false,
   sourcemap: false,
-  target: 'node22',
+  target: 'node24',
 });

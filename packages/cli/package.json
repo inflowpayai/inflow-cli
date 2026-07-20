@@ -25,7 +25,7 @@
     "clean": "rm -rf dist .turbo"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=24.15.0"
   },
   "publishConfig": {
     "access": "public",
@@ -54,7 +54,7 @@
   },
   "devDependencies": {
     "@inflowpayai/inflow-core": "workspace:^",
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.0.0",
     "@types/react": "^18.3.28",
     "@types/update-notifier": "^6.0.8",
     "@vitest/coverage-v8": "^2.1.0",
