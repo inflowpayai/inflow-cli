@@ -83,9 +83,9 @@ describe('makeFrozenUpdateProbe', () => {
 });
 
 describe('formatUpdateNotice', () => {
-  it('renders the inflow package name and install command', () => {
+  it('renders the inflow package name and install instructions URL', () => {
     const text = formatUpdateNotice({ current: '0.5.0', latest: '0.5.1' });
     expect(text).toContain('Update available for @inflowpayai/inflow: 0.5.0 -> 0.5.1');
-    expect(text).toContain('Run: npm install -g @inflowpayai/inflow');
+    expect(text).toContain('Install instructions: https://inflowcli.ai/');
   });
 });

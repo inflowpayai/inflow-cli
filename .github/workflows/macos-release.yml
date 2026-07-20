@@ -21,8 +21,17 @@ permissions:
   contents: write
 
 jobs:
-  macos-release:
-    runs-on: macos-15
+  build-macos:
+    name: build macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
     env:
       INFLOW_NOTARY_PROFILE: inflow-notary
       INFLOW_RELEASE_CODESIGN_IDENTITY: 'Developer ID Application: Jarwin, Inc. (B96U57DTR2)'
@@ -53,8 +62,8 @@ jobs:
             exit 1
           fi
           echo "version=$package_version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$package_version" >> "$GITHUB_OUTPUT"
-          echo "artifact=dist/macos/inflow-$package_version-darwin-arm64.zip" >> "$GITHUB_OUTPUT"
+          echo "artifact=dist/macos/inflow-$package_version-darwin-${{ matrix.arch }}.zip" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=inflow-macos-${{ matrix.arch }}-$package_version" >> "$GITHUB_OUTPUT"
 
       - name: Configure Apple signing
         if: inputs.dry_run == false
@@ -122,7 +131,74 @@ jobs:
             spctl --assess --type execute --verbose=2 dist/macos/InFlow.app
           fi
 
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.metadata.outputs.artifact_name }}
+          path: |
+            ${{ steps.metadata.outputs.artifact }}
+            dist/macos/manifest.json
+          if-no-files-found: error
+
+  publish-macos:
+    name: publish macOS artifacts
+    runs-on: macos-15
+    needs: build-macos
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "JSON.parse(require('node:fs').readFileSync('packages/cli/package.json', 'utf8')).version")"
+          requested_version="${{ inputs.version }}"
+          if [[ -n "$requested_version" && "$requested_version" != "$package_version" ]]; then
+            echo "::error::Requested version $requested_version does not match packages/cli/package.json version $package_version"
+            exit 1
+          fi
+          echo "version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$package_version" >> "$GITHUB_OUTPUT"
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: inflow-macos-*-${{ steps.metadata.outputs.version }}
+          path: dist/release-artifacts
+
+      - name: Resolve downloaded artifacts
+        id: artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          version='${{ steps.metadata.outputs.version }}'
+          arm64="$(find dist/release-artifacts -name "inflow-$version-darwin-arm64.zip" -print -quit)"
+          x64="$(find dist/release-artifacts -name "inflow-$version-darwin-x64.zip" -print -quit)"
+          if [[ -z "$arm64" || -z "$x64" ]]; then
+            echo "::error::Expected both darwin-arm64 and darwin-x64 artifacts"
+            find dist/release-artifacts -maxdepth 4 -type f
+            exit 1
+          fi
+          echo "arm64=$arm64" >> "$GITHUB_OUTPUT"
+          echo "x64=$x64" >> "$GITHUB_OUTPUT"
+
       - name: Render Homebrew Cask
+        env:
+          INFLOW_HOMEBREW_ARM64_ARTIFACT: ${{ steps.artifacts.outputs.arm64 }}
+          INFLOW_HOMEBREW_X64_ARTIFACT: ${{ steps.artifacts.outputs.x64 }}
         run: pnpm build:homebrew-cask
 
       - name: Audit Homebrew Cask
@@ -148,12 +224,12 @@ jobs:
         with:
           name: inflow-macos-release-dry-run-${{ steps.metadata.outputs.version }}
           path: |
-            ${{ steps.metadata.outputs.artifact }}
-            dist/macos/manifest.json
+            dist/release-artifacts/**/*.zip
+            dist/release-artifacts/**/manifest.json
             dist/homebrew/Casks/inflow.rb
           if-no-files-found: error
 
-      - name: Publish GitHub Release artifact
+      - name: Publish GitHub Release artifacts
         if: inputs.dry_run == false
         shell: bash
         env:
@@ -161,13 +237,14 @@ jobs:
         run: |
           set -euo pipefail
           tag='${{ steps.metadata.outputs.tag }}'
-          artifact='${{ steps.metadata.outputs.artifact }}'
+          arm64='${{ steps.artifacts.outputs.arm64 }}'
+          x64='${{ steps.artifacts.outputs.x64 }}'
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "$artifact" --clobber
+            gh release upload "$tag" "$arm64" "$x64" --clobber
           else
-            gh release create "$tag" "$artifact" \
+            gh release create "$tag" "$arm64" "$x64" \
               --title "InFlow ${{ steps.metadata.outputs.version }}" \
-              --notes "Signed and notarized macOS artifact for InFlow ${{ steps.metadata.outputs.version }}."
+              --notes "Signed and notarized macOS artifacts for InFlow ${{ steps.metadata.outputs.version }}."
           fi
 
       - name: Create Homebrew tap token

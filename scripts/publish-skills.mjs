@@ -5,12 +5,9 @@
  *
  * 1. Skills/skill.md → <dest>/skill.md (entry point)
  * 2. Skills/<name>/SKILL.md → <dest>/skills/<name>.md (full playbooks; `allowed-tools` frontmatter stripped —
- *    host-execution directive, meaningless in web copies; all other frontmatter including `version:` preserved)
- * 3. <dest>/cli and <dest>/install.ps1 — the minimum Node major is stamped in place (MIN_NODE_MAJOR= / $MinNodeMajor =)
- *    from packages/cli/package.json `engines.node`.
- *
- * Source of truth: skills/ for content, packages/cli/package.json for versions. Idempotent. Wired into the root `build`
- * and `release` scripts after align-skill-version.js.
+ *    host-execution directive, meaningless in web copies; all other frontmatter including `version:` preserved) Source
+ *    of truth: skills/ for content, packages/cli/package.json for versions. Idempotent. Wired into the root `build` and
+ *    `release` scripts after align-skill-version.js.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -103,28 +100,4 @@ if (existsSync(cliDist)) {
   process.stdout.write(
     'publish-skills: no dist/cli.js — skill.md copied from source; llms.txt/llms-full.txt not generated\n',
   );
-}
-
-// 3: stamp the minimum Node major into the install scripts
-const engines = JSON.parse(readFileSync(resolve(repoRoot, 'packages/cli/package.json'), 'utf8')).engines?.node ?? '';
-const nodeMajor = engines.match(/(\d+)/)?.[1];
-if (!nodeMajor) {
-  process.stdout.write('publish-skills: no engines.node in packages/cli/package.json — install scripts not stamped\n');
-} else {
-  const stamps = [
-    { file: 'cli', re: /^MIN_NODE_MAJOR=\d+$/m, line: `MIN_NODE_MAJOR=${nodeMajor}` },
-    { file: 'install.ps1', re: /^\$MinNodeMajor = \d+$/m, line: `$MinNodeMajor = ${nodeMajor}` },
-  ];
-  for (const { file, re, line } of stamps) {
-    const path = resolve(dest, file);
-    if (!existsSync(path)) continue;
-    const original = readFileSync(path, 'utf8');
-    const rewritten = original.replace(re, line);
-    if (rewritten === original) {
-      process.stdout.write(`publish-skills: ${file} already at Node >= ${nodeMajor}\n`);
-    } else {
-      writeFileSync(path, rewritten);
-      process.stdout.write(`publish-skills: ${file} stamped to Node >= ${nodeMajor}\n`);
-    }
-  }
 }

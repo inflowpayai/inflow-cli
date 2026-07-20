@@ -23,15 +23,7 @@ Installing into an agent host? Use the per-surface guide:
 
 ## Install
 
-```bash
-npm install -g @inflowpayai/inflow
-```
-
-Or run directly with `npx`:
-
-```bash
-npx @inflowpayai/inflow
-```
+Install instructions are published at [inflowcli.ai](https://inflowcli.ai/).
 
 ### Use with agents
 
@@ -81,9 +73,9 @@ pnpm changeset
 
 ## macOS release automation
 
-The `macos release` workflow is manually dispatched from GitHub Actions. Its default dry run builds the macOS artifact,
-renders the Homebrew Cask, audits the Cask, and uploads workflow artifacts without notarizing, creating a GitHub
-Release, or pushing `inflowpayai/homebrew-tap`.
+The `macos release` workflow is manually dispatched from GitHub Actions. Its default dry run builds the Apple Silicon
+and Intel macOS artifacts, renders the Homebrew Cask, audits the Cask, and uploads workflow artifacts without
+notarizing, creating a GitHub Release, or pushing `inflowpayai/homebrew-tap`.
 
 Real release runs require these repository secrets:
 
@@ -98,8 +90,8 @@ Real release runs also require this repository variable:
 
 - `HOMEBREW_TAP_APP_CLIENT_ID`
 
-The published macOS artifact is attached to the `inflowpayai/inflow-cli` GitHub Release for the package version, and the
-Homebrew Cask in `inflowpayai/homebrew-tap` points at that release asset.
+The published macOS artifacts are attached to the `inflowpayai/inflow-cli` GitHub Release for the package version, and
+the Homebrew Cask in `inflowpayai/homebrew-tap` points at those release assets for Apple Silicon and Intel Macs.
 
 ## Packages
 
