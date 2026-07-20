@@ -192,6 +192,7 @@ export class InflowApiClient {
       const attemptHeaders: Record<string, string> = {
         Accept: 'application/json',
         'User-Agent': SDK_USER_AGENT,
+        ...(skipAuth ? (this.config.defaultHeaders ?? {}) : {}),
         ...headers,
       };
       if (!skipAuth) {

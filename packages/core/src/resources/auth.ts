@@ -4,6 +4,7 @@ import { InflowApiError, InflowConfigurationError } from '../errors.js';
 import type { AuthTokens, DeviceAuthRequest } from '../types/index.js';
 import { InflowApiClient } from '../utils/api-client.js';
 import { redactRawBody } from '../utils/redact.js';
+import { createApiError, isVersionUnsupportedResponse } from './api-error.js';
 import type { IAuthResource } from './interfaces.js';
 
 const DEFAULT_SCOPE = 'balances:read deposit-addresses:read transactions:read transactions:write';
@@ -67,6 +68,9 @@ export class AuthResource implements IAuthResource {
     );
 
     if (status < 200 || status >= 300) {
+      if (isVersionUnsupportedResponse(data)) {
+        throw createApiError({ status, data, rawBody }, 'Device auth initiation failed');
+      }
       throw new InflowApiError(formatOAuthError('Device auth initiation failed', status, data, rawBody), {
         status,
         rawBody,
@@ -138,6 +142,10 @@ export class AuthResource implements IAuthResource {
       }
     }
 
+    if (isVersionUnsupportedResponse(data)) {
+      throw createApiError({ status, data, rawBody }, 'Token poll failed');
+    }
+
     throw new InflowApiError(formatOAuthError('Token poll failed', status, data, rawBody), {
       status,
       rawBody,
@@ -159,6 +167,9 @@ export class AuthResource implements IAuthResource {
     );
 
     if (status < 200 || status >= 300) {
+      if (isVersionUnsupportedResponse(data)) {
+        throw createApiError({ status, data, rawBody }, 'Token refresh failed');
+      }
       throw new InflowApiError(formatOAuthError('Token refresh failed', status, data, rawBody), {
         status,
         rawBody,
