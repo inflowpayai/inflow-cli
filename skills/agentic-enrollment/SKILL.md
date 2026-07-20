@@ -2,10 +2,10 @@
 version: 0.9.0
 name: agentic-enrollment
 description: Inspect, enroll with, authenticate to, and manage credentials for Agent Enrollment Protocol Services through InFlow. Use when an agent needs to discover an AEP Service, access an AEP-protected resource, check enrollment, request or revoke Service credentials, or continue an InFlow approval.
-allowed-tools: ['Bash(inflow:*)', 'Bash(npx:*)', 'Bash(npm:*)']
+allowed-tools: ['Bash(inflow:*)', 'Bash(brew:*)', 'Bash(curl:*)']
 user-invocable: true
 license: MIT
-metadata: { "author": "Jarwin, Inc.", "url": "inflowcli.ai", "openclaw": { "homepage": "https://inflowcli.ai", "requires": { "bins": ["inflow"] }, "install": [{ "id": "npm", "kind": "node", "package": "@inflowpayai/inflow", "bins": ["inflow"], "label": "Install InFlow" }] } }
+metadata: { "author": "Jarwin, Inc.", "url": "inflowcli.ai", "openclaw": { "homepage": "https://inflowcli.ai", "requires": { "bins": ["inflow"] }, "install": [{ "id": "homebrew-cask", "kind": "homebrew", "tap": "inflowpayai/tap", "cask": "inflow", "bins": ["inflow"], "label": "Install InFlow with Homebrew" }, { "id": "hosted-shell", "kind": "shell", "url": "https://inflowcli.ai/install.sh", "bins": ["inflow"], "label": "Install InFlow with the hosted installer" }] } }
 ---
 
 # Agentic Enrollment
@@ -16,7 +16,15 @@ replay. Do not construct AEP assertions or authentication headers yourself.
 
 ## Setup
 
-Install with `npm install -g @inflowpayai/inflow`, or run commands through `npx -y @inflowpayai/inflow`.
+Install the signed native CLI through one of these channels:
+
+| Channel | Command |
+| --- | --- |
+| macOS Homebrew | `brew tap inflowpayai/tap && brew install --cask inflow` |
+| macOS hosted installer | `curl -fsSL https://inflowcli.ai/install.sh \| bash` |
+| PowerShell hosted installer | `iwr -useb https://inflowcli.ai/install.ps1 \| iex` |
+
+Current install instructions live at https://inflowcli.ai/.
 
 InFlow runs as a standalone CLI or an MCP server. MCP exposes each CLI command as a tool with underscores replacing
 spaces, such as `aep_fetch`. Call `tools/list` for the authoritative inventory.

@@ -61,7 +61,7 @@ export default defineConfig({
       'react-devtools-core': reactDevtoolsAlias,
     };
   },
-  entry: { cli: 'src/cli.tsx' },
+  entry: { cli: 'src/cli.tsx', 'npm-shim': 'src/npm-shim.ts' },
   external: ['update-notifier'],
   format: ['esm'],
   outDir: 'dist',

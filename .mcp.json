@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "inflow": {
-      "command": "npx",
-      "args": ["-y", "@inflowpayai/inflow", "--mcp"]
+      "command": "inflow",
+      "args": ["--mcp"]
     }
   }
 }

@@ -7,12 +7,10 @@ You are an AI agent whose user asked to get set up with InFlow. Follow these ste
 
 ## 1. Install
 
-Requires Node.js >= 22.
-
-macOS / Linux:
+macOS:
 
 ```bash
-curl -fsSL https://inflowcli.ai/cli | bash
+curl -fsSL https://inflowcli.ai/install.sh | bash
 ```
 
 Windows:
@@ -21,11 +19,7 @@ Windows:
 iwr -useb https://inflowcli.ai/install.ps1 | iex
 ```
 
-Or install with npm directly: `npm install -g @inflowpayai/inflow`. Or skip installing and run every command through
-`npx -y @inflowpayai/inflow`.
-
-Running as an MCP server? Add an `inflow` server to your MCP client config that runs `npx -y @inflowpayai/inflow --mcp`
-(keep `-y`; without it the host can stall on first run).
+Running as an MCP server? Add an `inflow` server to your MCP client config that runs `inflow --mcp`.
 
 ## 2. Authenticate
 
@@ -35,8 +29,8 @@ Check the current state first - the user may already be logged in:
 inflow auth status
 ```
 
-If the response includes an `update` field, tell the user a newer version is available and how to upgrade
-(`npm install -g @inflowpayai/inflow@latest`), then proceed with the current version.
+If the response includes an `update` field, tell the user a newer version is available and share the install
+instructions at https://inflowcli.ai/, then proceed with the current version.
 
 If `authenticated` is `false`, start the OAuth device flow:
 
