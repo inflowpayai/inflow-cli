@@ -79,6 +79,28 @@ pnpm typedoc
 pnpm changeset
 ```
 
+## macOS release automation
+
+The `macos release` workflow is manually dispatched from GitHub Actions. Its default dry run builds the macOS artifact,
+renders the Homebrew Cask, audits the Cask, and uploads workflow artifacts without notarizing, creating a GitHub
+Release, or pushing `inflowpayai/homebrew-tap`.
+
+Real release runs require these repository secrets:
+
+- `APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64`
+- `APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD`
+- `APPLE_NOTARY_APPLE_ID`
+- `APPLE_NOTARY_APP_SPECIFIC_PASSWORD`
+- `APPLE_NOTARY_TEAM_ID`
+- `HOMEBREW_TAP_APP_PRIVATE_KEY`
+
+Real release runs also require this repository variable:
+
+- `HOMEBREW_TAP_APP_CLIENT_ID`
+
+The published macOS artifact is attached to the `inflowpayai/inflow-cli` GitHub Release for the package version, and the
+Homebrew Cask in `inflowpayai/homebrew-tap` points at that release asset.
+
 ## Packages
 
 - `@inflowpayai/inflow` (`packages/cli`) — the published binary, and the entry point for anyone integrating InFlow. Thin

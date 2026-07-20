@@ -1,0 +1,208 @@
+name: macos release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version to release. Defaults to packages/cli/package.json.
+        required: false
+        type: string
+      dry_run:
+        description: Build and audit artifacts without notarizing, publishing, or pushing the tap.
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  group: macos-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  macos-release:
+    runs-on: macos-15
+    env:
+      INFLOW_CODESIGN_IDENTITY: 'Developer ID Application: Jarwin, Inc. (B96U57DTR2)'
+      INFLOW_NOTARY_PROFILE: inflow-notary
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "JSON.parse(require('node:fs').readFileSync('packages/cli/package.json', 'utf8')).version")"
+          requested_version="${{ inputs.version }}"
+          if [[ -n "$requested_version" && "$requested_version" != "$package_version" ]]; then
+            echo "::error::Requested version $requested_version does not match packages/cli/package.json version $package_version"
+            exit 1
+          fi
+          echo "version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$package_version" >> "$GITHUB_OUTPUT"
+          echo "artifact=dist/macos/inflow-$package_version-darwin-arm64.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Apple signing
+        if: inputs.dry_run == false
+        shell: bash
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+          NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          NOTARY_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          required=(
+            CERTIFICATE_BASE64
+            CERTIFICATE_PASSWORD
+            NOTARY_APPLE_ID
+            NOTARY_APP_SPECIFIC_PASSWORD
+            NOTARY_TEAM_ID
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::$name is required for a real macOS release"
+              exit 1
+            fi
+          done
+
+          certificate_path="$RUNNER_TEMP/inflow-developer-id.p12"
+          keychain_path="$RUNNER_TEMP/inflow-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+
+          printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -s "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path"
+          xcrun notarytool store-credentials "$INFLOW_NOTARY_PROFILE" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_APP_SPECIFIC_PASSWORD" \
+            --keychain "$keychain_path"
+
+      - name: Build macOS artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ '${{ inputs.dry_run }}' == 'true' ]]; then
+            pnpm build:macos-app
+          else
+            pnpm build:macos-release
+          fi
+
+      - name: Verify macOS artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f '${{ steps.metadata.outputs.artifact }}'
+          dist/macos/bin/inflow --version
+          codesign --verify --deep --strict --verbose=2 dist/macos/InFlow.app
+          if [[ '${{ inputs.dry_run }}' == 'false' ]]; then
+            xcrun stapler validate dist/macos/InFlow.app
+            spctl --assess --type execute --verbose=2 dist/macos/InFlow.app
+          fi
+
+      - name: Render Homebrew Cask
+        run: pnpm build:homebrew-cask
+
+      - name: Audit Homebrew Cask
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -c dist/homebrew/Casks/inflow.rb
+          tap="$RUNNER_TEMP/homebrew-tap-audit"
+          mkdir -p "$tap/Casks"
+          cp dist/homebrew/Casks/inflow.rb "$tap/Casks/inflow.rb"
+          git -C "$tap" init
+          git -C "$tap" config user.name github-actions
+          git -C "$tap" config user.email github-actions@github.com
+          git -C "$tap" add Casks/inflow.rb
+          git -C "$tap" commit -m "Add inflow cask"
+          brew tap inflowpayai/tap-audit "$tap"
+          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_DEVELOPER=1 brew audit --cask --strict --skip-style inflowpayai/tap-audit/inflow
+          brew untap inflowpayai/tap-audit
+
+      - name: Upload dry-run artifacts
+        if: inputs.dry_run == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: inflow-macos-release-dry-run-${{ steps.metadata.outputs.version }}
+          path: |
+            ${{ steps.metadata.outputs.artifact }}
+            dist/macos/manifest.json
+            dist/homebrew/Casks/inflow.rb
+          if-no-files-found: error
+
+      - name: Publish GitHub Release artifact
+        if: inputs.dry_run == false
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag='${{ steps.metadata.outputs.tag }}'
+          artifact='${{ steps.metadata.outputs.artifact }}'
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$artifact" --clobber
+          else
+            gh release create "$tag" "$artifact" \
+              --title "InFlow ${{ steps.metadata.outputs.version }}" \
+              --notes "Signed and notarized macOS artifact for InFlow ${{ steps.metadata.outputs.version }}."
+          fi
+
+      - name: Create Homebrew tap token
+        if: inputs.dry_run == false
+        id: homebrew-tap-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: inflowpayai
+          repositories: homebrew-tap
+          permission-contents: write
+
+      - name: Update Homebrew tap
+        if: inputs.dry_run == false
+        shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ steps.homebrew-tap-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HOMEBREW_TAP_TOKEN" ]]; then
+            echo "::error::HOMEBREW_TAP_TOKEN was not created"
+            exit 1
+          fi
+
+          tap="$RUNNER_TEMP/homebrew-tap"
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/inflowpayai/homebrew-tap.git" "$tap"
+          mkdir -p "$tap/Casks"
+          cp dist/homebrew/Casks/inflow.rb "$tap/Casks/inflow.rb"
+          git -C "$tap" config user.name github-actions
+          git -C "$tap" config user.email github-actions@github.com
+          if git -C "$tap" diff --quiet -- Casks/inflow.rb; then
+            echo "Homebrew tap already matches ${{ steps.metadata.outputs.version }}"
+            exit 0
+          fi
+          git -C "$tap" add Casks/inflow.rb
+          git -C "$tap" commit -m "Update inflow to ${{ steps.metadata.outputs.version }}"
+          git -C "$tap" push origin HEAD:main
