@@ -8,6 +8,7 @@ import {
 import { Cli, Errors } from 'incur';
 import React from 'react';
 import { assertSessionGuard } from '../../utils/assert-session.js';
+import { authenticatedApiError } from '../../utils/api-error.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { UserGet, type UserGetOutcome } from './get.js';
 import { getOptions } from './schema.js';
@@ -63,7 +64,13 @@ async function runUserGet(c: UserGetContext, deps: UserGetDeps): Promise<UserAge
     return projectUserPayload(outcome.user);
   }
 
-  return deps.user.get();
+  try {
+    return await deps.user.get();
+  } catch (error) {
+    const mapped = authenticatedApiError(error);
+    if (mapped !== undefined) return c.error(mapped);
+    throw error;
+  }
 }
 
 export function createUserCli(user: IUser, authStorage: AuthStorage, inflow: Inflow) {

@@ -1,5 +1,5 @@
 import type { AuthStorage } from '@inflowpayai/inflow-core';
-import { Inflow, MemoryStorage } from '@inflowpayai/inflow-core';
+import { Inflow, InflowApiError, MemoryStorage } from '@inflowpayai/inflow-core';
 import {
   X402AdapterRoutingError,
   X402ApprovalFailedError,
@@ -820,6 +820,16 @@ describe('runStatusCommand (agent mode)', () => {
     expect(yields[0]).toMatchObject({ transaction_id: 'txn_1', status: 'INITIATED' });
   });
 
+  it('maps server 401 responses to NOT_AUTHENTICATED', async () => {
+    const client = makeClient({
+      getX402Payload: vi.fn(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 }))),
+    });
+    const ctx = agentContextReturningError({ transactionId: 'txn_1' }, { interval: 0, maxAttempts: 0, timeout: 900 });
+    const { inflow, storage } = authedResources(client);
+    const result = await drainWithReturn(runStatusCommand(ctx, inflow, storage));
+    expect(result.returnValue).toMatchObject({ code: 'NOT_AUTHENTICATED' });
+  });
+
   it('emits POLLING_TIMEOUT when polling exhausts max_attempts', async () => {
     const client = makeClient({
       getX402Payload: vi.fn(() => Promise.resolve({ status: 'INITIATED' })),
@@ -927,6 +937,27 @@ describe('runCancelCommand', () => {
     expect(cancelApproval).toHaveBeenCalledWith('appr_1');
   });
 
+  it('maps server 401 responses to NOT_AUTHENTICATED', async () => {
+    const client = makeClient({
+      cancelApproval: vi.fn(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 }))),
+    });
+    const ctx = agentContextReturningError({ approvalId: 'appr_1' }, {});
+    const { inflow, storage } = authedResources(client);
+    const result = await runCancelCommand(ctx, inflow, storage);
+    expect(result).toMatchObject({ code: 'NOT_AUTHENTICATED' });
+  });
+
+  it('rethrows non-authentication failures', async () => {
+    const failure = new Error('cancel unavailable');
+    const client = makeClient({
+      cancelApproval: vi.fn(() => Promise.reject(failure)),
+    });
+    const ctx = agentContextReturningError({ approvalId: 'appr_1' }, {});
+    const { inflow, storage } = authedResources(client);
+    await expect(runCancelCommand(ctx, inflow, storage)).rejects.toBe(failure);
+    expect(ctx.error).not.toHaveBeenCalled();
+  });
+
   it('short-circuits via c.error when not authenticated', async () => {
     const storage = new MemoryStorage();
     const inflow = new Inflow({
@@ -962,6 +993,27 @@ describe('runSupportedCommand', () => {
     const { inflow, storage } = authedResources(makeClient());
     const result = await runSupportedCommand(ctx, inflow, storage);
     expect(result?.kinds[0]?.scheme).toBe('balance');
+  });
+
+  it('maps server 401 responses to NOT_AUTHENTICATED', async () => {
+    const client = makeClient({
+      getSupported: vi.fn(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 }))),
+    });
+    const ctx = agentContextReturningError({}, {});
+    const { inflow, storage } = authedResources(client);
+    const result = await runSupportedCommand(ctx, inflow, storage);
+    expect(result).toMatchObject({ code: 'NOT_AUTHENTICATED' });
+  });
+
+  it('rethrows non-authentication failures', async () => {
+    const failure = new Error('supported unavailable');
+    const client = makeClient({
+      getSupported: vi.fn(() => Promise.reject(failure)),
+    });
+    const ctx = agentContextReturningError({}, {});
+    const { inflow, storage } = authedResources(client);
+    await expect(runSupportedCommand(ctx, inflow, storage)).rejects.toBe(failure);
+    expect(ctx.error).not.toHaveBeenCalled();
   });
 
   it('short-circuits via c.error when not authenticated', async () => {

@@ -19,6 +19,7 @@ import {
 import type { MppSupportedResponse, MppTransactionResponse } from '@inflowpayai/mpp';
 import { Cli } from 'incur';
 import { assertSessionGuard } from '../../utils/assert-session.js';
+import { authenticatedApiError } from '../../utils/api-error.js';
 import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { createAepAwareInspectProbe, createAepAwareSellerTransport } from '../aep/runtime.js';
@@ -540,70 +541,76 @@ async function* runStatusCommand(
 ): AsyncGenerator<unknown, unknown> {
   assertSessionGuard(c, authStorage, inflow);
 
-  if (!c.agent && !c.formatExplicit) {
-    const client = await inflow.mpp.client();
-    await renderInkUntilExit(
-      <MppStatusView
-        transactionId={c.args.transactionId}
-        fetchOnce={() => client.getTransaction(c.args.transactionId)}
-        interval={c.options.interval}
-        maxAttempts={c.options.maxAttempts}
-        timeout={c.options.timeout}
-        onComplete={() => undefined}
-      />,
-    );
-    return;
-  }
-
-  const client = await inflow.mpp.client();
-  const fetchOnce = (): Promise<MppTransactionResponse> => client.getTransaction(c.args.transactionId);
-
-  if (c.options.interval <= 0) {
-    const snapshot = await fetchOnce();
-    yield sanitizeDeep(toStatusFrame(snapshot, c.options.credentialFile));
-    return;
-  }
-
-  // Reuse the shared `runMppStatus` poller so the agent path and the TTY view classify terminal states identically.
-  // (Re-rolling `pollAsync` here previously diverged: it treated every non-`pending` state as terminal, whereas the
-  // core flow only terminates on {ready, failed, expired} — so an unexpected state would exit 0 with no credential.)
-  const run = runMppStatus({
-    fetchOnce,
-    interval: c.options.interval,
-    maxAttempts: c.options.maxAttempts,
-    timeout: c.options.timeout,
-  });
-  for await (const event of run.events) {
-    if (event.type === 'snapshot') {
-      yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
-      continue;
-    }
-    if (event.type === 'ready') {
-      yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
+  try {
+    if (!c.agent && !c.formatExplicit) {
+      const client = await inflow.mpp.client();
+      await renderInkUntilExit(
+        <MppStatusView
+          transactionId={c.args.transactionId}
+          fetchOnce={() => client.getTransaction(c.args.transactionId)}
+          interval={c.options.interval}
+          maxAttempts={c.options.maxAttempts}
+          timeout={c.options.timeout}
+          onComplete={() => undefined}
+        />,
+      );
       return;
     }
-    if (event.type === 'failed') {
-      yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
-      return c.error({
-        code: 'PAYMENT_FAILED',
-        message: event.response.problem?.detail ?? event.response.problem?.title ?? 'MPP transaction failed.',
-      });
+
+    const client = await inflow.mpp.client();
+    const fetchOnce = (): Promise<MppTransactionResponse> => client.getTransaction(c.args.transactionId);
+
+    if (c.options.interval <= 0) {
+      const snapshot = await fetchOnce();
+      yield sanitizeDeep(toStatusFrame(snapshot, c.options.credentialFile));
+      return;
     }
-    if (event.type === 'expired') {
-      yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
-      return c.error({ code: 'PAYMENT_EXPIRED', message: 'MPP transaction expired before it was ready.' });
-    }
-    if (event.type === 'timedOut') {
-      if (event.response !== undefined) {
+
+    // Reuse the shared `runMppStatus` poller so the agent path and the TTY view classify terminal states identically.
+    // (Re-rolling `pollAsync` here previously diverged: it treated every non-`pending` state as terminal, whereas the
+    // core flow only terminates on {ready, failed, expired} — so an unexpected state would exit 0 with no credential.)
+    const run = runMppStatus({
+      fetchOnce,
+      interval: c.options.interval,
+      maxAttempts: c.options.maxAttempts,
+      timeout: c.options.timeout,
+    });
+    for await (const event of run.events) {
+      if (event.type === 'snapshot') {
         yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
+        continue;
       }
-      return c.error({
-        code: 'POLLING_TIMEOUT',
-        message: 'Polling timed out before the transaction reached a ready state.',
-        retryable: true,
-      });
+      if (event.type === 'ready') {
+        yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
+        return;
+      }
+      if (event.type === 'failed') {
+        yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
+        return c.error({
+          code: 'PAYMENT_FAILED',
+          message: event.response.problem?.detail ?? event.response.problem?.title ?? 'MPP transaction failed.',
+        });
+      }
+      if (event.type === 'expired') {
+        yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
+        return c.error({ code: 'PAYMENT_EXPIRED', message: 'MPP transaction expired before it was ready.' });
+      }
+      if (event.type === 'timedOut') {
+        if (event.response !== undefined) {
+          yield sanitizeDeep(toStatusFrame(event.response, c.options.credentialFile));
+        }
+        return c.error({
+          code: 'POLLING_TIMEOUT',
+          message: 'Polling timed out before the transaction reached a ready state.',
+          retryable: true,
+        });
+      }
+      return c.error({ code: 'PAYMENT_FAILED', message: event.message });
     }
-    return c.error({ code: 'PAYMENT_FAILED', message: event.message });
+  } catch (error) {
+    const mapped = authenticatedApiError(error);
+    if (mapped !== undefined) return c.error(mapped);
+    throw error;
   }
 }
 
@@ -614,18 +621,24 @@ async function runCancelCommand(
 ): Promise<{ approval_id: string; cancelled: true; note: string }> {
   assertSessionGuard(c, authStorage, inflow);
 
-  if (!c.agent && !c.formatExplicit) {
-    await renderInkUntilExit(
-      <CancelView
-        approvalId={c.args.approvalId}
-        cancel={() => inflow.mpp.cancel({ approvalId: c.args.approvalId }).then(() => undefined)}
-        onComplete={() => undefined}
-      />,
-    );
-    return { approval_id: c.args.approvalId, cancelled: true, note: 'best-effort; server-side state not verified' };
-  }
+  try {
+    if (!c.agent && !c.formatExplicit) {
+      await renderInkUntilExit(
+        <CancelView
+          approvalId={c.args.approvalId}
+          cancel={() => inflow.mpp.cancel({ approvalId: c.args.approvalId }).then(() => undefined)}
+          onComplete={() => undefined}
+        />,
+      );
+      return { approval_id: c.args.approvalId, cancelled: true, note: 'best-effort; server-side state not verified' };
+    }
 
-  return inflow.mpp.cancel({ approvalId: c.args.approvalId });
+    return await inflow.mpp.cancel({ approvalId: c.args.approvalId });
+  } catch (error) {
+    const mapped = authenticatedApiError(error);
+    if (mapped !== undefined) return c.error(mapped);
+    throw error;
+  }
 }
 
 async function runDecodeCommand(c: DecodeCommandContext): Promise<Record<string, unknown> | undefined> {
@@ -638,7 +651,7 @@ async function runDecodeCommand(c: DecodeCommandContext): Promise<Record<string,
 
   if (!c.agent && !c.formatExplicit) {
     await renderInkUntilExit(<DecodeView result={result} />);
-    return undefined;
+    return;
   }
   return sanitizeDeep(result as unknown as Record<string, unknown>);
 }
@@ -654,8 +667,14 @@ async function runSupportedCommand(
     await renderInkUntilExit(<SupportedView load={() => inflow.mpp.supported()} onComplete={() => undefined} />);
     return undefined;
   }
-  const response = await inflow.mpp.supported();
-  return sanitizeDeep(response);
+  try {
+    const response = await inflow.mpp.supported();
+    return sanitizeDeep(response);
+  } catch (error) {
+    const mapped = authenticatedApiError(error);
+    if (mapped !== undefined) return c.error(mapped);
+    throw error;
+  }
 }
 
 async function runInspectCommand(

@@ -36,6 +36,10 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Changed-line coverage
+        if: github.event_name == 'pull_request'
+        run: pnpm coverage:changed
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:

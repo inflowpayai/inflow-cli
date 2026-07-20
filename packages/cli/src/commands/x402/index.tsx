@@ -18,6 +18,7 @@ import type { X402BuyerSupportedResponse } from '@inflowpayai/x402';
 import type { SignOptions, X402PayloadResponse } from '@inflowpayai/x402-buyer';
 import { Cli } from 'incur';
 import { assertSessionGuard } from '../../utils/assert-session.js';
+import { authenticatedApiError } from '../../utils/api-error.js';
 import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { createAepAwareInspectProbe, createAepAwareSellerTransport } from '../aep/runtime.js';
@@ -524,63 +525,69 @@ async function* runStatusCommand(
 ): AsyncGenerator<unknown, unknown> {
   assertSessionGuard(c, authStorage, inflow);
 
-  if (!c.agent && !c.formatExplicit) {
-    const client = await inflow.x402.client();
-    await renderInkUntilExit(
-      <X402StatusView
-        transactionId={c.args.transactionId}
-        fetchOnce={() => client.getX402Payload(c.args.transactionId)}
-        interval={c.options.interval}
-        maxAttempts={c.options.maxAttempts}
-        timeout={c.options.timeout}
-        onComplete={() => undefined}
-      />,
-    );
-    return;
-  }
-
-  const client = await inflow.x402.client();
-  const fetchOnce = (): Promise<X402PayloadResponse> => client.getX402Payload(c.args.transactionId);
-
-  if (c.options.interval <= 0) {
-    const snapshot = await fetchOnce();
-    yield sanitizeDeep(toStatusFrame(c.args.transactionId, snapshot, c.options.payloadFile));
-    return;
-  }
-
-  const run = inflow.x402.status({
-    transactionId: c.args.transactionId,
-    interval: c.options.interval,
-    maxAttempts: c.options.maxAttempts,
-    timeout: c.options.timeout,
-  });
-  for await (const event of run.events) {
-    if (event.type === 'snapshot') {
-      yield sanitizeDeep(toStatusFrame(c.args.transactionId, event.response, c.options.payloadFile));
-      continue;
-    }
-    if (event.type === 'settled') {
-      yield sanitizeDeep(toStatusFrame(c.args.transactionId, event.response, c.options.payloadFile));
+  try {
+    if (!c.agent && !c.formatExplicit) {
+      const client = await inflow.x402.client();
+      await renderInkUntilExit(
+        <X402StatusView
+          transactionId={c.args.transactionId}
+          fetchOnce={() => client.getX402Payload(c.args.transactionId)}
+          interval={c.options.interval}
+          maxAttempts={c.options.maxAttempts}
+          timeout={c.options.timeout}
+          onComplete={() => undefined}
+        />,
+      );
       return;
     }
-    if (event.type === 'failed') {
-      yield sanitizeDeep(toStatusFrame(c.args.transactionId, event.response, c.options.payloadFile));
-      return c.error({
-        code: 'APPROVAL_FAILED',
-        message: `Transaction ${c.args.transactionId} terminated as ${event.response.status} with no payload.`,
-      });
+
+    const client = await inflow.x402.client();
+    const fetchOnce = (): Promise<X402PayloadResponse> => client.getX402Payload(c.args.transactionId);
+
+    if (c.options.interval <= 0) {
+      const snapshot = await fetchOnce();
+      yield sanitizeDeep(toStatusFrame(c.args.transactionId, snapshot, c.options.payloadFile));
+      return;
     }
-    if (event.type === 'timedOut') {
-      if (event.response !== undefined) {
+
+    const run = inflow.x402.status({
+      transactionId: c.args.transactionId,
+      interval: c.options.interval,
+      maxAttempts: c.options.maxAttempts,
+      timeout: c.options.timeout,
+    });
+    for await (const event of run.events) {
+      if (event.type === 'snapshot') {
         yield sanitizeDeep(toStatusFrame(c.args.transactionId, event.response, c.options.payloadFile));
+        continue;
       }
-      return c.error({
-        code: 'POLLING_TIMEOUT',
-        message: 'Polling timed out before the transaction reached a signed state.',
-        retryable: true,
-      });
+      if (event.type === 'settled') {
+        yield sanitizeDeep(toStatusFrame(c.args.transactionId, event.response, c.options.payloadFile));
+        return;
+      }
+      if (event.type === 'failed') {
+        yield sanitizeDeep(toStatusFrame(c.args.transactionId, event.response, c.options.payloadFile));
+        return c.error({
+          code: 'APPROVAL_FAILED',
+          message: `Transaction ${c.args.transactionId} terminated as ${event.response.status} with no payload.`,
+        });
+      }
+      if (event.type === 'timedOut') {
+        if (event.response !== undefined) {
+          yield sanitizeDeep(toStatusFrame(c.args.transactionId, event.response, c.options.payloadFile));
+        }
+        return c.error({
+          code: 'POLLING_TIMEOUT',
+          message: 'Polling timed out before the transaction reached a signed state.',
+          retryable: true,
+        });
+      }
+      return c.error({ code: 'PAYMENT_FAILED', message: event.message });
     }
-    return c.error({ code: 'PAYMENT_FAILED', message: event.message });
+  } catch (error) {
+    const mapped = authenticatedApiError(error);
+    if (mapped !== undefined) return c.error(mapped);
+    throw error;
   }
 }
 
@@ -607,22 +614,28 @@ async function runCancelCommand(
 ): Promise<{ approval_id: string; cancelled: true; note: string }> {
   assertSessionGuard(c, authStorage, inflow);
 
-  if (!c.agent && !c.formatExplicit) {
-    await renderInkUntilExit(
-      <CancelView
-        approvalId={c.args.approvalId}
-        cancel={() => inflow.x402.cancel({ approvalId: c.args.approvalId }).then(() => undefined)}
-        onComplete={() => undefined}
-      />,
-    );
-    return {
-      approval_id: c.args.approvalId,
-      cancelled: true,
-      note: 'best-effort; server-side state not verified',
-    };
-  }
+  try {
+    if (!c.agent && !c.formatExplicit) {
+      await renderInkUntilExit(
+        <CancelView
+          approvalId={c.args.approvalId}
+          cancel={() => inflow.x402.cancel({ approvalId: c.args.approvalId }).then(() => undefined)}
+          onComplete={() => undefined}
+        />,
+      );
+      return {
+        approval_id: c.args.approvalId,
+        cancelled: true,
+        note: 'best-effort; server-side state not verified',
+      };
+    }
 
-  return inflow.x402.cancel({ approvalId: c.args.approvalId });
+    return await inflow.x402.cancel({ approvalId: c.args.approvalId });
+  } catch (error) {
+    const mapped = authenticatedApiError(error);
+    if (mapped !== undefined) return c.error(mapped);
+    throw error;
+  }
 }
 
 async function runDecodeCommand(c: DecodeCommandContext): Promise<DecodedHeader | undefined> {
@@ -654,8 +667,14 @@ async function runSupportedCommand(
     await renderInkUntilExit(<SupportedView load={() => inflow.x402.supported()} onComplete={() => undefined} />);
     return undefined;
   }
-  const response = await inflow.x402.supported();
-  return sanitizeDeep(response);
+  try {
+    const response = await inflow.x402.supported();
+    return sanitizeDeep(response);
+  } catch (error) {
+    const mapped = authenticatedApiError(error);
+    if (mapped !== undefined) return c.error(mapped);
+    throw error;
+  }
 }
 
 async function runInspectCommand(

@@ -27,6 +27,7 @@
     "dev": "turbo run dev --parallel",
     "test": "turbo run test",
     "posttest": "node scripts/clean-bundle-artifacts.mjs",
+    "coverage:changed": "node scripts/check-changed-coverage.mjs",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",

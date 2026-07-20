@@ -3,6 +3,7 @@ import {
   type ConfiguredDepositAddress,
   type DepositAddresses,
   type IDepositAddressResource,
+  InflowApiError,
   MemoryStorage,
   Inflow,
   sanitizeResource,
@@ -97,6 +98,33 @@ describe('runDepositAddressesList — session guard', () => {
       inflow: makeInflow({ storage, apiKey: 'inflow_test_key' }),
     });
     expect(result).toEqual(CONFIGURED);
+    expect(ctx.error).not.toHaveBeenCalled();
+  });
+
+  it('maps server 401 responses to the authenticated-session recovery error', async () => {
+    const ctx = agentCtx();
+    const storage = new MemoryStorage();
+    await expect(
+      runDepositAddressesList(ctx, {
+        depositAddressResource: resourceStub(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 }))),
+        authStorage: storage,
+        inflow: makeInflow({ storage, apiKey: 'inflow_test_key' }),
+      }),
+    ).rejects.toThrow('c.error called');
+    expect(ctx.error).toHaveBeenCalledWith(expect.objectContaining({ code: 'NOT_AUTHENTICATED' }));
+  });
+
+  it('rethrows non-authentication failures from the flow', async () => {
+    const ctx = agentCtx();
+    const storage = new MemoryStorage();
+    const failure = new Error('database unavailable');
+    await expect(
+      runDepositAddressesList(ctx, {
+        depositAddressResource: resourceStub(() => Promise.reject(failure)),
+        authStorage: storage,
+        inflow: makeInflow({ storage, apiKey: 'inflow_test_key' }),
+      }),
+    ).rejects.toBe(failure);
     expect(ctx.error).not.toHaveBeenCalled();
   });
 });

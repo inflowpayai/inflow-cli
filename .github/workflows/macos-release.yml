@@ -131,12 +131,22 @@ jobs:
             spctl --assess --type execute --verbose=2 dist/macos/InFlow.app
           fi
 
+      - name: Write artifact checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact='${{ steps.metadata.outputs.artifact }}'
+          checksum="${artifact}.sha256"
+          shasum -a 256 "$artifact" | sed "s#  .*#  $(basename "$artifact")#" > "$checksum"
+          (cd "$(dirname "$artifact")" && shasum -a 256 -c "$(basename "$checksum")")
+
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.metadata.outputs.artifact_name }}
           path: |
             ${{ steps.metadata.outputs.artifact }}
+            ${{ steps.metadata.outputs.artifact }}.sha256
             dist/macos/manifest.json
           if-no-files-found: error
 
@@ -187,13 +197,19 @@ jobs:
           version='${{ steps.metadata.outputs.version }}'
           arm64="$(find dist/release-artifacts -name "inflow-$version-darwin-arm64.zip" -print -quit)"
           x64="$(find dist/release-artifacts -name "inflow-$version-darwin-x64.zip" -print -quit)"
-          if [[ -z "$arm64" || -z "$x64" ]]; then
-            echo "::error::Expected both darwin-arm64 and darwin-x64 artifacts"
+          arm64_checksum="$(find dist/release-artifacts -name "inflow-$version-darwin-arm64.zip.sha256" -print -quit)"
+          x64_checksum="$(find dist/release-artifacts -name "inflow-$version-darwin-x64.zip.sha256" -print -quit)"
+          if [[ -z "$arm64" || -z "$x64" || -z "$arm64_checksum" || -z "$x64_checksum" ]]; then
+            echo "::error::Expected both darwin-arm64 and darwin-x64 artifacts with checksum files"
             find dist/release-artifacts -maxdepth 4 -type f
             exit 1
           fi
           echo "arm64=$arm64" >> "$GITHUB_OUTPUT"
           echo "x64=$x64" >> "$GITHUB_OUTPUT"
+          echo "arm64_checksum=$arm64_checksum" >> "$GITHUB_OUTPUT"
+          echo "x64_checksum=$x64_checksum" >> "$GITHUB_OUTPUT"
+          (cd "$(dirname "$arm64")" && shasum -a 256 -c "$(basename "$arm64_checksum")")
+          (cd "$(dirname "$x64")" && shasum -a 256 -c "$(basename "$x64_checksum")")
 
       - name: Render Homebrew Cask
         env:
@@ -225,6 +241,7 @@ jobs:
           name: inflow-macos-release-dry-run-${{ steps.metadata.outputs.version }}
           path: |
             dist/release-artifacts/**/*.zip
+            dist/release-artifacts/**/*.zip.sha256
             dist/release-artifacts/**/manifest.json
             dist/homebrew/Casks/inflow.rb
           if-no-files-found: error
@@ -239,10 +256,12 @@ jobs:
           tag='${{ steps.metadata.outputs.tag }}'
           arm64='${{ steps.artifacts.outputs.arm64 }}'
           x64='${{ steps.artifacts.outputs.x64 }}'
+          arm64_checksum='${{ steps.artifacts.outputs.arm64_checksum }}'
+          x64_checksum='${{ steps.artifacts.outputs.x64_checksum }}'
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "$arm64" "$x64" --clobber
+            gh release upload "$tag" "$arm64" "$x64" "$arm64_checksum" "$x64_checksum" --clobber
           else
-            gh release create "$tag" "$arm64" "$x64" \
+            gh release create "$tag" "$arm64" "$x64" "$arm64_checksum" "$x64_checksum" \
               --title "InFlow ${{ steps.metadata.outputs.version }}" \
               --notes "Signed and notarized macOS artifacts for InFlow ${{ steps.metadata.outputs.version }}."
           fi

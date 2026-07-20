@@ -1,5 +1,5 @@
 import type { AuthStorage } from '@inflowpayai/inflow-core';
-import { Inflow, MemoryStorage } from '@inflowpayai/inflow-core';
+import { Inflow, InflowApiError, MemoryStorage } from '@inflowpayai/inflow-core';
 import { encode, type MppChallenge, type MppClient, renderChallengeHeader } from '@inflowpayai/mpp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing, createMppCli } from '../../../../src/commands/mpp/index.js';
@@ -106,6 +106,23 @@ describe('mpp agent runners', () => {
     expect(out).toEqual(supported);
   });
 
+  it('runSupportedCommand maps server 401 responses to NOT_AUTHENTICATED', async () => {
+    const { inflow, storage } = authed(
+      makeClient({ getSupported: vi.fn(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 }))) }),
+    );
+    const ctx = agentCtxReturningError({}, {});
+    const out = await runSupportedCommand(ctx, inflow, storage);
+    expect(out).toMatchObject({ code: 'NOT_AUTHENTICATED' });
+  });
+
+  it('runSupportedCommand rethrows non-authentication failures', async () => {
+    const failure = new Error('supported unavailable');
+    const { inflow, storage } = authed(makeClient({ getSupported: vi.fn(() => Promise.reject(failure)) }));
+    const ctx = agentCtxReturningError({}, {});
+    await expect(runSupportedCommand(ctx, inflow, storage)).rejects.toBe(failure);
+    expect(ctx.error).not.toHaveBeenCalled();
+  });
+
   it('runCancelCommand delegates to cancelApproval', async () => {
     const cancelApproval = vi.fn(() => Promise.resolve(undefined));
     const { inflow, storage } = authed(makeClient(), cancelApproval);
@@ -113,6 +130,23 @@ describe('mpp agent runners', () => {
     const out = await runCancelCommand(ctx as never, inflow, storage);
     expect(cancelApproval).toHaveBeenCalledWith('ap-1');
     expect(out).toMatchObject({ approval_id: 'ap-1', cancelled: true });
+  });
+
+  it('runCancelCommand maps server 401 responses to NOT_AUTHENTICATED', async () => {
+    const cancelApproval = vi.fn(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 })));
+    const { inflow, storage } = authed(makeClient(), cancelApproval);
+    const ctx = agentCtxReturningError({ approvalId: 'ap-1' }, {});
+    const out = await runCancelCommand(ctx, inflow, storage);
+    expect(out).toMatchObject({ code: 'NOT_AUTHENTICATED' });
+  });
+
+  it('runCancelCommand rethrows non-authentication failures', async () => {
+    const failure = new Error('cancel unavailable');
+    const cancelApproval = vi.fn(() => Promise.reject(failure));
+    const { inflow, storage } = authed(makeClient(), cancelApproval);
+    const ctx = agentCtxReturningError({ approvalId: 'ap-1' }, {});
+    await expect(runCancelCommand(ctx, inflow, storage)).rejects.toBe(failure);
+    expect(ctx.error).not.toHaveBeenCalled();
   });
 
   it('runStatusCommand (interval 0) yields a single ready snapshot', async () => {
@@ -130,6 +164,31 @@ describe('mpp agent runners', () => {
     const frames = await drain(runStatusCommand(ctx as never, inflow, storage));
     expect(frames).toHaveLength(1);
     expect(frames[0]).toMatchObject({ transaction_id: 'tx-1', state: 'ready', credential: 'CRED' });
+  });
+
+  it('runStatusCommand (interval > 0) yields a ready terminal frame', async () => {
+    const responses = [
+      { transactionId: 'tx-1', state: 'pending' as const, retryAfterSeconds: 0 },
+      { transactionId: 'tx-1', state: 'ready' as const, credential: 'CRED' },
+    ];
+    const client = makeClient({
+      getTransaction: vi.fn(() => Promise.resolve(responses.shift() ?? responses[0])) as MppClient['getTransaction'],
+    });
+    const { inflow, storage } = authed(client);
+    const ctx = agentCtx({ transactionId: 'tx-1' }, { interval: 0.01, maxAttempts: 0, timeout: 900 });
+    const frames = await drain(runStatusCommand(ctx as never, inflow, storage));
+    expect(frames.at(-1)).toMatchObject({ transaction_id: 'tx-1', state: 'ready', credential: 'CRED' });
+    expect(ctx.error).not.toHaveBeenCalled();
+  });
+
+  it('runStatusCommand maps server 401 responses to NOT_AUTHENTICATED', async () => {
+    const client = makeClient({
+      getTransaction: vi.fn(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 }))),
+    });
+    const { inflow, storage } = authed(client);
+    const ctx = agentCtxReturningError({ transactionId: 'tx-1' }, { interval: 0, maxAttempts: 0, timeout: 900 });
+    const result = await drainWithReturn(runStatusCommand(ctx as never, inflow, storage));
+    expect(result.returnValue).toMatchObject({ code: 'NOT_AUTHENTICATED' });
   });
 
   it('runPayCommand short-circuits on a 200 probe', async () => {
