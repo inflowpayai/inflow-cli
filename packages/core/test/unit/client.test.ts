@@ -5,6 +5,21 @@ import { Inflow, MemoryStorage } from '../../src/index.js';
 import { BASE_URL, balancesHappy, userHappy } from './fixtures/handlers.js';
 import { makeServer } from './fixtures/server.js';
 
+function makeFetchRecorder(): {
+  fetch: typeof globalThis.fetch;
+  calls: Request[];
+} {
+  const calls: Request[] = [];
+  return {
+    calls,
+    fetch: (input, init) => {
+      const request = new Request(input, init);
+      calls.push(request);
+      return Promise.resolve(HttpResponse.json({ kinds: [] }));
+    },
+  };
+}
+
 vi.mock('@inflowpayai/x402-buyer', async (importOriginal) => {
   const actual = await importOriginal<typeof X402BuyerModule>();
   const calls: Array<Record<string, unknown>> = [];
@@ -140,6 +155,26 @@ describe('Inflow.x402 lazy wiring', () => {
     });
   });
 
+  it('passes the default-header fetch wrapper through to the x402 client', async () => {
+    const { __calls } = (await import('@inflowpayai/x402-buyer')) as unknown as {
+      __calls: Array<Record<string, unknown>>;
+    };
+    const { fetch, calls } = makeFetchRecorder();
+    const before = __calls.length;
+    const client = new Inflow({
+      apiKey: 'inflow_test_key',
+      apiBaseUrl: 'https://api.example.test',
+      defaultHeaders: { 'InFlow-CLI-Version': '1.2.3' },
+      fetch,
+    });
+    await client.x402.client();
+    const last = __calls[before];
+    const wrappedFetch = last?.['fetch'];
+    expect(typeof wrappedFetch).toBe('function');
+    await (wrappedFetch as typeof globalThis.fetch)('https://api.example.test/v1/probe');
+    expect(calls[0]?.headers.get('InFlow-CLI-Version')).toBe('1.2.3');
+  });
+
   it('passes a getAccessToken callback when no apiKey is configured but authStorage is', async () => {
     const { __calls } = (await import('@inflowpayai/x402-buyer')) as unknown as {
       __calls: Array<Record<string, unknown>>;
@@ -159,6 +194,21 @@ describe('Inflow.x402 lazy wiring', () => {
     const last = __calls[before];
     expect(last).toHaveProperty('getAccessToken');
     expect(typeof (last as { getAccessToken: () => unknown }).getAccessToken).toBe('function');
+  });
+});
+
+describe('Inflow.mpp lazy wiring', () => {
+  it('passes the default-header fetch wrapper through to the MPP client', async () => {
+    const { fetch, calls } = makeFetchRecorder();
+    const client = new Inflow({
+      apiKey: 'inflow_test_key',
+      apiBaseUrl: 'https://api.example.test',
+      defaultHeaders: { 'InFlow-CLI-Version': '1.2.3' },
+      fetch,
+    });
+    const mpp = await client.mpp.client();
+    await mpp.getSupported();
+    expect(calls[0]?.headers.get('InFlow-CLI-Version')).toBe('1.2.3');
   });
 });
 

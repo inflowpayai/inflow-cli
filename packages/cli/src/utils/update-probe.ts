@@ -1,7 +1,3 @@
-import process from 'node:process';
-import updateNotifier from 'update-notifier';
-import { INSTALL_INSTRUCTIONS_URL } from './user-display.js';
-
 export interface UpdateInfo {
   current: string;
   latest: string;
@@ -13,7 +9,8 @@ export interface UpdateProbeRequest {
 
 export type UpdateProbe = (request: UpdateProbeRequest) => Promise<UpdateInfo | undefined>;
 
-const FRESH_TTL_MS = 60 * 60 * 1000;
+const RELEASES_LATEST_URL = 'https://api.github.com/repos/inflowpayai/inflow-cli/releases/latest';
+const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 const STALE_TTL_MS = 60 * 1000;
 
 interface CacheEntry {
@@ -21,7 +18,44 @@ interface CacheEntry {
   value?: UpdateInfo;
 }
 
-export function makeBackgroundUpdateProbe(packageName: string, cliVersion: string): UpdateProbe {
+interface GitHubLatestRelease {
+  name?: unknown;
+  tag_name?: unknown;
+}
+
+function normalizeVersion(value: string): string {
+  return value.trim().replace(/^v/u, '');
+}
+
+function compareVersionPart(left: string | undefined, right: string | undefined): number {
+  const leftValue = Number.parseInt(left ?? '0', 10);
+  const rightValue = Number.parseInt(right ?? '0', 10);
+  return Math.sign(leftValue - rightValue);
+}
+
+export function isNewerVersion(latest: string, current: string): boolean {
+  const latestParts = normalizeVersion(latest).split(/[.-]/u);
+  const currentParts = normalizeVersion(current).split(/[.-]/u);
+  const length = Math.max(latestParts.length, currentParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const comparison = compareVersionPart(latestParts[index], currentParts[index]);
+    if (comparison !== 0) return comparison > 0;
+  }
+  return false;
+}
+
+function releaseVersion(release: GitHubLatestRelease): string | undefined {
+  const value = typeof release.tag_name === 'string' ? release.tag_name : release.name;
+  if (typeof value !== 'string') return undefined;
+  const normalized = normalizeVersion(value);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+export function makeBackgroundUpdateProbe(
+  _packageName: string,
+  cliVersion: string,
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+): UpdateProbe {
   let cache: CacheEntry | undefined;
   let inflight: Promise<UpdateInfo | undefined> | undefined;
 
@@ -33,27 +67,25 @@ export function makeBackgroundUpdateProbe(packageName: string, cliVersion: strin
   }
 
   async function checkUpstreamVersion(): Promise<UpdateInfo | undefined> {
-    const priorFlag = process.env['NO_UPDATE_NOTIFIER'];
     try {
-      process.env['NO_UPDATE_NOTIFIER'] = '1';
-      const notifier = updateNotifier({
-        pkg: { name: packageName, version: cliVersion },
+      const response = await fetchImpl(RELEASES_LATEST_URL, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': `inflow/${cliVersion}`,
+        },
       });
-      const payload = await notifier.fetchInfo();
-      const latest = payload.latest.trim();
+      if (!response.ok) {
+        writeCache(undefined, STALE_TTL_MS);
+        return undefined;
+      }
+      const latest = releaseVersion((await response.json()) as GitHubLatestRelease);
       const value: UpdateInfo | undefined =
-        latest.length > 0 && latest !== cliVersion ? { current: cliVersion, latest } : undefined;
+        latest !== undefined && isNewerVersion(latest, cliVersion) ? { current: cliVersion, latest } : undefined;
       writeCache(value, FRESH_TTL_MS);
       return value;
     } catch {
       writeCache(undefined, STALE_TTL_MS);
       return undefined;
-    } finally {
-      if (priorFlag === undefined) {
-        delete process.env['NO_UPDATE_NOTIFIER'];
-      } else {
-        process.env['NO_UPDATE_NOTIFIER'] = priorFlag;
-      }
     }
   }
 
@@ -81,10 +113,5 @@ export function makeFrozenUpdateProbe(snapshot?: UpdateInfo): UpdateProbe {
 }
 
 export function formatUpdateNotice(info: UpdateInfo): string {
-  return [
-    '',
-    `Update available for @inflowpayai/inflow: ${info.current} -> ${info.latest}`,
-    `Install instructions: ${INSTALL_INSTRUCTIONS_URL}`,
-    '',
-  ].join('\n');
+  return `A newer InFlow CLI is available: ${info.latest}.\n`;
 }

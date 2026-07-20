@@ -88,9 +88,9 @@ passes a custom `fetch` — bring your own dispatcher in that case.
 
 ## Boundary
 
-This package is the headless contract. It must not import any CLI-rendering library (`react`, `ink`, `incur`,
-`update-notifier`, etc.). The repo's ESLint config has a `no-restricted-imports` rule scoped to `packages/core/src/**`
-that fails the lint step on any such import. Add new bans there when promoting more CLI-only deps.
+This package is the headless contract. It must not import any CLI-rendering library (`react`, `ink`, `incur`, etc.). The
+repo's ESLint config has a `no-restricted-imports` rule scoped to `packages/core/src/**` that fails the lint step on any
+such import. Add new bans there when promoting more CLI-only deps.
 
 The CLI binary (`@inflowpayai/inflow`) is the only sanctioned consumer today; the package is workspace-internal
 (`private: true` in `package.json`).

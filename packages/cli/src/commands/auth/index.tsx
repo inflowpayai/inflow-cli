@@ -17,7 +17,6 @@ import React, { useEffect, useState } from 'react';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import type { UpdateInfo, UpdateProbe } from '../../utils/update-probe.js';
-import { INSTALL_INSTRUCTIONS_URL } from '../../utils/user-display.js';
 import { Login } from './login.js';
 import { LoginApiKey } from './login-api-key.js';
 import { LoginPrompt } from './login-prompt.js';
@@ -131,7 +130,6 @@ export function toUpdateBlock(info: UpdateInfo | undefined): UpdateBlock | undef
   return {
     current_version: info.current,
     latest_version: info.latest,
-    update_url: INSTALL_INSTRUCTIONS_URL,
   };
 }
 

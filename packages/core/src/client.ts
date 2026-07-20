@@ -179,10 +179,12 @@ export class Inflow {
     const rawUser = sanitizeResource<IUserResource>(new UserResource(dataOptions, dataConfig));
     this.user = augmentUser(rawUser);
 
-    const x402Internal: IX402Resource = new X402Resource(this.resolveX402Options(options, dataOptions));
+    const x402Internal: IX402Resource = new X402Resource(
+      this.resolveX402Options(options, dataOptions, dataConfig.fetch),
+    );
     this.x402 = augmentX402(x402Internal, this.resolvedApiBaseUrl);
 
-    const mppInternal: IMppResource = new MppResource(this.resolveMppOptions(options, dataOptions));
+    const mppInternal: IMppResource = new MppResource(this.resolveMppOptions(options, dataOptions, dataConfig.fetch));
     this.mpp = augmentMpp(mppInternal, this.resolvedApiBaseUrl);
     this.aep = sanitizeResource<IAepResource>(new AepResource());
 
@@ -215,7 +217,11 @@ export class Inflow {
     return options;
   }
 
-  private resolveX402Options(options: InflowOptions, dataOptions: InflowOptions): SignerOptions {
+  private resolveX402Options(
+    options: InflowOptions,
+    dataOptions: InflowOptions,
+    fetchImpl: typeof globalThis.fetch,
+  ): SignerOptions {
     // `SignerOptions` is a discriminated union of three shapes (InflowClientOptions / InflowAnonymousClientOptions /
     // InflowBearerClientOptions). Two interactions matter:
     //
@@ -226,6 +232,7 @@ export class Inflow {
     const connection = {
       ...(options.environment !== undefined ? { environment: options.environment } : {}),
       ...(options.apiBaseUrl !== undefined ? { baseUrl: options.apiBaseUrl } : {}),
+      fetch: fetchImpl,
     };
 
     if (options.apiKey !== undefined && options.apiKey.length > 0) {
@@ -241,13 +248,18 @@ export class Inflow {
     return connection;
   }
 
-  private resolveMppOptions(options: InflowOptions, dataOptions: InflowOptions): MppClientOptions {
+  private resolveMppOptions(
+    options: InflowOptions,
+    dataOptions: InflowOptions,
+    fetchImpl: typeof globalThis.fetch,
+  ): MppClientOptions {
     // Same mode-exclusive resolution as `resolveX402Options`: `MppClient` and the `@inflowpayai/mpp-buyer` method accept
     // the identical three-way auth union, so a single resolved value drives both. The conditional spreads keep each
     // property either present-with-T or entirely absent (required under `exactOptionalPropertyTypes`).
     const connection = {
       ...(options.environment !== undefined ? { environment: options.environment } : {}),
       ...(options.apiBaseUrl !== undefined ? { baseUrl: options.apiBaseUrl } : {}),
+      fetch: fetchImpl,
     };
 
     if (options.apiKey !== undefined && options.apiKey.length > 0) {

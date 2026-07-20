@@ -243,7 +243,7 @@ describe('AuthStatus', () => {
       />,
     );
     await vi.waitFor(() => {
-      expect(lastFrame()).toContain('Update available: 0.1.0 -> 0.2.0');
+      expect(lastFrame()).toContain('A newer InFlow CLI is available: 0.2.0.');
     });
     unmount();
   });
