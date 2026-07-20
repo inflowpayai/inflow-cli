@@ -2,10 +2,10 @@
 version: 0.9.0
 name: agentic-payments
 description: Authenticate with InFlow and pay HTTP 402-protected resources via MPP (the `Payment` auth scheme) or x402. Use when the user invokes the `inflow` CLI or asks to log in / connect to InFlow.
-allowed-tools: ['Bash(inflow:*)', 'Bash(npx:*)', 'Bash(npm:*)']
+allowed-tools: ['Bash(inflow:*)', 'Bash(brew:*)', 'Bash(curl:*)']
 user-invocable: true
 license: MIT
-metadata: { "author": "Jarwin, Inc.", "url": "inflowcli.ai", "openclaw": { "emoji": "💸", "homepage": "https://inflowcli.ai", "requires": { "bins": ["inflow"] }, "install": [{ "id": "npm", "kind": "node", "package": "@inflowpayai/inflow", "bins": ["inflow"], "label": "Install InFlow" }] } }
+metadata: { "author": "Jarwin, Inc.", "url": "inflowcli.ai", "openclaw": { "emoji": "💸", "homepage": "https://inflowcli.ai", "requires": { "bins": ["inflow"] }, "install": [{ "id": "homebrew-cask", "kind": "homebrew", "tap": "inflowpayai/tap", "cask": "inflow", "bins": ["inflow"], "label": "Install InFlow with Homebrew" }, { "id": "hosted-shell", "kind": "shell", "url": "https://inflowcli.ai/install.sh", "bins": ["inflow"], "label": "Install InFlow with the hosted installer" }] } }
 ---
 
 # Agentic Payments
@@ -14,13 +14,21 @@ Pay HTTP 402-protected resources on the user's behalf. InFlow speaks two payment
 
 ## Installing
 
-Install with `npm install -g @inflowpayai/inflow`. Or run directly with `npx -y @inflowpayai/inflow`.
+Install the signed native CLI through one of these channels:
+
+| Channel | Command |
+| --- | --- |
+| macOS Homebrew | `brew tap inflowpayai/tap && brew install --cask inflow` |
+| macOS hosted installer | `curl -fsSL https://inflowcli.ai/install.sh \| bash` |
+| PowerShell hosted installer | `iwr -useb https://inflowcli.ai/install.ps1 \| iex` |
+
+Current install instructions live at https://inflowcli.ai/.
 
 ## Running
 
 InFlow runs as a **standalone CLI** or an **MCP server**.
 
-**MCP**: add an `inflow` server to your MCP client config that runs `npx -y @inflowpayai/inflow --mcp`. Keep the `-y` flag - it suppresses npx's confirmation prompt, without which the MCP host can stall on first run.
+**MCP**: add an `inflow` server to your MCP client config that runs `inflow --mcp`.
 
 **MCP mode** exposes every CLI command as a tool. Call `tools/list` on the MCP server for the authoritative inventory; arguments mirror the CLI flags one-to-one.
 
@@ -49,7 +57,7 @@ A successful `auth status` returns `authenticated: true` plus `auth_method` (`de
 
 If the response includes an `update` field, a newer version of `inflow` is published.
 
-**Surface and defer.** Tell the user a newer version is available and how to upgrade - `npm install -g @inflowpayai/inflow@latest` (or `npx -y @inflowpayai/inflow@latest`). Then **proceed with the current version**. Only block on the upgrade if a subsequent command fails with `VERSION_UNSUPPORTED` (or an HTTP 426 from the API), at which point the upgrade is mandatory and you should not retry until it lands.
+**Surface and defer.** Tell the user a newer version is available and share the install instructions at https://inflowcli.ai/. Then **proceed with the current version**. Only block on the upgrade if a subsequent command fails with `VERSION_UNSUPPORTED` (or an HTTP 426 from the API), at which point the upgrade is mandatory and you should not retry until it lands.
 
 If `authenticated` is `false`, start the device flow:
 
@@ -308,7 +316,7 @@ These apply to both protocols (in addition to each section's protocol-specific c
 | `POLLING_TIMEOUT` | `--interval` polling reached its max-attempts or timeout. Retryable - resume with `inflow <mpp|x402> fetch <transaction_id> <url> --interval 5 --max-attempts 180`. | "Still waiting on your approval - want me to keep polling, or cancel the request? (`inflow <mpp|x402> cancel <approval_id>` cancels it.)" |
 | `PAYMENT_REPLAY_OUTCOME_UNKNOWN` | A credential-bearing seller request had an indeterminate transport failure. Do not automatically replay. | "The seller request may have received the payment credential, but the connection failed before we got a reliable response. I won't retry automatically because the credential may be consumed." |
 | `api_error` | Non-2xx from the InFlow API on the plain data calls (`user`, `balances`, `deposit-addresses`); discriminate on `httpStatus`. `401` - saved auth rejected, re-run `inflow auth login`. `426` (`VERSION_UNSUPPORTED`) - upgrade and retry. `5xx` - server-side; wait and retry. (Note: `pay`/`status` rejections instead surface the server's own code, e.g. `INSUFFICIENT_FUNDS`, or the protocol's terminal code - not `api_error`.) | - |
-| `VERSION_UNSUPPORTED` / HTTP 426 | Installed `inflow` CLI is below the minimum supported version. `npm install -g @inflowpayai/inflow@latest`, then retry; don't retry on the old version. | - |
+| `VERSION_UNSUPPORTED` / HTTP 426 | Installed `inflow` CLI is below the minimum supported version. Install the current release from https://inflowcli.ai/, then retry; don't retry on the old version. | - |
 | `transport_error` | Network failure - check connectivity; retry. | - |
 
 ## Out of scope

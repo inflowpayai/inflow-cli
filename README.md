@@ -89,8 +89,7 @@ The repo also ships as an installable plugin (skill + MCP server bundled) for pl
   `.agents/plugins/marketplace.json`, and `.codex-plugin/plugin.json` respectively.
 
 In every case the plugin bundles the skill and the `inflow` MCP server (`.mcp.json`). The default MCP entry runs
-`npx -y @inflowpayai/inflow --mcp`; install the binary globally only for direct CLI use or for hosts configured to run
-`inflow --mcp` from `PATH`.
+`inflow --mcp`; install the signed native binary before using the MCP server.
 
 ## Development
 

@@ -6,15 +6,16 @@
   "description": "InFlow - agentic MPP / x402 payments from your machine.",
   "homepage": "https://inflowcli.ai",
   "bin": {
-    "inflow": "./dist/cli.js"
+    "inflow": "./dist/npm-shim.js"
   },
   "files": [
-    "dist",
+    "dist/npm-shim.js",
+    "dist/npm-shim.d.ts",
     "README.md",
     "LICENSE"
   ],
-  "main": "./dist/cli.js",
-  "types": "./dist/cli.d.ts",
+  "main": "./dist/npm-shim.js",
+  "types": "./dist/npm-shim.d.ts",
   "scripts": {
     "build": "tsup",
     "build:standalone": "tsup --config tsup.standalone.config.ts",

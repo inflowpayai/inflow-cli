@@ -3,12 +3,19 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import {
+  isNpmShimAgentMode,
+  renderNpmShimAgentPayload,
+  renderNpmShimHumanMessage,
+  runNpmShim,
+} from '../../src/npm-shim.js';
 
 vi.setConfig({ testTimeout: 15_000 });
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(__dirname, '../../');
 const DIST_CLI = resolve(PACKAGE_ROOT, 'dist/cli.js');
+const DIST_NPM_SHIM = resolve(PACKAGE_ROOT, 'dist/npm-shim.js');
 const PKG_VERSION: string = (
   JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'package.json'), 'utf-8')) as { version: string }
 ).version;
@@ -38,11 +45,25 @@ interface RunOptions extends SpawnOptionsWithoutStdio {
   stdin?: string;
 }
 
+class CapturingWritable {
+  public text = '';
+
+  write(text: string, callback: () => void): boolean {
+    this.text += text;
+    callback();
+    return true;
+  }
+}
+
 function run(args: string[], options: RunOptions = {}): Promise<RunResult> {
+  return runScript(DIST_CLI, args, options);
+}
+
+function runScript(script: string, args: string[], options: RunOptions = {}): Promise<RunResult> {
   const { stdin, ...spawnOptions } = options;
   const stdio: ['ignore' | 'pipe', 'pipe', 'pipe'] = [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'];
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(process.execPath, [DIST_CLI, ...args], {
+    const child = spawn(process.execPath, [script, ...args], {
       ...spawnOptions,
       stdio,
     });
@@ -63,6 +84,109 @@ function run(args: string[], options: RunOptions = {}): Promise<RunResult> {
     }
   });
 }
+
+describe.skipIf(!existsSync(DIST_NPM_SHIM))(
+  'published npm shim (requires `pnpm --filter @inflowpayai/inflow build` first)',
+  () => {
+    it('prints the signed-native install message for humans and exits non-zero', async () => {
+      const { exitCode, stdout, stderr } = await runScript(DIST_NPM_SHIM, ['--help'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(1);
+      expect(stdout).toBe('');
+      expect(stderr).toContain('InFlow CLI is distributed as a signed native application.');
+      expect(stderr).toContain('https://inflowcli.ai/');
+      expect(stderr).toContain('does not run commands, start MCP, or manage credentials');
+    });
+
+    it('prints a stable JSON envelope for agent-mode invocations', async () => {
+      const { exitCode, stdout, stderr } = await runScript(DIST_NPM_SHIM, ['--format', 'json'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(1);
+      expect(stderr).toBe('');
+      expect(JSON.parse(stdout) as Record<string, unknown>).toEqual({
+        ok: false,
+        code: 'NPM_CLI_DEPRECATED',
+        message: 'The npm package no longer runs InFlow commands. Install the signed native InFlow CLI.',
+        install_url: 'https://inflowcli.ai/',
+        package_version: PKG_VERSION,
+      });
+    });
+
+    it('blocks the legacy npm MCP command path before any credential store can be opened', async () => {
+      const { exitCode, stdout, stderr } = await runScript(DIST_NPM_SHIM, ['--mcp'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(1);
+      expect(stderr).toBe('');
+      expect(JSON.parse(stdout) as Record<string, unknown>).toMatchObject({
+        ok: false,
+        code: 'NPM_CLI_DEPRECATED',
+        install_url: 'https://inflowcli.ai/',
+      });
+    });
+  },
+);
+
+describe('npm shim source contract', () => {
+  it('detects human and agent execution modes', () => {
+    expect(isNpmShimAgentMode(['node', 'npm-shim.js', '--help'], false)).toBe(false);
+    expect(isNpmShimAgentMode(['node', 'npm-shim.js', '-h'], false)).toBe(false);
+    expect(isNpmShimAgentMode(['node', 'npm-shim.js', '--mcp'], true)).toBe(true);
+    expect(isNpmShimAgentMode(['node', 'npm-shim.js', '--format', 'json'], true)).toBe(true);
+    expect(isNpmShimAgentMode(['node', 'npm-shim.js', '--format=json'], true)).toBe(true);
+    expect(isNpmShimAgentMode(['node', 'npm-shim.js'], false)).toBe(true);
+    expect(isNpmShimAgentMode(['node', 'npm-shim.js'], true)).toBe(false);
+  });
+
+  it('renders stable human and agent payloads', () => {
+    expect(JSON.parse(renderNpmShimAgentPayload(PKG_VERSION)) as Record<string, unknown>).toEqual({
+      ok: false,
+      code: 'NPM_CLI_DEPRECATED',
+      message: 'The npm package no longer runs InFlow commands. Install the signed native InFlow CLI.',
+      install_url: 'https://inflowcli.ai/',
+      package_version: PKG_VERSION,
+    });
+    const human = renderNpmShimHumanMessage();
+    expect(human).toContain('InFlow CLI is distributed as a signed native application.');
+    expect(human).toContain('https://inflowcli.ai/');
+    expect(human).toContain('does not run commands, start MCP, or manage credentials');
+  });
+
+  it('writes agent payloads to stdout', async () => {
+    const stdout = new CapturingWritable();
+    const stderr = new CapturingWritable();
+    const exitCode = await runNpmShim({
+      args: ['node', 'npm-shim.js', '--mcp'],
+      packageVersion: PKG_VERSION,
+      stderr,
+      stdout,
+      stdoutIsTty: true,
+    });
+    expect(exitCode).toBe(1);
+    expect(stderr.text).toBe('');
+    expect(JSON.parse(stdout.text) as Record<string, unknown>).toMatchObject({
+      code: 'NPM_CLI_DEPRECATED',
+      package_version: PKG_VERSION,
+    });
+  });
+
+  it('writes human messages to stderr', async () => {
+    const stdout = new CapturingWritable();
+    const stderr = new CapturingWritable();
+    const exitCode = await runNpmShim({
+      args: ['node', 'npm-shim.js', '--help'],
+      packageVersion: PKG_VERSION,
+      stderr,
+      stdout,
+      stdoutIsTty: false,
+    });
+    expect(exitCode).toBe(1);
+    expect(stdout.text).toBe('');
+    expect(stderr.text).toContain('InFlow CLI is distributed as a signed native application.');
+  });
+});
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -86,6 +210,19 @@ function collectSchemaPropertyNames(schema: unknown): string[] {
 describe.skipIf(!existsSync(DIST_CLI))(
   'inflow binary (requires `pnpm --filter @inflowpayai/inflow build` first)',
   () => {
+    it('package.json publishes the compatibility shim instead of the credential-running CLI', () => {
+      const manifest = JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'package.json'), 'utf-8')) as {
+        bin?: { inflow?: string };
+        files?: string[];
+        main?: string;
+        types?: string;
+      };
+      expect(manifest.bin?.inflow).toBe('./dist/npm-shim.js');
+      expect(manifest.main).toBe('./dist/npm-shim.js');
+      expect(manifest.types).toBe('./dist/npm-shim.d.ts');
+      expect(manifest.files).toEqual(['dist/npm-shim.js', 'dist/npm-shim.d.ts', 'README.md', 'LICENSE']);
+    });
+
     it('--help exits 0 and prints the binary name + description', async () => {
       const { exitCode, stdout } = await run(['--help']);
       expect(exitCode).toBe(0);
@@ -532,13 +669,13 @@ describe('plugin and skill distribution (spec 050)', () => {
     expect(parsed.interface?.displayName).toBe('InFlow');
   });
 
-  it('.mcp.json parses and uses the documented npx -y invocation', () => {
+  it('.mcp.json parses and uses the signed binary invocation', () => {
     const parsed = parseJsonRepoFile<{
       mcpServers?: Record<string, { command?: string; args?: string[] }>;
     }>('.mcp.json');
     const entry = parsed.mcpServers?.['inflow'];
-    expect(entry?.command).toBe('npx');
-    expect(entry?.args).toEqual(['-y', '@inflowpayai/inflow', '--mcp']);
+    expect(entry?.command).toBe('inflow');
+    expect(entry?.args).toEqual(['--mcp']);
   });
 
   for (const name of ['agentic-enrollment', 'agentic-payments']) {
@@ -550,10 +687,24 @@ describe('plugin and skill distribution (spec 050)', () => {
       expect(metadataMatch).not.toBeNull();
       const metadata = JSON.parse(metadataMatch?.[1] ?? '{}') as {
         author?: string;
-        openclaw?: { install?: { package?: string }[] };
+        openclaw?: {
+          install?: { cask?: string; kind?: string; tap?: string; url?: string }[];
+        };
       };
       expect(metadata.author).toBe('Jarwin, Inc.');
-      expect(metadata.openclaw?.install?.[0]?.package).toBe('@inflowpayai/inflow');
+      expect(metadata.openclaw?.install).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cask: 'inflow',
+            kind: 'homebrew',
+            tap: 'inflowpayai/tap',
+          }),
+          expect.objectContaining({
+            kind: 'shell',
+            url: 'https://inflowcli.ai/install.sh',
+          }),
+        ]),
+      );
     });
   }
 
