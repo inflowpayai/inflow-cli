@@ -62,6 +62,7 @@ mkdirSync(buildRoot, { recursive: true });
 mkdirSync(join(appPath, 'Contents/MacOS'), { recursive: true });
 mkdirSync(resourcesPath, { recursive: true });
 
+run('pnpm', ['--filter', '@inflowpayai/inflow-core', 'build']);
 run('pnpm', ['--filter', '@inflowpayai/inflow', 'build:standalone']);
 
 mkdirSync(dirname(standaloneBundlePath), { recursive: true });
