@@ -1,6 +1,7 @@
 import {
   augmentUser,
   type AuthTokens,
+  InflowApiError,
   type IUser,
   type IUserResource,
   MemoryStorage,
@@ -100,6 +101,58 @@ describe('runUserGet — session guard', () => {
       inflow,
     });
     expect(result).toEqual(expectedPayload(baseUser));
+    expect(ctx.error).not.toHaveBeenCalled();
+  });
+
+  it('maps server 401 responses to the authenticated-session recovery error', async () => {
+    const ctx = agentContext();
+    const storage = new MemoryStorage();
+    const inflow = makeInflow({ storage, apiKey: 'inflow_test_key' });
+    await expect(
+      runUserGet(ctx, {
+        user: userHandle(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 }))),
+        authStorage: storage,
+        inflow,
+      }),
+    ).rejects.toThrow('c.error called');
+    expect(ctx.error).toHaveBeenCalledWith(expect.objectContaining({ code: 'NOT_AUTHENTICATED' }));
+  });
+
+  it('preserves unsupported-version API errors', async () => {
+    const ctx = agentContext();
+    const storage = new MemoryStorage(baseTokens);
+    const inflow = makeInflow({ storage });
+    await expect(
+      runUserGet(ctx, {
+        user: userHandle(() =>
+          Promise.reject(
+            new InflowApiError('This InFlow CLI version is no longer supported.', {
+              status: 426,
+              code: 'VERSION_UNSUPPORTED',
+            }),
+          ),
+        ),
+        authStorage: storage,
+        inflow,
+      }),
+    ).rejects.toThrow('c.error called');
+    expect(ctx.error).toHaveBeenCalledWith({
+      code: 'VERSION_UNSUPPORTED',
+      message: 'This InFlow CLI version is no longer supported.',
+    });
+  });
+
+  it('passes through non-API failures', async () => {
+    const ctx = agentContext();
+    const storage = new MemoryStorage(baseTokens);
+    const failure = new Error('network shape changed');
+    await expect(
+      runUserGet(ctx, {
+        user: userHandle(() => Promise.reject(failure)),
+        authStorage: storage,
+        inflow: makeInflow({ storage }),
+      }),
+    ).rejects.toBe(failure);
     expect(ctx.error).not.toHaveBeenCalled();
   });
 });

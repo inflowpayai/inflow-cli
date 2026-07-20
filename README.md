@@ -46,14 +46,26 @@ brew uninstall --cask inflow
 curl -fsSL https://inflowcli.ai/install.sh | bash
 ```
 
-The installer selects the current Mac architecture, downloads the matching GitHub Release asset, verifies the app with
-macOS code-signing and Gatekeeper checks, installs `InFlow.app` into `~/.local/share/inflow`, and links `inflow` into
-`~/.local/bin`.
+The installer selects the current Mac architecture, downloads the matching GitHub Release asset and checksum, verifies
+the checksum plus macOS code-signing and Gatekeeper checks, installs `InFlow.app` into `~/.local/share/inflow`, and
+links `inflow` into `~/.local/bin`.
+
+Run the installer again to upgrade to the latest GitHub Release. Uninstall with:
+
+```bash
+curl -fsSL https://inflowcli.ai/install.sh | bash -s -- --uninstall
+```
 
 PowerShell on macOS can use the same hosted installer surface:
 
 ```powershell
 iwr -useb https://inflowcli.ai/install.ps1 | iex
+```
+
+PowerShell uninstall:
+
+```powershell
+$env:INFLOW_UNINSTALL = "1"; iwr -useb https://inflowcli.ai/install.ps1 | iex
 ```
 
 ### Direct download

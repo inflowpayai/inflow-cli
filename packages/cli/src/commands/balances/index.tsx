@@ -9,6 +9,7 @@ import {
 import { Cli } from 'incur';
 import React from 'react';
 import { assertSessionGuard } from '../../utils/assert-session.js';
+import { authenticatedApiError } from '../../utils/api-error.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { BalancesList } from './list.js';
 import { listOptions } from './schema.js';
@@ -47,8 +48,14 @@ async function runBalancesList(c: BalancesListContext, deps: BalancesListDeps): 
     );
   }
 
-  const balances = await runBalancesListFlow({ balanceResource: deps.balanceResource });
-  return sanitizeDeep(balances);
+  try {
+    const balances = await runBalancesListFlow({ balanceResource: deps.balanceResource });
+    return sanitizeDeep(balances);
+  } catch (error) {
+    const mapped = authenticatedApiError(error);
+    if (mapped !== undefined) return c.error(mapped);
+    throw error;
+  }
 }
 
 export function createBalancesCli(balanceResource: IBalanceResource, authStorage: AuthStorage, inflow: Inflow) {
