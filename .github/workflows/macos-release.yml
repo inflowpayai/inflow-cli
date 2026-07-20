@@ -24,8 +24,8 @@ jobs:
   macos-release:
     runs-on: macos-15
     env:
-      INFLOW_CODESIGN_IDENTITY: 'Developer ID Application: Jarwin, Inc. (B96U57DTR2)'
       INFLOW_NOTARY_PROFILE: inflow-notary
+      INFLOW_RELEASE_CODESIGN_IDENTITY: 'Developer ID Application: Jarwin, Inc. (B96U57DTR2)'
     steps:
       - uses: actions/checkout@v5
         with:
@@ -105,9 +105,9 @@ jobs:
         run: |
           set -euo pipefail
           if [[ '${{ inputs.dry_run }}' == 'true' ]]; then
-            pnpm build:macos-app
+            INFLOW_CODESIGN_IDENTITY=- pnpm build:macos-app
           else
-            pnpm build:macos-release
+            INFLOW_CODESIGN_IDENTITY="$INFLOW_RELEASE_CODESIGN_IDENTITY" pnpm build:macos-release
           fi
 
       - name: Verify macOS artifact
@@ -144,7 +144,7 @@ jobs:
 
       - name: Upload dry-run artifacts
         if: inputs.dry_run == true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: inflow-macos-release-dry-run-${{ steps.metadata.outputs.version }}
           path: |
