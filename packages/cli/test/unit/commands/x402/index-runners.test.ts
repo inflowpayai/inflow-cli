@@ -13,8 +13,15 @@ import type { PaymentRequired } from '@x402/core/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing } from '../../../../src/commands/x402/index.js';
 
-const { runPayCommand, runStatusCommand, runCancelCommand, runDecodeCommand, runSupportedCommand, runInspectCommand } =
-  __testing;
+const {
+  runPayCommand,
+  runFetchCommand,
+  runStatusCommand,
+  runCancelCommand,
+  runDecodeCommand,
+  runSupportedCommand,
+  runInspectCommand,
+} = __testing;
 
 function makePaymentRequired(): PaymentRequired {
   return {
@@ -259,10 +266,15 @@ describe('runPayCommand (agent mode)', () => {
     const { inflow, storage } = authedResources(makeClient());
     const yields = await drain(runPayCommand(ctx, inflow, storage, 'https://api.inflowpay.ai'));
     expect(yields).toHaveLength(1);
-    const payload = yields[0] as { transaction_id: string; approval_id: string; _next?: { command: string } };
+    const payload = yields[0] as {
+      transaction_id: string;
+      approval_id: string;
+      _next?: { command: string; tool: string };
+    };
     expect(payload.transaction_id).toBe('txn_1');
     expect(payload.approval_id).toBe('appr_1');
-    expect(payload._next?.command).toContain('x402 status txn_1');
+    expect(payload._next?.command).toContain('x402 fetch txn_1 https://seller/api');
+    expect(payload._next?.tool).toBe('x402_fetch');
   });
 
   it('completes the full pay flow (probe → prepare → await → replay) when interval > 0', async () => {
@@ -298,6 +310,92 @@ describe('runPayCommand (agent mode)', () => {
     expect(final.outcome).toBe('paid');
     expect(final.body).toBe('ok-body');
     expect(final.response_status).toBe(200);
+  });
+
+  it('runFetchCommand fetches a signed transaction without preparing a new payment or exposing encoded payload', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+    const prepareInflowPayment = vi.fn();
+    const client = makeClient({
+      prepareInflowPayment,
+      getX402Payload: vi.fn(() =>
+        Promise.resolve({
+          status: 'APPROVED',
+          encodedPayload: 'ENC',
+          paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
+        }),
+      ),
+    });
+    const ctx = agentContext(
+      { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
+      {
+        method: 'GET',
+        header: ['PAYMENT-SIGNATURE: caller'],
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: true,
+      },
+    );
+    const { inflow, storage } = authedResources(client);
+
+    const frames = await drain(runFetchCommand(ctx as never, inflow, storage));
+
+    expect(prepareInflowPayment).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(frames.at(-1)).toMatchObject({
+      protocol: 'x402',
+      outcome: 'paid',
+      transaction_id: 'txn_1',
+      requested_url: 'https://seller/api',
+      body: 'DONE',
+    });
+    expect(frames.at(-1)).not.toHaveProperty('encoded_payload');
+    const [, init] = fetchSpy.mock.calls[0] ?? [];
+    expect(new Headers(init?.headers).get('PAYMENT-SIGNATURE')).toBe('ENC');
+  });
+
+  it('runFetchCommand renders the human fetch path for signed transactions', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+    const client = makeClient({
+      getX402Payload: vi.fn(() =>
+        Promise.resolve({
+          status: 'APPROVED',
+          encodedPayload: 'ENC',
+          paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
+        }),
+      ),
+    });
+    const ctx = {
+      agent: false,
+      formatExplicit: false,
+      args: { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
+      options: { method: 'GET', header: [], interval: 0, maxAttempts: 0, timeout: 900, showBody: true },
+      error: vi.fn(),
+    };
+    const { inflow, storage } = authedResources(client);
+
+    const result = await drainWithReturn(runFetchCommand(ctx as never, inflow, storage));
+
+    expect(result.values).toEqual([]);
+    expect(ctx.error).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it('runFetchCommand stops terminal failures before contacting the seller', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const client = makeClient({
+      getX402Payload: vi.fn(() => Promise.resolve({ status: 'DECLINED' })),
+    });
+    const ctx = agentContextReturningError(
+      { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
+      { method: 'GET', header: [], interval: 0, maxAttempts: 0, timeout: 900, showBody: false },
+    );
+    const { inflow, storage } = authedResources(client);
+
+    const result = await drainWithReturn(runFetchCommand(ctx as never, inflow, storage));
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.returnValue).toMatchObject({ code: 'APPROVAL_CANCELLED' });
   });
 
   it('routes X402PaymentIdFormatError to INVALID_PAYMENT_ID via c.error', async () => {

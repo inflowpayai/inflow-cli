@@ -8,7 +8,7 @@
  *   inflow.user              IUser              — retrieve() (raw) + get() (agent-projected)
  *   inflow.balances          IBalanceResource   — list()
  *   inflow.depositAddresses  IDepositAddressResource — list()
- *   inflow.x402              IX402              — client() (raw buyer) + pay/status/cancel/inspect/supported
+ *   inflow.x402              IX402              — client() (raw buyer) + pay/fetch/status/cancel/inspect/supported
  *
  * Plus:
  *
@@ -40,10 +40,12 @@ export {
   type IUser,
   type IX402,
   type MppCancelRequest,
+  type MppFetchRequest,
   type MppInspectRequest,
   type MppPayRequest,
   type MppStatusRequest,
   type X402CancelRequest,
+  type X402FetchRequest,
   type X402InspectRequest,
   type X402PayRequest,
   type X402StatusRequest,
@@ -164,6 +166,21 @@ export {
   runPayPipeline,
 } from './flows/x402-pay.js';
 export {
+  PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
+  PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+  type PaymentReplayInput,
+  type PaymentReplayResult,
+  replayPaymentRequest,
+} from './flows/payment-fetch.js';
+export {
+  type X402FetchEvent,
+  type X402FetchInput,
+  type X402FetchRejected,
+  type X402FetchRun,
+  type X402FetchSuccess,
+  runX402Fetch,
+} from './flows/x402-fetch.js';
+export {
   classifyPayloadResponse,
   reduceX402Status,
   runX402Status,
@@ -207,6 +224,14 @@ export {
   reduceMppPay,
   runMppPayPipeline,
 } from './flows/mpp-pay.js';
+export {
+  type MppFetchEvent,
+  type MppFetchInput,
+  type MppFetchRejected,
+  type MppFetchRun,
+  type MppFetchSuccess,
+  runMppFetch,
+} from './flows/mpp-fetch.js';
 export {
   classifyTransaction,
   reduceMppStatus,

@@ -37,9 +37,30 @@ function preparedEvent(overrides: Record<string, unknown> = {}): Extract<PayEven
   return { ...base, ...overrides };
 }
 
+function payCtx(overrides: Record<string, unknown> = {}) {
+  return {
+    agent: true,
+    formatExplicit: true,
+    args: { url: 'https://seller/api' },
+    options: {
+      method: 'POST',
+      data: '{"hello":true}',
+      header: ['X-Test: yes'],
+      interval: 0,
+      maxAttempts: 0,
+      timeout: 900,
+      showBody: true,
+      ...overrides,
+    },
+    error: () => {
+      throw new Error('not called');
+    },
+  };
+}
+
 describe('initialPayFrame', () => {
   it('includes _next.command and POST_PAY_INSTRUCTION when interval=0', () => {
-    const frame = initialPayFrame(preparedEvent(), 0, 0);
+    const frame = initialPayFrame(preparedEvent(), payCtx());
     expect(frame['transaction_id']).toBe('txn_1');
     expect(frame['approval_id']).toBe('appr_1');
     expect(frame['approval_url']).toBe('https://app.inflowpay.ai/approvals/appr_1/view/');
@@ -47,20 +68,37 @@ describe('initialPayFrame', () => {
     expect(frame['network']).toBe('inflow:1');
     expect(frame['amount']).toBe('500');
     expect(frame['asset']).toBe('USDC');
-    const next = frame['_next'] as { command: string; poll_interval_seconds: number };
-    expect(next.command).toContain('x402 status txn_1');
+    const next = frame['_next'] as {
+      command: string;
+      poll_interval_seconds: number;
+      tool: string;
+      input: Record<string, unknown>;
+    };
+    expect(next.command).toContain('x402 fetch txn_1 https://seller/api');
+    expect(next.tool).toBe('x402_fetch');
+    expect(next.input).toMatchObject({
+      transactionId: 'txn_1',
+      resourceUrl: 'https://seller/api',
+      method: 'POST',
+      header: ['X-Test: yes'],
+      data: '{"hello":true}',
+      interval: 5,
+      maxAttempts: 60,
+      timeout: 900,
+      showBody: true,
+    });
     expect(next.poll_interval_seconds).toBe(5);
     expect(frame['instruction']).toContain('Present the approval_url');
   });
 
   it('omits _next when interval > 0 and uses the polling instruction', () => {
-    const frame = initialPayFrame(preparedEvent(), 5, 60);
+    const frame = initialPayFrame(preparedEvent(), payCtx({ interval: 5, maxAttempts: 60 }));
     expect(frame['_next']).toBeUndefined();
     expect(frame['instruction']).toContain('inline');
   });
 
   it('uses maxAttempts > 0 in the next command when supplied', () => {
-    const frame = initialPayFrame(preparedEvent(), 0, 120);
+    const frame = initialPayFrame(preparedEvent(), payCtx({ maxAttempts: 120 }));
     const next = frame['_next'] as { command: string };
     expect(next.command).toContain('--max-attempts 120');
   });
@@ -78,8 +116,7 @@ describe('initialPayFrame', () => {
           extra: {},
         },
       }),
-      0,
-      0,
+      payCtx(),
     );
     expect(frame['amount']).toBeUndefined();
     expect(frame['asset']).toBeUndefined();

@@ -12,6 +12,7 @@ const DIST_CLI = resolve(PACKAGE_ROOT, 'dist/cli.js');
 const PKG_VERSION: string = (
   JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'package.json'), 'utf-8')) as { version: string }
 ).version;
+const PAYMENT_FETCH_MCP_TOOLS = ['mpp_fetch', 'x402_fetch'];
 
 interface RunResult {
   exitCode: number;
@@ -334,6 +335,26 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(tool).toBeDefined();
       expect(tool?.inputSchema?.type).toBe('object');
       expect(tool?.inputSchema?.properties ?? {}).toEqual({});
+      expect(tools.map((entry) => entry.name)).toEqual(expect.arrayContaining(PAYMENT_FETCH_MCP_TOOLS));
+      for (const name of PAYMENT_FETCH_MCP_TOOLS) {
+        const fetchTool = tools.find((entry) => entry.name === name);
+        const properties = fetchTool?.inputSchema?.properties ?? {};
+        const expectedTypes: Record<string, string> = {
+          transactionId: 'string',
+          resourceUrl: 'string',
+          method: 'string',
+          header: 'array',
+          data: 'string',
+          interval: 'number',
+          maxAttempts: 'number',
+          timeout: 'number',
+          showBody: 'boolean',
+          outputFile: 'string',
+        };
+        for (const [property, type] of Object.entries(expectedTypes)) {
+          expect((properties[property] as { type?: string } | undefined)?.type, `${name}.${property}`).toBe(type);
+        }
+      }
     });
 
     it('user get --format json without auth emits NOT_AUTHENTICATED and exits 1', async () => {
