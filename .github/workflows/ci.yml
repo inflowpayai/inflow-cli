@@ -12,10 +12,6 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [22, 24]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -25,7 +21,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24.15.0
           cache: pnpm
 
       - name: Install
@@ -41,7 +37,6 @@ jobs:
         run: pnpm test
 
       - name: Upload coverage to Codecov
-        if: matrix.node == 22
         uses: codecov/codecov-action@v5
         with:
           use_oidc: true
@@ -54,5 +49,5 @@ jobs:
         run: pnpm build
 
       - name: Publish dry-run
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.node == 22
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: pnpm --filter @inflowpayai/inflow publish --dry-run --no-git-checks
