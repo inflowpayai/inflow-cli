@@ -1,8 +1,7 @@
 import { type InflowOptions, type ResolvedInflowSdkConfig, resolveInflowSdkConfig } from '../config.js';
-import { InflowApiError } from '../errors.js';
 import type { DepositAddresses } from '../types/index.js';
 import { InflowApiClient } from '../utils/api-client.js';
-import { redactRawBody } from '../utils/redact.js';
+import { createApiError } from './api-error.js';
 import type { IDepositAddressResource } from './interfaces.js';
 
 export class DepositAddressResource implements IDepositAddressResource {
@@ -15,16 +14,10 @@ export class DepositAddressResource implements IDepositAddressResource {
 
   async list(options: { signal?: AbortSignal } = {}): Promise<DepositAddresses> {
     const requestOptions = options.signal !== undefined ? { signal: options.signal } : {};
-    const { status, data, rawBody } = await this.api.get('/v1/deposit-addresses', requestOptions);
+    const response = await this.api.get('/v1/deposit-addresses', requestOptions);
+    const { status, data } = response;
     if (status < 200 || status >= 300) {
-      throw new InflowApiError(
-        `Failed to list deposit addresses (${String(status)}): ${redactRawBody(rawBody) || 'unknown error'}`,
-        {
-          status,
-          rawBody,
-          details: data,
-        },
-      );
+      throw createApiError(response, 'Failed to list deposit addresses');
     }
     const body = (data as Partial<DepositAddresses> | null) ?? {};
     return {

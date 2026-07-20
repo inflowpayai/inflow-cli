@@ -258,11 +258,13 @@ describe('InflowApiClient — request bodies & headers', () => {
       fetch,
       apiBaseUrl: 'https://api.test',
       accessToken: 'tk',
+      defaultHeaders: { 'InFlow-CLI-Version': '1.2.3' },
     });
     const client = new InflowApiClient(c, c.apiBaseUrl);
     await client.postForm('/v1/auth', { client_id: 'cid', scope: 'a b' });
     expect(calls[0]?.headers.get('Content-Type')).toBe('application/x-www-form-urlencoded');
     expect(calls[0]?.body).toBe('client_id=cid&scope=a+b');
+    expect(calls[0]?.headers.get('InFlow-CLI-Version')).toBe('1.2.3');
     expect(calls[0]?.headers.get('Authorization')).toBeNull();
   });
 
