@@ -1,6 +1,6 @@
 import process from 'node:process';
 import updateNotifier from 'update-notifier';
-import { NPM_INSTALL_COMMAND } from './user-display.js';
+import { INSTALL_INSTRUCTIONS_URL } from './user-display.js';
 
 export interface UpdateInfo {
   current: string;
@@ -84,7 +84,7 @@ export function formatUpdateNotice(info: UpdateInfo): string {
   return [
     '',
     `Update available for @inflowpayai/inflow: ${info.current} -> ${info.latest}`,
-    `Run: ${NPM_INSTALL_COMMAND}`,
+    `Install instructions: ${INSTALL_INSTRUCTIONS_URL}`,
     '',
   ].join('\n');
 }

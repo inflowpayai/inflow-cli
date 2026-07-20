@@ -23,15 +23,47 @@ Installing into an agent host? Use the per-surface guide:
 
 ## Install
 
-```bash
-npm install -g @inflowpayai/inflow
-```
+The signed native `inflow` binary is distributed for Apple Silicon and Intel Macs.
 
-Or run directly with `npx`:
+### Homebrew Cask
 
 ```bash
-npx @inflowpayai/inflow
+brew tap inflowpayai/tap
+brew install --cask inflow
+inflow --version
 ```
+
+Upgrade or uninstall through Homebrew:
+
+```bash
+brew upgrade --cask inflow
+brew uninstall --cask inflow
+```
+
+### Hosted installer
+
+```bash
+curl -fsSL https://inflowcli.ai/install.sh | bash
+```
+
+The installer selects the current Mac architecture, downloads the matching GitHub Release asset, verifies the app with
+macOS code-signing and Gatekeeper checks, installs `InFlow.app` into `~/.local/share/inflow`, and links `inflow` into
+`~/.local/bin`.
+
+PowerShell on macOS can use the same hosted installer surface:
+
+```powershell
+iwr -useb https://inflowcli.ai/install.ps1 | iex
+```
+
+### Direct download
+
+Download the matching zip from the `inflowpayai/inflow-cli` GitHub Release for the package version:
+
+- `inflow-<version>-darwin-arm64.zip` for Apple Silicon Macs
+- `inflow-<version>-darwin-x64.zip` for Intel Macs
+
+The zip contains `InFlow.app`; the executable is inside the app bundle at `InFlow.app/Contents/MacOS/inflow`.
 
 ### Use with agents
 
@@ -81,9 +113,9 @@ pnpm changeset
 
 ## macOS release automation
 
-The `macos release` workflow is manually dispatched from GitHub Actions. Its default dry run builds the macOS artifact,
-renders the Homebrew Cask, audits the Cask, and uploads workflow artifacts without notarizing, creating a GitHub
-Release, or pushing `inflowpayai/homebrew-tap`.
+The `macos release` workflow is manually dispatched from GitHub Actions. Its default dry run builds the Apple Silicon
+and Intel macOS artifacts, renders the Homebrew Cask, audits the Cask, and uploads workflow artifacts without
+notarizing, creating a GitHub Release, or pushing `inflowpayai/homebrew-tap`.
 
 Real release runs require these repository secrets:
 
@@ -98,8 +130,8 @@ Real release runs also require this repository variable:
 
 - `HOMEBREW_TAP_APP_CLIENT_ID`
 
-The published macOS artifact is attached to the `inflowpayai/inflow-cli` GitHub Release for the package version, and the
-Homebrew Cask in `inflowpayai/homebrew-tap` points at that release asset.
+The published macOS artifacts are attached to the `inflowpayai/inflow-cli` GitHub Release for the package version, and
+the Homebrew Cask in `inflowpayai/homebrew-tap` points at those release assets for Apple Silicon and Intel Macs.
 
 ## Packages
 

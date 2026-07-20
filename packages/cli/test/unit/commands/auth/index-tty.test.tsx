@@ -121,7 +121,7 @@ describe('toUpdateBlock', () => {
     expect(block).toEqual({
       current_version: '0.1.0',
       latest_version: '0.2.0',
-      update_command: 'npm install -g @inflowpayai/inflow',
+      update_url: 'https://inflowcli.ai/',
     });
   });
 });

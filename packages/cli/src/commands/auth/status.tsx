@@ -135,7 +135,7 @@ export const AuthStatus: React.FC<AuthStatusProps> = ({
   const updateFooter = updateNotice ? (
     <Box flexDirection="column" marginTop={1}>
       <Text dimColor>{`Update available: ${updateNotice.current} -> ${updateNotice.latest}`}</Text>
-      <Text dimColor>Run: npm install -g @inflowpayai/inflow</Text>
+      <Text dimColor>Install instructions: https://inflowcli.ai/</Text>
     </Box>
   ) : null;
 
