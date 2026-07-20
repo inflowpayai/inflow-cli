@@ -374,9 +374,9 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(head).toBe('#!/usr/bin/env node');
     });
 
-    it('does not bundle update-notifier (external in tsup config)', () => {
+    it('uses GitHub Releases for update checks', () => {
       const src = readFileSync(DIST_CLI, 'utf-8');
-      expect(src).not.toContain('update-notifier/package.json');
+      expect(src).toContain('https://api.github.com/repos/inflowpayai/inflow-cli/releases/latest');
     });
 
     it('--skill prints the bundled SKILL.md body without YAML frontmatter', async () => {

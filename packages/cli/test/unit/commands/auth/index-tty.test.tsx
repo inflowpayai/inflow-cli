@@ -121,7 +121,6 @@ describe('toUpdateBlock', () => {
     expect(block).toEqual({
       current_version: '0.1.0',
       latest_version: '0.2.0',
-      update_url: 'https://inflowcli.ai/',
     });
   });
 });

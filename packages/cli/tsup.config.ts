@@ -62,7 +62,6 @@ export default defineConfig({
     };
   },
   entry: { cli: 'src/cli.tsx', 'npm-shim': 'src/npm-shim.ts' },
-  external: ['update-notifier'],
   format: ['esm'],
   outDir: 'dist',
   platform: 'node',

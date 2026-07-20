@@ -102,21 +102,22 @@ export class InflowApiClient {
   }
 
   async authenticationHeaders(): Promise<Record<string, string>> {
+    const defaultHeaders = this.config.defaultHeaders ?? {};
     const mode = this.config.authMode;
     switch (mode.type) {
       case 'apiKey':
-        return { 'X-API-KEY': mode.apiKey };
+        return { ...defaultHeaders, 'X-API-KEY': mode.apiKey };
       case 'dynamicBearer': {
         const token = await mode.getAccessToken();
         if (typeof token !== 'string' || token.length === 0) {
           throw new InflowTransportError('InflowApiClient: getAccessToken resolved to a non-string or empty value.');
         }
-        return { Authorization: `Bearer ${token}` };
+        return { ...defaultHeaders, Authorization: `Bearer ${token}` };
       }
       case 'staticBearer':
-        return { Authorization: `Bearer ${mode.accessToken}` };
+        return { ...defaultHeaders, Authorization: `Bearer ${mode.accessToken}` };
       case 'anonymous':
-        return {};
+        return defaultHeaders;
     }
   }
 

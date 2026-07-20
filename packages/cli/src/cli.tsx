@@ -170,7 +170,10 @@ async function main(): Promise<void> {
   const authBaseUrl = authBaseUrlFromFlag ?? process.env['INFLOW_AUTH_BASE_URL'] ?? savedConnection.authBaseUrl;
   const cliClientId = process.env['INFLOW_CLI_CLIENT_ID'] ?? CLI_CLIENT_IDS[environment];
 
-  const defaultHeaders = { 'User-Agent': `inflow/${cliVersion}` };
+  const defaultHeaders = {
+    'InFlow-CLI-Version': cliVersion,
+    'User-Agent': `inflow/${cliVersion}`,
+  };
 
   const inflow = new Inflow({
     verbose,

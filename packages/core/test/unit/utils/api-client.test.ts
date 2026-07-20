@@ -268,11 +268,31 @@ describe('InflowApiClient — request bodies & headers', () => {
 
   it('sets default Accept and User-Agent headers', async () => {
     const { fetch, calls } = makeFetchRecorder([{ status: 200, bodyJson: {} }]);
-    const c = makeConfig({ fetch, apiBaseUrl: 'https://api.test' });
+    const c = makeConfig({
+      fetch,
+      apiBaseUrl: 'https://api.test',
+      defaultHeaders: { 'InFlow-CLI-Version': '1.2.3' },
+    });
     const client = new InflowApiClient(c, c.apiBaseUrl);
     await client.get('/v1/x');
     expect(calls[0]?.headers.get('Accept')).toBe('application/json');
     expect(calls[0]?.headers.get('User-Agent')).toContain('@inflowpayai/inflow-core');
+    expect(calls[0]?.headers.get('InFlow-CLI-Version')).toBe('1.2.3');
+  });
+
+  it('includes default headers in direct authentication header helpers', async () => {
+    const { fetch } = makeFetchRecorder([{ status: 200, bodyJson: {} }]);
+    const c = makeConfig({
+      fetch,
+      apiBaseUrl: 'https://api.test',
+      apiKey: 'sk-1',
+      defaultHeaders: { 'InFlow-CLI-Version': '1.2.3' },
+    });
+    const client = new InflowApiClient(c, c.apiBaseUrl);
+    await expect(client.authenticationHeaders()).resolves.toEqual({
+      'InFlow-CLI-Version': '1.2.3',
+      'X-API-KEY': 'sk-1',
+    });
   });
 
   it('returns rawBody alongside parsed data', async () => {
