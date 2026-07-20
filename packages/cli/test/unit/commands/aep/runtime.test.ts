@@ -588,7 +588,7 @@ describe('CLI AEP approval resolver', () => {
   });
 
   it('maps approval polling exhaustion to the stable timeout error', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ status: 'PENDING' }));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(Response.json({ status: 'PENDING' })));
     const options = createCliAepAgentOptions({
       authStorage: new MemoryStorage(),
       context: context(),

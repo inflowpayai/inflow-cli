@@ -326,4 +326,205 @@ describe('payment fetch replay safety', () => {
       },
     ]);
   });
+
+  it('maps every immediate MPP non-ready state without contacting the seller', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const failedWithDetail = await drain(
+      runMppFetch({
+        client: mppClient({
+          transactionId: 'tx-detail',
+          state: 'failed',
+          problem: { detail: 'The payment was declined.', status: 400, title: 'Declined', type: 'about:blank' },
+        }),
+        transactionId: 'tx-detail',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: false,
+      }).events,
+    );
+    const pending = await drain(
+      runMppFetch({
+        client: mppClient({ transactionId: 'tx-pending', state: 'pending' }),
+        transactionId: 'tx-pending',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: false,
+      }).events,
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(failedWithDetail.at(-1)).toEqual({
+      type: 'errored',
+      code: 'PAYMENT_FAILED',
+      message: 'The payment was declined.',
+    });
+    expect(pending.at(-1)).toMatchObject({ type: 'errored', code: 'PAYMENT_NOT_READY', retryable: true });
+  });
+
+  it('maps immediate x402 terminal statuses and empty signed payloads', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const expired = await drain(
+      runX402Fetch({
+        client: x402Client({ status: 'EXPIRED' }),
+        transactionId: 'txn-expired',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: false,
+      }).events,
+    );
+    const failed = await drain(
+      runX402Fetch({
+        client: x402Client({ status: 'GENERAL_ERROR' }),
+        transactionId: 'txn-failed',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: false,
+      }).events,
+    );
+    const missing = await drain(
+      runX402Fetch({
+        client: x402Client({
+          status: 'APPROVED',
+          encodedPayload: '',
+          paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
+        }),
+        transactionId: 'txn-missing',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: false,
+      }).events,
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(expired.at(-1)).toMatchObject({ type: 'errored', code: 'APPROVAL_TIMEOUT' });
+    expect(failed.at(-1)).toMatchObject({ type: 'errored', code: 'APPROVAL_FAILED' });
+    expect(missing.at(-1)).toMatchObject({ type: 'errored', code: 'PAYMENT_CREDENTIAL_MISSING' });
+  });
+
+  it('maps snapshot failures, polling timeouts, and polling crashes without replay', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const crashingMppClient = mppClient({ transactionId: 'unused', state: 'pending' });
+    vi.spyOn(crashingMppClient, 'getTransaction').mockRejectedValue(new Error('MPP unavailable'));
+    const immediateMppCrash = await drain(
+      runMppFetch({
+        client: crashingMppClient,
+        transactionId: 'tx-crash',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: false,
+      }).events,
+    );
+    const pollingMppTimeout = await drain(
+      runMppFetch({
+        client: mppClient({ transactionId: 'tx-timeout', state: 'pending' }),
+        transactionId: 'tx-timeout',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0.001,
+        maxAttempts: 1,
+        timeout: 900,
+        showBody: false,
+      }).events,
+    );
+    const pollingX402Crash = await drain(
+      runX402Fetch({
+        client: {
+          getX402Payload: vi.fn(() => Promise.reject(new Error('x402 unavailable'))),
+        } as unknown as X402InflowClient,
+        transactionId: 'txn-crash',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0.001,
+        maxAttempts: 1,
+        timeout: 900,
+        showBody: false,
+      }).events,
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(immediateMppCrash.at(-1)).toEqual({
+      type: 'errored',
+      code: 'PAYMENT_FAILED',
+      message: 'MPP unavailable',
+    });
+    expect(pollingMppTimeout.at(-1)).toMatchObject({ type: 'errored', code: 'POLLING_TIMEOUT', retryable: true });
+    expect(pollingX402Crash.at(-1)).toMatchObject({
+      type: 'errored',
+      code: 'PAYMENT_FAILED',
+      message: 'x402 unavailable',
+    });
+  });
+
+  it('preserves retryability from MPP authentication failures and reports x402 seller rejection', async () => {
+    const mppEvents = await drain(
+      runMppFetch({
+        client: mppClient({ transactionId: 'tx-1', state: 'ready', credential: 'CRED' }),
+        transactionId: 'tx-1',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: false,
+        sellerTransport: {
+          request: () =>
+            Promise.reject(new SellerAuthenticationError('AEP_LOGIN_PENDING', 'Approval is pending.', true)),
+        },
+      }).events,
+    );
+    const x402Events = await drain(
+      runX402Fetch({
+        client: x402Client({
+          status: 'APPROVED',
+          encodedPayload: 'ENC',
+          paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
+        }),
+        transactionId: 'txn-1',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'POST', headers: {}, data: '{}' },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: true,
+        sellerTransport: {
+          request: () =>
+            Promise.resolve({
+              bytes: Buffer.from('rejected'),
+              contentType: 'text/plain',
+              headers: new Headers(),
+              status: 402,
+            }),
+        },
+      }).events,
+    );
+
+    expect(mppEvents.at(-1)).toEqual({
+      type: 'errored',
+      code: 'AEP_LOGIN_PENDING',
+      message: 'Approval is pending.',
+      retryable: true,
+    });
+    expect(x402Events.at(-1)).toMatchObject({
+      type: 'rejected',
+      result: { outcome: 'replay-rejected', body: 'rejected' },
+    });
+  });
 });

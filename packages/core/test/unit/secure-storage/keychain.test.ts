@@ -8,6 +8,7 @@ import {
   SyncKeychainSecretStore,
   SyncMemorySecretStore,
   createOpaqueSecretReference,
+  type SecretReference,
 } from '../../../src/secure-storage/keychain.js';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 
@@ -56,6 +57,60 @@ class FakeEntry {
   }
 }
 
+class BinaryAsyncEntry {
+  deletePassword(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
+
+  getPassword(): Promise<Uint8Array> {
+    return Promise.resolve(Uint8Array.from([1, 2, 3]));
+  }
+
+  setPassword(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+class FailingAsyncEntry {
+  deletePassword(): Promise<boolean> {
+    return Promise.reject(new Error('delete failed'));
+  }
+
+  getPassword(): Promise<undefined> {
+    return Promise.reject(new Error('read failed'));
+  }
+
+  setPassword(): Promise<void> {
+    return Promise.reject(new Error('write failed'));
+  }
+}
+
+class FailingEntry {
+  deleteCredential(): boolean {
+    throw new Error('delete failed');
+  }
+
+  getSecret(): null {
+    throw new Error('read failed');
+  }
+
+  setSecret(): void {
+    throw new Error('write failed');
+  }
+}
+
+class FailingAsyncManifestDeleteStore extends MemorySecretStore {
+  override delete(_reference: SecretReference): Promise<void> {
+    return Promise.reject(new Error('manifest delete failed'));
+  }
+}
+
+class FailingSyncManifestDeleteStore extends SyncMemorySecretStore {
+  override delete(_reference: SecretReference): void {
+    throw new Error('manifest delete failed');
+  }
+}
+
 describe('KeychainSecretStore', () => {
   it('reads and deletes exact opaque references without exposing a search surface', async () => {
     FakeAsyncEntry.values.clear();
@@ -93,6 +148,36 @@ describe('KeychainSecretStore', () => {
     expect(reference.purpose).toBe('refresh-token');
     expect(reference.reference).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
+
+  it('accepts binary Keychain values without base64 decoding', async () => {
+    const store = new KeychainSecretStore({
+      loadKeyring: () => ({ AsyncEntry: BinaryAsyncEntry, Entry: FakeEntry }),
+    });
+
+    await expect(store.read({ purpose: 'api-key', reference: 'binary' })).resolves.toEqual(Uint8Array.from([1, 2, 3]));
+  });
+
+  it('maps backend write, read, and delete failures to stable storage errors', async () => {
+    const store = new KeychainSecretStore({
+      loadKeyring: () => ({ AsyncEntry: FailingAsyncEntry, Entry: FakeEntry }),
+    });
+    const reference = { purpose: 'api-key', reference: 'failing' };
+
+    await expect(store.create(reference, Buffer.from('secret'))).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_io_error',
+    });
+    await expect(store.read(reference)).rejects.toMatchObject({ secureStorageCode: 'secure_storage_io_error' });
+    await expect(store.delete(reference)).rejects.toMatchObject({ secureStorageCode: 'secure_storage_io_error' });
+  });
+
+  it('reports deletion of a missing Keychain reference distinctly', async () => {
+    FakeAsyncEntry.values.clear();
+    const store = new KeychainSecretStore({ loadKeyring: () => ({ AsyncEntry: FakeAsyncEntry, Entry: FakeEntry }) });
+
+    await expect(store.delete({ purpose: 'api-key', reference: 'missing' })).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_secret_missing',
+    });
+  });
 });
 
 describe('SyncKeychainSecretStore', () => {
@@ -109,6 +194,25 @@ describe('SyncKeychainSecretStore', () => {
     expect(Buffer.from(store.read(reference)).toString('utf8')).toBe('sync-secret');
     store.delete(reference);
     expect(() => store.read(reference)).toThrow('A referenced secret is missing from Keychain.');
+  });
+
+  it('maps synchronous backend failures and missing deletion to stable errors', () => {
+    const failing = new SyncKeychainSecretStore({
+      loadKeyring: () => ({ AsyncEntry: FakeAsyncEntry, Entry: FailingEntry }),
+    });
+    const reference = { purpose: 'api-key', reference: 'failing' };
+
+    expect(() => failing.create(reference, Buffer.from('secret'))).toThrow('Failed to write a secret to Keychain.');
+    expect(() => failing.read(reference)).toThrow('Failed to read a secret from Keychain.');
+    expect(() => failing.delete(reference)).toThrow('Failed to delete a secret from Keychain.');
+
+    FakeAsyncEntry.values.clear();
+    const missing = new SyncKeychainSecretStore({
+      loadKeyring: () => ({ AsyncEntry: FakeAsyncEntry, Entry: FakeEntry }),
+    });
+    expect(() => missing.delete({ purpose: 'api-key', reference: 'missing' })).toThrow(
+      'A referenced secret could not be deleted.',
+    );
   });
 });
 
@@ -127,6 +231,30 @@ describe('KeychainReferenceManifest', () => {
     await manifest.remove(first);
     expect(await manifest.read()).toEqual([second]);
   });
+
+  it('rejects malformed JSON, non-array payloads, and malformed entries', async () => {
+    const store = new MemorySecretStore();
+    const reference = { purpose: 'manifest', reference: 'fixed-keychain-references' };
+    const manifest = new KeychainReferenceManifest(store);
+
+    await store.create(reference, Buffer.from('{', 'utf8'));
+    await expect(manifest.read()).rejects.toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
+    await store.delete(reference);
+    await store.create(reference, Buffer.from('{}', 'utf8'));
+    await expect(manifest.read()).rejects.toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
+    await store.delete(reference);
+    await store.create(reference, Buffer.from('[null]', 'utf8'));
+    await expect(manifest.read()).rejects.toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
+    await store.delete(reference);
+    await store.create(reference, Buffer.from('[{"purpose":1,"reference":"one"}]', 'utf8'));
+    await expect(manifest.read()).rejects.toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
+  });
+
+  it('does not hide unexpected manifest deletion failures', async () => {
+    const manifest = new KeychainReferenceManifest(new FailingAsyncManifestDeleteStore());
+
+    await expect(manifest.add({ purpose: 'api-key', reference: 'one' })).rejects.toThrow('manifest delete failed');
+  });
 });
 
 describe('SyncKeychainReferenceManifest', () => {
@@ -141,5 +269,35 @@ describe('SyncKeychainReferenceManifest', () => {
 
     manifest.remove(reference);
     expect(manifest.read()).toEqual([]);
+  });
+
+  it('rejects corrupt synchronous manifests and propagates unexpected deletion failures', () => {
+    const store = new SyncMemorySecretStore();
+    const reference = { purpose: 'manifest', reference: 'fixed-keychain-references' };
+    const manifest = new SyncKeychainReferenceManifest(store);
+
+    store.create(reference, Buffer.from('{', 'utf8'));
+    expect(() => manifest.read()).toThrow('The Keychain reference manifest is malformed.');
+    store.delete(reference);
+    store.create(reference, Buffer.from('[{}]', 'utf8'));
+    expect(() => manifest.read()).toThrow('The Keychain reference manifest contains a malformed entry.');
+
+    const failing = new SyncKeychainReferenceManifest(new FailingSyncManifestDeleteStore());
+    expect(() => failing.add({ purpose: 'api-key', reference: 'one' })).toThrow('manifest delete failed');
+  });
+
+  it('reports missing values and deletions from both memory stores', async () => {
+    const reference = { purpose: 'api-key', reference: 'missing' };
+    const asyncStore = new MemorySecretStore();
+    const syncStore = new SyncMemorySecretStore();
+
+    await expect(asyncStore.read(reference)).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_secret_missing',
+    });
+    await expect(asyncStore.delete(reference)).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_secret_missing',
+    });
+    expect(() => syncStore.read(reference)).toThrow('A referenced secret is missing from Keychain.');
+    expect(() => syncStore.delete(reference)).toThrow('A referenced secret could not be deleted.');
   });
 });

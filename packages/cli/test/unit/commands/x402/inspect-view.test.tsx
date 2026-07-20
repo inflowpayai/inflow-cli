@@ -1,4 +1,5 @@
 import { encodePaymentRequiredHeader } from '@x402/core/http';
+import { PaymentInspectionBlockedError } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -213,6 +214,36 @@ describe('InspectView', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     const frame = lastFrame() ?? '';
     expect(frame).toContain('extensions: payment-identifier');
+    unmount();
+  });
+
+  it('renders an AEP authentication block with Service details', async () => {
+    const blocked = {
+      method: 'GET',
+      url: 'https://seller/api',
+      source: 'challenge' as const,
+      message: 'Authenticate before inspecting payment terms.',
+      serviceUrl: 'https://seller',
+      serviceDid: 'did:web:seller',
+    };
+    const { lastFrame, unmount } = render(
+      <InspectView
+        url={blocked.url}
+        method="GET"
+        deps={{
+          probeOptions: { method: 'GET', headers: {} },
+          url: blocked.url,
+          probe: () => Promise.reject(new PaymentInspectionBlockedError(blocked)),
+        }}
+        onComplete={vi.fn()}
+      />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('AEP authentication required');
+    expect(frame).toContain('https://seller');
+    expect(frame).toContain('did:web:seller');
+    expect(frame).toContain(blocked.message);
     unmount();
   });
 });
