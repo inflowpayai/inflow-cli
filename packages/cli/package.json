@@ -17,6 +17,7 @@
   "types": "./dist/cli.d.ts",
   "scripts": {
     "build": "tsup",
+    "build:standalone": "tsup --config tsup.standalone.config.ts",
     "dev": "tsup --watch",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
