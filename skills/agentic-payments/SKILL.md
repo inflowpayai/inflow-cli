@@ -92,7 +92,7 @@ If `inspect` returns `outcome: "no-payment-required"`, the URL isn't paywalled -
 
 ## Paying a 402 resource
 
-One flow for both protocols. Prerequisite: you are authenticated (see [Authenticate](#authenticate)). First find your protocol's row in the **Protocol deltas** table below - it names the 402 header that selected it, the matching model, the filter flags, and the credential and replay header you'll use. Everything else in this section applies to both protocols.
+One flow for both protocols. Prerequisite: you are authenticated (see [Authenticate](#authenticate)). First find your protocol's row in the **Protocol deltas** table below - it names the 402 header that selected it, the matching model, the filter flags, and the Fetch command that completes the seller request. Everything else in this section applies to both protocols.
 
 **Sequencing.** Run pre-flight before pay - `pay` fails or double-charges if the pre-flight checks didn't clear. `inspect` and `decode` are read-only and need no auth, so they may run before you authenticate if useful (e.g. sizing up a paywall first).
 
@@ -104,9 +104,9 @@ One flow for both protocols. Prerequisite: you are authenticated (see [Authentic
 | Command prefix | `inflow mpp …` | `inflow x402 …` |
 | Matching model | The seller's challenge **pins the rail** - the buyer does not choose scheme/network/asset | Pay where the x402 `accepts` ∩ `supported.kinds` is non-empty |
 | Filter flags | `--payment-method`, `--intent`, `--currency`, `--rail`, `--instrument-id` | `--scheme`, `--network`, `--asset`, `--asset-name` |
-| Credential field (after approval) | `credential` (from `mpp status` when `state` is `ready`) | `encoded_payload` (from `x402 status` after approval) |
-| Replay header | `Authorization: Payment <credential>` | `PAYMENT-SIGNATURE: <encoded_payload>` |
-| Write-credential-to-disk flag | `--credential-file <path>` | `--payload-file <path>` |
+| Resource completion command | `inflow mpp fetch <transaction_id> <url>` | `inflow x402 fetch <transaction_id> <url>` |
+| Replay header used by Fetch | `Authorization: Payment <credential>` | `PAYMENT-SIGNATURE: <encoded_payload>` |
+| Diagnostic credential file flag | `--credential-file <path>` on `status` | `--payload-file <path>` on `status` |
 | Idempotency | - | `--payment-id` (see Step 2) |
 | Cancel uses | `approval_id` | `approval_id` |
 | Protocol-specific error codes | `PAYMENT_FAILED`, `PAYMENT_EXPIRED`, `PAYMENT_NOT_ACCEPTED` | `APPROVAL_TIMEOUT`, `APPROVAL_FAILED`, `APPROVAL_CANCELLED` |
@@ -165,11 +165,11 @@ The result includes `outcome`, `transaction_id`, `response_status`, `settled`, t
 | `no-payment-required` | The resource wasn't paywalled, or was already paid | Tell the user nothing was charged; return the body |
 | `replay-rejected` | Payment was approved (funds in transit) but the seller replied non-2xx on the replay | Do NOT report success. Tell the user the seller's response failed; because the payment didn't complete, the in-transit funds are reverted to their InFlow balance. Offer to retry |
 
-**Two-step path.** Use this when the agent's host can't block I/O long enough for the user to approve (chat UIs that yield between turns). Drop `--interval`; the first call returns `transaction_id` + `approval_id` + `approval_url` + a `_next` `status` command, and the agent drives the replay itself once a credential arrives.
+**Two-step path.** Use this when the agent's host can't block I/O long enough for the user to approve (chat UIs that yield between turns). Drop `--interval`; the first call returns `transaction_id` + `approval_id` + `approval_url` + a `_next` Fetch command/tool input. Fetch owns polling and seller replay.
 
 ```bash
 inflow <mpp|x402> pay <url>
-# -> { "transaction_id": "txn_abc", "approval_id": "appr_xyz", "approval_url": "https://app.inflowpay.ai/approvals/appr_xyz", "_next": { "command": "<mpp|x402> status txn_abc --interval 5 --max-attempts 180" } }
+# -> { "transaction_id": "txn_abc", "approval_id": "appr_xyz", "approval_url": "https://app.inflowpay.ai/approvals/appr_xyz", "_next": { "command": "<mpp|x402> fetch txn_abc <url> --interval 5 --max-attempts 180", "tool": "<mpp|x402>_fetch", "input": { "transactionId": "txn_abc", "resourceUrl": "<url>" } } }
 ```
 
 Mind the two distinct ids: poll, replay, and resume all use `transaction_id`; **cancel uses `approval_id`** (`inflow <mpp|x402> cancel <approval_id>`). Both are returned by `pay`.
@@ -186,7 +186,7 @@ inflow <mpp|x402> pay https://seller.example.com/api/widgets --method POST --dat
 inflow x402 pay <url> --payment-id "<stable-opaque-id>"
 ```
 
-**Sensitive / binary output.** The one-time bearer credential (`credential` for MPP, `encoded_payload` for x402; returned after approval and echoed in the fast-path result) must not be echoed back in chat. Write it to disk at mode `0o600` with your protocol's flag (`--credential-file <path>` for MPP, `--payload-file <path>` for x402); replay then reads from that file. For the seller's response body, `--output-file <path>` writes bytes to disk and replaces `body` / `body_base64` with `output_saved_to: <path>` - pair with `--no-show-body` for binary content (PDFs, images, audio, datasets) so bytes never appear inline as base64:
+**Sensitive / binary output.** Fetch never exposes the one-time bearer credential (`credential` for MPP, `encoded_payload` for x402). For the seller's response body, `--output-file <path>` writes bytes to disk and replaces `body` / `body_base64` with `output_saved_to: <path>` - pair with `--no-show-body` for binary content (PDFs, images, audio, datasets) so bytes never appear inline as base64:
 
 ```bash
 inflow <mpp|x402> pay https://api.foo.dev/dataset.csv --interval 5 --max-attempts 180 --output-file /tmp/dataset.csv --no-show-body
@@ -194,13 +194,13 @@ inflow <mpp|x402> pay https://api.foo.dev/dataset.csv --interval 5 --max-attempt
 
 **Polling discipline.** Persist `transaction_id` as soon as `pay` returns it. Then:
 
-- Run `_next.command` (or `<mpp|x402> status <transaction_id> --interval N`) immediately. Don't wait for the user to confirm before polling starts.
-- If polling is interrupted - network drop, session bounce, user kills the agent - resume with `inflow <mpp|x402> status <transaction_id> --interval 5 --max-attempts 180`. Only create a new transaction if the original expired (`PAYMENT_EXPIRED` for MPP, `APPROVAL_TIMEOUT` for x402), was denied/cancelled, or its credential is already consumed.
+- Run `_next.command`, or call `_next.tool` with `_next.input`, immediately. Don't wait for the user to confirm before polling starts.
+- If polling is interrupted - network drop, session bounce, user kills the agent - resume with `inflow <mpp|x402> fetch <transaction_id> <url> --interval 5 --max-attempts 180`. Only create a new transaction if the original expired (`PAYMENT_EXPIRED` for MPP, `APPROVAL_TIMEOUT` for x402), was denied/cancelled, or its credential is already consumed.
 - If `POLLING_TIMEOUT` fires before approval, ask the user whether to keep waiting or cancel - don't silently restart the poll.
 - If >12 minutes elapsed without a user response (≈3 min before the 15-minute approval window closes), surface that explicitly so they can act before the window closes.
 - If the user aborts ("nevermind", "cancel that"), call `inflow <mpp|x402> cancel <approval_id>` before exiting. Otherwise the approval sits pending for 15 minutes and triggers phantom notifications in the user's InFlow app.
 
-Once `status` reports the credential (MPP: `state: ready` with `credential`; x402: `encoded_payload`), replay the original seller request with your protocol's replay header from the delta table - `Authorization: Payment <credential>` (MPP) or `PAYMENT-SIGNATURE: <encoded_payload>` (x402); use `$(cat <file>)` if you wrote it to disk with `--credential-file` / `--payload-file`. The seller's protected response comes back on the replay.
+Fetch sends a ready payment credential to the seller at most once per invocation. If Fetch returns `PAYMENT_REPLAY_OUTCOME_UNKNOWN`, tell the user the seller might have received or consumed the credential and do not automatically replay it.
 
 ### Limits
 
@@ -208,7 +208,7 @@ Once `status` reports the credential (MPP: `state: ready` with `credential`; x40
 | --- | --- |
 | Approval window | 15 minutes from `pay` creating the transaction (`--timeout` overrides the polling deadline) |
 | Polling stop condition | Polling ends at whichever fires first: `--max-attempts` (count, default `0` = unlimited) or `--timeout` (seconds, default `900` = the full 15-min window). The examples use `--interval 5 --max-attempts 180` (= 900 s) so a copied command covers the whole window - `--interval 5 --max-attempts 60` (= 300 s) would stop polling at 5 min, well before approval can land |
-| Credential reuse | One-time. The credential (`credential` for MPP, `encoded_payload` for x402) is consumed by the first seller replay - not reusable; a failed seller call requires a new `pay` |
+| Credential reuse | One-time. Fetch consumes the credential on the first seller replay - not reusable; a failed seller call requires a new `pay` |
 
 ### Worked example (MPP)
 
@@ -229,7 +229,7 @@ Once the result arrives:
 
 > "Paid 0.10 USDC. Transaction txn_abc. Saved the dataset to /tmp/dataset.csv."
 
-**Two-step variant** (host can't block): follow Step 2's two-step path; once `mpp status` reports `state: ready`, replay with `Authorization: Payment <credential>` (or `$(cat <path>)` via `--credential-file` to keep it out of chat).
+**Two-step variant** (host can't block): follow Step 2's two-step path; `mpp fetch` polls, attaches `Authorization: Payment`, and returns the resource body without exposing the credential.
 
 ### Worked example (x402)
 
@@ -253,7 +253,7 @@ Once the result arrives:
 
 > "Paid 0.10 USDC. Transaction txn_abc. Server returned: 'How to brew coffee - ...'"
 
-**Two-step variant** (host can't block): follow Step 2's two-step path; once `x402 status` returns the `encoded_payload`, replay with `PAYMENT-SIGNATURE: <encoded_payload>` (use `--payload-file` to keep it out of chat).
+**Two-step variant** (host can't block): follow Step 2's two-step path; `x402 fetch` polls, attaches `PAYMENT-SIGNATURE`, and returns the resource body without exposing the encoded payload.
 
 ### MPP errors
 
@@ -282,7 +282,7 @@ All errors in agent mode are JSON with `code` and `message` fields and exit code
 
 Applies to both protocols.
 
-- Treat OAuth tokens and API keys as secrets - never echo them. The one-time bearer credential (`encoded_payload` for x402, `credential` for MPP) returned after approval should be replayed directly against the seller and discarded, not pasted back to the user.
+- Treat OAuth tokens and API keys as secrets - never echo them. Use Fetch for approved payments so one-time payment credentials are attached to the seller request without being pasted back to the user.
 - Respect `/agents.txt` and `/llm.txt` on sites you browse.
 - Avoid suspicious 402 endpoints - if the domain doesn't match what the user asked to pay, or the price is different from expectation, stop and ask.
 - When displaying deposit addresses to the user, print the full address (don't truncate). Truncating breaks copy-paste.
@@ -297,7 +297,8 @@ These apply to both protocols (in addition to each section's protocol-specific c
 | `NO_INFLOW_MATCH` | Seller's rails aren't supported by the account. Fund a matching method/chain, or use a different seller. | "The seller wants `<method/rail or scheme×network>`, but your account can't pay on that rail. Either fund a matching method, or pick a different seller." |
 | `NO_FILTERED_MATCH` | A `pay` filter emptied the candidate list. Loosen the filter (flags per the delta table), or re-check the seller's unfiltered options with `inflow inspect <url>`. | "Your filter removed every option the seller accepts. Loosen it or re-check the seller's options with `inflow inspect`." |
 | `INVALID_402` / `DECODE_FAILED` | Seller returned 402 but the protocol's header was missing (`INVALID_402`) or unparseable (`DECODE_FAILED`). Verify the URL is payable; pass the raw header to `inflow <mpp|x402> decode` for the detailed parse error. | - |
-| `POLLING_TIMEOUT` | `--interval` polling reached its max-attempts or timeout. Retryable - resume with `inflow <mpp|x402> status <transaction_id> --interval 5 --max-attempts 180`. | "Still waiting on your approval - want me to keep polling, or cancel the request? (`inflow <mpp|x402> cancel <approval_id>` cancels it.)" |
+| `POLLING_TIMEOUT` | `--interval` polling reached its max-attempts or timeout. Retryable - resume with `inflow <mpp|x402> fetch <transaction_id> <url> --interval 5 --max-attempts 180`. | "Still waiting on your approval - want me to keep polling, or cancel the request? (`inflow <mpp|x402> cancel <approval_id>` cancels it.)" |
+| `PAYMENT_REPLAY_OUTCOME_UNKNOWN` | A credential-bearing seller request had an indeterminate transport failure. Do not automatically replay. | "The seller request may have received the payment credential, but the connection failed before we got a reliable response. I won't retry automatically because the credential may be consumed." |
 | `api_error` | Non-2xx from the InFlow API on the plain data calls (`user`, `balances`, `deposit-addresses`); discriminate on `httpStatus`. `401` - saved auth rejected, re-run `inflow auth login`. `426` (`VERSION_UNSUPPORTED`) - upgrade and retry. `5xx` - server-side; wait and retry. (Note: `pay`/`status` rejections instead surface the server's own code, e.g. `INSUFFICIENT_FUNDS`, or the protocol's terminal code - not `api_error`.) | - |
 | `VERSION_UNSUPPORTED` / HTTP 426 | Installed `inflow` CLI is below the minimum supported version. `npm install -g @inflowpayai/inflow@latest`, then retry; don't retry on the old version. | - |
 | `transport_error` | Network failure - check connectivity; retry. | - |

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   cancelArgs,
   decodeArgs,
+  fetchArgs,
+  fetchOptions,
   inspectArgs,
   inspectOptions,
   payArgs,
@@ -86,6 +88,25 @@ describe('statusArgs / statusOptions', () => {
   it('accepts an explicit payloadFile path on status', () => {
     const parsed = statusOptions.parse({ payloadFile: '/tmp/payment.payload' });
     expect(parsed.payloadFile).toBe('/tmp/payment.payload');
+  });
+});
+
+describe('fetchArgs / fetchOptions', () => {
+  it('requires transactionId and resourceUrl', () => {
+    expect(fetchArgs.parse({ transactionId: 'txn_1', resourceUrl: 'https://seller/api' })).toEqual({
+      transactionId: 'txn_1',
+      resourceUrl: 'https://seller/api',
+    });
+  });
+
+  it('defaults request, polling, and output controls', () => {
+    const parsed = fetchOptions.parse({});
+    expect(parsed.method).toBe('GET');
+    expect(parsed.header).toEqual([]);
+    expect(parsed.interval).toBe(0);
+    expect(parsed.timeout).toBe(900);
+    expect(parsed.showBody).toBe(true);
+    expect(parsed.outputFile).toBeUndefined();
   });
 });
 

@@ -4,7 +4,8 @@ import { encode, type MppChallenge, type MppClient, renderChallengeHeader } from
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing, createMppCli } from '../../../../src/commands/mpp/index.js';
 
-const { runPayCommand, runStatusCommand, runCancelCommand, runSupportedCommand, runInspectCommand } = __testing;
+const { runPayCommand, runFetchCommand, runStatusCommand, runCancelCommand, runSupportedCommand, runInspectCommand } =
+  __testing;
 
 const SELLER = 'https://seller.test/api';
 
@@ -162,6 +163,88 @@ describe('mpp agent runners', () => {
     );
     const frames = await drain(runPayCommand(ctx as never, inflow, storage, 'https://app'));
     expect(frames.at(-1)).toMatchObject({ outcome: 'paid', transaction_id: 'tx-1', credential: 'CRED' });
+  });
+
+  it('runFetchCommand fetches a ready transaction without creating a transaction or exposing the credential', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+    const createTransaction = vi.fn();
+    const client = makeClient({
+      createTransaction: createTransaction as MppClient['createTransaction'],
+      getTransaction: vi.fn(() =>
+        Promise.resolve({
+          state: 'ready',
+          credential: 'CRED',
+          transactionId: 'tx-1',
+        }),
+      ) as MppClient['getTransaction'],
+    });
+    const { inflow, storage } = authed(client);
+    const ctx = agentCtx(
+      { transactionId: 'tx-1', resourceUrl: SELLER },
+      { method: 'GET', header: ['Authorization: caller'], interval: 0, maxAttempts: 0, timeout: 900, showBody: true },
+    );
+
+    const frames = await drain(runFetchCommand(ctx as never, inflow, storage));
+
+    expect(createTransaction).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(frames.at(-1)).toMatchObject({
+      protocol: 'mpp',
+      outcome: 'paid',
+      transaction_id: 'tx-1',
+      requested_url: SELLER,
+      body: 'DONE',
+    });
+    expect(frames.at(-1)).not.toHaveProperty('credential');
+    const [, init] = fetchSpy.mock.calls[0] ?? [];
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Payment CRED');
+  });
+
+  it('runFetchCommand renders the human fetch path for ready transactions', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+    const client = makeClient({
+      getTransaction: vi.fn(() =>
+        Promise.resolve({
+          state: 'ready',
+          credential: 'CRED',
+          transactionId: 'tx-1',
+        }),
+      ) as MppClient['getTransaction'],
+    });
+    const { inflow, storage } = authed(client);
+    const ctx = {
+      agent: false,
+      formatExplicit: false,
+      args: { transactionId: 'tx-1', resourceUrl: SELLER },
+      options: { method: 'GET', header: [], interval: 0, maxAttempts: 0, timeout: 900, showBody: true },
+      error: vi.fn(),
+    };
+
+    const result = await drainWithReturn(runFetchCommand(ctx as never, inflow, storage));
+
+    expect(result.values).toEqual([]);
+    expect(ctx.error).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it('runFetchCommand stops terminal failures before contacting the seller', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const { inflow, storage } = authed(
+      makeClient({
+        getTransaction: vi.fn(() =>
+          Promise.resolve({ state: 'expired', transactionId: 'tx-1' }),
+        ) as MppClient['getTransaction'],
+      }),
+    );
+    const ctx = agentCtxReturningError(
+      { transactionId: 'tx-1', resourceUrl: SELLER },
+      { method: 'GET', header: [], interval: 0, maxAttempts: 0, timeout: 900, showBody: false },
+    );
+
+    const result = await drainWithReturn(runFetchCommand(ctx as never, inflow, storage));
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.returnValue).toMatchObject({ code: 'PAYMENT_EXPIRED' });
   });
 
   it('runInspectCommand returns the challenges frame', async () => {

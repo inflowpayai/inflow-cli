@@ -4,6 +4,8 @@ import {
   type AuthStorage,
   type DecodedChallenge,
   type Inflow,
+  type MppFetchRejected,
+  type MppFetchSuccess,
   type MppPayCreated,
   type MppPayPipelineDeps,
   type MppPayResultNoPayment,
@@ -17,7 +19,9 @@ import {
 import type { MppSupportedResponse, MppTransactionResponse } from '@inflowpayai/mpp';
 import { Cli } from 'incur';
 import { assertSessionGuard } from '../../utils/assert-session.js';
+import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
+import { PaymentFetchView, type PaymentFetchPhase } from '../payment-fetch.js';
 import { CancelView } from './cancel.js';
 import { DecodeView, decodeMppValue } from './decode.js';
 import {
@@ -32,6 +36,8 @@ import { MPP_PAYMENT_NOT_ACCEPTED_CODE, type MppPayPhase, PayView } from './pay.
 import {
   cancelArgs,
   decodeArgs,
+  fetchArgs,
+  fetchOptions,
   inspectArgs,
   inspectOptions,
   payArgs,
@@ -85,6 +91,23 @@ interface StatusCommandContext {
   error: (err: ErrorOptions) => never;
 }
 
+interface FetchCommandContext {
+  agent: boolean;
+  formatExplicit: boolean;
+  args: { transactionId: string; resourceUrl: string };
+  options: {
+    method: string;
+    data?: string | undefined;
+    header: string[];
+    interval: number;
+    maxAttempts: number;
+    timeout: number;
+    showBody: boolean;
+    outputFile?: string | undefined;
+  };
+  error: (err: ErrorOptions) => never;
+}
+
 interface CancelCommandContext {
   agent: boolean;
   formatExplicit: boolean;
@@ -122,7 +145,7 @@ interface InspectCommandContext {
 }
 
 const POST_CREATE_INSTRUCTION =
-  'Present the approval_url to the user and ask them to approve in the InFlow mobile app or dashboard. Then call `mpp status <transaction_id> --interval 5 --max-attempts 60` to poll until ready. Once ready, replay the request manually with the credential as the `Authorization: Payment <credential>` header.';
+  'Present the approval_url to the user and ask them to approve in the InFlow mobile app or dashboard. Then call `mpp fetch <transaction_id> <resource_url> --interval 5 --max-attempts 60` to poll until ready and fetch the seller resource.';
 
 const POLLING_INSTRUCTION =
   'Approval polling is happening inline. The yield stream emits each state change; the final frame includes the result once the transaction is ready and replayed.';
@@ -151,6 +174,14 @@ function decorateCredentialField(
 }
 
 function probeOptionsFrom(c: PayContext | InspectCommandContext): SellerProbeOptions {
+  return {
+    method: c.options.method,
+    headers: parseHeaderFlags(c.options.header),
+    ...(c.options.data !== undefined ? { data: c.options.data } : {}),
+  };
+}
+
+function fetchProbeOptionsFrom(c: FetchCommandContext): SellerProbeOptions {
   return {
     method: c.options.method,
     headers: parseHeaderFlags(c.options.header),
@@ -207,24 +238,46 @@ function noPaymentFrameFromResult(result: MppPayResultNoPayment): Record<string,
   return frame;
 }
 
-function createdFrameFromEvent(created: MppPayCreated, interval: number, maxAttempts: number): Record<string, unknown> {
+function createdFrameFromEvent(created: MppPayCreated, c: PayContext): Record<string, unknown> {
   const pending = created.state === 'pending';
+  const max = c.options.maxAttempts > 0 ? c.options.maxAttempts : 60;
   const frame: Record<string, unknown> = {
     transaction_id: created.transactionId,
     state: created.state,
     challenge: challengeFields(created.challenge),
-    instruction: interval > 0 ? POLLING_INSTRUCTION : POST_CREATE_INSTRUCTION,
+    instruction: c.options.interval > 0 ? POLLING_INSTRUCTION : POST_CREATE_INSTRUCTION,
   };
   if (created.approvalId !== undefined) frame['approval_id'] = created.approvalId;
   if (created.approvalUrl !== undefined) frame['approval_url'] = created.approvalUrl;
   if (created.retryAfterSeconds !== undefined) frame['retry_after_seconds'] = created.retryAfterSeconds;
   if (created.expires !== undefined) frame['expires'] = created.expires;
-  if (pending && interval <= 0) {
-    const max = maxAttempts > 0 ? maxAttempts : 60;
+  if (pending && c.options.interval <= 0) {
     frame['_next'] = {
-      command: `mpp status ${created.transactionId} --interval 5 --max-attempts ${String(max)}`,
+      command: buildPaymentFetchNextCommand({
+        protocol: 'mpp',
+        transactionId: created.transactionId,
+        resourceUrl: c.args.url,
+        method: c.options.method,
+        interval: 5,
+        maxAttempts: max,
+        showBody: c.options.showBody,
+        ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
+      }),
+      tool: 'mpp_fetch',
+      input: {
+        transactionId: created.transactionId,
+        resourceUrl: c.args.url,
+        method: c.options.method,
+        header: c.options.header,
+        ...(c.options.data !== undefined ? { data: c.options.data } : {}),
+        interval: 5,
+        maxAttempts: max,
+        timeout: c.options.timeout,
+        showBody: c.options.showBody,
+        ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
+      },
       poll_interval_seconds: 5,
-      until: 'state is ready (credential present)',
+      until: 'resource fetch completes',
     };
   }
   return frame;
@@ -253,6 +306,21 @@ function rejectedFrameFromResult(result: MppPayResultRejected): Record<string, u
     response_status: result.responseStatus,
   };
   if (result.responseContentType !== undefined) frame['response_content_type'] = result.responseContentType;
+  attachBodyFields(frame, result);
+  return frame;
+}
+
+function fetchFrameFromResult(result: MppFetchSuccess | MppFetchRejected): Record<string, unknown> {
+  const frame: Record<string, unknown> = {
+    protocol: result.protocol,
+    outcome: result.outcome,
+    transaction_id: result.transactionId,
+    requested_url: result.url,
+    method: result.method,
+    response_status: result.responseStatus,
+  };
+  if (result.responseContentType !== undefined) frame['response_content_type'] = result.responseContentType;
+  if (result.outcome === 'paid' && result.settled !== undefined) frame['settled'] = result.settled;
   attachBodyFields(frame, result);
   return frame;
 }
@@ -334,7 +402,7 @@ async function* runPayCommand(
       return;
     }
     if (event.type === 'created') {
-      yield sanitizeDeep(createdFrameFromEvent(event.created, c.options.interval, c.options.maxAttempts));
+      yield sanitizeDeep(createdFrameFromEvent(event.created, c));
       continue;
     }
     if (event.type === 'replayed') {
@@ -352,6 +420,98 @@ async function* runPayCommand(
       return c.error({ code: event.code, message: event.message });
     }
     // 'decoded' is an intermediate phase signal; agent mode doesn't surface it.
+  }
+}
+
+async function* runFetchCommand(
+  c: FetchCommandContext,
+  inflow: Inflow,
+  authStorage: AuthStorage,
+): AsyncGenerator<unknown, unknown> {
+  assertSessionGuard(c, authStorage, inflow);
+
+  let probeOptions: SellerProbeOptions;
+  try {
+    probeOptions = fetchProbeOptionsFrom(c);
+  } catch (err) {
+    return c.error(invalidHeaderError(err));
+  }
+
+  if (!c.agent && !c.formatExplicit) {
+    const captured: { finalPhase: PaymentFetchPhase | null } = { finalPhase: null };
+    await renderInkUntilExit(
+      <PaymentFetchView
+        protocol="MPP"
+        transactionId={c.args.transactionId}
+        url={c.args.resourceUrl}
+        method={c.options.method}
+        paymentHeader="Authorization: Payment"
+        events={() =>
+          inflow.mpp.fetch({
+            transactionId: c.args.transactionId,
+            url: c.args.resourceUrl,
+            probeOptions,
+            interval: c.options.interval,
+            maxAttempts: c.options.maxAttempts,
+            timeout: c.options.timeout,
+            showBody: c.options.showBody,
+            ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
+          }).events
+        }
+        onComplete={(phase) => {
+          captured.finalPhase = phase;
+        }}
+      />,
+    );
+    if (captured.finalPhase !== null) {
+      const phase = captured.finalPhase;
+      if (phase.kind === 'rejected') {
+        return c.error({
+          code: MPP_PAYMENT_NOT_ACCEPTED_CODE,
+          message: `Seller rejected the credential with status ${String(phase.result.responseStatus)}. The seller did not honour the payment.`,
+        });
+      }
+      if (phase.kind === 'error') {
+        return c.error({
+          code: phase.code,
+          message: phase.message,
+          ...(phase.retryable !== undefined ? { retryable: phase.retryable } : {}),
+        });
+      }
+    }
+    return;
+  }
+
+  const run = inflow.mpp.fetch({
+    transactionId: c.args.transactionId,
+    url: c.args.resourceUrl,
+    probeOptions,
+    interval: c.options.interval,
+    maxAttempts: c.options.maxAttempts,
+    timeout: c.options.timeout,
+    showBody: c.options.showBody,
+    ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
+  });
+
+  for await (const event of run.events) {
+    if (event.type === 'replayed') {
+      yield sanitizeDeep(fetchFrameFromResult(event.result));
+      return;
+    }
+    if (event.type === 'rejected') {
+      yield sanitizeDeep(fetchFrameFromResult(event.result));
+      return c.error({
+        code: MPP_PAYMENT_NOT_ACCEPTED_CODE,
+        message: `Seller rejected the credential with status ${String(event.result.responseStatus)}. The seller did not honour the payment; see the previous frame for details.`,
+      });
+    }
+    if (event.type === 'errored') {
+      return c.error({
+        code: event.code,
+        message: event.message,
+        ...(event.retryable !== undefined ? { retryable: event.retryable } : {}),
+      });
+    }
   }
 }
 
@@ -547,7 +707,7 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
 
 export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUrl: string) {
   const cli = Cli.create('mpp', {
-    description: 'MPP payment commands (pay, inspect, status, cancel, decode, supported).',
+    description: 'MPP payment commands (pay, fetch, inspect, status, cancel, decode, supported).',
   });
 
   cli.command('pay', {
@@ -567,6 +727,16 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
     outputPolicy: 'agent-only' as const,
     async *run(c) {
       return yield* runStatusCommand(c, inflow, authStorage);
+    },
+  });
+
+  cli.command('fetch', {
+    description: 'Fetch an MPP-protected resource for a ready or pending payment transaction.',
+    args: fetchArgs,
+    options: fetchOptions,
+    outputPolicy: 'agent-only' as const,
+    async *run(c) {
+      return yield* runFetchCommand(c, inflow, authStorage);
     },
   });
 
@@ -611,12 +781,14 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
 
 export const __testing = {
   runPayCommand,
+  runFetchCommand,
   runStatusCommand,
   runCancelCommand,
   runDecodeCommand,
   runSupportedCommand,
   runInspectCommand,
   createdFrameFromEvent,
+  fetchFrameFromResult,
   noPaymentFrameFromResult,
   paidFrameFromResult,
   rejectedFrameFromResult,

@@ -64,25 +64,58 @@ function challengeHeader(): string {
   return renderChallengeHeader(challenge);
 }
 
+function payCtx(overrides: Record<string, unknown> = {}) {
+  return {
+    agent: true,
+    formatExplicit: true,
+    args: { url: 'https://seller/api' },
+    options: {
+      method: 'POST',
+      data: '{"hello":true}',
+      header: ['X-Test: yes'],
+      interval: 0,
+      maxAttempts: 0,
+      timeout: 900,
+      showBody: true,
+      ...overrides,
+    },
+    error: () => {
+      throw new Error('not called');
+    },
+  };
+}
+
 describe('createdFrameFromEvent', () => {
   it('includes _next + post-create instruction for a pending tx at interval 0', () => {
-    const frame = createdFrameFromEvent(created(), 0, 0);
+    const frame = createdFrameFromEvent(created(), payCtx());
     expect(frame['transaction_id']).toBe('tx-1');
     expect(frame['state']).toBe('pending');
     expect(frame['approval_id']).toBe('ap-1');
-    const next = frame['_next'] as { command: string };
-    expect(next.command).toContain('mpp status tx-1');
+    const next = frame['_next'] as { command: string; tool: string; input: Record<string, unknown> };
+    expect(next.command).toContain('mpp fetch tx-1 https://seller/api');
+    expect(next.tool).toBe('mpp_fetch');
+    expect(next.input).toMatchObject({
+      transactionId: 'tx-1',
+      resourceUrl: 'https://seller/api',
+      method: 'POST',
+      header: ['X-Test: yes'],
+      data: '{"hello":true}',
+      interval: 5,
+      maxAttempts: 60,
+      timeout: 900,
+      showBody: true,
+    });
     expect(frame['instruction']).toContain('Present the approval_url');
   });
 
   it('omits _next and uses the polling instruction at interval > 0', () => {
-    const frame = createdFrameFromEvent(created(), 5, 60);
+    const frame = createdFrameFromEvent(created(), payCtx({ interval: 5, maxAttempts: 60 }));
     expect(frame['_next']).toBeUndefined();
     expect(frame['instruction']).toContain('polling');
   });
 
   it('omits _next for a ready (non-pending) transaction', () => {
-    const frame = createdFrameFromEvent(created({ state: 'ready' }), 0, 0);
+    const frame = createdFrameFromEvent(created({ state: 'ready' }), payCtx());
     expect(frame['_next']).toBeUndefined();
   });
 });

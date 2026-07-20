@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import type { MppClient } from '@inflowpayai/mpp';
 import type * as x402Buyer from '@inflowpayai/x402-buyer';
 import { Inflow, MemoryStorage } from '../../../src/index.js';
 import type { AuthStatusFrame } from '../../../src/auth/poll.js';
@@ -103,5 +104,53 @@ describe('Inflow.x402 augmented operations', () => {
     if (terminal?.type === 'timedOut') {
       expect(terminal.response).toMatchObject({ status: 'INITIATED' });
     }
+  });
+
+  it('x402.fetch uses the augmented handle to replay a signed payload', async () => {
+    server.use(http.get('https://seller.test/x402-fetch', () => new HttpResponse('DONE', { status: 200 })));
+    const client = new Inflow({ apiBaseUrl: BASE_URL, accessToken: 'tk' });
+    (client.x402 as unknown as { cached: Promise<x402Buyer.InflowClient> }).cached = Promise.resolve({
+      getX402Payload: vi.fn(() =>
+        Promise.resolve({
+          status: 'APPROVED',
+          encodedPayload: 'ENC',
+          paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
+        }),
+      ),
+    } as unknown as x402Buyer.InflowClient);
+    const events = await drainEvents(
+      client.x402.fetch({
+        transactionId: 'txn-1',
+        url: 'https://seller.test/x402-fetch',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: true,
+      }).events,
+    );
+    expect(events.at(-1)).toMatchObject({ type: 'replayed', result: { protocol: 'x402', body: 'DONE' } });
+  });
+});
+
+describe('Inflow.mpp augmented operations', () => {
+  it('mpp.fetch uses the augmented handle to replay a ready credential', async () => {
+    server.use(http.get('https://seller.test/mpp-fetch', () => new HttpResponse('DONE', { status: 200 })));
+    const client = new Inflow({ apiBaseUrl: BASE_URL, accessToken: 'tk' });
+    (client.mpp as unknown as { cachedClient: Promise<MppClient> }).cachedClient = Promise.resolve({
+      getTransaction: vi.fn(() => Promise.resolve({ transactionId: 'tx-1', state: 'ready', credential: 'CRED' })),
+    } as unknown as MppClient);
+    const events = await drainEvents(
+      client.mpp.fetch({
+        transactionId: 'tx-1',
+        url: 'https://seller.test/mpp-fetch',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: true,
+      }).events,
+    );
+    expect(events.at(-1)).toMatchObject({ type: 'replayed', result: { protocol: 'mpp', body: 'DONE' } });
   });
 });
