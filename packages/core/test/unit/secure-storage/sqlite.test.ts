@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -52,6 +52,40 @@ describe('SecureSqliteRepository', () => {
     expect(repository.getPublicDocument('openapi', 'https://service.example/openapi.json')).toBeUndefined();
   });
 
+  it('round-trips and orders complete public-document metadata', () => {
+    repository.upsertPublicDocument({
+      cachedAt: '2026-01-02T00:00:00.000Z',
+      finalUrl: 'https://service.example/openapi-final.json',
+      lastModified: 'Wed, 01 Jan 2026 00:00:00 GMT',
+      namespace: 'openapi',
+      payload: { openapi: '3.1.0', version: 2 },
+      url: 'https://service.example/z-openapi.json',
+    });
+    repository.upsertPublicDocument({
+      cachedAt: '2026-01-01T00:00:00.000Z',
+      namespace: 'openapi',
+      payload: { openapi: '3.1.0', version: 1 },
+      url: 'https://service.example/a-openapi.json',
+    });
+
+    expect(repository.listPublicDocuments('openapi')).toEqual([
+      {
+        cachedAt: '2026-01-01T00:00:00.000Z',
+        namespace: 'openapi',
+        payload: { openapi: '3.1.0', version: 1 },
+        url: 'https://service.example/a-openapi.json',
+      },
+      {
+        cachedAt: '2026-01-02T00:00:00.000Z',
+        finalUrl: 'https://service.example/openapi-final.json',
+        lastModified: 'Wed, 01 Jan 2026 00:00:00 GMT',
+        namespace: 'openapi',
+        payload: { openapi: '3.1.0', version: 2 },
+        url: 'https://service.example/z-openapi.json',
+      },
+    ]);
+  });
+
   it('tracks secret lifecycle rows without storing secret material', () => {
     const principal = repository.upsertPrincipal('https://platform.example.test', 'user-1');
     const reference = { purpose: 'api-key', reference: 'opaque-reference' };
@@ -76,5 +110,50 @@ describe('SecureSqliteRepository', () => {
       payload: { apiBaseUrl: 'https://sandbox.inflowpay.ai' },
       payloadVersion: 1,
     });
+
+    repository.deleteSetting('connection');
+    expect(repository.getSetting('connection')).toBeUndefined();
+  });
+
+  it('commits nested transactions and rolls back failed synchronous and asynchronous work', async () => {
+    repository.writeTransactionSync(() => {
+      repository.upsertSetting('nested-sync', { committed: true });
+    });
+    await repository.writeTransaction(() => {
+      repository.upsertSetting('nested-async', { committed: true });
+      return Promise.resolve();
+    });
+
+    expect(repository.getSetting('nested-sync')?.payload).toEqual({ committed: true });
+    expect(repository.getSetting('nested-async')?.payload).toEqual({ committed: true });
+
+    expect(() =>
+      repository.writeTransactionSync(() => {
+        repository.upsertSetting('rolled-back-sync', { committed: false });
+        throw new Error('sync failure');
+      }),
+    ).toThrow('sync failure');
+    await expect(
+      repository.writeTransaction(() => {
+        repository.upsertSetting('rolled-back-async', { committed: false });
+        return Promise.reject(new Error('async failure'));
+      }),
+    ).rejects.toThrow('async failure');
+
+    expect(repository.getSetting('rolled-back-sync')).toBeUndefined();
+    expect(repository.getSetting('rolled-back-async')).toBeUndefined();
+  });
+
+  it('rejects database files whose permissions become unsafe', async () => {
+    chmodSync(join(tmpDir, 'inflow.sqlite3'), 0o644);
+
+    await expect(repository.verifyDatabaseFiles()).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_invalid_path',
+    });
+  });
+
+  it('allows close to be repeated safely', () => {
+    repository.close();
+    repository.close();
   });
 });

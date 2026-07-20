@@ -3,8 +3,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { KeychainReferenceManifest, MemorySecretStore } from '../../../src/secure-storage/keychain.js';
-import { SecureSecretLifecycleCoordinator } from '../../../src/secure-storage/lifecycle.js';
+import {
+  KeychainReferenceManifest,
+  MemorySecretStore,
+  SyncKeychainReferenceManifest,
+  SyncMemorySecretStore,
+} from '../../../src/secure-storage/keychain.js';
+import {
+  SecureSecretLifecycleCoordinator,
+  SyncSecureSecretLifecycleCoordinator,
+} from '../../../src/secure-storage/lifecycle.js';
 import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
 
 describe('SecureSecretLifecycleCoordinator', () => {
@@ -66,6 +74,49 @@ describe('SecureSecretLifecycleCoordinator', () => {
     await expect(store.read(pending)).rejects.toMatchObject({ secureStorageCode: 'secure_storage_secret_missing' });
     await expect(store.read(deleting)).rejects.toMatchObject({ secureStorageCode: 'secure_storage_secret_missing' });
     expect(await manifest.read()).toEqual([]);
+    expect(repository.listSecretLifecycle('pending')).toEqual([]);
+    expect(repository.listSecretLifecycle('deleting')).toEqual([]);
+  });
+
+  it('cleans lifecycle records when interrupted secrets are already absent', async () => {
+    const pending = { purpose: 'api-key', reference: 'missing-pending' };
+    const deleting = { purpose: 'refresh-token', reference: 'missing-deleting' };
+    repository.beginSecretLifecycle(pending, null);
+    repository.beginSecretLifecycle(deleting, null);
+    repository.markSecretDeleting(deleting);
+
+    await coordinator.recoverInterruptedWork();
+
+    expect(repository.listSecretLifecycle('pending')).toEqual([]);
+    expect(repository.listSecretLifecycle('deleting')).toEqual([]);
+  });
+
+  it('supports synchronous create, delete, and interrupted-work recovery', () => {
+    const syncStore = new SyncMemorySecretStore();
+    const syncManifest = new SyncKeychainReferenceManifest(syncStore);
+    const syncCoordinator = new SyncSecureSecretLifecycleCoordinator(repository, syncStore, syncManifest);
+    const active = { purpose: 'api-key', reference: 'sync-active' };
+
+    syncCoordinator.create(active, Buffer.from('secret'), null, { owner: 'auth' });
+    expect(Buffer.from(syncStore.read(active)).toString('utf8')).toBe('secret');
+    expect(syncManifest.read()).toEqual([active]);
+    expect(repository.listSecretLifecycle('active')).toEqual([active]);
+
+    syncCoordinator.delete(active);
+    expect(() => syncStore.read(active)).toThrow('A referenced secret is missing from Keychain.');
+    expect(repository.listSecretLifecycle('active')).toEqual([]);
+
+    const pending = { purpose: 'api-key', reference: 'sync-pending' };
+    const deleting = { purpose: 'refresh-token', reference: 'sync-deleting' };
+    syncStore.create(pending, Buffer.from('pending'));
+    syncManifest.add(pending);
+    repository.beginSecretLifecycle(pending, null);
+    repository.beginSecretLifecycle(deleting, null);
+    repository.markSecretDeleting(deleting);
+
+    syncCoordinator.recoverInterruptedWork();
+
+    expect(() => syncStore.read(pending)).toThrow('A referenced secret is missing from Keychain.');
     expect(repository.listSecretLifecycle('pending')).toEqual([]);
     expect(repository.listSecretLifecycle('deleting')).toEqual([]);
   });

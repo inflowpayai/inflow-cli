@@ -3,6 +3,7 @@ import type { PaymentRequired } from '@x402/core/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildAcceptsFrame,
+  buildBlockedFrame,
   buildNoPaymentFrame,
   type InspectResultAccepts,
   type InspectResultNoPayment,
@@ -362,6 +363,28 @@ describe('buildNoPaymentFrame', () => {
     };
     const frame = buildNoPaymentFrame(result);
     expect('content_type' in frame).toBe(false);
+  });
+});
+
+describe('buildBlockedFrame', () => {
+  it('projects optional Service details only when present', () => {
+    const base = {
+      method: 'POST',
+      url: 'https://seller/api',
+      source: 'openapi' as const,
+      message: 'Authentication required.',
+    };
+    expect(buildBlockedFrame(base)).toEqual({
+      outcome: 'aep-authentication-required',
+      url: 'https://seller/api',
+      method: 'POST',
+      source: 'openapi',
+      message: 'Authentication required.',
+    });
+    expect(buildBlockedFrame({ ...base, serviceUrl: 'https://seller', serviceDid: 'did:web:seller' })).toMatchObject({
+      service_url: 'https://seller',
+      service_did: 'did:web:seller',
+    });
   });
 });
 
