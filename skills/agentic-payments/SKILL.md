@@ -79,6 +79,11 @@ inflow inspect <url>
 
 `inflow inspect` probes the URL **once** and decodes both MPP and x402 challenges from the same 402. Read its `detected` array to pick the pay rail:
 
+If `detected` includes `aep` and also reveals a payment protocol, continue with the matching `mpp pay` or `x402 pay`;
+the payment commands perform AEP authentication before creating the payment transaction. If `aep.blocked` is true, AEP
+authentication is required before payment terms can be inspected; use `inflow aep fetch <url>` for access-only requests
+or ask whether to authenticate before attempting payment.
+
 | `detected` | Pay with |
 | --- | --- |
 | `["mpp"]` | `inflow mpp pay <url>` |
@@ -94,7 +99,7 @@ If `inspect` returns `outcome: "no-payment-required"`, the URL isn't paywalled -
 
 One flow for both protocols. Prerequisite: you are authenticated (see [Authenticate](#authenticate)). First find your protocol's row in the **Protocol deltas** table below - it names the 402 header that selected it, the matching model, the filter flags, and the Fetch command that completes the seller request. Everything else in this section applies to both protocols.
 
-**Sequencing.** Run pre-flight before pay - `pay` fails or double-charges if the pre-flight checks didn't clear. `inspect` and `decode` are read-only and need no auth, so they may run before you authenticate if useful (e.g. sizing up a paywall first).
+**Sequencing.** Run pre-flight before pay - `pay` fails or double-charges if the pre-flight checks didn't clear. `inspect` and `decode` are read-only and need no auth, so they may run before you authenticate if useful (e.g. sizing up a paywall first). If the seller requires AEP before payment, `pay` authenticates with the Service first, then creates the payment only after the legitimate 402 is available. Do not run a separate `aep grant` just to continue payment.
 
 ### Protocol deltas
 
@@ -105,7 +110,7 @@ One flow for both protocols. Prerequisite: you are authenticated (see [Authentic
 | Matching model | The seller's challenge **pins the rail** - the buyer does not choose scheme/network/asset | Pay where the x402 `accepts` ∩ `supported.kinds` is non-empty |
 | Filter flags | `--payment-method`, `--intent`, `--currency`, `--rail`, `--instrument-id` | `--scheme`, `--network`, `--asset`, `--asset-name` |
 | Resource completion command | `inflow mpp fetch <transaction_id> <url>` | `inflow x402 fetch <transaction_id> <url>` |
-| Replay header used by Fetch | `Authorization: Payment <credential>` | `PAYMENT-SIGNATURE: <encoded_payload>` |
+| Replay header used by Fetch | `Authorization: Payment <credential>` plus a non-colliding AEP credential when required | `PAYMENT-SIGNATURE: <encoded_payload>` plus a non-colliding AEP credential when required |
 | Diagnostic credential file flag | `--credential-file <path>` on `status` | `--payload-file <path>` on `status` |
 | Idempotency | - | `--payment-id` (see Step 2) |
 | Cancel uses | `approval_id` | `approval_id` |
@@ -201,6 +206,9 @@ inflow <mpp|x402> pay https://api.foo.dev/dataset.csv --interval 5 --max-attempt
 - If the user aborts ("nevermind", "cancel that"), call `inflow <mpp|x402> cancel <approval_id>` before exiting. Otherwise the approval sits pending for 15 minutes and triggers phantom notifications in the user's InFlow app.
 
 Fetch sends a ready payment credential to the seller at most once per invocation. If Fetch returns `PAYMENT_REPLAY_OUTCOME_UNKNOWN`, tell the user the seller might have received or consumed the credential and do not automatically replay it.
+
+When AEP is required, Fetch still sends the payment credential at most once. The final seller request carries both
+credentials without exposing either one in JSON output, logs, cache keys, or chat.
 
 ### Limits
 

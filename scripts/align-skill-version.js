@@ -4,7 +4,7 @@
  * package.json itself:
  *
  * - Package.json — repo root manifest (private; kept in step with the published CLI version)
- * - Skills/agentic-payments/SKILL.md — YAML frontmatter `version:` line
+ * - Skills/<name>/SKILL.md — YAML frontmatter `version:` line
  * - Plugins/inflow/.claude-plugin/plugin.json — Claude Code per-plugin manifest
  * - Plugins/inflow/.cursor-plugin/plugin.json — Cursor per-plugin manifest
  * - .codex-plugin/plugin.json — Codex top-level manifest
@@ -19,7 +19,7 @@
  * `pnpm build` runs it.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -62,7 +62,13 @@ function rewriteJsonVersion(relPath) {
 }
 
 rewriteJsonVersion('package.json');
-rewriteSkill('skills/agentic-payments/SKILL.md');
+for (const entry of readdirSync(resolve(repoRoot, 'skills'), { withFileTypes: true }).sort((a, b) =>
+  a.name.localeCompare(b.name),
+)) {
+  if (!entry.isDirectory()) continue;
+  const relPath = `skills/${entry.name}/SKILL.md`;
+  if (existsSync(resolve(repoRoot, relPath))) rewriteSkill(relPath);
+}
 rewriteJsonVersion('plugins/inflow/.claude-plugin/plugin.json');
 rewriteJsonVersion('plugins/inflow/.cursor-plugin/plugin.json');
 rewriteJsonVersion('.codex-plugin/plugin.json');

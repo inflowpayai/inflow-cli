@@ -90,6 +90,46 @@ describe('runMppPayPipeline', () => {
     }
   });
 
+  it('creates the payment transaction only after the shared seller transport returns a payment challenge', async () => {
+    const order: string[] = [];
+    const request = (input: {
+      additionalAuthenticationHeaders?: Record<string, string>;
+      headers: Record<string, string>;
+      method: string;
+      url: string;
+    }) => {
+      order.push(input.additionalAuthenticationHeaders === undefined ? 'aep-then-payment-challenge' : 'paid-replay');
+      if (input.additionalAuthenticationHeaders !== undefined) {
+        expect(input.additionalAuthenticationHeaders).toEqual({ Authorization: 'Payment CRED-ORDER' });
+        return Promise.resolve({
+          bytes: new Uint8Array(Buffer.from('paid')),
+          contentType: 'text/plain',
+          headers: new Headers(),
+          status: 200,
+        });
+      }
+      return Promise.resolve({
+        bytes: new Uint8Array(),
+        contentType: undefined,
+        headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(challenge()) }),
+        status: 402,
+      });
+    };
+    const client = {
+      createTransaction: () => {
+        order.push('payment-created');
+        return Promise.resolve({ state: 'ready', credential: 'CRED-ORDER', transactionId: 'tx-order' });
+      },
+    };
+
+    const terminal = (await collect(deps({ client: client as unknown as MppClient, sellerTransport: { request } }))).at(
+      -1,
+    );
+
+    expect(order).toEqual(['aep-then-payment-challenge', 'payment-created', 'paid-replay']);
+    expect(terminal?.type).toBe('replayed');
+  });
+
   it('pays a Tempo challenge when selected by payment method', async () => {
     let createdMethod: string | undefined;
     server.use(

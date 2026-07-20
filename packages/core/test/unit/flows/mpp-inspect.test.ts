@@ -6,9 +6,10 @@ import {
   type MppInspectEvent,
   type MppInspectResultChallenges,
   type MppInspectResultNoPayment,
+  PaymentInspectionBlockedError,
   reduceMppInspect,
   runMppInspectPipeline,
-} from '../../../src/flows/mpp-inspect.js';
+} from '../../../src/index.js';
 
 const SELLER = 'https://seller.test/api';
 const server = setupServer();
@@ -144,6 +145,33 @@ describe('runMppInspectPipeline', () => {
     if (event?.type === 'errored') expect(event.code).toBe('INSPECT_FAILED');
   });
 
+  it('emits blocked when AEP authentication is required before MPP inspection', async () => {
+    const [event] = await collect({
+      probe: () =>
+        Promise.reject(
+          new PaymentInspectionBlockedError({
+            method: 'GET',
+            url: SELLER,
+            message: 'AEP authentication is required before payment terms can be inspected.',
+            source: 'challenge',
+            serviceDid: 'did:web:seller.test',
+            serviceUrl: 'https://seller.test',
+          }),
+        ),
+    });
+    expect(event).toEqual({
+      type: 'blocked',
+      result: {
+        method: 'GET',
+        url: SELLER,
+        message: 'AEP authentication is required before payment terms can be inspected.',
+        source: 'challenge',
+        serviceDid: 'did:web:seller.test',
+        serviceUrl: 'https://seller.test',
+      },
+    });
+  });
+
   it('errors UNEXPECTED_PROBE_STATUS when the seller returns a non-2xx, non-402 status', async () => {
     server.use(http.get(SELLER, () => new HttpResponse('boom', { status: 500 })));
     const [event] = await collect();
@@ -195,6 +223,17 @@ describe('reduceMppInspect', () => {
   it('errored event transitions to the error phase', () => {
     const next = reduceMppInspect({ kind: 'probing' }, { type: 'errored', code: 'INVALID_402', message: 'no header' });
     expect(next).toEqual({ kind: 'error', code: 'INVALID_402', message: 'no header' });
+  });
+
+  it('blocked event transitions to the blocked phase', () => {
+    const blocked = {
+      method: 'GET',
+      url: SELLER,
+      message: 'AEP authentication is required before payment terms can be inspected.',
+      source: 'openapi' as const,
+    };
+    const next = reduceMppInspect({ kind: 'probing' }, { type: 'blocked', result: blocked });
+    expect(next).toEqual({ kind: 'blocked', result: blocked });
   });
 
   it('returns the prior state for an unrecognised event (default branch)', () => {

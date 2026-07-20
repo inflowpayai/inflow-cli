@@ -30,6 +30,10 @@ export function sanitizeDeep<T>(value: T): T {
     return value.map((entry: unknown) => sanitizeDeep(entry)) as T;
   }
 
+  if (value instanceof URL) {
+    return value;
+  }
+
   if (typeof value === 'object') {
     const result: Record<string, unknown> = {};
     const keys = Object.keys(value);

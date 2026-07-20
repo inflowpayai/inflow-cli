@@ -20,11 +20,13 @@ import { Cli } from 'incur';
 import { assertSessionGuard } from '../../utils/assert-session.js';
 import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
+import { createAepAwareInspectProbe, createAepAwareSellerTransport } from '../aep/runtime.js';
 import { PaymentFetchView, type PaymentFetchPhase } from '../payment-fetch.js';
 import { CancelView } from './cancel.js';
 import { DecodeView, decodeHeader, type DecodedHeader } from './decode.js';
 import {
   buildAcceptsFrame,
+  buildBlockedFrame,
   buildNoPaymentFrame as buildInspectNoPaymentFrame,
   type InspectPhase,
   type InspectPipelineDeps,
@@ -191,6 +193,16 @@ function fetchProbeOptionsFrom(c: FetchCommandContext): SellerProbeOptions {
   };
 }
 
+function createSellerTransport(c: PayContext | FetchCommandContext, inflow: Inflow, authStorage: AuthStorage) {
+  return createAepAwareSellerTransport({
+    authStorage,
+    context: c,
+    inflow,
+    timeout: c.options.timeout,
+    ...(c.options.interval > 0 ? { interval: c.options.interval } : {}),
+  });
+}
+
 function buildPayPipelineInput(
   c: PayContext,
   probeOptions: SellerProbeOptions,
@@ -334,6 +346,7 @@ async function* runPayCommand(
     return c.error(invalidHeaderError(err));
   }
 
+  const sellerTransport = createSellerTransport(c, inflow, authStorage);
   if (!c.agent && !c.formatExplicit) {
     const client = await inflow.x402.client();
     const captured: { finalPhase: PayPhase | null } = { finalPhase: null };
@@ -345,6 +358,7 @@ async function* runPayCommand(
           client,
           apiBaseUrl,
           probeOptions,
+          sellerTransport,
           url: c.args.url,
           signOptions: buildSignOptions(c.options),
           showBody: c.options.showBody,
@@ -378,6 +392,7 @@ async function* runPayCommand(
   const run = inflow.x402.pay({
     ...buildPayPipelineInput(c, probeOptions),
     awaitPayment: c.options.interval > 0,
+    sellerTransport,
   });
 
   for await (const event of run.events) {
@@ -421,6 +436,7 @@ async function* runFetchCommand(
     return c.error(invalidHeaderError(err));
   }
 
+  const sellerTransport = createSellerTransport(c, inflow, authStorage);
   if (!c.agent && !c.formatExplicit) {
     const captured: { finalPhase: PaymentFetchPhase | null } = { finalPhase: null };
     await renderInkUntilExit(
@@ -439,6 +455,7 @@ async function* runFetchCommand(
             maxAttempts: c.options.maxAttempts,
             timeout: c.options.timeout,
             showBody: c.options.showBody,
+            sellerTransport,
             ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
           }).events
         }
@@ -474,6 +491,7 @@ async function* runFetchCommand(
     maxAttempts: c.options.maxAttempts,
     timeout: c.options.timeout,
     showBody: c.options.showBody,
+    sellerTransport,
     ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
   });
 
@@ -640,7 +658,11 @@ async function runSupportedCommand(
   return sanitizeDeep(response);
 }
 
-async function runInspectCommand(c: InspectCommandContext): Promise<Record<string, unknown> | undefined> {
+async function runInspectCommand(
+  c: InspectCommandContext,
+  inflow?: Inflow,
+  authStorage?: AuthStorage,
+): Promise<Record<string, unknown> | undefined> {
   let probeOptions: SellerProbeOptions;
   try {
     probeOptions = probeOptionsFrom(c);
@@ -649,6 +671,9 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
   }
   const deps: InspectPipelineDeps = {
     probeOptions,
+    ...(inflow === undefined || authStorage === undefined
+      ? {}
+      : { probe: createAepAwareInspectProbe({ authStorage, context: c, inflow, timeout: 30 }) }),
     url: c.args.url,
     ...(c.options.scheme !== undefined ? { schemeFilter: c.options.scheme } : {}),
     ...(c.options.network !== undefined ? { networkFilter: c.options.network } : {}),
@@ -687,6 +712,10 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
       captured.finalEvent = { kind: 'accepts', payload: event.result };
       return;
     }
+    if (event.type === 'blocked') {
+      captured.finalEvent = { kind: 'blocked', payload: event.result };
+      return;
+    }
     captured.finalEvent = { kind: 'no-payment', payload: event.result };
   });
 
@@ -700,6 +729,9 @@ async function runInspectCommand(c: InspectCommandContext): Promise<Record<strin
   }
   if (kind === 'accepts') {
     return sanitizeDeep(buildAcceptsFrame(payload as Parameters<typeof buildAcceptsFrame>[0]));
+  }
+  if (kind === 'blocked') {
+    return sanitizeDeep(buildBlockedFrame(payload as Parameters<typeof buildBlockedFrame>[0]));
   }
   return sanitizeDeep(buildInspectNoPaymentFrame(payload as Parameters<typeof buildInspectNoPaymentFrame>[0]));
 }
@@ -771,7 +803,7 @@ export function createX402Cli(inflow: Inflow, authStorage: AuthStorage, apiBaseU
     options: inspectOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
-      return runInspectCommand(c);
+      return runInspectCommand(c, inflow, authStorage);
     },
   });
 

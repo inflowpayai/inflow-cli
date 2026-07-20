@@ -12,7 +12,21 @@ const DIST_CLI = resolve(PACKAGE_ROOT, 'dist/cli.js');
 const PKG_VERSION: string = (
   JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'package.json'), 'utf-8')) as { version: string }
 ).version;
+const AEP_COMMANDS = ['aep enroll', 'aep fetch', 'aep grant', 'aep inspect', 'aep revoke', 'aep status'] as const;
+const AEP_MCP_TOOLS = AEP_COMMANDS.map((command) => command.replace(' ', '_'));
 const PAYMENT_FETCH_MCP_TOOLS = ['mpp_fetch', 'x402_fetch'];
+const RAW_SECRET_SCHEMA_FIELDS = new Set([
+  'apiKey',
+  'api_key',
+  'accessToken',
+  'access_token',
+  'authorization',
+  'Authorization',
+  'password',
+  'refreshToken',
+  'refresh_token',
+  'secret',
+]);
 
 interface RunResult {
   exitCode: number;
@@ -50,6 +64,25 @@ function run(args: string[], options: RunOptions = {}): Promise<RunResult> {
   });
 }
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function collectSchemaPropertyNames(schema: unknown): string[] {
+  if (!isJsonObject(schema)) return [];
+  const properties = schema['properties'];
+  const names = isJsonObject(properties) ? Object.keys(properties) : [];
+  const nested = isJsonObject(properties)
+    ? Object.values(properties).flatMap((property) => collectSchemaPropertyNames(property))
+    : [];
+  const items = collectSchemaPropertyNames(schema['items']);
+  const combinators = ['allOf', 'anyOf', 'oneOf'].flatMap((key) => {
+    const values = schema[key];
+    return Array.isArray(values) ? values.flatMap((value) => collectSchemaPropertyNames(value)) : [];
+  });
+  return [...names, ...nested, ...items, ...combinators];
+}
+
 describe.skipIf(!existsSync(DIST_CLI))(
   'inflow binary (requires `pnpm --filter @inflowpayai/inflow build` first)',
   () => {
@@ -58,7 +91,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(exitCode).toBe(0);
       const combined = stdout;
       expect(combined).toContain('inflow');
-      expect(combined).toMatch(/agentic MPP/);
+      expect(combined).toContain('agent enrollment and agentic payments');
     });
 
     it('--version prints the package.json version', async () => {
@@ -110,6 +143,29 @@ describe.skipIf(!existsSync(DIST_CLI))(
         env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
+    });
+
+    it('auth status reports API-key authentication without echoing the key', async () => {
+      const secret = 'inflow_task90_secret';
+      const { exitCode, stdout, stderr } = await run(
+        [
+          '--auth',
+          `/tmp/inflow-test-api-key-status-${String(process.pid)}.json`,
+          '--api-key',
+          secret,
+          'auth',
+          'status',
+          '--format',
+          'json',
+        ],
+        {
+          env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        },
+      );
+      expect(exitCode).toBe(0);
+      expect(`${stdout}\n${stderr}`).not.toContain(secret);
+      const frames = JSON.parse(stdout) as { auth_method?: string }[];
+      expect(frames[0]?.auth_method).toBe('api_key');
     });
 
     it('strips --verbose before incur sees it in prefix and suffix position', async () => {
@@ -210,6 +266,17 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(assigned.stdout).toBe(bare.stdout);
     });
 
+    it('--skill agentic-enrollment prints the enrollment playbook without frontmatter', async () => {
+      const { exitCode, stdout, stderr } = await run(['--skill', 'agentic-enrollment'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe('');
+      expect(stdout.startsWith('# Agentic Enrollment')).toBe(true);
+      expect(stdout).toContain('inflow aep fetch');
+      expect(stdout).not.toMatch(/^---/);
+    });
+
     it('--skill with an unknown name exits 1 and lists the available skills on stderr', async () => {
       const { exitCode, stdout, stderr } = await run(['--skill', 'no-such-skill'], {
         env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
@@ -217,6 +284,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(exitCode).toBe(1);
       expect(stdout).toBe('');
       expect(stderr).toContain("Unknown skill 'no-such-skill'");
+      expect(stderr).toContain('agentic-enrollment');
       expect(stderr).toContain('agentic-payments');
     });
 
@@ -269,6 +337,16 @@ describe.skipIf(!existsSync(DIST_CLI))(
       const depositAddressesList = manifest.commands.find((c) => c.name === 'deposit-addresses list');
       expect(depositAddressesList).toBeDefined();
       expect(depositAddressesList?.description).toBe("List the authenticated user's configured deposit addresses");
+    });
+
+    it.each(['--llms', '--llms-full'] as const)('%s lists every AEP command', async (flag) => {
+      const { exitCode, stdout } = await run([flag, '--format', 'json'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(0);
+      const manifest = JSON.parse(stdout) as { commands: { name: string }[] };
+      const names = manifest.commands.map((command) => command.name);
+      expect(names).toEqual(expect.arrayContaining([...AEP_COMMANDS]));
     });
 
     it('user get --schema returns an empty-properties JSON Schema', async () => {
@@ -335,6 +413,10 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(tool).toBeDefined();
       expect(tool?.inputSchema?.type).toBe('object');
       expect(tool?.inputSchema?.properties ?? {}).toEqual({});
+      expect(tools.map((entry) => entry.name)).toEqual(expect.arrayContaining(AEP_MCP_TOOLS));
+      for (const name of AEP_MCP_TOOLS) {
+        expect(tools.find((entry) => entry.name === name)?.inputSchema?.type, name).toBe('object');
+      }
       expect(tools.map((entry) => entry.name)).toEqual(expect.arrayContaining(PAYMENT_FETCH_MCP_TOOLS));
       for (const name of PAYMENT_FETCH_MCP_TOOLS) {
         const fetchTool = tools.find((entry) => entry.name === name);
@@ -355,6 +437,12 @@ describe.skipIf(!existsSync(DIST_CLI))(
           expect((properties[property] as { type?: string } | undefined)?.type, `${name}.${property}`).toBe(type);
         }
       }
+      const rawSecretFields = tools.flatMap((entry) =>
+        collectSchemaPropertyNames(entry.inputSchema)
+          .filter((property) => RAW_SECRET_SCHEMA_FIELDS.has(property))
+          .map((property) => `${entry.name}.${property}`),
+      );
+      expect(rawSecretFields).toEqual([]);
     });
 
     it('user get --format json without auth emits NOT_AUTHENTICATED and exits 1', async () => {
@@ -453,25 +541,29 @@ describe('plugin and skill distribution (spec 050)', () => {
     expect(entry?.args).toEqual(['-y', '@inflowpayai/inflow', '--mcp']);
   });
 
-  it('skills/agentic-payments/SKILL.md exists, has a semver version: line, and a parseable inline metadata JSON', () => {
-    const skill = readRepoFile('skills/agentic-payments/SKILL.md');
-    const versionMatch = skill.match(/^version:\s*(\d+\.\d+\.\d+[^\s]*)$/m);
-    expect(versionMatch).not.toBeNull();
-    const metadataMatch = skill.match(/^metadata:\s*(\{.*\})$/m);
-    expect(metadataMatch).not.toBeNull();
-    const metadata = JSON.parse(metadataMatch?.[1] ?? '{}') as {
-      author?: string;
-      openclaw?: { emoji?: string; install?: { package?: string }[] };
-    };
-    expect(metadata.author).toBe('Jarwin, Inc.');
-    expect(metadata.openclaw?.install?.[0]?.package).toBe('@inflowpayai/inflow');
-  });
+  for (const name of ['agentic-enrollment', 'agentic-payments']) {
+    it(`skills/${name}/SKILL.md has version and distribution metadata`, () => {
+      const skill = readRepoFile(`skills/${name}/SKILL.md`);
+      const versionMatch = skill.match(/^version:\s*(\d+\.\d+\.\d+[^\s]*)$/m);
+      expect(versionMatch).not.toBeNull();
+      const metadataMatch = skill.match(/^metadata:\s*(\{.*\})$/m);
+      expect(metadataMatch).not.toBeNull();
+      const metadata = JSON.parse(metadataMatch?.[1] ?? '{}') as {
+        author?: string;
+        openclaw?: { install?: { package?: string }[] };
+      };
+      expect(metadata.author).toBe('Jarwin, Inc.');
+      expect(metadata.openclaw?.install?.[0]?.package).toBe('@inflowpayai/inflow');
+    });
+  }
 
   it('skill version, plugin manifests, and packages/cli/package.json all agree', () => {
     const cliVersion = PKG_VERSION;
-    const skill = readRepoFile('skills/agentic-payments/SKILL.md');
-    const skillVersion = skill.match(/^version:\s*(.+)$/m)?.[1]?.trim();
-    expect(skillVersion).toBe(cliVersion);
+    for (const name of ['agentic-enrollment', 'agentic-payments']) {
+      const skill = readRepoFile(`skills/${name}/SKILL.md`);
+      const skillVersion = skill.match(/^version:\s*(.+)$/m)?.[1]?.trim();
+      expect(skillVersion, name).toBe(cliVersion);
+    }
 
     for (const rel of [
       'plugins/inflow/.claude-plugin/plugin.json',

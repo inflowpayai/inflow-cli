@@ -1,5 +1,6 @@
 import type { IAuthResource } from '../resources/interfaces.js';
 import type { AuthStorage } from '../utils/storage.js';
+import type { AepStateStorage, PublicDocumentStateStorage } from '../aep/storage.js';
 
 export interface AuthLogoutInput {
   /** Auth resource used to best-effort revoke the refresh token before the local clear. */
@@ -32,5 +33,23 @@ export async function runAuthLogout(input: AuthLogoutInput): Promise<void> {
   input.authStorage.clearApiKey();
   input.authStorage.clearPendingDeviceAuth();
   input.authStorage.clearConnection();
-  await input.authStorage.deleteConfig();
+  if ('clearAepState' in input.authStorage) {
+    (input.authStorage as AuthStorage & AepStateStorage).clearAepState();
+  }
+  if (!hasDocumentStorage(input.authStorage)) {
+    await input.authStorage.deleteConfig();
+    return;
+  }
+  const storage = input.authStorage as AuthStorage & PublicDocumentStateStorage;
+  storage.setDiscoveryDocuments(storage.getDiscoveryDocuments());
+  storage.setOpenApiDocuments(storage.getOpenApiDocuments());
+}
+
+function hasDocumentStorage(storage: AuthStorage): boolean {
+  return (
+    'getDiscoveryDocuments' in storage &&
+    'setDiscoveryDocuments' in storage &&
+    'getOpenApiDocuments' in storage &&
+    'setOpenApiDocuments' in storage
+  );
 }

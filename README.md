@@ -9,10 +9,11 @@
 [![Discord](https://img.shields.io/discord/1488618872461332562?logo=discord&logoColor=white&label=Discord)](https://discord.gg/Z9nmMAgaR4)
 [![skills.sh](https://skills.sh/b/inflowpayai/inflow-cli)](https://skills.sh/inflowpayai/inflow-cli)
 
-InFlow — agentic MPP (Machine Payments Protocol) / x402 payments from your machine.
+InFlow — Agent Enrollment Protocol access and agentic MPP (Machine Payments Protocol) / x402 payments from your machine.
 
 The agent-native and human-accessible command-line entry point to InFlow. Agentic buyers perform agent-native payments
-via MPP and x402; humans hit the same functionality from MCP-integrated assistants or the raw CLI.
+via MPP and x402, manage Agent Enrollment Protocol Service enrollment, and fetch resources that require AEP
+authentication before payment; humans hit the same functionality from MCP-integrated assistants or the raw CLI.
 
 New here? Start with the command reference in [`packages/cli/README.md`](./packages/cli/README.md) — it covers `auth`,
 the `x402` and `mpp` command groups, the global flags, and the agent (`--format`) renderings.
@@ -34,7 +35,7 @@ npx @inflowpayai/inflow
 
 ### Use with agents
 
-Install the `agentic-payments` skill into a skills-aware agent:
+Install the `agentic-enrollment` and `agentic-payments` skills into a skills-aware agent:
 
 ```bash
 npx skills add inflowpayai/inflow-cli

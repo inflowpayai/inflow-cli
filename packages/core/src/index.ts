@@ -23,7 +23,7 @@
  */
 
 /* Client + augmented interfaces ------------------------------------------- */
-export { Inflow, type IMppResource, type IX402Resource } from './client.js';
+export { Inflow, type IAepResource, type IMppResource, type IX402Resource } from './client.js';
 export {
   augmentAuth,
   augmentMpp,
@@ -86,8 +86,27 @@ export {
   type StorageOptions,
   storage,
 } from './utils/storage.js';
+export { SecureStorageError, type SecureStorageErrorCode } from './secure-storage/errors.js';
+export { SyncMemorySecretStore, type SecretReference, type SyncSecureSecretStore } from './secure-storage/keychain.js';
 export { sanitizeDeep, sanitizeText } from './utils/sanitize-text.js';
 export { sanitizeResource } from './utils/sanitize-proxy.js';
+export {
+  type AepPersistedInspectResult,
+  type AepOwner,
+  type AepPersistedState,
+  type PublicDocumentStateStorage,
+  AepStorage,
+  createAepPublicDocumentCache,
+  type AepStateStorage,
+} from './aep/storage.js';
+export {
+  AepFetchError,
+  type AepFetchAuthentication,
+  type AepFetchInput,
+  type AepFetchPaymentRequired,
+  type AepFetchResult,
+  runAepFetch,
+} from './flows/aep-fetch.js';
 export { pollAsync, type PollExitReason, type PollOptions, type PollOutcome } from './utils/async-poll.js';
 export { describeUser, previewAccessToken } from './utils/user-display.js';
 
@@ -128,6 +147,7 @@ export { type AuthStatusProbeInput, type AuthStatusProbeResult, probeAuthStatus 
 export {
   buildMppSection,
   buildX402Section,
+  type AepSection,
   type CombinedInspectEvent,
   type CombinedInspectNoPayment,
   type CombinedInspectPhase,
@@ -168,9 +188,16 @@ export {
 export {
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+  type PaymentInspectionBlocked,
+  PaymentInspectionBlockedError,
   type PaymentReplayInput,
   type PaymentReplayResult,
+  SellerAuthenticationError,
+  type SellerRequestInput,
+  type SellerRequestTransport,
+  defaultSellerRequestTransport,
   replayPaymentRequest,
+  sellerRequest,
 } from './flows/payment-fetch.js';
 export {
   type X402FetchEvent,

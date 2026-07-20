@@ -32,9 +32,9 @@ The package exposes three things:
    environment-derived default).
 
 3. **Helpers** — `sanitizeDeep`, `sanitizeResource`, the `Storage` / `MemoryStorage` classes, the `pollAsync` generic,
-   the seller-probe primitives (`sellerProbe`, `replayWithPayment`, `describeBody`), the x402 decode helpers
-   (`decodeHeader`, `summarizeAccepts`), plus the `approvalUrlFor` / `dashboardHostFor` URL helpers. All used inside the
-   augmented handles; all re-exported for direct consumption.
+   the seller-request primitives (`sellerProbe`, `sellerRequest`, `replayWithPayment`, `replayPaymentRequest`,
+   `describeBody`), the x402 decode helpers (`decodeHeader`, `summarizeAccepts`), plus the `approvalUrlFor` /
+   `dashboardHostFor` URL helpers. All used inside the augmented handles; all re-exported for direct consumption.
 
 ## Two-minute tour
 

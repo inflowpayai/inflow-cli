@@ -60,12 +60,13 @@ Confirm with `inflow auth status` before proceeding.
 
 Setup alone is not enough. Before performing a task with InFlow, load and follow its playbook:
 
-| Task                                          | Playbook                                                                       |
-| --------------------------------------------- | ------------------------------------------------------------------------------ |
-| Pay HTTP 402-protected resources (MPP / x402) | run `inflow --skill`, or fetch https://inflowcli.ai/skills/agentic-payments.md |
+| Task                                          | Playbook                                                                                            |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Enroll with or access an AEP Service          | run `inflow --skill agentic-enrollment`, or fetch https://inflowcli.ai/skills/agentic-enrollment.md |
+| Pay HTTP 402-protected resources (MPP / x402) | run `inflow --skill agentic-payments`, or fetch https://inflowcli.ai/skills/agentic-payments.md     |
 
-Prefer `inflow --skill` - it always matches the version you are running. The web copy reflects the latest release;
-compare its `version:` header against `inflow --version`.
+Prefer `inflow --skill <name>` - it always matches the version you are running. The web copy reflects the latest
+release; compare its `version:` header against `inflow --version`.
 
 The CLI is self-describing - prefer querying it over static docs: `inflow --llms` (command index), `inflow --llms-full`
 (parameter detail), `inflow <command> --schema` (JSON Schema for one command).

@@ -2,6 +2,7 @@ import {
   type CombinedInspectPhase,
   type CombinedInspectPipelineDeps,
   type DecodedChallenge,
+  type AepSection,
   type MppSection,
   reduceCombinedInspect,
   runCombinedInspectPipeline,
@@ -14,6 +15,7 @@ import type React from 'react';
 import { useEffect, useReducer } from 'react';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { Table, type TableColumn } from '../../utils/table.js';
+import { AepDetailsTable } from '../aep/views.js';
 
 function orDash(value: string | undefined): string {
   return value === undefined || value === '' ? '—' : value;
@@ -45,12 +47,89 @@ const X402_TRIAGE_COLUMNS: ReadonlyArray<TableColumn<PaymentRequirements>> = [
 ];
 
 /** Protocols with at least one usable entry — drives the `detected:` summary and the agent frame. */
-export function detectedProtocols(mpp: MppSection, x402: X402Section): string[] {
+export function detectedProtocols(aep: AepSection, mpp: MppSection, x402: X402Section): string[] {
   const out: string[] = [];
+  if (aep.kind !== 'absent') out.push('aep');
   if (mpp.kind === 'challenges' && mpp.challenges.length > 0) out.push('mpp');
   if (x402.kind === 'accepts' && x402.accepts.length > 0) out.push('x402');
   return out;
 }
+
+const AepSectionView: React.FC<{ section: AepSection }> = ({ section }) => {
+  if (section.kind === 'absent') {
+    if (section.openApiPolicy !== undefined) {
+      return (
+        <Box flexDirection="column">
+          <Text>
+            <Text bold>── AEP ──</Text>{' '}
+            <Text dimColor>{section.source === 'not_checked' ? 'not checked' : 'not required for this URL'}</Text>
+          </Text>
+        </Box>
+      );
+    }
+    return (
+      <Text>
+        <Text bold>── AEP ──</Text>{' '}
+        <Text dimColor>{section.source === 'not_checked' ? 'not checked' : 'not required for this URL'}</Text>
+      </Text>
+    );
+  }
+  if (section.kind === 'error') {
+    return (
+      <Text>
+        <Text bold>── AEP ──</Text>{' '}
+        <Text color="yellow">{`authentication required, but Inspect failed (${section.code})`}</Text>
+      </Text>
+    );
+  }
+  const serviceUrl = String(section.inspect.finalUrl ?? section.inspect.inspectUrl).replace('/.well-known/aep', '');
+  if (section.kind === 'openapi') {
+    const resourceAuthentication =
+      section.policy.state === 'required'
+        ? 'AEP authenticatable'
+        : section.policy.state === 'public'
+          ? 'Not required'
+          : 'Not checked';
+    return (
+      <Box flexDirection="column">
+        <Text>
+          <Text bold>── AEP ──</Text>{' '}
+          <Text dimColor>{section.policy.state === 'required' ? 'authentication required' : 'not required'}</Text>
+        </Text>
+        <AepDetailsTable
+          document={section.inspect.document}
+          openApiPolicy={section.policy}
+          resourceAuthentication={resourceAuthentication}
+          serviceUrl={serviceUrl}
+        />
+      </Box>
+    );
+  }
+  if (section.kind === 'blocked') {
+    return (
+      <Box flexDirection="column">
+        <Text>
+          <Text bold>── AEP ──</Text> <Text color="yellow">authentication required before payment inspection</Text>
+        </Text>
+        <Text dimColor>{section.message}</Text>
+        <AepDetailsTable
+          document={section.inspect.document}
+          openApiPolicy={section.policy}
+          resourceAuthentication="AEP authenticatable"
+          serviceUrl={serviceUrl}
+        />
+      </Box>
+    );
+  }
+  return (
+    <Box flexDirection="column">
+      <Text>
+        <Text bold>── AEP ──</Text> <Text dimColor>AEP authentication required</Text>
+      </Text>
+      <AepDetailsTable document={section.inspect.document} serviceUrl={serviceUrl} />
+    </Box>
+  );
+};
 
 const MppSectionView: React.FC<{ section: MppSection }> = ({ section }) => {
   if (section.kind === 'absent') {
@@ -166,11 +245,16 @@ export const CombinedInspectView: React.FC<CombinedInspectViewProps> = ({ url, m
     const { result } = phase;
     return (
       <Box flexDirection="column">
-        <Text color="green">✓ Seller accepted without payment</Text>
-        <Text>{`status: ${String(result.status)}`}</Text>
-        {result.contentType !== undefined ? <Text>{`content-type: ${result.contentType}`}</Text> : null}
-        <Text>{`response size: ${String(result.bodySizeBytes)} bytes`}</Text>
-        <Text dimColor>No InFlow-payable challenge advertised.</Text>
+        <Text>
+          <Text bold>── AEP ──</Text> <Text dimColor>not required for this URL</Text>
+        </Text>
+        <Box marginTop={1} flexDirection="column">
+          <Text color="green">✓ Seller accepted without payment</Text>
+          <Text>{`status: ${String(result.status)}`}</Text>
+          {result.contentType !== undefined ? <Text>{`content-type: ${result.contentType}`}</Text> : null}
+          <Text>{`response size: ${String(result.bodySizeBytes)} bytes`}</Text>
+          <Text dimColor>No InFlow-payable challenge advertised.</Text>
+        </Box>
       </Box>
     );
   }
@@ -185,16 +269,19 @@ export const CombinedInspectView: React.FC<CombinedInspectViewProps> = ({ url, m
   }
 
   const { result } = phase;
-  const detected = detectedProtocols(result.mpp, result.x402);
+  const detected = detectedProtocols(result.aep, result.mpp, result.x402);
   return (
     <Box flexDirection="column">
       <Text>
-        <Text bold>PAYMENT-REQUIRED</Text>
+        <Text bold>HTTP requirements</Text>
         {' for '}
         <Text color="cyan">{result.url}</Text>
         {'  ·  '}
         <Text dimColor>{`detected: ${detected.length > 0 ? detected.join(', ') : 'none'}`}</Text>
       </Text>
+      <Box marginTop={1}>
+        <AepSectionView section={result.aep} />
+      </Box>
       <Box marginTop={1}>
         <MppSectionView section={result.mpp} />
       </Box>
@@ -203,8 +290,7 @@ export const CombinedInspectView: React.FC<CombinedInspectViewProps> = ({ url, m
       </Box>
       <Box marginTop={1}>
         <Text dimColor>
-          Full detail (pay-to, timeout, extras, ids/digests): `inflow mpp inspect` / `inflow x402 inspect`, or --format
-          json.
+          Full detail: `inflow aep inspect` / `inflow mpp inspect` / `inflow x402 inspect`, or --format json.
         </Text>
       </Box>
     </Box>

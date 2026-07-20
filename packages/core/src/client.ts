@@ -29,6 +29,18 @@ import type {
 import { UserResource } from './resources/user.js';
 import { createAccessTokenProvider } from './session.js';
 import { sanitizeResource } from './utils/sanitize-proxy.js';
+import { InflowApiClient } from './utils/api-client.js';
+import { inspectService, type InspectServiceOptions, type InspectServiceResult } from '@aep-foundation/agent';
+
+export interface IAepResource {
+  inspect(options: InspectServiceOptions): Promise<InspectServiceResult>;
+}
+
+class AepResource implements IAepResource {
+  inspect(options: InspectServiceOptions): Promise<InspectServiceResult> {
+    return inspectService(options);
+  }
+}
 
 /**
  * Lazy handle for the buyer-side x402 client (`@inflowpayai/x402-buyer`). The underlying `createInflowClient` is an
@@ -130,6 +142,7 @@ export class Inflow {
   readonly user: IUser;
   readonly x402: IX402;
   readonly mpp: IMpp;
+  readonly aep: IAepResource;
   /**
    * The effective API base URL this client will hit, after resolution against `options.apiBaseUrl`, `INFLOW_BASE_URL`,
    * and the environment-derived default. Exposed for callers (CLI, MCP transports, etc.) that need to display "what URL
@@ -138,6 +151,7 @@ export class Inflow {
   readonly resolvedApiBaseUrl: string;
 
   private readonly _apiKey: string | undefined;
+  private readonly platformApi: InflowApiClient;
 
   constructor(options: InflowOptions = {}) {
     this._apiKey = options.apiKey;
@@ -155,6 +169,7 @@ export class Inflow {
     // so we resolve the data config separately and share it across the four data-touching resources.
     const dataOptions = this.resolveDataOptions(options, rawAuth);
     const dataConfig = dataOptions === options ? authConfig : resolveInflowSdkConfig(dataOptions);
+    this.platformApi = new InflowApiClient(dataConfig, this.resolvedApiBaseUrl);
 
     this.balances = sanitizeResource<IBalanceResource>(new BalanceResource(dataOptions, dataConfig));
     this.depositAddresses = sanitizeResource<IDepositAddressResource>(
@@ -169,6 +184,7 @@ export class Inflow {
 
     const mppInternal: IMppResource = new MppResource(this.resolveMppOptions(options, dataOptions));
     this.mpp = augmentMpp(mppInternal, this.resolvedApiBaseUrl);
+    this.aep = sanitizeResource<IAepResource>(new AepResource());
 
     this.auth = augmentAuth(rawAuth, rawUser, options.authStorage);
   }
@@ -180,6 +196,10 @@ export class Inflow {
    */
   hasApiKey(): boolean {
     return this._apiKey !== undefined && this._apiKey.length > 0;
+  }
+
+  platformAuthenticationHeaders(): Promise<Record<string, string>> {
+    return this.platformApi.authenticationHeaders();
   }
 
   private resolveDataOptions(options: InflowOptions, rawAuth: IAuthResource): InflowOptions {
