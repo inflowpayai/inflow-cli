@@ -196,13 +196,13 @@ export function buildSettlement(headers: Headers): MppPaySettlement | undefined 
   } catch {
     return undefined;
   }
-  const out: MppPaySettlement = {};
-  if (receipt.reference !== '') out.reference = receipt.reference;
-  if (receipt.status !== '') out.status = receipt.status;
-  if (receipt.timestamp !== '') out.timestamp = receipt.timestamp;
-  if (receipt.amount !== undefined) out.amount = receipt.amount;
-  if (receipt.currency !== undefined) out.currency = receipt.currency;
-  return Object.keys(out).length > 0 ? out : undefined;
+  return {
+    amount: receipt.settlement.amount,
+    currency: receipt.settlement.currency,
+    reference: receipt.reference,
+    status: receipt.status,
+    timestamp: receipt.timestamp,
+  };
 }
 
 /** Poll `getTransaction` to a terminal state. Returns the terminal response, or `undefined` on poll exhaustion. */
