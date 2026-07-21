@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AuthTokens } from '../../../src/types/index.js';
 import { MemoryStorage, Storage } from '../../../src/utils/storage.js';
-import { SyncMemorySecretStore } from '../../../src/secure-storage/keychain.js';
+import { AepStorage } from '../../../src/aep/storage.js';
+import { SyncMemorySecretStore, type SecretReference } from '../../../src/secure-storage/keychain.js';
 
 const sampleAuth: AuthTokens = {
   access_token: 'a',
@@ -12,6 +13,15 @@ const sampleAuth: AuthTokens = {
   token_type: 'Bearer',
   expires_in: 3600,
 };
+
+class CountingSecretStore extends SyncMemorySecretStore {
+  readonly deleted: SecretReference[] = [];
+
+  override delete(reference: SecretReference): void {
+    super.delete(reference);
+    this.deleted.push(reference);
+  }
+}
 
 describe('Storage (file-backed)', () => {
   let tmpDir: string;
@@ -281,6 +291,43 @@ describe('Storage (file-backed)', () => {
 
     s.clearAepState();
     expect(s.getAepState()).toBeNull();
+  });
+
+  it('deletes expired AEP credential secrets during normal credential-store interactions', () => {
+    const secretStore = new CountingSecretStore();
+    const s = new Storage({ cwd: tmpDir, secretStore });
+    s.setAepState({
+      credentials: {
+        'did:web:service.example': {
+          active: {
+            credential: { credential_id: 'active', value: 'active-secret-value' },
+            credentialId: 'active',
+            expiresAt: '2999-01-01T00:00:00.000Z',
+            grantType: 'api-key',
+            issuedAt: '2026-01-01T00:00:00.000Z',
+            serviceDid: 'did:web:service.example',
+          },
+          expired: {
+            credential: { credential_id: 'expired', value: 'expired-secret-value' },
+            credentialId: 'expired',
+            expiresAt: '2000-01-01T00:00:00.000Z',
+            grantType: 'api-key',
+            issuedAt: '2026-01-01T00:00:00.000Z',
+            serviceDid: 'did:web:service.example',
+          },
+        },
+      },
+      identities: {},
+      owner: { platformOrigin: 'https://platform.example', userId: 'user-1' },
+      version: 1,
+    });
+
+    const aep = new AepStorage(s, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+    expect(aep.credentials().listCredentials('did:web:service.example')).toHaveLength(1);
+
+    expect(s.getAepState()?.credentials['did:web:service.example']?.['expired']).toBeUndefined();
+    expect(readFileSync(s.getPath(), 'utf8')).not.toContain('expired-secret-value');
+    expect(secretStore.deleted.length).toBeGreaterThanOrEqual(2);
   });
 });
 
