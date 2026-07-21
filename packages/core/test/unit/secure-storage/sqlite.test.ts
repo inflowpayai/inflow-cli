@@ -1,8 +1,56 @@
-import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
+
+type SqliteTestValue = Uint8Array | bigint | number | string | null;
+
+class EmptySqliteStatement {
+  all(): Record<string, SqliteTestValue>[] {
+    return [];
+  }
+
+  get(): Record<string, SqliteTestValue> | undefined {
+    return undefined;
+  }
+
+  run(): undefined {
+    return undefined;
+  }
+}
+
+class QuickCheckStatement extends EmptySqliteStatement {
+  constructor(private readonly result: Record<string, SqliteTestValue> | undefined) {
+    super();
+  }
+
+  override get(): Record<string, SqliteTestValue> | undefined {
+    return this.result;
+  }
+}
+
+function quickCheckSqlite(result: Record<string, SqliteTestValue> | undefined): {
+  DatabaseSync: new (filename: string) => {
+    close(): void;
+    exec(sql: string): void;
+    prepare(sql: string): EmptySqliteStatement;
+  };
+} {
+  return {
+    DatabaseSync: class {
+      constructor(_filename: string) {}
+
+      close(): void {}
+
+      exec(_sql: string): void {}
+
+      prepare(sql: string): EmptySqliteStatement {
+        return sql === 'PRAGMA quick_check' ? new QuickCheckStatement(result) : new EmptySqliteStatement();
+      }
+    },
+  };
+}
 
 describe('SecureSqliteRepository', () => {
   let tmpDir: string;
@@ -30,6 +78,20 @@ describe('SecureSqliteRepository', () => {
 
     expect(loaded).toEqual(created);
     expect(repository.getPrincipal('https://platform.example.test', 'user-2')).toBeUndefined();
+  });
+
+  it('allows independent repository handles to share one durable database', () => {
+    const second = new SecureSqliteRepository({ rootDir: tmpDir });
+    second.initialize();
+    try {
+      repository.upsertSetting('cli-process', { source: 'cli' });
+      second.upsertSetting('mcp-process', { source: 'mcp' });
+
+      expect(repository.getSetting('mcp-process')?.payload).toEqual({ source: 'mcp' });
+      expect(second.getSetting('cli-process')?.payload).toEqual({ source: 'cli' });
+    } finally {
+      second.close();
+    }
   });
 
   it('stores public documents separately from authenticated records', () => {
@@ -150,6 +212,41 @@ describe('SecureSqliteRepository', () => {
     await expect(repository.verifyDatabaseFiles()).rejects.toMatchObject({
       secureStorageCode: 'secure_storage_invalid_path',
     });
+  });
+
+  it('reports corrupted database files with the stable secure-storage code', () => {
+    repository.close();
+    writeFileSync(join(tmpDir, 'inflow.sqlite3'), 'not a sqlite database');
+    const corrupted = new SecureSqliteRepository({ rootDir: tmpDir });
+
+    let error: unknown;
+    try {
+      corrupted.initialize();
+    } catch (cause) {
+      error = cause;
+    }
+    expect(error).toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
+    corrupted.close();
+  });
+
+  it('reports failed SQLite quick_check results with the stable secure-storage code', () => {
+    for (const [name, result] of [
+      ['missing', undefined],
+      ['failed', { quick_check: 'database disk image is malformed' }],
+    ] as const) {
+      const failing = new SecureSqliteRepository({
+        databasePath: join(tmpDir, `${name}.sqlite3`),
+        loadSqlite: () => quickCheckSqlite(result),
+      });
+      let error: unknown;
+      try {
+        failing.initialize();
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
+      failing.close();
+    }
   });
 
   it('allows close to be repeated safely', () => {

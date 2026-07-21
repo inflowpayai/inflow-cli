@@ -2,6 +2,11 @@ import type { KeychainReferenceManifest, SecretReference, SecureSecretStore } fr
 import type { SyncKeychainReferenceManifest, SyncSecureSecretStore } from './keychain.js';
 import type { SecureSqliteRepository } from './sqlite.js';
 
+function errorFromCause(cause: unknown): Error {
+  if (cause instanceof Error) return cause;
+  return new Error('Secure secret lifecycle operation failed.', { cause });
+}
+
 export class SecureSecretLifecycleCoordinator {
   constructor(
     private readonly repository: SecureSqliteRepository,
@@ -15,21 +20,33 @@ export class SecureSecretLifecycleCoordinator {
     principalId: number | null,
     payload: unknown = {},
   ): Promise<void> {
+    let failure: Error | undefined;
     await this.repository.writeTransaction(async () => {
       this.repository.beginSecretLifecycle(reference, principalId, payload);
-      await this.store.create(reference, value);
-      await this.manifest.add(reference);
-      this.repository.markSecretActive(reference);
+      try {
+        await this.store.create(reference, value);
+        await this.manifest.add(reference);
+        this.repository.markSecretActive(reference);
+      } catch (cause) {
+        failure = errorFromCause(cause);
+      }
     });
+    if (failure !== undefined) throw failure;
   }
 
   async delete(reference: SecretReference): Promise<void> {
+    let failure: Error | undefined;
     await this.repository.writeTransaction(async () => {
       this.repository.markSecretDeleting(reference);
-      await this.store.delete(reference);
-      await this.manifest.remove(reference);
-      this.repository.deleteSecretLifecycle(reference);
+      try {
+        await this.store.delete(reference);
+        await this.manifest.remove(reference);
+        this.repository.deleteSecretLifecycle(reference);
+      } catch (cause) {
+        failure = errorFromCause(cause);
+      }
     });
+    if (failure !== undefined) throw failure;
   }
 
   async recoverInterruptedWork(): Promise<void> {
@@ -64,21 +81,33 @@ export class SyncSecureSecretLifecycleCoordinator {
   ) {}
 
   create(reference: SecretReference, value: Uint8Array, principalId: number | null, payload: unknown = {}): void {
+    let failure: Error | undefined;
     this.repository.writeTransactionSync(() => {
       this.repository.beginSecretLifecycle(reference, principalId, payload);
-      this.store.create(reference, value);
-      this.manifest.add(reference);
-      this.repository.markSecretActive(reference);
+      try {
+        this.store.create(reference, value);
+        this.manifest.add(reference);
+        this.repository.markSecretActive(reference);
+      } catch (cause) {
+        failure = errorFromCause(cause);
+      }
     });
+    if (failure !== undefined) throw failure;
   }
 
   delete(reference: SecretReference): void {
+    let failure: Error | undefined;
     this.repository.writeTransactionSync(() => {
       this.repository.markSecretDeleting(reference);
-      this.store.delete(reference);
-      this.manifest.remove(reference);
-      this.repository.deleteSecretLifecycle(reference);
+      try {
+        this.store.delete(reference);
+        this.manifest.remove(reference);
+        this.repository.deleteSecretLifecycle(reference);
+      } catch (cause) {
+        failure = errorFromCause(cause);
+      }
     });
+    if (failure !== undefined) throw failure;
   }
 
   recoverInterruptedWork(): void {

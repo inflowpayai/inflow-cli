@@ -168,116 +168,122 @@ export class SecureSqliteRepository {
 
   initialize(): void {
     ensureDatabasePath(this.databasePath);
-    const db = this.db();
-    db.exec(`
-      PRAGMA foreign_keys = ON;
-      PRAGMA journal_mode = WAL;
-      PRAGMA synchronous = FULL;
-      PRAGMA trusted_schema = OFF;
-      PRAGMA secure_delete = ON;
-      PRAGMA busy_timeout = 5000;
-    `);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS schema_metadata (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS principals (
-        id INTEGER PRIMARY KEY,
-        platform_origin TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        payload_version INTEGER NOT NULL,
-        payload BLOB NOT NULL,
-        UNIQUE(platform_origin, user_id)
-      );
-      CREATE TABLE IF NOT EXISTS connection_profiles (
-        id INTEGER PRIMARY KEY,
-        environment TEXT NOT NULL UNIQUE,
-        payload_version INTEGER NOT NULL,
-        payload BLOB NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS auth_sessions (
-        id INTEGER PRIMARY KEY,
-        profile_id INTEGER NOT NULL REFERENCES connection_profiles(id) ON DELETE CASCADE,
-        principal_id INTEGER NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
-        auth_method TEXT NOT NULL,
-        expires_at TEXT,
-        access_secret_purpose TEXT,
-        access_secret_reference TEXT,
-        refresh_secret_purpose TEXT,
-        refresh_secret_reference TEXT,
-        payload_version INTEGER NOT NULL,
-        payload BLOB NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS pending_auth (
-        id INTEGER PRIMARY KEY,
-        profile_id INTEGER NOT NULL REFERENCES connection_profiles(id) ON DELETE CASCADE,
-        expires_at TEXT NOT NULL,
-        device_secret_purpose TEXT NOT NULL,
-        device_secret_reference TEXT NOT NULL,
-        payload_version INTEGER NOT NULL,
-        payload BLOB NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS aep_identities (
-        id INTEGER PRIMARY KEY,
-        principal_id INTEGER NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
-        service_did TEXT NOT NULL,
-        agent_did TEXT NOT NULL,
-        identity_kind TEXT NOT NULL,
-        payload_version INTEGER NOT NULL,
-        payload BLOB NOT NULL,
-        UNIQUE(principal_id, service_did)
-      );
-      CREATE TABLE IF NOT EXISTS aep_credentials (
-        id INTEGER PRIMARY KEY,
-        principal_id INTEGER NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
-        service_did TEXT NOT NULL,
-        credential_id TEXT NOT NULL,
-        grant_type TEXT NOT NULL,
-        issued_at TEXT NOT NULL,
-        expires_at TEXT,
-        secret_purpose TEXT NOT NULL,
-        secret_reference TEXT NOT NULL,
-        payload_version INTEGER NOT NULL,
-        payload BLOB NOT NULL,
-        UNIQUE(principal_id, service_did, credential_id)
-      );
-      CREATE TABLE IF NOT EXISTS public_documents (
-        namespace TEXT NOT NULL,
-        canonical_url TEXT NOT NULL,
-        final_url TEXT,
-        cached_at TEXT NOT NULL,
-        cache_control TEXT,
-        etag TEXT,
-        last_modified TEXT,
-        payload_version INTEGER NOT NULL,
-        payload BLOB NOT NULL,
-        PRIMARY KEY(namespace, canonical_url)
-      );
-      CREATE TABLE IF NOT EXISTS settings (
-        name TEXT PRIMARY KEY,
-        payload_version INTEGER NOT NULL,
-        payload BLOB NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS secret_lifecycle (
-        secret_purpose TEXT NOT NULL,
-        secret_reference TEXT NOT NULL,
-        principal_id INTEGER REFERENCES principals(id) ON DELETE CASCADE,
-        state TEXT NOT NULL CHECK(state IN ('pending', 'active', 'deleting')),
-        payload_version INTEGER NOT NULL,
-        payload BLOB NOT NULL,
-        PRIMARY KEY(secret_purpose, secret_reference)
-      );
-      CREATE INDEX IF NOT EXISTS auth_sessions_principal_idx ON auth_sessions(principal_id);
-      CREATE INDEX IF NOT EXISTS aep_credentials_lookup_idx ON aep_credentials(principal_id, service_did, grant_type, expires_at);
-      CREATE INDEX IF NOT EXISTS aep_identities_lookup_idx ON aep_identities(principal_id, service_did);
-      CREATE INDEX IF NOT EXISTS public_documents_namespace_idx ON public_documents(namespace, cached_at);
-      CREATE INDEX IF NOT EXISTS secret_lifecycle_state_idx ON secret_lifecycle(state);
-    `);
-    this.setSchemaMetadata('schema_version', String(SCHEMA_VERSION));
-    const check = db.prepare('PRAGMA quick_check').get();
-    if (check === undefined || Object.values(check)[0] !== 'ok') {
-      throw new SecureStorageError('secure_storage_corrupt', 'SQLite quick_check failed.');
+    try {
+      const db = this.db();
+      db.exec(`
+        PRAGMA foreign_keys = ON;
+        PRAGMA journal_mode = WAL;
+        PRAGMA synchronous = FULL;
+        PRAGMA trusted_schema = OFF;
+        PRAGMA secure_delete = ON;
+        PRAGMA busy_timeout = 5000;
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS schema_metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS principals (
+          id INTEGER PRIMARY KEY,
+          platform_origin TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          payload_version INTEGER NOT NULL,
+          payload BLOB NOT NULL,
+          UNIQUE(platform_origin, user_id)
+        );
+        CREATE TABLE IF NOT EXISTS connection_profiles (
+          id INTEGER PRIMARY KEY,
+          environment TEXT NOT NULL UNIQUE,
+          payload_version INTEGER NOT NULL,
+          payload BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+          id INTEGER PRIMARY KEY,
+          profile_id INTEGER NOT NULL REFERENCES connection_profiles(id) ON DELETE CASCADE,
+          principal_id INTEGER NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+          auth_method TEXT NOT NULL,
+          expires_at TEXT,
+          access_secret_purpose TEXT,
+          access_secret_reference TEXT,
+          refresh_secret_purpose TEXT,
+          refresh_secret_reference TEXT,
+          payload_version INTEGER NOT NULL,
+          payload BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS pending_auth (
+          id INTEGER PRIMARY KEY,
+          profile_id INTEGER NOT NULL REFERENCES connection_profiles(id) ON DELETE CASCADE,
+          expires_at TEXT NOT NULL,
+          device_secret_purpose TEXT NOT NULL,
+          device_secret_reference TEXT NOT NULL,
+          payload_version INTEGER NOT NULL,
+          payload BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS aep_identities (
+          id INTEGER PRIMARY KEY,
+          principal_id INTEGER NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+          service_did TEXT NOT NULL,
+          agent_did TEXT NOT NULL,
+          identity_kind TEXT NOT NULL,
+          payload_version INTEGER NOT NULL,
+          payload BLOB NOT NULL,
+          UNIQUE(principal_id, service_did)
+        );
+        CREATE TABLE IF NOT EXISTS aep_credentials (
+          id INTEGER PRIMARY KEY,
+          principal_id INTEGER NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+          service_did TEXT NOT NULL,
+          credential_id TEXT NOT NULL,
+          grant_type TEXT NOT NULL,
+          issued_at TEXT NOT NULL,
+          expires_at TEXT,
+          secret_purpose TEXT NOT NULL,
+          secret_reference TEXT NOT NULL,
+          payload_version INTEGER NOT NULL,
+          payload BLOB NOT NULL,
+          UNIQUE(principal_id, service_did, credential_id)
+        );
+        CREATE TABLE IF NOT EXISTS public_documents (
+          namespace TEXT NOT NULL,
+          canonical_url TEXT NOT NULL,
+          final_url TEXT,
+          cached_at TEXT NOT NULL,
+          cache_control TEXT,
+          etag TEXT,
+          last_modified TEXT,
+          payload_version INTEGER NOT NULL,
+          payload BLOB NOT NULL,
+          PRIMARY KEY(namespace, canonical_url)
+        );
+        CREATE TABLE IF NOT EXISTS settings (
+          name TEXT PRIMARY KEY,
+          payload_version INTEGER NOT NULL,
+          payload BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS secret_lifecycle (
+          secret_purpose TEXT NOT NULL,
+          secret_reference TEXT NOT NULL,
+          principal_id INTEGER REFERENCES principals(id) ON DELETE CASCADE,
+          state TEXT NOT NULL CHECK(state IN ('pending', 'active', 'deleting')),
+          payload_version INTEGER NOT NULL,
+          payload BLOB NOT NULL,
+          PRIMARY KEY(secret_purpose, secret_reference)
+        );
+        CREATE INDEX IF NOT EXISTS auth_sessions_principal_idx ON auth_sessions(principal_id);
+        CREATE INDEX IF NOT EXISTS aep_credentials_lookup_idx ON aep_credentials(principal_id, service_did, grant_type, expires_at);
+        CREATE INDEX IF NOT EXISTS aep_identities_lookup_idx ON aep_identities(principal_id, service_did);
+        CREATE INDEX IF NOT EXISTS public_documents_namespace_idx ON public_documents(namespace, cached_at);
+        CREATE INDEX IF NOT EXISTS secret_lifecycle_state_idx ON secret_lifecycle(state);
+      `);
+      this.setSchemaMetadata('schema_version', String(SCHEMA_VERSION));
+      const check = db.prepare('PRAGMA quick_check').get();
+      if (check === undefined || Object.values(check)[0] !== 'ok') {
+        throw new SecureStorageError('secure_storage_corrupt', 'SQLite quick_check failed.');
+      }
+    } catch (cause) {
+      this.close();
+      if (cause instanceof SecureStorageError) throw cause;
+      throw new SecureStorageError('secure_storage_corrupt', 'SQLite database is corrupt or unreadable.', { cause });
     }
   }
 
