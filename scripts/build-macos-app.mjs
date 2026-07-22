@@ -22,6 +22,7 @@ const args = new Set(process.argv.slice(2));
 const release = args.has('--release');
 const skipNotarize = args.has('--skip-notarize') || process.env.INFLOW_SKIP_NOTARIZATION === '1';
 const identity = process.env.INFLOW_CODESIGN_IDENTITY ?? '-';
+const timestampMode = process.env.INFLOW_CODESIGN_TIMESTAMP ?? 'default';
 const notaryProfile = process.env.INFLOW_NOTARY_PROFILE ?? 'inflow-notary';
 const packageName = 'InFlow';
 const version = packageVersion();
@@ -38,6 +39,7 @@ const seaConfigPath = join(buildRoot, 'sea-config.json');
 const seaBlobPath = join(buildRoot, 'inflow.sea.blob');
 const seaMainPath = join(buildRoot, 'sea-main.cjs');
 const standaloneBundlePath = join(resourcesPath, 'app/cli.standalone.mjs');
+const nativeRuntimePath = join(resourcesPath, 'app/native');
 const zipPath = join(artifactRoot, `inflow-${version}-${process.platform}-${process.arch}.zip`);
 const nodeVersion = process.versions.node;
 
@@ -57,12 +59,17 @@ if (release && skipNotarize) {
   throw new Error('release packaging requires notarization.');
 }
 
+if (release && timestampMode === 'none') {
+  throw new Error('release packaging requires codesign timestamping.');
+}
+
 rmSync(artifactRoot, { force: true, recursive: true });
 mkdirSync(buildRoot, { recursive: true });
 mkdirSync(join(appPath, 'Contents/MacOS'), { recursive: true });
 mkdirSync(resourcesPath, { recursive: true });
 
 run('pnpm', ['--filter', '@inflowpayai/inflow-core', 'build']);
+run(process.execPath, ['scripts/build-vault-peer-native.mjs']);
 run('pnpm', ['--filter', '@inflowpayai/inflow', 'build:standalone']);
 
 mkdirSync(dirname(standaloneBundlePath), { recursive: true });
@@ -97,16 +104,18 @@ run(resolvePostject(), [
 writeInfoPlist();
 writeEntitlements();
 copyKeyringRuntime();
+copyArgon2Runtime();
+copyVaultPeerRuntime();
 signNestedCode();
 signExecutable();
-verifySignature();
+verifySignature({ assessGatekeeper: !release, gatekeeperOptional: true });
 linkExecutable();
 zipArtifact();
 
 if (!skipNotarize) {
   notarize();
   staple();
-  verifySignature();
+  verifySignature({ assessGatekeeper: true, gatekeeperOptional: false });
 }
 
 writeFileSync(
@@ -141,6 +150,27 @@ function copyKeyringRuntime() {
   copyPackage(nativeRoot, join(resourceNodeModules, nativePackageName));
 }
 
+function copyArgon2Runtime() {
+  const argon2Root = dirname(requireFromCore.resolve('@node-rs/argon2/package.json'));
+  const requireFromArgon2 = createRequire(join(argon2Root, 'index.js'));
+  const nativePackageName = `@node-rs/argon2-darwin-${process.arch}`;
+  const nativeRoot = dirname(requireFromArgon2.resolve(`${nativePackageName}/package.json`));
+  copyPackage(argon2Root, join(resourceNodeModules, '@node-rs/argon2'));
+  copyPackage(nativeRoot, join(resourceNodeModules, nativePackageName));
+  copyFileSync(
+    join(nativeRoot, `argon2.darwin-${process.arch}.node`),
+    join(resourceNodeModules, '@node-rs/argon2', `argon2.darwin-${process.arch}.node`),
+  );
+}
+
+function copyVaultPeerRuntime() {
+  mkdirSync(nativeRuntimePath, { recursive: true });
+  copyFileSync(
+    join(repoRoot, 'packages/core/native/build/vault_peer_darwin.node'),
+    join(nativeRuntimePath, 'vault_peer_darwin.node'),
+  );
+}
+
 function copyPackage(source, destination) {
   mkdirSync(dirname(destination), { recursive: true });
   cpSync(source, destination, {
@@ -153,7 +183,7 @@ function copyPackage(source, destination) {
 function signNestedCode() {
   for (const file of listFiles(appPath)) {
     if (file.endsWith('.node') || isMachO(file)) {
-      run('codesign', ['--force', '--sign', identity, ...timestampArgs(), '--options', 'runtime', file]);
+      run('codesign', ['--force', '--sign', identity, ...timestampArgs(), ...runtimeArgs(), file]);
     }
   }
 }
@@ -164,8 +194,7 @@ function signExecutable() {
     '--sign',
     identity,
     ...timestampArgs(),
-    '--options',
-    'runtime',
+    ...runtimeArgs(),
     '--entitlements',
     entitlementsPath,
     appPath,
@@ -173,13 +202,20 @@ function signExecutable() {
 }
 
 function timestampArgs() {
+  if (timestampMode === 'none') return ['--timestamp=none'];
   return identity === '-' ? ['--timestamp=none'] : ['--timestamp'];
 }
 
-function verifySignature() {
+function runtimeArgs() {
+  return identity === '-' ? [] : ['--options', 'runtime'];
+}
+
+function verifySignature(options = { assessGatekeeper: true, gatekeeperOptional: false }) {
   run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath]);
-  if (identity !== '-') {
-    run('spctl', ['--assess', '--type', 'execute', '--verbose=2', appPath], { optional: true });
+  if (identity !== '-' && options.assessGatekeeper) {
+    run('spctl', ['--assess', '--type', 'execute', '--verbose=2', appPath], {
+      optional: options.gatekeeperOptional,
+    });
   }
 }
 

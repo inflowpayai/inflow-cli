@@ -22,6 +22,16 @@ const PKG_VERSION: string = (
 const AEP_COMMANDS = ['aep enroll', 'aep fetch', 'aep grant', 'aep inspect', 'aep revoke', 'aep status'] as const;
 const AEP_MCP_TOOLS = AEP_COMMANDS.map((command) => command.replace(' ', '_'));
 const PAYMENT_FETCH_MCP_TOOLS = ['mpp_fetch', 'x402_fetch'];
+const VAULT_COMMANDS = [
+  'vault change-passphrase',
+  'vault lock',
+  'vault policy',
+  'vault reset',
+  'vault set-policy',
+  'vault status',
+  'vault unlock',
+] as const;
+const VAULT_MCP_TOOLS = VAULT_COMMANDS.map((command) => command.replace(' ', '_'));
 const RAW_SECRET_SCHEMA_FIELDS = new Set([
   'apiKey',
   'api_key',
@@ -229,6 +239,15 @@ describe.skipIf(!existsSync(DIST_CLI))(
       const combined = stdout;
       expect(combined).toContain('inflow');
       expect(combined).toContain('agent enrollment and agentic payments');
+      expect(combined).not.toContain('--daemon');
+    });
+
+    it('rejects invalid hidden daemon modes before command registration', async () => {
+      const { exitCode, stderr } = await run(['--daemon', 'nope'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(2);
+      expect(stderr).toContain('Unknown daemon mode: nope');
     });
 
     it('--version prints the package.json version', async () => {
@@ -486,6 +505,16 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(names).toEqual(expect.arrayContaining([...AEP_COMMANDS]));
     });
 
+    it.each(['--llms', '--llms-full'] as const)('%s lists every vault command', async (flag) => {
+      const { exitCode, stdout } = await run([flag, '--format', 'json'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(0);
+      const manifest = JSON.parse(stdout) as { commands: { name: string }[] };
+      const names = manifest.commands.map((command) => command.name);
+      expect(names).toEqual(expect.arrayContaining([...VAULT_COMMANDS]));
+    });
+
     it('user get --schema returns an empty-properties JSON Schema', async () => {
       const { exitCode, stdout } = await run(['user', 'get', '--schema', '--format', 'json'], {
         env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
@@ -552,6 +581,10 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(tool?.inputSchema?.properties ?? {}).toEqual({});
       expect(tools.map((entry) => entry.name)).toEqual(expect.arrayContaining(AEP_MCP_TOOLS));
       for (const name of AEP_MCP_TOOLS) {
+        expect(tools.find((entry) => entry.name === name)?.inputSchema?.type, name).toBe('object');
+      }
+      expect(tools.map((entry) => entry.name)).toEqual(expect.arrayContaining(VAULT_MCP_TOOLS));
+      for (const name of VAULT_MCP_TOOLS) {
         expect(tools.find((entry) => entry.name === name)?.inputSchema?.type, name).toBe('object');
       }
       expect(tools.map((entry) => entry.name)).toEqual(expect.arrayContaining(PAYMENT_FETCH_MCP_TOOLS));

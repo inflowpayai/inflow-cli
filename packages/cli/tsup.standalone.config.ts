@@ -65,8 +65,8 @@ export default defineConfig({
     };
   },
   entry: { 'cli.standalone': 'src/cli.tsx' },
-  external: [],
-  noExternal: [/.*/],
+  external: ['@node-rs/argon2'],
+  noExternal: [/^(?!@node-rs\/argon2$).*/],
   format: ['esm'],
   outExtension() {
     return { js: '.mjs' };

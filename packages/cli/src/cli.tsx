@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { type AuthStorage, Inflow, Storage, storage } from '@inflowpayai/inflow-core';
+import { type AuthStorage, Inflow, runLocalVaultDaemon, Storage, storage } from '@inflowpayai/inflow-core';
 import { Cli, Help } from 'incur';
 import { createAuthCli } from './commands/auth/index.js';
 import { createAepCli } from './commands/aep/index.js';
@@ -8,6 +8,7 @@ import { createDepositAddressesCli } from './commands/deposit-addresses/index.js
 import { createInspectCommand } from './commands/inspect/index.js';
 import { createMppCli } from './commands/mpp/index.js';
 import { createUserCli } from './commands/user/index.js';
+import { createVaultCli } from './commands/vault/index.js';
 import { createX402Cli } from './commands/x402/index.js';
 import {
   formatUpdateNotice,
@@ -44,6 +45,17 @@ async function printBody(body: string): Promise<never> {
 }
 
 async function main(): Promise<void> {
+  const daemonMode = extractHiddenDaemonMode();
+  if (daemonMode !== undefined) {
+    if (daemonMode !== 'vault') {
+      process.stderr.write(`Unknown daemon mode: ${daemonMode}\n`);
+      process.exit(2);
+    }
+    await runLocalVaultDaemon({
+      ...(process.env['INFLOW_VAULT_ROOT'] !== undefined ? { rootDirectory: process.env['INFLOW_VAULT_ROOT'] } : {}),
+    });
+  }
+
   if (process.argv.includes('--bootstrap')) {
     await printBody(bootstrapBody);
   }
@@ -236,12 +248,27 @@ async function main(): Promise<void> {
   cli.command(createUserCli(inflow.user, authStorage, inflow));
   cli.command(createBalancesCli(inflow.balances, authStorage, inflow));
   cli.command(createDepositAddressesCli(inflow.depositAddresses, authStorage, inflow));
+  cli.command(createVaultCli());
   cli.command(createX402Cli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createMppCli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createAepCli(inflow, authStorage));
   cli.command('inspect', createInspectCommand(inflow, authStorage));
 
   await cli.serve();
+}
+
+function extractHiddenDaemonMode(): string | undefined {
+  const assignmentIndex = process.argv.findIndex((arg) => arg.startsWith('--daemon='));
+  if (assignmentIndex !== -1) {
+    const [arg] = process.argv.splice(assignmentIndex, 1);
+    return arg?.slice('--daemon='.length);
+  }
+
+  const index = process.argv.indexOf('--daemon');
+  if (index === -1) return undefined;
+  const value = process.argv[index + 1];
+  process.argv.splice(index, value === undefined ? 1 : 2);
+  return value ?? '';
 }
 
 main().catch((cause: unknown) => {

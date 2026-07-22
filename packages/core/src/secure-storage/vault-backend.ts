@@ -1,0 +1,92 @@
+import type { VaultRecordStatus, VaultSecretKind, VaultSecretReference } from './vault-types.js';
+
+export type VaultLockState = 'locked' | 'not_initialized' | 'unlocked';
+export type Awaitable<T> = Promise<T> | T;
+
+export const VAULT_BACKEND_METHODS = [
+  'changePassphrase',
+  'deleteExpired',
+  'deleteSecret',
+  'exists',
+  'getPolicy',
+  'getSecret',
+  'lock',
+  'putSecret',
+  'reset',
+  'setPolicy',
+  'status',
+  'touch',
+  'unlock',
+] as const;
+
+export const DEFAULT_VAULT_POLICY = {
+  idleTimeoutSeconds: 28_800,
+  lockOnDaemonExit: true,
+  lockOnExplicitLogout: true,
+  lockOnSleep: true,
+} as const satisfies VaultPolicy;
+
+export interface VaultStatus {
+  lockState: VaultLockState;
+  daemonRunning: boolean;
+}
+
+export interface VaultPolicy {
+  idleTimeoutSeconds: number | null;
+  lockOnDaemonExit: boolean;
+  lockOnExplicitLogout: boolean;
+  lockOnSleep: boolean;
+}
+
+export interface VaultSecretPayload {
+  payload: Uint8Array;
+  reference: VaultSecretReference;
+}
+
+export interface PutVaultSecretInput {
+  expectedKind: VaultSecretKind;
+  expiresAt?: string;
+  payload: Uint8Array;
+}
+
+export interface GetVaultSecretInput {
+  expectedKind: VaultSecretKind;
+  reference: VaultSecretReference;
+}
+
+export interface DeleteVaultSecretInput {
+  expectedKind: VaultSecretKind;
+  reference: VaultSecretReference;
+}
+
+export interface TouchVaultSecretInput {
+  expectedKind: VaultSecretKind;
+  reference: VaultSecretReference;
+}
+
+export interface DeleteExpiredVaultSecretsInput {
+  now: string;
+}
+
+export interface VaultBackend {
+  changePassphrase(currentUnlockFactor: Uint8Array, nextUnlockFactor: Uint8Array): Awaitable<void>;
+  deleteExpired(input: DeleteExpiredVaultSecretsInput): Awaitable<void>;
+  deleteSecret(input: DeleteVaultSecretInput): Awaitable<void>;
+  exists(input: GetVaultSecretInput): Awaitable<boolean>;
+  getPolicy(): Awaitable<VaultPolicy>;
+  getSecret(input: GetVaultSecretInput): Awaitable<VaultSecretPayload>;
+  lock(): Awaitable<void>;
+  putSecret(input: PutVaultSecretInput): Awaitable<VaultSecretReference>;
+  reset(): Awaitable<void>;
+  setPolicy(policy: VaultPolicy): Awaitable<VaultPolicy>;
+  status(): Awaitable<VaultStatus>;
+  touch(input: TouchVaultSecretInput): Awaitable<void>;
+  unlock(unlockFactor: Uint8Array): Awaitable<VaultStatus>;
+}
+
+export interface StoredVaultSecretEnvelope {
+  expiresAt?: string;
+  kind: VaultSecretKind;
+  reference: VaultSecretReference;
+  status: VaultRecordStatus;
+}

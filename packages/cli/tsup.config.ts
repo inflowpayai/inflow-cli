@@ -61,6 +61,7 @@ export default defineConfig({
       'react-devtools-core': reactDevtoolsAlias,
     };
   },
+  external: ['@node-rs/argon2'],
   entry: { cli: 'src/cli.tsx', 'npm-shim': 'src/npm-shim.ts' },
   format: ['esm'],
   outDir: 'dist',
