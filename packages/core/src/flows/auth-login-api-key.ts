@@ -8,9 +8,7 @@ import type { AuthStorage, ConnectionSettings } from '../utils/storage.js';
  * uniformly across both login paths.
  */
 export type AuthLoginApiKeyPhase =
-  | { kind: 'validating' }
-  | { kind: 'saved'; user: User }
-  | { kind: 'failed'; message: string };
+  { kind: 'validating' } | { kind: 'saved'; user: User } | { kind: 'failed'; message: string };
 
 export type AuthLoginApiKeyEvent = { type: 'validated'; user: User } | { type: 'failed'; message: string };
 

@@ -81,6 +81,7 @@ describe('PayView', () => {
       challengeId: 'chal-1',
       method: 'inflow',
       reference: 'ref-42',
+      settlement: { amount: '10.5', currency: 'USDC' },
       status: 'success',
       timestamp: '2025-01-01T00:00:00Z',
     };

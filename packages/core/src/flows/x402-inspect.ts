@@ -64,9 +64,7 @@ export type InspectEvent =
  * - `error` — header present but the codec rejected it (`DECODE_FAILED`).
  */
 export type X402HeaderParse =
-  | { kind: 'absent' }
-  | { kind: 'parsed'; decoded: PaymentRequired }
-  | { kind: 'error'; code: string; message: string };
+  { kind: 'absent' } | { kind: 'parsed'; decoded: PaymentRequired } | { kind: 'error'; code: string; message: string };
 
 /** Read + decode the `PAYMENT-REQUIRED` header from a 402 probe response. Pure; performs no I/O and applies no filters. */
 export function parseX402HeaderFromProbe(probe: SellerProbeResult): X402HeaderParse {
