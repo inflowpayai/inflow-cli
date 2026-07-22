@@ -205,6 +205,7 @@ async function main(): Promise<void> {
 
   const cli = Cli.create('inflow', {
     description: 'InFlow - agent enrollment and agentic payments from your machine.',
+    mcp: { tools: { discovery: 'direct' } },
     version: cliVersion,
   });
 

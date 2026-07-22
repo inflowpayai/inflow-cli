@@ -196,9 +196,11 @@ export function buildSettlement(headers: Headers): MppPaySettlement | undefined 
   } catch {
     return undefined;
   }
+  const settlement = receipt.settlement;
+  if (settlement === undefined) return undefined;
   return {
-    amount: receipt.settlement.amount,
-    currency: receipt.settlement.currency,
+    amount: settlement.amount,
+    currency: settlement.currency,
     reference: receipt.reference,
     status: receipt.status,
     timestamp: receipt.timestamp,

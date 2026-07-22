@@ -466,6 +466,18 @@ describe('buildSettlement', () => {
     expect(buildSettlement(headers)).toBeUndefined();
   });
 
+  it('returns undefined when a core receipt has no settlement extension', () => {
+    const headers = new Headers({
+      [HEADERS.PAYMENT_RECEIPT]: encode({
+        method: 'tempo',
+        reference: 'ref-8',
+        status: 'success',
+        timestamp: '2025-02-02T00:00:00Z',
+      }),
+    });
+    expect(buildSettlement(headers)).toBeUndefined();
+  });
+
   it('projects the populated receipt fields into a compact settlement', () => {
     const receipt: MppReceipt = {
       challengeId: 'chal-1',
