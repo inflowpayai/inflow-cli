@@ -24,6 +24,7 @@
     "build:macos-app": "node scripts/build-macos-app.mjs --skip-notarize",
     "build:macos-debug-signed": "node scripts/build-macos-app.mjs --signed-debug --skip-notarize",
     "build:macos-release": "node scripts/build-macos-app.mjs --release",
+    "smoke:macos-packaged-vault": "node scripts/smoke-macos-packaged-vault.mjs",
     "verify": "node scripts/clean-bundle-artifacts.mjs && pnpm format && pnpm typecheck && pnpm lint && pnpm test && pnpm typedoc && pnpm build",
     "dev": "turbo run dev --parallel",
     "test": "turbo run test",
