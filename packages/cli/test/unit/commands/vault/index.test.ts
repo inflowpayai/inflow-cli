@@ -1,4 +1,7 @@
 import { Buffer } from 'node:buffer';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -324,6 +327,33 @@ describe('vault command runners', () => {
         '/Applications/InFlow.app/Contents/MacOS/inflow',
       ),
     ).toBe(false);
+  });
+
+  it('treats a symlinked packaged launcher as the same daemon executable', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'inflow-vault-executable-'));
+    const executable = join(root, 'InFlow.app', 'Contents', 'MacOS', 'inflow');
+    const launcher = join(root, 'bin', 'inflow');
+    try {
+      await mkdir(join(root, 'InFlow.app', 'Contents', 'MacOS'), { recursive: true });
+      await mkdir(join(root, 'bin'), { recursive: true });
+      await writeFile(executable, '');
+      await symlink('../InFlow.app/Contents/MacOS/inflow', launcher);
+
+      expect(
+        __testing.isCompatibleDaemon(
+          {
+            buildId: 'build-1',
+            cliVersion: '0.9.0',
+            executablePath: executable,
+            pid: 123,
+          },
+          { buildId: 'build-1', cliVersion: '0.9.0' },
+          launcher,
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
   });
 
   it('resets through a compatible daemon without deleting underneath it', async () => {

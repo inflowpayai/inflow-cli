@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { spawn } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import process from 'node:process';
@@ -342,10 +343,18 @@ function isCompatibleDaemon(
   executablePath: string,
 ): boolean {
   return (
-    info.executablePath === executablePath &&
+    executableIdentityPath(info.executablePath) === executableIdentityPath(executablePath) &&
     info.cliVersion === (options.cliVersion ?? null) &&
     info.buildId === (options.buildId ?? null)
   );
+}
+
+function executableIdentityPath(executablePath: string): string {
+  try {
+    return realpathSync.native(executablePath);
+  } catch {
+    return resolve(executablePath);
+  }
 }
 
 async function resetLocalVaultWithDeps(options: LocalVaultDaemonClientOptions, deps: ResetVaultDeps): Promise<void> {
