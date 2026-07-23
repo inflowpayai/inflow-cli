@@ -1,4 +1,5 @@
 import type { IAuthResource } from '../resources/interfaces.js';
+import { SecureStorageError } from '../secure-storage/errors.js';
 import type { AuthTokens } from '../types/index.js';
 import { pollAsync, type PollExitReason } from '../utils/async-poll.js';
 import { previewAccessToken } from '../utils/user-display.js';
@@ -89,14 +90,14 @@ async function advancePendingFlow(
   storage: AuthStorage,
   connection: ConnectionSettings | undefined,
 ): Promise<void> {
-  const pending = storage.getPendingDeviceAuth();
+  const pending = readStorageValue(() => storage.getPendingDeviceAuth(), null);
   if (!pending) return;
 
   const tokens: AuthTokens | null = await authResource.pollDeviceAuth(pending.device_code);
   if (!tokens) return;
 
   // Capture the prior refresh token BEFORE overwriting storage. The safe-rebind invariant: revoke fires only after new tokens are durable.
-  const priorRefreshToken = storage.getAuth()?.refresh_token;
+  const priorRefreshToken = readStorageValue(() => storage.getAuth(), null)?.refresh_token;
   storage.setAuth(tokens);
   // Single active auth method at a time. A successful device-flow login supersedes any prior API key on the same machine.
   storage.clearApiKey();
@@ -117,15 +118,15 @@ async function advancePendingFlow(
  * tokens are also present in storage.
  */
 export function composeAuthSnapshot(storage: AuthStorage, options: ComposeAuthSnapshotOptions = {}): AuthSnapshotFrame {
-  const tokens = storage.getAuth();
+  const tokens = readStorageValue(() => storage.getAuth(), null);
   // Runtime api key (from a flag/env) wins over the stored one. When composing a status frame mid-invocation this is what matches
   // InflowResources's precedence and avoids "auth status says X but actual calls used Y" confusion.
   const apiKey =
     options.effectiveApiKey !== undefined && options.effectiveApiKey.length > 0
       ? options.effectiveApiKey
-      : (storage.getApiKey() ?? undefined);
-  const pending = storage.getPendingDeviceAuth();
-  const connection = options.connection ?? storage.getConnection() ?? undefined;
+      : (readStorageValue(() => storage.getApiKey(), null) ?? undefined);
+  const pending = readStorageValue(() => storage.getPendingDeviceAuth(), null);
+  const connection = options.connection ?? readStorageValue(() => storage.getConnection(), null) ?? undefined;
   const credentialsPath = options.verbose ? storage.getPath() : undefined;
 
   // API key path takes precedence over device tokens — mirrors the resource layer (see InflowResources.authenticatedOptions).
@@ -213,7 +214,7 @@ export async function* pollAuthStatus(
       if (composeOptions.connection !== undefined) {
         terminal.connection = composeOptions.connection;
       } else {
-        const fileConnection = storage.getConnection();
+        const fileConnection = readStorageValue(() => storage.getConnection(), null);
         if (fileConnection !== null) terminal.connection = fileConnection;
       }
       if (composeOptions.update !== undefined) terminal.update = composeOptions.update;
@@ -221,5 +222,20 @@ export async function* pollAuthStatus(
       return;
     }
     yield outcome.value;
+  }
+}
+
+function readStorageValue<T>(read: () => T, fallback: T): T {
+  try {
+    return read();
+  } catch (cause) {
+    if (
+      cause instanceof SecureStorageError &&
+      cause.secureStorageCode === 'secure_storage_secret_missing' &&
+      cause.message === 'A referenced vault secret is missing.'
+    ) {
+      return fallback;
+    }
+    throw cause;
   }
 }

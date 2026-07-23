@@ -5,22 +5,22 @@ import path from 'node:path';
 import { InflowConfigurationError } from '../errors.js';
 import type { AuthTokens } from '../types/index.js';
 import type {
+  AepCredentialDeleteSelector,
   AepOwner,
   AepPersistedInspectResult,
   AepPersistedState,
   AepStateStorage,
   PublicDocumentStateStorage,
 } from '../aep/storage.js';
-import type { AepPublicDocumentCacheRecord } from '@aep-foundation/agent';
+import type { AepPublicDocumentCacheRecord, AgentServiceIdentity } from '@aep-foundation/agent';
 import {
-  SyncKeychainReferenceManifest,
-  SyncKeychainSecretStore,
   createOpaqueSecretReference,
   type SecretReference,
   type SyncSecureSecretStore,
-} from '../secure-storage/keychain.js';
+} from '../secure-storage/secret-store.js';
 import { SyncSecureSecretLifecycleCoordinator } from '../secure-storage/lifecycle.js';
 import { SecureSqliteRepository, type StoredPublicDocument } from '../secure-storage/sqlite.js';
+import { NoopSyncSecretReferenceManifest, SyncVaultSecretStore } from '../secure-storage/vault-sync-secret-store.js';
 
 export interface PendingDeviceAuth {
   device_code: string;
@@ -163,11 +163,11 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
     this.options = options;
     const databasePath = this.databasePath();
     this.repository = new SecureSqliteRepository(databasePath === undefined ? {} : { databasePath });
-    this.secretStore = options.secretStore ?? new SyncKeychainSecretStore();
+    this.secretStore = options.secretStore ?? defaultSecretStore();
     this.lifecycle = new SyncSecureSecretLifecycleCoordinator(
       this.repository,
       this.secretStore,
-      new SyncKeychainReferenceManifest(this.secretStore),
+      new NoopSyncSecretReferenceManifest(),
     );
   }
 
@@ -188,12 +188,12 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
   setAuth(auth: AuthTokens): void {
     this.initialize();
     const persisted = withComputedExpiry(auth);
-    this.repository.writeTransactionSync(() => {
-      this.clearAuth();
-      const accessToken = createOpaqueSecretReference('auth-access-token');
-      const refreshToken = createOpaqueSecretReference('auth-refresh-token');
-      this.lifecycle.create(accessToken, utf8(persisted.access_token), null, { setting: AUTH_SETTING });
-      this.lifecycle.create(refreshToken, utf8(persisted.refresh_token), null, { setting: AUTH_SETTING });
+    this.clearAuth();
+    const accessToken = createOpaqueSecretReference('auth-access-token');
+    const refreshToken = createOpaqueSecretReference('auth-refresh-token');
+    this.lifecycle.create(accessToken, utf8(persisted.access_token), null, { setting: AUTH_SETTING });
+    this.lifecycle.create(refreshToken, utf8(persisted.refresh_token), null, { setting: AUTH_SETTING });
+    try {
       this.repository.upsertSetting(AUTH_SETTING, {
         accessToken,
         refreshToken,
@@ -202,7 +202,11 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
         ...(persisted.scope === undefined ? {} : { scope: persisted.scope }),
         ...(persisted.expires_at === undefined ? {} : { expiresAt: persisted.expires_at }),
       } satisfies StoredAuth);
-    });
+    } catch (cause) {
+      this.lifecycle.delete(accessToken);
+      this.lifecycle.delete(refreshToken);
+      throw cause;
+    }
   }
 
   clearAuth(): void {
@@ -216,7 +220,11 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
   }
 
   isAuthenticated(): boolean {
-    return this.getAuth() !== null || this.getApiKey() !== null;
+    this.initialize();
+    return (
+      isStoredAuth(this.repository.getSetting(AUTH_SETTING)?.payload) ||
+      isStoredSecret(this.repository.getSetting(API_KEY_SETTING)?.payload)
+    );
   }
 
   getApiKey(): string | null {
@@ -231,12 +239,15 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
       throw new InflowConfigurationError('Storage.setApiKey: api key must be a non-empty string.');
     }
     this.initialize();
-    this.repository.writeTransactionSync(() => {
-      this.clearApiKey();
-      const secret = createOpaqueSecretReference('api-key');
-      this.lifecycle.create(secret, utf8(apiKey), null, { setting: API_KEY_SETTING });
+    this.clearApiKey();
+    const secret = createOpaqueSecretReference('api-key');
+    this.lifecycle.create(secret, utf8(apiKey), null, { setting: API_KEY_SETTING });
+    try {
       this.repository.upsertSetting(API_KEY_SETTING, { secret } satisfies StoredSecret);
-    });
+    } catch (cause) {
+      this.lifecycle.delete(secret);
+      throw cause;
+    }
   }
 
   clearApiKey(): void {
@@ -283,10 +294,10 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
 
   setPendingDeviceAuth(pending: PendingDeviceAuth): void {
     this.initialize();
-    this.repository.writeTransactionSync(() => {
-      this.clearPendingDeviceAuth();
-      const deviceCode = createOpaqueSecretReference('pending-device-code');
-      this.lifecycle.create(deviceCode, utf8(pending.device_code), null, { setting: PENDING_AUTH_SETTING });
+    this.clearPendingDeviceAuth();
+    const deviceCode = createOpaqueSecretReference('pending-device-code');
+    this.lifecycle.create(deviceCode, utf8(pending.device_code), null, { setting: PENDING_AUTH_SETTING });
+    try {
       this.repository.upsertSetting(PENDING_AUTH_SETTING, {
         deviceCode,
         interval: pending.interval,
@@ -294,7 +305,10 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
         verificationUrl: pending.verification_url,
         phrase: pending.phrase,
       } satisfies StoredPendingDeviceAuth);
-    });
+    } catch (cause) {
+      this.lifecycle.delete(deviceCode);
+      throw cause;
+    }
   }
 
   clearPendingDeviceAuth(): void {
@@ -325,6 +339,40 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
       }
     }
     this.repository.deleteSetting(AEP_STATE_SETTING);
+  }
+
+  deleteAepCredentials(owner: AepOwner, serviceDid: string, selector: AepCredentialDeleteSelector): void {
+    this.initialize();
+    const stored = this.repository.getSetting(AEP_STATE_SETTING)?.payload;
+    if (!isStoredAepState(stored)) return;
+    if (!sameAepOwner(stored.owner, owner)) {
+      this.clearAepState();
+      return;
+    }
+    const records = stored.credentials[serviceDid];
+    if (records === undefined) return;
+    for (const [credentialId, record] of Object.entries(records)) {
+      if (matchesStoredAepCredential(record, selector)) {
+        this.lifecycle.delete(record.credentialSecret);
+        delete records[credentialId];
+      }
+    }
+    if (Object.keys(records).length === 0) {
+      delete stored.credentials[serviceDid];
+    }
+    this.repository.upsertSetting(AEP_STATE_SETTING, stored);
+  }
+
+  findAepIdentity(owner: AepOwner, serviceDid: string): AgentServiceIdentity | undefined {
+    this.initialize();
+    const stored = this.repository.getSetting(AEP_STATE_SETTING)?.payload;
+    if (!isStoredAepState(stored)) return undefined;
+    if (!sameAepOwner(stored.owner, owner)) {
+      this.clearAepState();
+      return undefined;
+    }
+    const identity = stored.identities[serviceDid];
+    return identity === undefined ? undefined : structuredClone(identity);
   }
 
   getAepState(): AepPersistedState | null {
@@ -358,9 +406,10 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
 
   setAepState(state: AepPersistedState): void {
     this.initialize();
-    this.repository.writeTransactionSync(() => {
-      this.clearAepState();
-      const credentials: StoredAepState['credentials'] = {};
+    this.clearAepState();
+    const created: SecretReference[] = [];
+    const credentials: StoredAepState['credentials'] = {};
+    try {
       for (const [serviceDid, serviceRecords] of Object.entries(state.credentials)) {
         const byCredentialId: Record<string, StoredAepCredentialRecord> = {};
         for (const [credentialId, record] of Object.entries(serviceRecords)) {
@@ -369,6 +418,7 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
             credentialId,
             serviceDid,
           });
+          created.push(credentialSecret);
           byCredentialId[credentialId] = {
             credentialSecret,
             credentialId: record.credentialId,
@@ -388,7 +438,12 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
         version: 1,
         ...(state.inspect === undefined ? {} : { inspect: structuredClone(state.inspect) }),
       } satisfies StoredAepState);
-    });
+    } catch (cause) {
+      for (const reference of created) {
+        this.lifecycle.delete(reference);
+      }
+      throw cause;
+    }
   }
 
   getDiscoveryDocuments(): AepPublicDocumentCacheRecord[] {
@@ -592,6 +647,10 @@ function readUtf8(store: SyncSecureSecretStore, reference: SecretReference): str
   return Buffer.from(store.read(reference)).toString('utf8');
 }
 
+function defaultSecretStore(): SyncSecureSecretStore {
+  return new SyncVaultSecretStore();
+}
+
 function publicDocumentToCacheRecord(record: StoredPublicDocument): AepPublicDocumentCacheRecord {
   return {
     cachedAt: record.cachedAt,
@@ -700,6 +759,18 @@ function isStoredAepState(value: unknown): value is StoredAepState {
     }
   }
   return isRecord(value['identities']);
+}
+
+function sameAepOwner(left: AepOwner, right: AepOwner): boolean {
+  return left.platformOrigin === right.platformOrigin && left.userId === right.userId;
+}
+
+function matchesStoredAepCredential(record: StoredAepCredentialRecord, selector: AepCredentialDeleteSelector): boolean {
+  return (
+    'allGrantTypes' in selector ||
+    ('credentialId' in selector && record.credentialId === selector.credentialId) ||
+    ('grantType' in selector && record.grantType === selector.grantType)
+  );
 }
 
 export const storage = new Storage();

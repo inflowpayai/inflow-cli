@@ -19,6 +19,7 @@ import {
 import {
   decodeVaultIpcFrame,
   encodeVaultIpcMessage,
+  VAULT_IPC_MAX_MESSAGE_BYTES,
   type VaultIpcRequest,
 } from '../../../src/secure-storage/vault-ipc.js';
 import type { VaultSecretReference } from '../../../src/secure-storage/vault-types.js';
@@ -42,8 +43,6 @@ class SocketVaultBackend implements VaultBackend {
   getPolicy(): VaultPolicy {
     return {
       idleTimeoutSeconds: 28_800,
-      lockOnDaemonExit: true,
-      lockOnExplicitLogout: true,
       lockOnSleep: true,
     };
   }
@@ -126,6 +125,39 @@ describe('vault socket transport', () => {
     });
   });
 
+  it('refuses to unlink a reachable daemon socket', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'run', 'vault.sock');
+    mkdirSync(join(tmpDir, 'run'));
+    const existing = createServer((socket) => {
+      socket.end();
+    });
+    await new Promise<void>((resolve, reject) => {
+      existing.once('error', reject);
+      existing.listen(socketPath, () => {
+        existing.off('error', reject);
+        resolve();
+      });
+    });
+    servers.push({
+      close: () =>
+        new Promise<void>((resolve, reject) => {
+          existing.close((cause) => {
+            if (cause !== undefined) {
+              reject(cause);
+              return;
+            }
+            resolve();
+          });
+        }),
+      socketPath,
+    });
+
+    await expect(startVaultSocketServer({ backend: new SocketVaultBackend(), socketPath })).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_unavailable',
+    });
+  });
+
   it('returns a redacted socket response for malformed request frames', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
     const socketPath = join(tmpDir, 'run', 'vault.sock');
@@ -148,6 +180,26 @@ describe('vault socket transport', () => {
       },
       ok: false,
     });
+  });
+
+  it('closes an oversized frame after reading only its declared length', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'run', 'vault.sock');
+    servers.push(await startVaultSocketServer({ backend: new SocketVaultBackend(), socketPath }));
+    const socket = createConnection(socketPath);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve);
+      socket.once('error', reject);
+    });
+    const closed = new Promise<boolean>((resolve, reject) => {
+      socket.once('close', resolve);
+      socket.once('error', reject);
+    });
+    const header = Buffer.alloc(4);
+    header.writeUInt32BE(VAULT_IPC_MAX_MESSAGE_BYTES + 1);
+    socket.write(header);
+
+    await expect(closed).resolves.toBe(false);
   });
 
   it('returns a redacted socket response when peer verification fails', async () => {

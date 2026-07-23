@@ -1,4 +1,6 @@
 import { Buffer } from 'node:buffer';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { __testing, createVaultCli } from '../../../../src/commands/vault/index.js';
 import { SecureStorageError, type VaultPolicy, type VaultStatus } from '@inflowpayai/inflow-core';
@@ -17,7 +19,20 @@ type VaultTestDeps = {
   client: VaultTestClient;
   ensureDaemon: ReturnType<typeof vi.fn>;
   readPassphrase: ReturnType<typeof vi.fn>;
+  readVaultStatus: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
+};
+type ResetVaultTestDeps = {
+  client: {
+    info: ReturnType<typeof vi.fn>;
+    reset: ReturnType<typeof vi.fn>;
+    shutdown: ReturnType<typeof vi.fn>;
+    status: ReturnType<typeof vi.fn>;
+  };
+  executablePath: string;
+  now: ReturnType<typeof vi.fn>;
+  removeLocalState: ReturnType<typeof vi.fn>;
+  sleep: ReturnType<typeof vi.fn>;
 };
 
 function context(options: Record<string, unknown> = {}, agent = true) {
@@ -37,8 +52,6 @@ function deps(overrides: Partial<VaultTestDeps> = {}): VaultTestDeps {
     getPolicy: vi.fn(() =>
       Promise.resolve({
         idleTimeoutSeconds: 28_800,
-        lockOnDaemonExit: true,
-        lockOnExplicitLogout: true,
         lockOnSleep: true,
       } satisfies VaultPolicy),
     ),
@@ -62,7 +75,38 @@ function deps(overrides: Partial<VaultTestDeps> = {}): VaultTestDeps {
     client,
     ensureDaemon: vi.fn(() => Promise.resolve(client)),
     readPassphrase: vi.fn(() => Promise.resolve(Buffer.from('123456'))),
+    readVaultStatus: vi.fn(() => client.status()),
     write: vi.fn(),
+    ...overrides,
+  };
+}
+
+function resetDeps(overrides: Partial<ResetVaultTestDeps> = {}): ResetVaultTestDeps {
+  const executablePath = '/Applications/InFlow.app/Contents/MacOS/inflow';
+  const client = {
+    info: vi.fn(() =>
+      Promise.resolve({
+        buildId: 'build-1',
+        cliVersion: '0.9.0',
+        executablePath,
+        pid: 123,
+      }),
+    ),
+    reset: vi.fn(() => Promise.resolve()),
+    shutdown: vi.fn(() => Promise.resolve()),
+    status: vi.fn(() =>
+      Promise.resolve({
+        daemonRunning: true,
+        lockState: 'unlocked',
+      } satisfies VaultStatus),
+    ),
+  };
+  return {
+    client,
+    executablePath,
+    now: vi.fn(() => 0),
+    removeLocalState: vi.fn(() => Promise.resolve()),
+    sleep: vi.fn(() => Promise.resolve()),
     ...overrides,
   };
 }
@@ -72,28 +116,80 @@ describe('vault command runners', () => {
     const harness = deps();
 
     await expect(__testing.runVaultStatus(context(), harness)).resolves.toEqual({
-      daemon_running: true,
       lock_state: 'locked',
     });
+    expect(harness.ensureDaemon).not.toHaveBeenCalled();
   });
 
   it('renders status in human mode', async () => {
     const harness = deps();
 
     await expect(__testing.runVaultStatus(context({}, false), harness)).resolves.toEqual({
-      daemon_running: true,
       lock_state: 'locked',
     });
 
-    expect(harness.write).toHaveBeenCalledWith('Vault status: locked\nDaemon running: yes\n');
+    expect(harness.ensureDaemon).not.toHaveBeenCalled();
+    expect(harness.write).toHaveBeenCalledWith('Vault status: locked\n');
+  });
+
+  it('reads local status without starting a daemon', async (testContext) => {
+    await expect(
+      __testing.readVaultStatusWithoutStarting({ rootDirectory: testContext.task.name }),
+    ).resolves.toMatchObject({
+      daemonRunning: false,
+      lockState: 'not_initialized',
+    });
+  });
+
+  it('treats an overlong socket path as an unavailable daemon for status reads', async () => {
+    const rootDirectory = join('/private/tmp', `inflow-${'x'.repeat(120)}`);
+
+    await expect(__testing.readVaultStatusWithoutStarting({ rootDirectory })).resolves.toMatchObject({
+      daemonRunning: false,
+      lockState: 'not_initialized',
+    });
+  });
+
+  it('reports locked from local sidecar state when no daemon is reachable', async (testContext) => {
+    const rootDirectory = join('/private/tmp', testContext.task.id.replaceAll(/[^a-z0-9_-]/giu, '_'));
+    await mkdir(rootDirectory, { recursive: true });
+    await writeFile(join(rootDirectory, 'inflow.vault'), Buffer.from('vault sidecar'));
+
+    await expect(__testing.readVaultStatusWithoutStarting({ rootDirectory })).resolves.toMatchObject({
+      daemonRunning: false,
+      lockState: 'locked',
+    });
+  });
+
+  it('reports unlocked status for agent unlock when the vault is already unlocked', async () => {
+    const harness = deps();
+    harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'unlocked' });
+
+    await expect(__testing.runVaultUnlock(context(), harness)).resolves.toEqual({
+      lock_state: 'unlocked',
+    });
+    expect(harness.ensureDaemon).not.toHaveBeenCalled();
+    expect(harness.readPassphrase).not.toHaveBeenCalled();
+    expect(harness.client.unlock).not.toHaveBeenCalled();
+  });
+
+  it('rejects agent unlock without reading a passphrase when the vault is locked', async () => {
+    const harness = deps();
+
+    await expect(__testing.runVaultUnlock(context(), harness)).rejects.toMatchObject({
+      code: 'VAULT_UNLOCK_REQUIRES_HUMAN',
+    });
+    expect(harness.ensureDaemon).not.toHaveBeenCalled();
+    expect(harness.readVaultStatus).toHaveBeenCalled();
+    expect(harness.readPassphrase).not.toHaveBeenCalled();
+    expect(harness.client.unlock).not.toHaveBeenCalled();
   });
 
   it('unlocks and initializes with the first-run prompt', async () => {
     const harness = deps();
     harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'not_initialized' });
 
-    await expect(__testing.runVaultUnlock(context(), harness)).resolves.toEqual({
-      daemon_running: true,
+    await expect(__testing.runVaultUnlock(context({}, false), harness)).resolves.toEqual({
       lock_state: 'unlocked',
     });
 
@@ -108,7 +204,6 @@ describe('vault command runners', () => {
     const harness = deps();
 
     await expect(__testing.runVaultUnlock(context({}, false), harness)).resolves.toEqual({
-      daemon_running: true,
       lock_state: 'unlocked',
     });
 
@@ -124,7 +219,7 @@ describe('vault command runners', () => {
       readPassphrase: vi.fn(() => Promise.resolve(Buffer.from('123'))),
     });
 
-    await expect(__testing.runVaultUnlock(context(), harness)).rejects.toMatchObject({
+    await expect(__testing.runVaultUnlock(context({}, false), harness)).rejects.toMatchObject({
       code: 'VAULT_PASSPHRASE_TOO_SHORT',
     });
     expect(harness.client.unlock).not.toHaveBeenCalled();
@@ -143,15 +238,11 @@ describe('vault command runners', () => {
       ),
     ).resolves.toEqual({
       idle_timeout_seconds: null,
-      lock_on_daemon_exit: true,
-      lock_on_explicit_logout: true,
       lock_on_sleep: false,
     });
 
     expect(harness.client.setPolicy).toHaveBeenCalledWith({
       idleTimeoutSeconds: null,
-      lockOnDaemonExit: true,
-      lockOnExplicitLogout: true,
       lockOnSleep: false,
     });
   });
@@ -161,23 +252,15 @@ describe('vault command runners', () => {
 
     await expect(__testing.runVaultPolicy(context({}, false), harness)).resolves.toEqual({
       idle_timeout_seconds: 28_800,
-      lock_on_daemon_exit: true,
-      lock_on_explicit_logout: true,
       lock_on_sleep: true,
     });
     await expect(__testing.runVaultPolicySet(context({ idleTimeoutSeconds: 60 }, false), harness)).resolves.toEqual({
       idle_timeout_seconds: 60,
-      lock_on_daemon_exit: true,
-      lock_on_explicit_logout: true,
       lock_on_sleep: true,
     });
 
-    expect(harness.write).toHaveBeenCalledWith(
-      'Idle timeout: 28800s\nLock on daemon exit: yes\nLock on logout: yes\nLock on sleep: yes\n',
-    );
-    expect(harness.write).toHaveBeenCalledWith(
-      'Idle timeout: 60s\nLock on daemon exit: yes\nLock on logout: yes\nLock on sleep: yes\n',
-    );
+    expect(harness.write).toHaveBeenCalledWith('Idle timeout: 28800s\nLock on sleep: yes\n');
+    expect(harness.write).toHaveBeenCalledWith('Idle timeout: 60s\nLock on sleep: yes\n');
   });
 
   it('locks and resets the vault in human mode', async () => {
@@ -192,6 +275,206 @@ describe('vault command runners', () => {
     expect(harness.write).toHaveBeenCalledWith('Vault reset complete.\n');
   });
 
+  it('requires the same executable, version, and build when reusing a daemon', () => {
+    expect(
+      __testing.isCompatibleDaemon(
+        {
+          buildId: 'build-1',
+          cliVersion: '0.9.0',
+          executablePath: '/Applications/InFlow.app/Contents/MacOS/inflow',
+          pid: 123,
+        },
+        { buildId: 'build-1', cliVersion: '0.9.0' },
+        '/Applications/InFlow.app/Contents/MacOS/inflow',
+      ),
+    ).toBe(true);
+    expect(
+      __testing.isCompatibleDaemon(
+        {
+          buildId: 'build-2',
+          cliVersion: '0.9.0',
+          executablePath: '/Applications/InFlow.app/Contents/MacOS/inflow',
+          pid: 123,
+        },
+        { buildId: 'build-1', cliVersion: '0.9.0' },
+        '/Applications/InFlow.app/Contents/MacOS/inflow',
+      ),
+    ).toBe(false);
+    expect(
+      __testing.isCompatibleDaemon(
+        {
+          buildId: 'build-1',
+          cliVersion: '0.9.1',
+          executablePath: '/Applications/InFlow.app/Contents/MacOS/inflow',
+          pid: 123,
+        },
+        { buildId: 'build-1', cliVersion: '0.9.0' },
+        '/Applications/InFlow.app/Contents/MacOS/inflow',
+      ),
+    ).toBe(false);
+    expect(
+      __testing.isCompatibleDaemon(
+        {
+          buildId: 'build-1',
+          cliVersion: '0.9.0',
+          executablePath: '/tmp/inflow',
+          pid: 123,
+        },
+        { buildId: 'build-1', cliVersion: '0.9.0' },
+        '/Applications/InFlow.app/Contents/MacOS/inflow',
+      ),
+    ).toBe(false);
+  });
+
+  it('resets through a compatible daemon without deleting underneath it', async () => {
+    const harness = resetDeps();
+
+    await expect(
+      __testing.resetLocalVaultWithDeps({ buildId: 'build-1', cliVersion: '0.9.0' }, harness),
+    ).resolves.toBeUndefined();
+
+    expect(harness.client.reset).toHaveBeenCalledOnce();
+    expect(harness.client.shutdown).not.toHaveBeenCalled();
+    expect(harness.removeLocalState).not.toHaveBeenCalled();
+  });
+
+  it('removes local vault files directly when no daemon is reachable', async () => {
+    const harness = resetDeps();
+    harness.client.status.mockRejectedValueOnce(
+      new SecureStorageError('secure_storage_unavailable', 'The InFlow vault daemon is unavailable.'),
+    );
+
+    await expect(
+      __testing.resetLocalVaultWithDeps({ rootDirectory: '/tmp/inflow-vault-test' }, harness),
+    ).resolves.toBeUndefined();
+
+    expect(harness.client.reset).not.toHaveBeenCalled();
+    expect(harness.client.shutdown).not.toHaveBeenCalled();
+    expect(harness.removeLocalState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        database: '/tmp/inflow-vault-test/inflow.sqlite3',
+      }),
+    );
+  });
+
+  it('treats a missing daemon socket as direct cleanup', async () => {
+    const harness = resetDeps();
+    harness.client.status.mockRejectedValueOnce(
+      Object.assign(new Error('connect ENOENT vault.sock'), { code: 'ENOENT' }),
+    );
+
+    await expect(
+      __testing.resetLocalVaultWithDeps({ rootDirectory: '/tmp/inflow-vault-test' }, harness),
+    ).resolves.toBeUndefined();
+
+    expect(harness.client.reset).not.toHaveBeenCalled();
+    expect(harness.client.shutdown).not.toHaveBeenCalled();
+    expect(harness.removeLocalState).toHaveBeenCalledOnce();
+  });
+
+  it('stops a stale daemon before removing local vault files', async () => {
+    const harness = resetDeps();
+    harness.client.info.mockResolvedValueOnce({
+      buildId: 'build-2',
+      cliVersion: '0.9.0',
+      executablePath: harness.executablePath,
+      pid: 123,
+    });
+    harness.client.status
+      .mockResolvedValueOnce({ daemonRunning: true, lockState: 'unlocked' })
+      .mockRejectedValueOnce(
+        new SecureStorageError('secure_storage_unavailable', 'The InFlow vault daemon is unavailable.'),
+      );
+
+    await expect(
+      __testing.resetLocalVaultWithDeps({ buildId: 'build-1', cliVersion: '0.9.0' }, harness),
+    ).resolves.toBeUndefined();
+
+    expect(harness.client.reset).not.toHaveBeenCalled();
+    expect(harness.client.shutdown).toHaveBeenCalledOnce();
+    expect(harness.removeLocalState).toHaveBeenCalledOnce();
+  });
+
+  it('does not remove local vault files when a reachable daemon cannot shut down', async () => {
+    const harness = resetDeps();
+    harness.client.info.mockResolvedValueOnce({
+      buildId: 'build-2',
+      cliVersion: '0.9.0',
+      executablePath: harness.executablePath,
+      pid: 123,
+    });
+    harness.client.shutdown.mockRejectedValueOnce(
+      new SecureStorageError('secure_storage_corrupt', 'The InFlow vault daemon returned invalid data.'),
+    );
+
+    await expect(
+      __testing.resetLocalVaultWithDeps({ buildId: 'build-1', cliVersion: '0.9.0' }, harness),
+    ).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_corrupt',
+    });
+
+    expect(harness.removeLocalState).not.toHaveBeenCalled();
+  });
+
+  it('does not prompt when ensuring an unlocked vault', async () => {
+    const harness = deps();
+    harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'unlocked' });
+
+    await expect(
+      __testing.ensureLocalVaultUnlockedWithDeps('human', {
+        ensureDaemon: harness.ensureDaemon,
+        readPassphrase: harness.readPassphrase,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.readPassphrase).not.toHaveBeenCalled();
+    expect(harness.client.unlock).not.toHaveBeenCalled();
+  });
+
+  it('tells agents to ask a human when the vault is unavailable for secrets', async () => {
+    const harness = deps();
+    harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'not_initialized' });
+
+    await expect(
+      __testing.ensureLocalVaultUnlockedWithDeps('agent', {
+        ensureDaemon: harness.ensureDaemon,
+        readPassphrase: harness.readPassphrase,
+      }),
+    ).rejects.toMatchObject({
+      secureStorageCode: 'vault_not_initialized',
+      message: 'The InFlow vault is not initialized. A human must run `inflow vault unlock` first.',
+    });
+
+    harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'locked' });
+    await expect(
+      __testing.ensureLocalVaultUnlockedWithDeps('agent', {
+        ensureDaemon: harness.ensureDaemon,
+        readPassphrase: harness.readPassphrase,
+      }),
+    ).rejects.toMatchObject({
+      secureStorageCode: 'vault_locked',
+      message: 'The InFlow vault is locked. A human must run `inflow vault unlock` first.',
+    });
+  });
+
+  it('prompts humans and unlocks before secret-backed commands continue', async () => {
+    const harness = deps();
+    harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'locked' });
+
+    await expect(
+      __testing.ensureLocalVaultUnlockedWithDeps('human', {
+        ensureDaemon: harness.ensureDaemon,
+        readPassphrase: harness.readPassphrase,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.readPassphrase).toHaveBeenCalledWith(
+      'Enter the InFlow vault PIN or passphrase: ',
+      expect.anything(),
+    );
+    expect(harness.client.unlock).toHaveBeenCalledWith(Buffer.from([0, 0, 0, 0, 0, 0]));
+  });
+
   it('requires force before resetting the vault', async () => {
     const harness = deps();
 
@@ -199,6 +482,17 @@ describe('vault command runners', () => {
       code: 'VAULT_RESET_REQUIRES_FORCE',
     });
     expect(harness.client.reset).not.toHaveBeenCalled();
+  });
+
+  it('rejects agent passphrase changes without reading passphrases', async () => {
+    const harness = deps();
+
+    await expect(__testing.runVaultChangePassphrase(context(), harness)).rejects.toMatchObject({
+      code: 'VAULT_CHANGE_PASSPHRASE_REQUIRES_HUMAN',
+    });
+    expect(harness.ensureDaemon).not.toHaveBeenCalled();
+    expect(harness.readPassphrase).not.toHaveBeenCalled();
+    expect(harness.client.changePassphrase).not.toHaveBeenCalled();
   });
 
   it('changes passphrase after confirming the human prompt', async () => {
@@ -234,7 +528,7 @@ describe('vault command runners', () => {
 
   it('maps secure storage errors through the command context', async () => {
     const harness = deps();
-    harness.client.status.mockRejectedValue(
+    harness.readVaultStatus.mockRejectedValue(
       new SecureStorageError('secure_storage_secret_missing', 'The InFlow vault is locked.'),
     );
 

@@ -15,12 +15,10 @@ import {
 describe('vault peer verifier', () => {
   const originalPlatform = process.platform;
   const originalExecPath = process.execPath;
-  const originalEnv = { ...process.env };
 
   afterEach(() => {
     Object.defineProperty(process, 'platform', { value: originalPlatform });
     Object.defineProperty(process, 'execPath', { value: originalExecPath });
-    process.env = { ...originalEnv };
   });
 
   it('requires peer verification for packaged macOS app execution', () => {
@@ -48,23 +46,9 @@ describe('vault peer verifier', () => {
     }
   });
 
-  it('honors explicit peer-verification environment overrides', () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin' });
-    Object.defineProperty(process, 'execPath', { value: '/Applications/InFlow.app/Contents/MacOS/inflow' });
-    process.env['INFLOW_VAULT_PEER_VERIFICATION'] = 'disabled';
-
-    expect(shouldRequireVaultPeerVerification()).toBe(false);
-
-    Object.defineProperty(process, 'platform', { value: 'linux' });
-    Object.defineProperty(process, 'execPath', { value: '/usr/bin/inflow' });
-    process.env['INFLOW_VAULT_PEER_VERIFICATION'] = 'required';
-
-    expect(shouldRequireVaultPeerVerification()).toBe(true);
-  });
-
   it('accepts same-user same-executable peers and verifies release signatures', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
-    const verifiedPaths: string[] = [];
+    const verified: { path: string; teamId: string }[] = [];
     const verifier = createVaultSocketPeerVerifier(
       {
         expectedExecutablePath: '/Applications/InFlow.app/Contents/MacOS/inflow',
@@ -75,14 +59,38 @@ describe('vault peer verifier', () => {
         currentUserId: 501,
         peer: { path: '/Applications/InFlow.app/Contents/MacOS/inflow', pid: 123, uid: 501 },
         realpaths: new Map([['/Applications/InFlow.app/Contents/MacOS/inflow', '/signed/inflow']]),
-        verifySignature(path) {
-          verifiedPaths.push(path);
+        verifySignature(path, teamId) {
+          verified.push({ path, teamId });
         },
       }),
     );
 
     expect(() => verifier(socketWithFd(42))).not.toThrow();
-    expect(verifiedPaths).toEqual(['/Applications/InFlow.app/Contents/MacOS/inflow']);
+    expect(verified).toEqual([{ path: '/Applications/InFlow.app/Contents/MacOS/inflow', teamId: 'B96U57DTR2' }]);
+  });
+
+  it('accepts an explicit expected Team ID for tests and future packaging variants', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const verified: { path: string; teamId: string }[] = [];
+    const verifier = createVaultSocketPeerVerifier(
+      {
+        expectedExecutablePath: '/Applications/InFlow.app/Contents/MacOS/inflow',
+        expectedTeamId: 'TEAM123456',
+        nativeModulePath: '/native/vault_peer_darwin.node',
+        requireSignature: true,
+      },
+      dependencies({
+        currentUserId: 501,
+        peer: { path: '/Applications/InFlow.app/Contents/MacOS/inflow', pid: 123, uid: 501 },
+        realpaths: new Map([['/Applications/InFlow.app/Contents/MacOS/inflow', '/signed/inflow']]),
+        verifySignature(path, teamId) {
+          verified.push({ path, teamId });
+        },
+      }),
+    );
+
+    expect(() => verifier(socketWithFd(42))).not.toThrow();
+    expect(verified).toEqual([{ path: '/Applications/InFlow.app/Contents/MacOS/inflow', teamId: 'TEAM123456' }]);
   });
 
   it('rejects wrong-user, wrong-executable, and signature-failed peers', () => {

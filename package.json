@@ -22,6 +22,7 @@
     "build": "turbo run build && node scripts/align-skill-version.js && node scripts/publish-skills.mjs",
     "build:homebrew-cask": "node scripts/render-homebrew-cask.mjs",
     "build:macos-app": "node scripts/build-macos-app.mjs --skip-notarize",
+    "build:macos-debug-signed": "node scripts/build-macos-app.mjs --signed-debug --skip-notarize",
     "build:macos-release": "node scripts/build-macos-app.mjs --release",
     "verify": "node scripts/clean-bundle-artifacts.mjs && pnpm format && pnpm typecheck && pnpm lint && pnpm test && pnpm typedoc && pnpm build",
     "dev": "turbo run dev --parallel",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AepFetchError, AepStorage, MemoryStorage } from '@inflowpayai/inflow-core';
+import { AepFetchError, AepStorage, MemoryStorage, SecureStorageError } from '@inflowpayai/inflow-core';
 import { AepCommandError, AepInspectError } from '@aep-foundation/agent';
 import type { InspectServiceResult } from '@aep-foundation/agent';
 import type * as InflowCore from '@inflowpayai/inflow-core';
@@ -333,6 +333,12 @@ describe('aep commands', () => {
     expect(__testing.commandError(new Error('failed'))).toEqual({
       code: 'AEP_INTERNAL_ERROR',
       message: 'The AEP command failed unexpectedly.',
+    });
+    expect(
+      __testing.commandError(new SecureStorageError('secure_storage_secret_missing', 'The InFlow vault is locked.')),
+    ).toEqual({
+      code: 'VAULT_LOCKED',
+      message: 'The InFlow vault is locked.',
     });
   });
 
@@ -730,7 +736,9 @@ describe('aep commands', () => {
       local: { grants: [] },
       service: { status: 'active' },
     });
-    await expect(__testing.runGrant(context({ scope: ['read', 'read'] }), client, storage)).resolves.toEqual({
+    await expect(
+      __testing.runGrant(context({ interval: 1, scope: ['read', 'read'] }), client, storage),
+    ).resolves.toEqual({
       credential_id: 'credential-1',
       expires_at: '2999-01-01T00:00:00.000Z',
       grant_type: 'oauth-bearer',
@@ -808,6 +816,114 @@ describe('aep commands', () => {
     const approvalRequests = approvalFetch.mock.calls.length;
     await expect(__testing.runEnroll(options, client, storage)).resolves.toEqual({ status: 'active' });
     expect(approvalFetch).toHaveBeenCalledTimes(approvalRequests);
+  });
+
+  it('returns an agentic pending approval frame for a new enrollment without polling inline', async () => {
+    const approvalFetch = vi.fn();
+    vi.stubGlobal('fetch', approvalFetch);
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+
+    await expect(__testing.runEnroll(context({ maxAttempts: 0, timeout: 900 }), inflow(), storage)).resolves.toEqual({
+      _next: {
+        poll_interval_seconds: 1,
+        until: 'enrollment completes',
+      },
+      approval_id: 'approval-1',
+      approval_url: 'https://platform.example/approvals/approval-1/view/',
+      instruction:
+        'Present the approval_url to the user and ask them to approve in the InFlow mobile app or dashboard. Then call AEP enroll again with the approval id.',
+      service_did: 'did:web:service.example',
+      state: 'pending',
+      retry_after_seconds: 1,
+    });
+    expect(approvalFetch).not.toHaveBeenCalled();
+  });
+
+  it('continues an agentic enrollment approval and returns the Service response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 }))),
+    );
+    platformRecovery.notRecognized = true;
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const persisted = new AepStorage(storage, {
+      platformOrigin: 'https://platform.example',
+      userId: 'user-1',
+    });
+    await persisted.identities().saveIdentity(identity);
+
+    await expect(
+      __testing.runEnroll(
+        context({ approvalId: 'approval-1', interval: 1, maxAttempts: 1, timeout: 1 }),
+        inflow(),
+        storage,
+      ),
+    ).resolves.toEqual({ status: 'active' });
+  });
+
+  it('returns an agentic pending approval frame for Grant without polling inline', async () => {
+    const approvalFetch = vi.fn();
+    vi.stubGlobal('fetch', approvalFetch);
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const persisted = new AepStorage(storage, {
+      platformOrigin: 'https://platform.example',
+      userId: 'user-1',
+    });
+    await persisted.identities().saveIdentity(identity);
+
+    await expect(__testing.runGrant(context({ scope: ['read'], timeout: 900 }), inflow(), storage)).resolves.toEqual({
+      _next: {
+        poll_interval_seconds: 1,
+        until: 'credential grant completes',
+      },
+      approval_id: 'approval-1',
+      approval_url: 'https://platform.example/approvals/approval-1/view/',
+      grant_type: 'oauth-bearer',
+      instruction:
+        'Present the approval_url to the user and ask them to approve in the InFlow mobile app or dashboard. Then call AEP grant again with the approval id.',
+      service_did: 'did:web:service.example',
+      state: 'pending',
+      retry_after_seconds: 1,
+    });
+    expect(approvalFetch).not.toHaveBeenCalled();
+  });
+
+  it('continues an agentic Grant approval and stores the issued credential', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 }))),
+    );
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const persisted = new AepStorage(storage, {
+      platformOrigin: 'https://platform.example',
+      userId: 'user-1',
+    });
+    await persisted.identities().saveIdentity(identity);
+
+    await expect(
+      __testing.runGrant(
+        context({
+          approvalId: 'approval-1',
+          grantType: 'oauth-bearer',
+          interval: 1,
+          scope: ['read'],
+          timeout: 1,
+        }),
+        inflow(),
+        storage,
+      ),
+    ).resolves.toEqual({
+      credential_id: 'credential-1',
+      expires_at: '2999-01-01T00:00:00.000Z',
+      grant_type: 'oauth-bearer',
+      granted: true,
+      service_did: 'did:web:service.example',
+      scopes: ['read'],
+    });
   });
 
   it('rehydrates a missing local identity from the Platform before checking Status', async () => {

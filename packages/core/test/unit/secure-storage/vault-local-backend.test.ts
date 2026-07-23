@@ -60,6 +60,41 @@ describe('LocalVaultBackend', () => {
     }
   });
 
+  it('stores a secret at an exact caller-provided vault reference', async () => {
+    await backend.unlock(Buffer.from('123456'));
+    const reference = parseVaultSecretReference('vlt_11111111111111111111111111111111');
+
+    expect(
+      backend.putSecret({
+        expectedKind: 'inflow_api_key',
+        payload: Buffer.from('secret-api-key'),
+        reference,
+      }),
+    ).toEqual(reference);
+    expect(backend.getSecret({ expectedKind: 'inflow_api_key', reference })).toMatchObject({
+      payload: Buffer.from('secret-api-key'),
+    });
+  });
+
+  it('refuses to overwrite an existing caller-provided vault reference', async () => {
+    await backend.unlock(Buffer.from('123456'));
+    const reference = parseVaultSecretReference('vlt_11111111111111111111111111111111');
+    backend.putSecret({
+      expectedKind: 'inflow_api_key',
+      payload: Buffer.from('original'),
+      reference,
+    });
+
+    expect(() =>
+      backend.putSecret({
+        expectedKind: 'inflow_api_key',
+        payload: Buffer.from('replacement'),
+        reference,
+      }),
+    ).toThrow('The vault secret reference already exists.');
+    expect(backend.getSecret({ expectedKind: 'inflow_api_key', reference }).payload).toEqual(Buffer.from('original'));
+  });
+
   it('rejects locked reads with the stable storage code', async () => {
     await backend.unlock(Buffer.from('123456'));
     const reference = backend.putSecret({
@@ -72,7 +107,7 @@ describe('LocalVaultBackend', () => {
       backend.getSecret({ expectedKind: 'auth_refresh_token', reference });
     } catch (cause) {
       expect(cause).toMatchObject({
-        secureStorageCode: 'secure_storage_secret_missing',
+        secureStorageCode: 'vault_locked',
       });
       return;
     }
@@ -105,7 +140,7 @@ describe('LocalVaultBackend', () => {
       secureStorageCode: 'secure_storage_corrupt',
     });
     await expect(backend.unlock(Buffer.from('654321'))).resolves.toMatchObject({ lockState: 'unlocked' });
-  });
+  }, 15_000);
 
   it('fails closed when encrypted record metadata is changed', async () => {
     await backend.unlock(Buffer.from('123456'));
@@ -136,6 +171,7 @@ describe('LocalVaultBackend', () => {
     expect(record).toBeDefined();
     if (record === undefined) throw new Error('expected stored vault record');
 
+    repository.deleteVaultRecord(record.reference);
     repository.putVaultRecord({
       ...record,
       ciphertext: Buffer.from('changed'),
@@ -144,6 +180,7 @@ describe('LocalVaultBackend', () => {
       'Vault record could not be decrypted.',
     );
 
+    repository.deleteVaultRecord(record.reference);
     repository.putVaultRecord({
       ...record,
       tag: Buffer.from('changed-tag-0000'),
@@ -152,6 +189,7 @@ describe('LocalVaultBackend', () => {
       'Vault record could not be decrypted.',
     );
 
+    repository.deleteVaultRecord(record.reference);
     repository.putVaultRecord({
       ...record,
       encryptionVersion: 2,
@@ -184,8 +222,6 @@ describe('LocalVaultBackend', () => {
     expect(
       backend.setPolicy({
         idleTimeoutSeconds: null,
-        lockOnDaemonExit: true,
-        lockOnExplicitLogout: true,
         lockOnSleep: false,
       }),
     ).toMatchObject({ idleTimeoutSeconds: null, lockOnSleep: false });

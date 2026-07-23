@@ -16,7 +16,5 @@ export const policySetOptions = z.object({
     .min(0)
     .optional()
     .describe('Lock the vault after this many idle seconds. 0 disables the idle timeout.'),
-  lockOnDaemonExit: z.boolean().optional().describe('Lock the vault when the daemon exits.'),
-  lockOnExplicitLogout: z.boolean().optional().describe('Lock and remove local vault state during InFlow logout.'),
   lockOnSleep: z.boolean().optional().describe('Lock the vault when the computer sleeps.'),
 });

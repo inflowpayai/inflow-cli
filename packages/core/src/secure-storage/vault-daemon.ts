@@ -22,6 +22,8 @@ import { startVaultSocketServer, type VaultSocketServer } from './vault-socket.j
 import type { VaultSecretReference } from './vault-types.js';
 
 export interface LocalVaultDaemonOptions {
+  buildId?: string;
+  cliVersion?: string;
   rootDirectory?: string;
   sleepCheckIntervalMilliseconds?: number;
   sleepDriftThresholdMilliseconds?: number;
@@ -29,6 +31,7 @@ export interface LocalVaultDaemonOptions {
 
 export interface LocalVaultDaemon {
   close(): Promise<void>;
+  closed: Promise<void>;
   socketPath: string;
 }
 
@@ -42,26 +45,64 @@ export async function startLocalVaultDaemon(options: LocalVaultDaemonOptions = {
   const repository = new SecureSqliteRepository({ databasePath: paths.database });
   const backend = new LocalVaultBackend({ paths, repository });
   const lifetime = new VaultDaemonLifetime(lifetimeOptions(options));
+  const shutdown = { close: undefined as (() => Promise<void>) | undefined };
+  let resolveClosed: () => void;
+  const closedPromise = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
   const server = await startVaultSocketServer(
-    socketServerOptions(new LifetimeVaultBackend(backend, lifetime), paths.socket),
+    socketServerOptions(
+      new LifetimeVaultBackend(backend, lifetime),
+      paths.socket,
+      options.cliVersion ?? null,
+      options.buildId ?? null,
+      () => {
+        void shutdown.close?.();
+      },
+    ),
   );
-  let closed = false;
+  let isClosed = false;
   const close = async (): Promise<void> => {
-    if (closed) return;
-    closed = true;
+    if (isClosed) return;
+    isClosed = true;
     lifetime.clear();
-    await closeLocalVaultDaemon(repository, server);
+    try {
+      await closeLocalVaultDaemon(repository, server);
+    } finally {
+      resolveClosed();
+    }
   };
+  shutdown.close = close;
   lifetime.closeWith(close);
   return {
     close,
+    closed: closedPromise,
     socketPath: paths.socket,
   };
 }
 
-function socketServerOptions(backend: VaultBackend, socketPath: string) {
-  const options: { backend: VaultBackend; peerVerifier?: VaultSocketPeerVerifier; socketPath: string } = {
+function socketServerOptions(
+  backend: VaultBackend,
+  socketPath: string,
+  cliVersion: string | null,
+  buildId: string | null,
+  onShutdown: () => void,
+) {
+  const options: {
+    backend: VaultBackend;
+    daemonInfo: { buildId: string | null; cliVersion: string | null; executablePath: string; pid: number };
+    onShutdown: () => void;
+    peerVerifier?: VaultSocketPeerVerifier;
+    socketPath: string;
+  } = {
     backend,
+    daemonInfo: {
+      buildId,
+      cliVersion,
+      executablePath: process.execPath,
+      pid: process.pid,
+    },
+    onShutdown,
     socketPath,
   };
   if (shouldRequireVaultPeerVerification()) options.peerVerifier = createVaultSocketPeerVerifier();
@@ -71,7 +112,7 @@ function socketServerOptions(backend: VaultBackend, socketPath: string) {
 export async function runLocalVaultDaemon(options: LocalVaultDaemonOptions = {}): Promise<void> {
   const daemon = await startLocalVaultDaemon(options);
   attachLocalVaultDaemonSignalHandlers(daemon, process);
-  await new Promise<void>(() => {});
+  await daemon.closed;
 }
 
 export function attachLocalVaultDaemonSignalHandlers(daemon: LocalVaultDaemon, runtime: LocalVaultDaemonRuntime): void {
@@ -195,7 +236,7 @@ class LifetimeVaultBackend implements VaultBackend {
 
   async lock(): Promise<void> {
     await this.backend.lock();
-    await this.refresh();
+    this.lifetime.clear();
   }
 
   async putSecret(input: PutVaultSecretInput): Promise<VaultSecretReference> {
@@ -206,7 +247,7 @@ class LifetimeVaultBackend implements VaultBackend {
 
   async reset(): Promise<void> {
     await this.backend.reset();
-    await this.refresh();
+    this.lifetime.clear();
   }
 
   async setPolicy(policy: VaultPolicy): Promise<VaultPolicy> {

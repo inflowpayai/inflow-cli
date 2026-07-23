@@ -109,6 +109,7 @@ describe('AEP views', () => {
     expect(view.lastFrame()).toContain('Authentication');
     expect(view.lastFrame()).toContain('AEP JWT');
     expect(view.lastFrame()).toContain('None');
+    expect(view.lastFrame()).not.toContain('Enrollment');
     expect(view.lastFrame()).not.toContain('Local grants');
     view.unmount();
   });
@@ -156,6 +157,7 @@ describe('AEP views', () => {
     expect(status.lastFrame()).toContain('Authentication');
     expect(status.lastFrame()).toContain('Available credential types');
     expect(status.lastFrame()).toContain('oauth-bearer');
+    expect(status.lastFrame()).not.toContain('Enrollment');
     status.unmount();
     const granted = render(
       <GrantView

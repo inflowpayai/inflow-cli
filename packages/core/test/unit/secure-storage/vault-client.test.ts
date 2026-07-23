@@ -32,13 +32,24 @@ describe('LocalVaultClient', () => {
           version: 1,
         };
       }
+      if (request.method === 'daemon.info') {
+        return {
+          id: request.id,
+          ok: true,
+          result: {
+            buildId: 'build-1',
+            cliVersion: '0.9.0',
+            executablePath: '/Applications/InFlow.app/Contents/MacOS/inflow',
+            pid: 123,
+          },
+          version: 1,
+        };
+      }
       return {
         id: request.id,
         ok: true,
         result: {
           idleTimeoutSeconds: 120,
-          lockOnDaemonExit: true,
-          lockOnExplicitLogout: true,
           lockOnSleep: false,
         },
         version: 1,
@@ -47,10 +58,14 @@ describe('LocalVaultClient', () => {
     const client = new LocalVaultClient({ rootDirectory: tmpDir });
 
     await expect(client.status()).resolves.toEqual({ daemonRunning: true, lockState: 'unlocked' });
+    await expect(client.info()).resolves.toEqual({
+      buildId: 'build-1',
+      cliVersion: '0.9.0',
+      executablePath: '/Applications/InFlow.app/Contents/MacOS/inflow',
+      pid: 123,
+    });
     await expect(client.getPolicy()).resolves.toEqual({
       idleTimeoutSeconds: 120,
-      lockOnDaemonExit: true,
-      lockOnExplicitLogout: true,
       lockOnSleep: false,
     });
   });
@@ -82,8 +97,6 @@ describe('LocalVaultClient', () => {
           request.method === 'vault.setPolicy'
             ? {
                 idleTimeoutSeconds: null,
-                lockOnDaemonExit: false,
-                lockOnExplicitLogout: true,
                 lockOnSleep: false,
               }
             : {},
@@ -95,21 +108,24 @@ describe('LocalVaultClient', () => {
     await expect(
       client.setPolicy({
         idleTimeoutSeconds: null,
-        lockOnDaemonExit: false,
-        lockOnExplicitLogout: true,
         lockOnSleep: false,
       }),
     ).resolves.toEqual({
       idleTimeoutSeconds: null,
-      lockOnDaemonExit: false,
-      lockOnExplicitLogout: true,
       lockOnSleep: false,
     });
     await expect(client.changePassphrase(Buffer.from('current'), Buffer.from('next123'))).resolves.toBeUndefined();
     await expect(client.lock()).resolves.toBeUndefined();
     await expect(client.reset()).resolves.toBeUndefined();
+    await expect(client.shutdown()).resolves.toBeUndefined();
 
-    expect(methods).toEqual(['vault.setPolicy', 'vault.changePassphrase', 'vault.lock', 'vault.reset']);
+    expect(methods).toEqual([
+      'vault.setPolicy',
+      'vault.changePassphrase',
+      'vault.lock',
+      'vault.reset',
+      'daemon.shutdown',
+    ]);
   });
 
   it('rejects malformed status and policy payloads', async () => {

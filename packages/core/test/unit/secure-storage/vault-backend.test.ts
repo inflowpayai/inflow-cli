@@ -18,8 +18,6 @@ describe('VaultBackend contract', () => {
   it('models the default policy fields without user or protocol ownership', () => {
     expect(DEFAULT_VAULT_POLICY).toEqual({
       idleTimeoutSeconds: 28_800,
-      lockOnDaemonExit: true,
-      lockOnExplicitLogout: true,
       lockOnSleep: true,
     });
   });

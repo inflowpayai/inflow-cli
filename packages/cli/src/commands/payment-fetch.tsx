@@ -11,6 +11,7 @@ import Spinner from 'ink-spinner';
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { useFlowExit } from '../hooks/use-flow-exit.js';
+import { AuthenticationApprovalView, type AuthenticationApprovalDisplay } from './payment-authentication-approval.js';
 
 export type PaymentFetchResult = MppFetchSuccess | MppFetchRejected | X402FetchSuccess | X402FetchRejected;
 
@@ -29,6 +30,7 @@ export interface PaymentFetchViewProps {
   paymentHeader: string;
   events: () => AsyncIterable<MppFetchEvent | X402FetchEvent>;
   onComplete: (final: PaymentFetchPhase) => void;
+  authenticationApproval?: AuthenticationApprovalDisplay | undefined;
 }
 
 function settlementLine(result: MppFetchSuccess | X402FetchSuccess): string | undefined {
@@ -68,6 +70,7 @@ export const PaymentFetchView: React.FC<PaymentFetchViewProps> = ({
   paymentHeader,
   events,
   onComplete,
+  authenticationApproval,
 }) => {
   const [phase, setPhase] = useState<PaymentFetchPhase>({ kind: 'waiting' });
   const cancelledRef = useRef(false);
@@ -121,6 +124,9 @@ export const PaymentFetchView: React.FC<PaymentFetchViewProps> = ({
   }, [phase, finish]);
 
   if (phase.kind === 'waiting') {
+    if (authenticationApproval !== undefined) {
+      return <AuthenticationApprovalView approval={authenticationApproval} />;
+    }
     return (
       <Box>
         <Text color="cyan">

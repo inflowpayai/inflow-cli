@@ -14,8 +14,6 @@ import type { VaultSecretReference } from '../../../src/secure-storage/vault-typ
 class FakeVaultBackend implements VaultBackend {
   policy: VaultPolicy = {
     idleTimeoutSeconds: 28_800,
-    lockOnDaemonExit: true,
-    lockOnExplicitLogout: true,
     lockOnSleep: true,
   };
   secret: VaultSecretPayload = {
@@ -86,6 +84,22 @@ describe('handleVaultIpcRequest', () => {
         request('vault.unlock', { unlockFactor: Buffer.from('123456').toString('base64') }),
       ),
     ).resolves.toMatchObject({ ok: true, result: { lockState: 'unlocked' } });
+    await expect(
+      handleVaultIpcRequest(backend, request('daemon.info'), {
+        buildId: 'build-1',
+        cliVersion: '0.9.0',
+        executablePath: '/Applications/InFlow.app/Contents/MacOS/inflow',
+        pid: 123,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      result: {
+        buildId: 'build-1',
+        cliVersion: '0.9.0',
+        executablePath: '/Applications/InFlow.app/Contents/MacOS/inflow',
+        pid: 123,
+      },
+    });
     await expect(handleVaultIpcRequest(backend, request('vault.status'))).resolves.toMatchObject({
       ok: true,
       result: { daemonRunning: true, lockState: 'unlocked' },
@@ -123,8 +137,6 @@ describe('handleVaultIpcRequest', () => {
     const backend = new FakeVaultBackend();
     const policy = {
       idleTimeoutSeconds: null,
-      lockOnDaemonExit: true,
-      lockOnExplicitLogout: true,
       lockOnSleep: false,
     };
 
@@ -156,6 +168,15 @@ describe('handleVaultIpcRequest', () => {
     await expect(handleVaultIpcRequest(backend, request('daemon.shutdown'))).resolves.toMatchObject({
       ok: true,
       result: {},
+    });
+  });
+
+  it('rejects daemon info when identity metadata is unavailable', async () => {
+    const backend = new FakeVaultBackend();
+
+    await expect(handleVaultIpcRequest(backend, request('daemon.info'))).resolves.toMatchObject({
+      error: { code: 'secure_storage_unavailable' },
+      ok: false,
     });
   });
 
@@ -199,8 +220,6 @@ describe('handleVaultIpcRequest', () => {
       request('vault.setPolicy', {
         policy: {
           idleTimeoutSeconds: -1,
-          lockOnDaemonExit: true,
-          lockOnExplicitLogout: true,
           lockOnSleep: true,
         },
       }),

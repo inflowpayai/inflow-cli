@@ -24,7 +24,7 @@ import {
   type VaultSecretPayload,
   type VaultStatus,
 } from './vault-backend.js';
-import { createVaultSecretReference, parseVaultSecretReference } from './vault-types.js';
+import { createVaultSecretReference, parseVaultSecretReference, type VaultSecretKind } from './vault-types.js';
 
 export interface LocalVaultBackendOptions {
   paths?: VaultFilePaths;
@@ -65,8 +65,7 @@ export class LocalVaultBackend implements VaultBackend {
 
   deleteSecret(input: DeleteVaultSecretInput): void {
     const reference = parseVaultSecretReference(input.reference.reference);
-    const record = this.repository.getVaultRecord(reference.reference, input.expectedKind);
-    if (record === undefined) return;
+    this.requireActiveRecord(reference.reference, input.expectedKind);
     this.repository.markVaultRecordStatus(reference.reference, 'deleting', this.nowIso());
     this.repository.deleteVaultRecord(reference.reference);
   }
@@ -85,10 +84,7 @@ export class LocalVaultBackend implements VaultBackend {
   getSecret(input: GetVaultSecretInput): VaultSecretPayload {
     const keys = this.unlockedKeys();
     const reference = parseVaultSecretReference(input.reference.reference);
-    const record = this.repository.getVaultRecord(reference.reference, input.expectedKind);
-    if (record === undefined) {
-      throw new SecureStorageError('secure_storage_secret_missing', 'A referenced vault secret is missing.');
-    }
+    const record = this.requireActiveRecord(reference.reference, input.expectedKind);
     return {
       payload: decryptVaultRecordPayload(keys.recordKey, recordContext(record), {
         ciphertext: Buffer.from(record.ciphertext),
@@ -106,7 +102,13 @@ export class LocalVaultBackend implements VaultBackend {
 
   putSecret(input: PutVaultSecretInput): { reference: string } {
     const keys = this.unlockedKeys();
-    const reference = createVaultSecretReference();
+    const reference =
+      input.reference === undefined
+        ? createVaultSecretReference()
+        : parseVaultSecretReference(input.reference.reference);
+    if (this.repository.hasVaultRecord(reference.reference)) {
+      throw new SecureStorageError('secure_storage_secret_conflict', 'The vault secret reference already exists.');
+    }
     const status = 'active';
     const context = {
       encryptionVersion: RECORD_ENCRYPTION_VERSION,
@@ -150,7 +152,7 @@ export class LocalVaultBackend implements VaultBackend {
 
   touch(input: TouchVaultSecretInput): void {
     const reference = parseVaultSecretReference(input.reference.reference);
-    if (this.repository.getVaultRecord(reference.reference, input.expectedKind) === undefined) return;
+    this.requireActiveRecord(reference.reference, input.expectedKind);
     this.repository.touchVaultRecord(reference.reference, this.nowIso());
   }
 
@@ -181,13 +183,26 @@ export class LocalVaultBackend implements VaultBackend {
     }
   }
 
+  private requireActiveRecord(reference: string, expectedKind: VaultSecretKind): StoredVaultRecord {
+    const record = this.repository.getVaultRecordByReference(reference);
+    if (
+      record === undefined ||
+      record.kind !== expectedKind ||
+      record.status !== 'active' ||
+      (record.expiresAt !== undefined && Date.parse(record.expiresAt) <= this.now().getTime())
+    ) {
+      throw new SecureStorageError('secure_storage_secret_missing', 'A referenced vault secret is missing.');
+    }
+    return record;
+  }
+
   private nowIso(): string {
     return this.now().toISOString();
   }
 
   private unlockedKeys(): ReturnType<typeof deriveVaultKeys> {
     if (this.masterKey === undefined) {
-      throw new SecureStorageError('secure_storage_secret_missing', 'The InFlow vault is locked.');
+      throw new SecureStorageError('vault_locked', 'The InFlow vault is locked.');
     }
     return deriveVaultKeys(this.masterKey);
   }
@@ -208,18 +223,11 @@ function parseVaultPolicy(value: unknown): VaultPolicy {
   }
   const candidate = value as Record<string, unknown>;
   const idleTimeoutSeconds = candidate['idleTimeoutSeconds'];
-  const lockOnDaemonExit = candidate['lockOnDaemonExit'];
-  const lockOnExplicitLogout = candidate['lockOnExplicitLogout'];
   const lockOnSleep = candidate['lockOnSleep'];
-  if (
-    !(idleTimeoutSeconds === null || isNonNegativeInteger(idleTimeoutSeconds)) ||
-    typeof lockOnDaemonExit !== 'boolean' ||
-    typeof lockOnExplicitLogout !== 'boolean' ||
-    typeof lockOnSleep !== 'boolean'
-  ) {
+  if (!(idleTimeoutSeconds === null || isNonNegativeInteger(idleTimeoutSeconds)) || typeof lockOnSleep !== 'boolean') {
     throw new SecureStorageError('secure_storage_corrupt', 'The vault policy is malformed.');
   }
-  return { idleTimeoutSeconds, lockOnDaemonExit, lockOnExplicitLogout, lockOnSleep };
+  return { idleTimeoutSeconds, lockOnSleep };
 }
 
 function isMissingFileError(cause: unknown): boolean {

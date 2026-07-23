@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { SecureStorageError } from './errors.js';
 import type { VaultBackend } from './vault-backend.js';
-import { handleVaultIpcRequest } from './vault-daemon-handler.js';
+import { handleVaultIpcRequest, type VaultDaemonInfo } from './vault-daemon-handler.js';
 import type { VaultSocketPeerVerifier } from './vault-peer-verifier.js';
 import {
   VAULT_IPC_MAX_MESSAGE_BYTES,
@@ -21,6 +21,8 @@ export interface VaultSocketServer {
 
 export interface StartVaultSocketServerOptions {
   backend: VaultBackend;
+  daemonInfo?: VaultDaemonInfo;
+  onShutdown?: () => Promise<void> | void;
   peerVerifier?: VaultSocketPeerVerifier;
   socketPath: string;
 }
@@ -28,12 +30,17 @@ export interface StartVaultSocketServerOptions {
 export async function startVaultSocketServer(options: StartVaultSocketServerOptions): Promise<VaultSocketServer> {
   await prepareSocketPath(options.socketPath);
   const server = createServer((socket) => {
-    void handleSocket(socket, options.backend, options.peerVerifier);
+    void handleSocket(socket, options.backend, options.peerVerifier, options.onShutdown, options.daemonInfo);
   });
   await listen(server, options.socketPath);
   await chmod(options.socketPath, 0o600);
+  let closed = false;
   return {
-    close: () => closeServer(server, options.socketPath),
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await closeServer(server, options.socketPath);
+    },
     socketPath: options.socketPath,
   };
 }
@@ -56,6 +63,8 @@ async function handleSocket(
   socket: Socket,
   backend: VaultBackend,
   peerVerifier: VaultSocketPeerVerifier | undefined,
+  onShutdown: (() => Promise<void> | void) | undefined,
+  daemonInfo: VaultDaemonInfo | undefined,
 ): Promise<void> {
   try {
     await peerVerifier?.(socket);
@@ -64,7 +73,12 @@ async function handleSocket(
     if (!('method' in decoded)) {
       throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC request is malformed.');
     }
-    socket.end(encodeVaultIpcMessage(await handleVaultIpcRequest(backend, decoded)));
+    const response = await handleVaultIpcRequest(backend, decoded, daemonInfo);
+    socket.end(encodeVaultIpcMessage(response), () => {
+      if (response.ok && (decoded.method === 'daemon.shutdown' || decoded.method === 'vault.reset')) {
+        void Promise.resolve(onShutdown?.()).catch(() => undefined);
+      }
+    });
   } catch (cause) {
     const response: VaultIpcResponse = {
       error: {
@@ -102,6 +116,11 @@ function readOneFrame(socket: Socket): Promise<Buffer> {
       const buffer = Buffer.concat(chunks);
       if (buffer.byteLength < 4) return;
       const length = buffer.readUInt32BE(0);
+      if (length > VAULT_IPC_MAX_MESSAGE_BYTES) {
+        socket.destroy();
+        settle(new SecureStorageError('secure_storage_invalid_path', 'Vault IPC message is too large.'));
+        return;
+      }
       if (buffer.byteLength >= length + 4) {
         settle(buffer.subarray(0, length + 4));
       }
@@ -136,11 +155,37 @@ async function prepareSocketPath(socketPath: string): Promise<void> {
     if (existing.isSymbolicLink() || existing.isDirectory()) {
       throw new SecureStorageError('secure_storage_invalid_path', 'The vault socket path is unsafe.');
     }
+    if (existing.isSocket() && (await isReachableSocket(socketPath))) {
+      throw new SecureStorageError('secure_storage_unavailable', 'The InFlow vault daemon is already running.');
+    }
     await rm(socketPath, { force: true });
   } catch (cause) {
     if (isMissingFileError(cause)) return;
     throw cause;
   }
+}
+
+function isReachableSocket(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(socketPath);
+    let settled = false;
+    const settle = (reachable: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(reachable);
+    };
+    socket.setTimeout(250, () => {
+      settle(false);
+    });
+    socket.once('connect', () => {
+      settle(true);
+    });
+    socket.once('error', () => {
+      settle(false);
+    });
+  });
 }
 
 function listen(server: Server, socketPath: string): Promise<void> {

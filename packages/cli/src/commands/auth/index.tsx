@@ -5,6 +5,7 @@ import {
   type DeviceAuthRequest,
   type IAuth,
   InflowApiError,
+  SecureStorageError,
   type IUserResource,
   probeSession,
   sanitizeDeep,
@@ -15,6 +16,7 @@ import { Cli } from 'incur';
 import { Text } from 'ink';
 import React, { useEffect, useState } from 'react';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
+import { mcpTool } from '../../mcp-metadata.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import type { UpdateInfo, UpdateProbe } from '../../utils/update-probe.js';
 import { Login } from './login.js';
@@ -23,6 +25,7 @@ import { LoginPrompt } from './login-prompt.js';
 import { Logout } from './logout.js';
 import { loginOptions, statusOptions } from './schema.js';
 import { AuthStatus } from './status.js';
+import { ensureLocalVaultUnlocked, resetLocalVault, type LocalVaultDaemonClientOptions } from '../vault/index.js';
 
 export interface AuthCommandContext {
   apiKey: string | undefined;
@@ -31,6 +34,7 @@ export interface AuthCommandContext {
   apiBaseUrl?: string;
   authBaseUrl?: string;
   resolvedApiBaseUrl: string;
+  vaultOptions?: LocalVaultDaemonClientOptions;
   verbose: boolean;
 }
 
@@ -269,6 +273,7 @@ async function* runAuthLogin(
     authResource: IAuth;
     userResource: IUserResource;
     authStorage: AuthStorage;
+    ensureVaultUnlocked?: (mode: 'agent' | 'human') => Promise<void>;
   },
   ctx: AuthCommandContext,
 ): AsyncGenerator<unknown, unknown> {
@@ -281,6 +286,7 @@ async function* runAuthLogin(
   }
 
   const connection = connectionFromContext(ctx);
+  await deps.ensureVaultUnlocked?.(c.agent || c.formatExplicit ? 'agent' : 'human');
 
   if (ctx.apiKey !== undefined && ctx.apiKey.length > 0) {
     if (!c.agent && !c.formatExplicit) {
@@ -390,15 +396,31 @@ async function* runAuthLogin(
 
 async function runAuthLogout(
   c: AuthLogoutContext,
-  deps: { authResource: IAuth; authStorage: AuthStorage },
+  deps: { authResource: IAuth; authStorage: AuthStorage; resetVault: () => Promise<void> },
 ): Promise<{ authenticated: false }> {
   if (!c.agent && !c.formatExplicit) {
-    await renderInkUntilExit(<Logout auth={deps.authResource} onComplete={() => undefined} />);
+    await logoutThenReset(
+      () => renderInkUntilExit(<Logout auth={deps.authResource} onComplete={() => undefined} />),
+      deps,
+    );
     return { authenticated: false };
   }
 
-  await deps.authResource.logout();
+  await logoutThenReset(() => deps.authResource.logout(), deps);
   return { authenticated: false };
+}
+
+async function logoutThenReset(run: () => Promise<void>, deps: { resetVault: () => Promise<void> }): Promise<void> {
+  let logoutFailure: unknown;
+  try {
+    await run();
+  } catch (cause) {
+    logoutFailure = cause;
+  }
+  await deps.resetVault();
+  if (logoutFailure instanceof SecureStorageError) return;
+  if (logoutFailure instanceof Error) throw logoutFailure;
+  if (logoutFailure !== undefined) throw new Error('The InFlow logout operation failed.');
 }
 
 async function* runAuthStatus(
@@ -415,7 +437,7 @@ async function* runAuthStatus(
     polling: c.options.interval > 0,
   });
   const update = toUpdateBlock(updateInfo);
-  const storedConnection = deps.authStorage.getConnection();
+  const storedConnection = readStoredConnection(deps.authStorage);
   const effectiveConnection = displayConnection(storedConnection, ctx);
   const composeOptions = {
     ...(update !== undefined ? { update } : {}),
@@ -485,23 +507,35 @@ export function createAuthCli(
 
   cli.command('login', {
     description: 'Authenticate with InFlow',
+    mcp: mcpTool('auth_login'),
     options: loginOptions,
     outputPolicy: 'agent-only' as const,
     async *run(c) {
-      return yield* runAuthLogin(c, { authResource, userResource, authStorage }, ctx);
+      return yield* runAuthLogin(
+        c,
+        {
+          authResource,
+          userResource,
+          authStorage,
+          ensureVaultUnlocked: (mode) => ensureLocalVaultUnlocked({ mode, vaultOptions: ctx.vaultOptions ?? {} }),
+        },
+        ctx,
+      );
     },
   });
 
   cli.command('logout', {
     description: 'Log out from InFlow',
+    mcp: mcpTool('auth_logout'),
     outputPolicy: 'agent-only' as const,
     async run(c) {
-      return runAuthLogout(c, { authResource, authStorage });
+      return runAuthLogout(c, { authResource, authStorage, resetVault: () => resetLocalVault(ctx.vaultOptions ?? {}) });
     },
   });
 
   cli.command('status', {
     description: 'Check authentication status',
+    mcp: mcpTool('auth_status'),
     options: statusOptions,
     outputPolicy: 'agent-only' as const,
     async *run(c) {
@@ -510,6 +544,15 @@ export function createAuthCli(
   });
 
   return cli;
+}
+
+function readStoredConnection(authStorage: AuthStorage): ConnectionSettings | null {
+  try {
+    return authStorage.getConnection();
+  } catch (cause) {
+    if (cause instanceof SecureStorageError && cause.secureStorageCode === 'secure_storage_secret_missing') return null;
+    throw cause;
+  }
 }
 
 export const __testing = {

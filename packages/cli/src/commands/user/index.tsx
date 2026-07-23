@@ -7,6 +7,7 @@ import {
 } from '@inflowpayai/inflow-core';
 import { Cli, Errors } from 'incur';
 import React from 'react';
+import { mcpTool } from '../../mcp-metadata.js';
 import { assertSessionGuard } from '../../utils/assert-session.js';
 import { authenticatedApiError } from '../../utils/api-error.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
@@ -78,6 +79,7 @@ export function createUserCli(user: IUser, authStorage: AuthStorage, inflow: Inf
 
   cli.command('get', {
     description: 'Retrieve the current authenticated user',
+    mcp: mcpTool('user_get'),
     options: getOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {

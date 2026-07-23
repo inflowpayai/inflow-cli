@@ -4,7 +4,7 @@ import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { SecureStorageError } from './errors.js';
-import type { SecretReference } from './keychain.js';
+import type { SecretReference } from './secret-store.js';
 import {
   vaultRecordStatusCode,
   vaultRecordStatusName,
@@ -533,15 +533,7 @@ export class SecureSqliteRepository {
           `INSERT INTO vault_records (
              reference, kind, status, expires_at, encryption_version, nonce, tag, ciphertext, updated_at
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(reference) DO UPDATE SET
-             kind = excluded.kind,
-             status = excluded.status,
-             expires_at = excluded.expires_at,
-             encryption_version = excluded.encryption_version,
-             nonce = excluded.nonce,
-             tag = excluded.tag,
-             ciphertext = excluded.ciphertext,
-             updated_at = excluded.updated_at`,
+          `,
         )
         .run(
           record.reference,
@@ -557,10 +549,18 @@ export class SecureSqliteRepository {
     });
   }
 
-  getVaultRecord(reference: string, expectedKind: VaultSecretKind): StoredVaultRecord | undefined {
+  hasVaultRecord(reference: string): boolean {
+    return this.db().prepare('SELECT 1 FROM vault_records WHERE reference = ?').get(reference) !== undefined;
+  }
+
+  getVaultRecordByReference(reference: string): StoredVaultRecord | undefined {
     const row = this.db().prepare('SELECT * FROM vault_records WHERE reference = ?').get(reference);
-    if (row === undefined) return undefined;
-    const record = this.vaultRecordFromRow(row);
+    return row === undefined ? undefined : this.vaultRecordFromRow(row);
+  }
+
+  getVaultRecord(reference: string, expectedKind: VaultSecretKind): StoredVaultRecord | undefined {
+    const record = this.getVaultRecordByReference(reference);
+    if (record === undefined) return undefined;
     if (record.kind !== expectedKind || record.status !== 'active') return undefined;
     if (record.expiresAt !== undefined && Date.parse(record.expiresAt) <= Date.now()) return undefined;
     return record;

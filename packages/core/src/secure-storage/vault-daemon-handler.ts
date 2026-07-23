@@ -7,9 +7,10 @@ import { isVaultSecretKind, parseVaultSecretReference, type VaultSecretKind } fr
 export async function handleVaultIpcRequest(
   backend: VaultBackend,
   request: VaultIpcRequest,
+  daemonInfo?: VaultDaemonInfo,
 ): Promise<VaultIpcResponse> {
   try {
-    const result = await dispatchVaultIpcRequest(backend, request);
+    const result = await dispatchVaultIpcRequest(backend, request, daemonInfo);
     return { id: request.id, ok: true, result, version: 1 };
   } catch (cause) {
     return {
@@ -21,11 +22,21 @@ export async function handleVaultIpcRequest(
   }
 }
 
+export interface VaultDaemonInfo {
+  buildId: string | null;
+  cliVersion: string | null;
+  executablePath: string;
+  pid: number;
+}
+
 async function dispatchVaultIpcRequest(
   backend: VaultBackend,
   request: VaultIpcRequest,
+  daemonInfo: VaultDaemonInfo | undefined,
 ): Promise<Record<string, unknown>> {
   switch (request.method) {
+    case 'daemon.info':
+      return daemonInfoResult(daemonInfo);
     case 'daemon.shutdown':
       await backend.lock();
       return {};
@@ -67,14 +78,28 @@ async function dispatchVaultIpcRequest(
   }
 }
 
+function daemonInfoResult(info: VaultDaemonInfo | undefined): Record<string, unknown> {
+  if (info === undefined) {
+    throw new SecureStorageError('secure_storage_unavailable', 'Vault daemon identity is unavailable.');
+  }
+  return {
+    buildId: info.buildId,
+    cliVersion: info.cliVersion,
+    executablePath: info.executablePath,
+    pid: info.pid,
+  };
+}
+
 function parsePutSecretParams(params: Record<string, unknown>) {
   const input = {
     expectedKind: parseKindParam(params),
     payload: parseBase64Param(params, 'payload'),
   };
+  const reference = parseOptionalStringParam(params, 'reference');
+  const withReference = reference === undefined ? input : { ...input, reference: parseVaultSecretReference(reference) };
   const expiresAt = parseOptionalStringParam(params, 'expiresAt');
-  if (expiresAt !== undefined) return { ...input, expiresAt };
-  return input;
+  if (expiresAt !== undefined) return { ...withReference, expiresAt };
+  return withReference;
 }
 
 function parseSecretReferenceParams(params: Record<string, unknown>) {
@@ -90,18 +115,11 @@ function parsePolicyParam(params: Record<string, unknown>): VaultPolicy {
     throw new SecureStorageError('secure_storage_invalid_path', 'Vault IPC request parameters are malformed.');
   }
   const idleTimeoutSeconds = policy['idleTimeoutSeconds'];
-  const lockOnDaemonExit = policy['lockOnDaemonExit'];
-  const lockOnExplicitLogout = policy['lockOnExplicitLogout'];
   const lockOnSleep = policy['lockOnSleep'];
-  if (
-    !(idleTimeoutSeconds === null || isNonNegativeInteger(idleTimeoutSeconds)) ||
-    typeof lockOnDaemonExit !== 'boolean' ||
-    typeof lockOnExplicitLogout !== 'boolean' ||
-    typeof lockOnSleep !== 'boolean'
-  ) {
+  if (!(idleTimeoutSeconds === null || isNonNegativeInteger(idleTimeoutSeconds)) || typeof lockOnSleep !== 'boolean') {
     throw new SecureStorageError('secure_storage_invalid_path', 'Vault IPC request parameters are malformed.');
   }
-  return { idleTimeoutSeconds, lockOnDaemonExit, lockOnExplicitLogout, lockOnSleep };
+  return { idleTimeoutSeconds, lockOnSleep };
 }
 
 function parseKindParam(params: Record<string, unknown>): VaultSecretKind {
@@ -147,8 +165,6 @@ function secretPayloadResult(secret: VaultSecretPayload): Record<string, unknown
 function policyResult(policy: VaultPolicy): Record<string, unknown> {
   return {
     idleTimeoutSeconds: policy.idleTimeoutSeconds,
-    lockOnDaemonExit: policy.lockOnDaemonExit,
-    lockOnExplicitLogout: policy.lockOnExplicitLogout,
     lockOnSleep: policy.lockOnSleep,
   };
 }

@@ -25,7 +25,23 @@ describe('local vault daemon lifecycle', () => {
 
   it('serves generic vault IPC over the configured socket', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-daemon-'));
-    daemon = await startLocalVaultDaemon({ rootDirectory: tmpDir });
+    daemon = await startLocalVaultDaemon({ buildId: 'build-1', cliVersion: '0.9.0', rootDirectory: tmpDir });
+
+    await expect(
+      sendVaultIpcRequest(daemon.socketPath, {
+        id: 'req_info',
+        method: 'daemon.info',
+        params: {},
+        version: 1,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      result: {
+        buildId: 'build-1',
+        cliVersion: '0.9.0',
+        executablePath: process.execPath,
+      },
+    });
 
     await expect(
       sendVaultIpcRequest(daemon.socketPath, {
@@ -67,6 +83,7 @@ describe('local vault daemon lifecycle', () => {
           closed += 1;
           return Promise.resolve();
         },
+        closed: Promise.resolve(),
         socketPath: '/tmp/inflow-test-vault.sock',
       },
       runtime,
@@ -77,6 +94,56 @@ describe('local vault daemon lifecycle', () => {
     expect(closed).toBe(1);
     expect(exits).toEqual([0]);
     expect(handlers.has('SIGINT')).toBe(true);
+  });
+
+  it('stops accepting IPC after a reset request', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-daemon-'));
+    daemon = await startLocalVaultDaemon({ rootDirectory: tmpDir });
+
+    await expect(
+      sendVaultIpcRequest(daemon.socketPath, {
+        id: 'req_reset',
+        method: 'vault.reset',
+        params: {},
+        version: 1,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await expectClosed(daemon.closed);
+
+    await expect(
+      sendVaultIpcRequest(daemon.socketPath, {
+        id: 'req_after_reset',
+        method: 'vault.status',
+        params: {},
+        version: 1,
+      }),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('stops accepting IPC after a shutdown request', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-daemon-'));
+    daemon = await startLocalVaultDaemon({ rootDirectory: tmpDir });
+
+    await expect(
+      sendVaultIpcRequest(daemon.socketPath, {
+        id: 'req_shutdown',
+        method: 'daemon.shutdown',
+        params: {},
+        version: 1,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await expectClosed(daemon.closed);
+
+    await expect(
+      sendVaultIpcRequest(daemon.socketPath, {
+        id: 'req_after_shutdown',
+        method: 'vault.status',
+        params: {},
+        version: 1,
+      }),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('stops accepting IPC after the configured idle timeout', async () => {
@@ -96,8 +163,6 @@ describe('local vault daemon lifecycle', () => {
         params: {
           policy: {
             idleTimeoutSeconds: 1,
-            lockOnDaemonExit: true,
-            lockOnExplicitLogout: true,
             lockOnSleep: true,
           },
         },
@@ -105,6 +170,7 @@ describe('local vault daemon lifecycle', () => {
       }),
     ).resolves.toMatchObject({ ok: true });
     await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await expectClosed(daemon.closed);
 
     await expect(
       sendVaultIpcRequest(daemon.socketPath, {
@@ -136,8 +202,6 @@ describe('local vault daemon lifecycle', () => {
       params: {
         policy: {
           idleTimeoutSeconds: null,
-          lockOnDaemonExit: true,
-          lockOnExplicitLogout: true,
           lockOnSleep: true,
         },
       },
@@ -146,6 +210,7 @@ describe('local vault daemon lifecycle', () => {
 
     blockEventLoop(80);
     await new Promise((resolve) => setTimeout(resolve, 30));
+    await expectClosed(daemon.closed);
 
     await expect(
       sendVaultIpcRequest(daemon.socketPath, {
@@ -157,6 +222,14 @@ describe('local vault daemon lifecycle', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
+
+async function expectClosed(closed: Promise<void>): Promise<void> {
+  await expect(Promise.race([closed.then(() => 'closed'), delay(500).then(() => 'open')])).resolves.toBe('closed');
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 function vaultReferenceFromPut(response: VaultIpcResponse): string {
   if (!response.ok) throw new Error('expected successful put response');

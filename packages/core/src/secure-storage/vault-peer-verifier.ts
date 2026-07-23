@@ -36,8 +36,6 @@ interface VaultPeerVerifierDependencies {
 const DEFAULT_TEAM_ID = 'B96U57DTR2';
 
 export function shouldRequireVaultPeerVerification(): boolean {
-  if (process.env['INFLOW_VAULT_PEER_VERIFICATION'] === 'required') return true;
-  if (process.env['INFLOW_VAULT_PEER_VERIFICATION'] === 'disabled') return false;
   return process.platform === 'darwin' && realExecutablePath().includes('/InFlow.app/Contents/MacOS/');
 }
 
@@ -50,7 +48,7 @@ export function createVaultSocketPeerVerifier(
   }
   const native = dependencies.loadNativeModule(options.nativeModulePath ?? defaultNativeModulePath());
   const expectedPath = dependencies.realpath(options.expectedExecutablePath ?? process.execPath);
-  const expectedTeamId = options.expectedTeamId ?? process.env['INFLOW_CODESIGN_TEAM_ID'] ?? DEFAULT_TEAM_ID;
+  const expectedTeamId = options.expectedTeamId ?? DEFAULT_TEAM_ID;
   const requireSignature = options.requireSignature ?? expectedPath.includes('/InFlow.app/Contents/MacOS/');
 
   return (socket) => {

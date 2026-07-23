@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { type AuthStorage, Inflow, runLocalVaultDaemon, Storage, storage } from '@inflowpayai/inflow-core';
+import { type AuthStorage, Inflow, runLocalVaultDaemon, Storage, SyncVaultSecretStore } from '@inflowpayai/inflow-core';
 import { Cli, Help } from 'incur';
 import { createAuthCli } from './commands/auth/index.js';
 import { createAepCli } from './commands/aep/index.js';
@@ -8,7 +8,12 @@ import { createDepositAddressesCli } from './commands/deposit-addresses/index.js
 import { createInspectCommand } from './commands/inspect/index.js';
 import { createMppCli } from './commands/mpp/index.js';
 import { createUserCli } from './commands/user/index.js';
-import { createVaultCli } from './commands/vault/index.js';
+import {
+  createVaultCli,
+  ensureLocalVaultDaemon,
+  ensureLocalVaultUnlocked,
+  type LocalVaultDaemonClientOptions,
+} from './commands/vault/index.js';
 import { createX402Cli } from './commands/x402/index.js';
 import {
   formatUpdateNotice,
@@ -16,13 +21,16 @@ import {
   makeFrozenUpdateProbe,
   type UpdateProbe,
 } from './utils/update-probe.js';
+import { shouldStartVaultDaemon, shouldUnlockVault } from './startup-vault.js';
 
 declare const __CLI_VERSION__: string;
+declare const __CLI_BUILD_ID__: string;
 declare const __CLI_NAME__: string;
 declare const __BOOTSTRAP_BODY__: string;
 declare const __SKILL_BODIES__: Record<string, string>;
 
 const cliVersion = __CLI_VERSION__;
+const cliBuildId = __CLI_BUILD_ID__;
 const cliName = __CLI_NAME__;
 const bootstrapBody = __BOOTSTRAP_BODY__;
 const skillBodies = __SKILL_BODIES__;
@@ -52,7 +60,8 @@ async function main(): Promise<void> {
       process.exit(2);
     }
     await runLocalVaultDaemon({
-      ...(process.env['INFLOW_VAULT_ROOT'] !== undefined ? { rootDirectory: process.env['INFLOW_VAULT_ROOT'] } : {}),
+      cliVersion,
+      buildId: cliBuildId,
     });
   }
 
@@ -122,8 +131,21 @@ async function main(): Promise<void> {
   const sandboxFlag = extractBooleanFlag('--sandbox');
   const apiKeyFromFlag = extractFlag('--api-key');
   const verbose = extractBooleanFlag('--verbose');
+  const isAgent = process.argv.includes('--format') || process.argv.includes('--mcp') || !process.stdout.isTTY;
+  const vaultOptions: LocalVaultDaemonClientOptions = { buildId: cliBuildId, cliVersion };
+  const hasDirectApiKey = apiKeyFromFlag !== undefined || process.env['INFLOW_API_KEY'] !== undefined;
+  if (shouldStartVaultDaemon(process.argv, hasDirectApiKey)) {
+    await ensureLocalVaultDaemon(vaultOptions);
+  }
+  if (shouldUnlockVault(process.argv, { hasDirectApiKey, isAgent })) {
+    await ensureLocalVaultUnlocked({ mode: isAgent ? 'agent' : 'human', vaultOptions });
+  }
 
-  const authStorage: AuthStorage = credentialFilePath ? new Storage({ configPath: credentialFilePath }) : storage;
+  const secretStore = new SyncVaultSecretStore(vaultOptions);
+  const authStorage: AuthStorage = new Storage({
+    ...(credentialFilePath === undefined ? {} : { configPath: credentialFilePath }),
+    secretStore,
+  });
 
   const apiKeyFromEnv = process.env['INFLOW_API_KEY'];
   function readSavedApiKey(): string | undefined {
@@ -144,7 +166,7 @@ async function main(): Promise<void> {
       return {};
     }
   }
-  const apiKeyFromSaved = readSavedApiKey();
+  const apiKeyFromSaved = apiKeyFromFlag !== undefined || apiKeyFromEnv !== undefined ? undefined : readSavedApiKey();
   const apiKey = apiKeyFromFlag ?? apiKeyFromEnv ?? apiKeyFromSaved;
   const apiKeySource: 'flag' | 'env' | 'saved' | undefined =
     apiKeyFromFlag !== undefined && apiKeyFromFlag.length > 0
@@ -156,8 +178,6 @@ async function main(): Promise<void> {
           : undefined;
 
   const savedConnection = readSavedConnection();
-
-  const isAgent = process.argv.includes('--format') || process.argv.includes('--mcp') || !process.stdout.isTTY;
 
   const rawEnvironment =
     environmentFromFlag ??
@@ -243,12 +263,13 @@ async function main(): Promise<void> {
       ...(authBaseUrl !== undefined ? { authBaseUrl } : {}),
       resolvedApiBaseUrl,
       verbose,
+      vaultOptions,
     }),
   );
   cli.command(createUserCli(inflow.user, authStorage, inflow));
   cli.command(createBalancesCli(inflow.balances, authStorage, inflow));
   cli.command(createDepositAddressesCli(inflow.depositAddresses, authStorage, inflow));
-  cli.command(createVaultCli());
+  cli.command(createVaultCli(vaultOptions));
   cli.command(createX402Cli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createMppCli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createAepCli(inflow, authStorage));

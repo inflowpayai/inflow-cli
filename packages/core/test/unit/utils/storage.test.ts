@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AuthTokens } from '../../../src/types/index.js';
 import { MemoryStorage, Storage } from '../../../src/utils/storage.js';
 import { AepStorage } from '../../../src/aep/storage.js';
-import { SyncMemorySecretStore, type SecretReference } from '../../../src/secure-storage/keychain.js';
+import { SyncMemorySecretStore, type SecretReference } from '../../../src/secure-storage/secret-store.js';
 
 const sampleAuth: AuthTokens = {
   access_token: 'a',
@@ -16,10 +16,16 @@ const sampleAuth: AuthTokens = {
 
 class CountingSecretStore extends SyncMemorySecretStore {
   readonly deleted: SecretReference[] = [];
+  readonly readReferences: SecretReference[] = [];
 
   override delete(reference: SecretReference): void {
     super.delete(reference);
     this.deleted.push(reference);
+  }
+
+  override read(reference: SecretReference): Uint8Array {
+    this.readReferences.push(reference);
+    return super.read(reference);
   }
 }
 
@@ -63,6 +69,16 @@ describe('Storage (file-backed)', () => {
     expect(s.isAuthenticated()).toBe(true);
     s.clearAuth();
     expect(s.isAuthenticated()).toBe(false);
+  });
+
+  it('isAuthenticated checks stored auth metadata without reading secrets', () => {
+    const secretStore = new CountingSecretStore();
+    const s = new Storage({ cwd: tmpDir, secretStore });
+    s.setAuth(sampleAuth);
+    secretStore.readReferences.length = 0;
+
+    expect(s.isAuthenticated()).toBe(true);
+    expect(secretStore.readReferences).toEqual([]);
   });
 
   it('pendingDeviceAuth evicts at read time when expired', () => {
@@ -255,7 +271,7 @@ describe('Storage (file-backed)', () => {
     await expect(s.deleteConfig()).resolves.toBeUndefined();
   });
 
-  it('stores AEP credential payloads as Keychain secrets and reconstructs state', () => {
+  it('stores AEP credential payloads as vault secrets and reconstructs state', () => {
     const s = secureStorage();
     s.setAepState({
       credentials: {
@@ -328,6 +344,58 @@ describe('Storage (file-backed)', () => {
     expect(s.getAepState()?.credentials['did:web:service.example']?.['expired']).toBeUndefined();
     expect(readFileSync(s.getPath(), 'utf8')).not.toContain('expired-secret-value');
     expect(secretStore.deleted.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('finds AEP identities and deletes matching credentials without reading credential payloads', () => {
+    const secretStore = new CountingSecretStore();
+    const s = new Storage({ cwd: tmpDir, secretStore });
+    const owner = { platformOrigin: 'https://platform.example', userId: 'user-1' };
+    s.setAepState({
+      credentials: {
+        'did:web:service.example': {
+          keep: {
+            credential: { credential_id: 'keep', value: 'keep-secret-value' },
+            credentialId: 'keep',
+            expiresAt: '2999-01-01T00:00:00.000Z',
+            grantType: 'oauth-bearer',
+            issuedAt: '2026-01-01T00:00:00.000Z',
+            serviceDid: 'did:web:service.example',
+          },
+          remove: {
+            credential: { credential_id: 'remove', value: 'remove-secret-value' },
+            credentialId: 'remove',
+            expiresAt: '2999-01-01T00:00:00.000Z',
+            grantType: 'api-key',
+            issuedAt: '2026-01-01T00:00:00.000Z',
+            serviceDid: 'did:web:service.example',
+          },
+        },
+      },
+      identities: {
+        'did:web:service.example': {
+          agentDid: 'did:web:platform.example:agents:one',
+          identityKind: 'platform-hosted',
+          serviceDid: 'did:web:service.example',
+          signingAlgorithms: ['ES256'],
+        },
+      },
+      owner,
+      version: 1,
+    });
+    secretStore.readReferences.length = 0;
+
+    expect(s.findAepIdentity(owner, 'did:web:service.example')).toMatchObject({
+      agentDid: 'did:web:platform.example:agents:one',
+    });
+    s.deleteAepCredentials(owner, 'did:web:service.example', { grantType: 'api-key' });
+
+    expect(secretStore.readReferences.filter((reference) => reference.purpose === 'aep-credential')).toEqual([]);
+    expect(secretStore.deleted.filter((reference) => reference.purpose === 'aep-credential')).toHaveLength(1);
+    const state = s.getAepState();
+    expect(state?.credentials['did:web:service.example']?.['remove']).toBeUndefined();
+    expect(state?.credentials['did:web:service.example']?.['keep']).toMatchObject({
+      credential: { credential_id: 'keep', value: 'keep-secret-value' },
+    });
   });
 });
 

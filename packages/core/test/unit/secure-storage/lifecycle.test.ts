@@ -4,18 +4,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  KeychainReferenceManifest,
+  SecretReferenceManifest,
   MemorySecretStore,
-  SyncKeychainReferenceManifest,
+  SyncSecretReferenceManifestStore,
   SyncMemorySecretStore,
-} from '../../../src/secure-storage/keychain.js';
+} from '../../../src/secure-storage/secret-store.js';
 import {
   SecureSecretLifecycleCoordinator,
   SyncSecureSecretLifecycleCoordinator,
 } from '../../../src/secure-storage/lifecycle.js';
 import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
 
-class FailingAddManifest extends KeychainReferenceManifest {
+class FailingAddManifest extends SecretReferenceManifest {
   override add(): Promise<void> {
     return Promise.reject(new Error('manifest add failed'));
   }
@@ -26,25 +26,25 @@ function rejectWithUnknown(reason: unknown): Promise<never> {
   return reject(reason);
 }
 
-class NonErrorFailingAddManifest extends KeychainReferenceManifest {
+class NonErrorFailingAddManifest extends SecretReferenceManifest {
   override add(): Promise<void> {
     return rejectWithUnknown('manifest add failed');
   }
 }
 
-class FailingRemoveManifest extends KeychainReferenceManifest {
+class FailingRemoveManifest extends SecretReferenceManifest {
   override remove(): Promise<void> {
     return Promise.reject(new Error('manifest remove failed'));
   }
 }
 
-class FailingSyncAddManifest extends SyncKeychainReferenceManifest {
+class FailingSyncAddManifest extends SyncSecretReferenceManifestStore {
   override add(): void {
     throw new Error('manifest add failed');
   }
 }
 
-class FailingSyncRemoveManifest extends SyncKeychainReferenceManifest {
+class FailingSyncRemoveManifest extends SyncSecretReferenceManifestStore {
   override remove(): void {
     throw new Error('manifest remove failed');
   }
@@ -54,7 +54,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
   let tmpDir: string;
   let repository: SecureSqliteRepository;
   let store: MemorySecretStore;
-  let manifest: KeychainReferenceManifest;
+  let manifest: SecretReferenceManifest;
   let coordinator: SecureSecretLifecycleCoordinator;
 
   beforeEach(() => {
@@ -62,7 +62,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
     repository = new SecureSqliteRepository({ rootDir: tmpDir });
     repository.initialize();
     store = new MemorySecretStore();
-    manifest = new KeychainReferenceManifest(store);
+    manifest = new SecretReferenceManifest(store);
     coordinator = new SecureSecretLifecycleCoordinator(repository, store, manifest);
   });
 
@@ -71,7 +71,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
     rmSync(tmpDir, { force: true, recursive: true });
   });
 
-  it('creates a Keychain item, manifest reference, and active lifecycle row in one serialized operation', async () => {
+  it('creates a secret item, manifest reference, and active lifecycle row in one serialized operation', async () => {
     const principal = repository.upsertPrincipal('https://platform.example.test', 'user-1');
     const reference = { purpose: 'api-key', reference: 'opaque-reference' };
 
@@ -82,7 +82,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
     expect(repository.listSecretLifecycle('active')).toEqual([reference]);
   });
 
-  it('deletes the Keychain item, manifest reference, and lifecycle row', async () => {
+  it('deletes the secret item, manifest reference, and lifecycle row', async () => {
     const reference = { purpose: 'api-key', reference: 'opaque-reference' };
     await coordinator.create(reference, Buffer.from('secret'), null);
 
@@ -126,7 +126,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
     expect(repository.listSecretLifecycle('deleting')).toEqual([]);
   });
 
-  it('keeps a failed create recoverable after the Keychain item is written', async () => {
+  it('keeps a failed create recoverable after the secret item is written', async () => {
     const reference = { purpose: 'api-key', reference: 'create-failure' };
     const failing = new SecureSecretLifecycleCoordinator(repository, store, new FailingAddManifest(store));
 
@@ -150,7 +150,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
     expect(repository.listSecretLifecycle('pending')).toEqual([reference]);
   });
 
-  it('keeps a failed delete recoverable after the Keychain item is deleted', async () => {
+  it('keeps a failed delete recoverable after the secret item is deleted', async () => {
     const reference = { purpose: 'api-key', reference: 'delete-failure' };
     await coordinator.create(reference, Buffer.from('secret'), null);
     const failing = new SecureSecretLifecycleCoordinator(repository, store, new FailingRemoveManifest(store));
@@ -167,7 +167,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
 
   it('supports synchronous create, delete, and interrupted-work recovery', () => {
     const syncStore = new SyncMemorySecretStore();
-    const syncManifest = new SyncKeychainReferenceManifest(syncStore);
+    const syncManifest = new SyncSecretReferenceManifestStore(syncStore);
     const syncCoordinator = new SyncSecureSecretLifecycleCoordinator(repository, syncStore, syncManifest);
     const active = { purpose: 'api-key', reference: 'sync-active' };
 
@@ -177,7 +177,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
     expect(repository.listSecretLifecycle('active')).toEqual([active]);
 
     syncCoordinator.delete(active);
-    expect(() => syncStore.read(active)).toThrow('A referenced secret is missing from Keychain.');
+    expect(() => syncStore.read(active)).toThrow('A referenced secret is missing from secret store.');
     expect(repository.listSecretLifecycle('active')).toEqual([]);
 
     const pending = { purpose: 'api-key', reference: 'sync-pending' };
@@ -190,14 +190,14 @@ describe('SecureSecretLifecycleCoordinator', () => {
 
     syncCoordinator.recoverInterruptedWork();
 
-    expect(() => syncStore.read(pending)).toThrow('A referenced secret is missing from Keychain.');
+    expect(() => syncStore.read(pending)).toThrow('A referenced secret is missing from secret store.');
     expect(repository.listSecretLifecycle('pending')).toEqual([]);
     expect(repository.listSecretLifecycle('deleting')).toEqual([]);
   });
 
-  it('keeps synchronous create and delete failures recoverable after touching Keychain', () => {
+  it('keeps synchronous create and delete failures recoverable after touching secret store', () => {
     const syncStore = new SyncMemorySecretStore();
-    const syncManifest = new SyncKeychainReferenceManifest(syncStore);
+    const syncManifest = new SyncSecretReferenceManifestStore(syncStore);
     const syncCoordinator = new SyncSecureSecretLifecycleCoordinator(repository, syncStore, syncManifest);
     const createFailure = { purpose: 'api-key', reference: 'sync-create-failure' };
     const failingCreate = new SyncSecureSecretLifecycleCoordinator(
@@ -210,7 +210,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
     expect(repository.listSecretLifecycle('pending')).toEqual([createFailure]);
     expect(Buffer.from(syncStore.read(createFailure)).toString('utf8')).toBe('secret');
     syncCoordinator.recoverInterruptedWork();
-    expect(() => syncStore.read(createFailure)).toThrow('A referenced secret is missing from Keychain.');
+    expect(() => syncStore.read(createFailure)).toThrow('A referenced secret is missing from secret store.');
 
     const deleteFailure = { purpose: 'api-key', reference: 'sync-delete-failure' };
     syncCoordinator.create(deleteFailure, Buffer.from('secret'), null);
@@ -222,7 +222,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
 
     expect(() => failingDelete.delete(deleteFailure)).toThrow('manifest remove failed');
     expect(repository.listSecretLifecycle('deleting')).toEqual([deleteFailure]);
-    expect(() => syncStore.read(deleteFailure)).toThrow('A referenced secret is missing from Keychain.');
+    expect(() => syncStore.read(deleteFailure)).toThrow('A referenced secret is missing from secret store.');
     syncCoordinator.recoverInterruptedWork();
     expect(repository.listSecretLifecycle('deleting')).toEqual([]);
   });

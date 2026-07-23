@@ -21,8 +21,6 @@ export const VAULT_BACKEND_METHODS = [
 
 export const DEFAULT_VAULT_POLICY = {
   idleTimeoutSeconds: 28_800,
-  lockOnDaemonExit: true,
-  lockOnExplicitLogout: true,
   lockOnSleep: true,
 } as const satisfies VaultPolicy;
 
@@ -33,8 +31,6 @@ export interface VaultStatus {
 
 export interface VaultPolicy {
   idleTimeoutSeconds: number | null;
-  lockOnDaemonExit: boolean;
-  lockOnExplicitLogout: boolean;
   lockOnSleep: boolean;
 }
 
@@ -47,6 +43,7 @@ export interface PutVaultSecretInput {
   expectedKind: VaultSecretKind;
   expiresAt?: string;
   payload: Uint8Array;
+  reference?: VaultSecretReference;
 }
 
 export interface GetVaultSecretInput {

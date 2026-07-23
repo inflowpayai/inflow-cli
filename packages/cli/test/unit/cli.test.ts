@@ -1,5 +1,5 @@
 import { spawn, type SpawnOptionsWithoutStdio } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
@@ -32,6 +32,78 @@ const VAULT_COMMANDS = [
   'vault unlock',
 ] as const;
 const VAULT_MCP_TOOLS = VAULT_COMMANDS.map((command) => command.replace(' ', '_'));
+const MCP_TOOL_EXPECTATIONS = [
+  ['aep_enroll', 'AEP: Enroll Service', false, false],
+  ['aep_fetch', 'AEP: Fetch Resource', false, false],
+  ['aep_grant', 'AEP: Grant Credential', false, false],
+  ['aep_inspect', 'AEP: Inspect Service', true, false],
+  ['aep_revoke', 'AEP: Revoke Credentials', false, true],
+  ['aep_status', 'AEP: Check Status', true, false],
+  ['auth_login', 'InFlow Account: Log In', false, false],
+  ['auth_logout', 'InFlow Account: Log Out', false, true],
+  ['auth_status', 'InFlow Account: Check Login', true, false],
+  ['balances_list', 'Balances: List Balances', true, false],
+  ['deposit-addresses_list', 'Deposit Addresses: List Deposit Addresses', true, false],
+  ['inspect', 'Inspect: Inspect Resource', true, false],
+  ['mpp_cancel', 'MPP: Cancel Approval', false, true],
+  ['mpp_decode', 'MPP: Decode Header', true, false],
+  ['mpp_fetch', 'MPP: Fetch Resource', false, false],
+  ['mpp_inspect', 'MPP: Inspect Resource', true, false],
+  ['mpp_pay', 'MPP: Pay Resource', false, true],
+  ['mpp_status', 'MPP: Check Payment', true, false],
+  ['mpp_supported', 'MPP: List Payment Methods', true, false],
+  ['user_get', 'User: Get InFlow User', true, false],
+  ['vault_change-passphrase', 'Vault: Change Passphrase', false, true],
+  ['vault_lock', 'Vault: Lock Vault', false, false],
+  ['vault_policy', 'Vault: Show Policy', true, false],
+  ['vault_reset', 'Vault: Reset Vault', false, true],
+  ['vault_set-policy', 'Vault: Set Policy', false, false],
+  ['vault_status', 'Vault: Check Status', true, false],
+  ['vault_unlock', 'Vault: Unlock Vault', false, false],
+  ['x402_cancel', 'x402: Cancel Approval', false, true],
+  ['x402_decode', 'x402: Decode Header', true, false],
+  ['x402_fetch', 'x402: Fetch Resource', false, false],
+  ['x402_inspect', 'x402: Inspect Resource', true, false],
+  ['x402_pay', 'x402: Pay Resource', false, true],
+  ['x402_status', 'x402: Check Payment', true, false],
+  ['x402_supported', 'x402: List Payment Methods', true, false],
+] as const;
+const CLI_SCHEMA_COMMANDS = [
+  'aep enroll',
+  'aep fetch',
+  'aep grant',
+  'aep inspect',
+  'aep revoke',
+  'aep status',
+  'auth login',
+  'auth logout',
+  'auth status',
+  'balances list',
+  'deposit-addresses list',
+  'inspect',
+  'mpp cancel',
+  'mpp decode',
+  'mpp fetch',
+  'mpp inspect',
+  'mpp pay',
+  'mpp status',
+  'mpp supported',
+  'user get',
+  'vault change-passphrase',
+  'vault lock',
+  'vault policy',
+  'vault reset',
+  'vault set-policy',
+  'vault status',
+  'vault unlock',
+  'x402 cancel',
+  'x402 decode',
+  'x402 fetch',
+  'x402 inspect',
+  'x402 pay',
+  'x402 status',
+  'x402 supported',
+] as const;
 const RAW_SECRET_SCHEMA_FIELDS = new Set([
   'apiKey',
   'api_key',
@@ -324,6 +396,20 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(frames[0]?.auth_method).toBe('api_key');
     });
 
+    it('auth status uses platform-local vault storage on cold start', async () => {
+      const root = mkdtempSync('/tmp/inflow-home-');
+      try {
+        const { exitCode, stdout } = await run(['auth', 'status', '--format', 'json'], {
+          env: { ...process.env, HOME: root, NO_UPDATE_NOTIFIER: '1' },
+        });
+        expect(exitCode).toBe(0);
+        const frames = JSON.parse(stdout) as { authenticated?: boolean }[];
+        expect(frames[0]?.authenticated).toBe(false);
+      } finally {
+        rmSync(root, { force: true, recursive: true });
+      }
+    });
+
     it('strips --verbose before incur sees it in prefix and suffix position', async () => {
       const cases = [
         ['--verbose', '--auth', `/tmp/inflow-test-verbose-prefix-${String(process.pid)}.json`, 'auth', 'status'],
@@ -551,6 +637,25 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(parsed.options?.properties ?? {}).toEqual({});
     });
 
+    it.each(CLI_SCHEMA_COMMANDS)('%s exposes a JSON Schema without starting runtime work', async (command) => {
+      const { exitCode, stdout, stderr } = await run([...command.split(' '), '--schema', '--format', 'json'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(stderr).toBe('');
+      expect(exitCode).toBe(0);
+      const parsed = JSON.parse(stdout) as {
+        args?: { type?: string; properties?: Record<string, unknown> };
+        options?: { type?: string; properties?: Record<string, unknown> };
+      };
+      const schema = parsed.options ?? parsed.args;
+      if (schema === undefined) {
+        expect(parsed).toEqual({});
+      } else {
+        expect(schema.type).toBe('object');
+        expect(schema.properties ?? {}).toBeTypeOf('object');
+      }
+    });
+
     it('--mcp tools/list exposes user_get with an empty input schema', async () => {
       const request =
         JSON.stringify({
@@ -570,15 +675,56 @@ describe.skipIf(!existsSync(DIST_CLI))(
         result?: {
           tools?: {
             name: string;
+            title?: string;
+            annotations?: {
+              destructiveHint?: boolean;
+              idempotentHint?: boolean;
+              openWorldHint?: boolean;
+              readOnlyHint?: boolean;
+              title?: string;
+            };
             inputSchema?: { type?: string; properties?: Record<string, unknown> };
           }[];
         };
       };
       const tools = response.result?.tools ?? [];
+      expect(tools.map((entry) => entry.name).sort()).toEqual(MCP_TOOL_EXPECTATIONS.map(([name]) => name).sort());
+      for (const [name, title, readOnlyHint, destructiveHint] of MCP_TOOL_EXPECTATIONS) {
+        expect(
+          tools.find((entry) => entry.name === name),
+          name,
+        ).toMatchObject({
+          title,
+          annotations: { destructiveHint, readOnlyHint, title },
+          inputSchema: { type: 'object' },
+        });
+      }
       const tool = tools.find((t) => t.name === 'user_get');
       expect(tool).toBeDefined();
+      expect(tool?.title).toBe('User: Get InFlow User');
+      expect(tool?.annotations).toMatchObject({
+        destructiveHint: false,
+        idempotentHint: true,
+        readOnlyHint: true,
+        title: 'User: Get InFlow User',
+      });
       expect(tool?.inputSchema?.type).toBe('object');
       expect(tool?.inputSchema?.properties ?? {}).toEqual({});
+      expect(tools.find((entry) => entry.name === 'auth_status')).toMatchObject({
+        title: 'InFlow Account: Check Login',
+        annotations: { readOnlyHint: true, title: 'InFlow Account: Check Login' },
+      });
+      expect(tools.find((entry) => entry.name === 'mpp_pay')).toMatchObject({
+        title: 'MPP: Pay Resource',
+        annotations: { destructiveHint: true, readOnlyHint: false, title: 'MPP: Pay Resource' },
+      });
+      expect(tools.find((entry) => entry.name === 'vault_unlock')).toMatchObject({
+        title: 'Vault: Unlock Vault',
+        annotations: { openWorldHint: false, readOnlyHint: false, title: 'Vault: Unlock Vault' },
+      });
+      const titles = tools.map((entry) => entry.title ?? entry.name);
+      expect(titles).toEqual([...titles].sort((a, b) => a.localeCompare(b)));
+      expect(titles.filter((title) => /^\d+:/.test(title))).toEqual([]);
       expect(tools.map((entry) => entry.name)).toEqual(expect.arrayContaining(AEP_MCP_TOOLS));
       for (const name of AEP_MCP_TOOLS) {
         expect(tools.find((entry) => entry.name === name)?.inputSchema?.type, name).toBe('object');
@@ -613,6 +759,39 @@ describe.skipIf(!existsSync(DIST_CLI))(
           .map((property) => `${entry.name}.${property}`),
       );
       expect(rawSecretFields).toEqual([]);
+    });
+
+    it('--mcp vault tools hide daemon details and do not prompt for unlock input', async () => {
+      const root = mkdtempSync('/tmp/inflow-mcp-home-');
+      const request = [
+        { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'vault_status', arguments: {} } },
+        { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'vault_unlock', arguments: {} } },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join('\n');
+      try {
+        const { exitCode, stdout } = await run(['--mcp'], {
+          env: { ...process.env, HOME: root, NO_UPDATE_NOTIFIER: '1' },
+          stdin: `${request}\n`,
+        });
+        expect(exitCode).toBe(0);
+        const responses = stdout
+          .split('\n')
+          .filter((line) => line.trim().length > 0)
+          .map(
+            (line) =>
+              JSON.parse(line) as { id?: number; result?: { content?: { text?: string }[]; isError?: boolean } },
+          );
+        const status = responses.find((entry) => entry.id === 1);
+        const unlock = responses.find((entry) => entry.id === 2);
+        const statusText = status?.result?.content?.[0]?.text ?? '';
+        expect(JSON.parse(statusText)).toEqual({ lock_state: 'not_initialized' });
+        expect(statusText).not.toContain('daemon');
+        expect(unlock?.result?.isError).toBe(true);
+        expect(unlock?.result?.content?.[0]?.text).toContain('A human must run `inflow vault unlock`');
+      } finally {
+        rmSync(root, { force: true, recursive: true });
+      }
     });
 
     it('user get --format json without auth emits NOT_AUTHENTICATED and exits 1', async () => {

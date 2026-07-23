@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { discoverPlatform, fetchAepPublicDocument, type CachedInspectServiceResult } from '@aep-foundation/agent';
 import { AepStorage, createAepPublicDocumentCache, MemoryStorage, runAuthLogout, Storage } from '../../../src/index.js';
-import { SyncMemorySecretStore } from '../../../src/secure-storage/keychain.js';
+import { SyncMemorySecretStore } from '../../../src/secure-storage/secret-store.js';
 
 const OWNER = { platformOrigin: 'https://api.example.test', userId: 'user-1' };
 const IDENTITY = {

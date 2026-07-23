@@ -87,7 +87,16 @@ export {
   storage,
 } from './utils/storage.js';
 export { SecureStorageError, type SecureStorageErrorCode } from './secure-storage/errors.js';
-export { SyncMemorySecretStore, type SecretReference, type SyncSecureSecretStore } from './secure-storage/keychain.js';
+export {
+  MemorySecretStore,
+  SecretReferenceManifest,
+  SyncMemorySecretStore,
+  SyncSecretReferenceManifestStore,
+  type SecretReference,
+  type SecureSecretStore,
+  type SyncSecretReferenceManifest,
+  type SyncSecureSecretStore,
+} from './secure-storage/secret-store.js';
 export {
   DEFAULT_VAULT_POLICY,
   type Awaitable,
@@ -108,8 +117,18 @@ export {
   runLocalVaultDaemon,
   startLocalVaultDaemon,
 } from './secure-storage/vault-daemon.js';
-export { LocalVaultClient, type LocalVaultClientOptions } from './secure-storage/vault-client.js';
-export { vaultFilePaths, type VaultFilePaths } from './secure-storage/vault-files.js';
+export {
+  LocalVaultClient,
+  type LocalVaultClientOptions,
+  type LocalVaultDaemonInfo,
+} from './secure-storage/vault-client.js';
+export { type VaultDaemonInfo } from './secure-storage/vault-daemon-handler.js';
+export { removeVaultLocalState, vaultFilePaths, type VaultFilePaths } from './secure-storage/vault-files.js';
+export {
+  NoopSyncSecretReferenceManifest,
+  SyncVaultSecretStore,
+  type SyncVaultSecretStoreOptions,
+} from './secure-storage/vault-sync-secret-store.js';
 export {
   sendVaultIpcRequest,
   startVaultSocketServer,
@@ -134,6 +153,7 @@ export {
 export { sanitizeDeep, sanitizeText } from './utils/sanitize-text.js';
 export { sanitizeResource } from './utils/sanitize-proxy.js';
 export {
+  type AepCredentialDeleteSelector,
   type AepPersistedInspectResult,
   type AepOwner,
   type AepPersistedState,

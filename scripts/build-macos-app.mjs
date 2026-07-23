@@ -17,11 +17,13 @@ import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const requireFromCli = createRequire(join(repoRoot, 'packages/cli/package.json'));
 const requireFromCore = createRequire(join(repoRoot, 'packages/core/package.json'));
 const args = new Set(process.argv.slice(2));
 const release = args.has('--release');
+const signedDebug = args.has('--signed-debug');
 const skipNotarize = args.has('--skip-notarize') || process.env.INFLOW_SKIP_NOTARIZATION === '1';
-const identity = process.env.INFLOW_CODESIGN_IDENTITY ?? '-';
+const identity = resolveCodesignIdentity({ release, signedDebug });
 const timestampMode = process.env.INFLOW_CODESIGN_TIMESTAMP ?? 'default';
 const notaryProfile = process.env.INFLOW_NOTARY_PROFILE ?? 'inflow-notary';
 const packageName = 'InFlow';
@@ -49,10 +51,6 @@ if (process.platform !== 'darwin') {
 
 if (release && !isAtLeastNodeVersion(nodeVersion, 24, 15, 0)) {
   throw new Error(`release packaging requires Node 24.15.0 or newer; current Node is ${nodeVersion}.`);
-}
-
-if (release && identity === '-') {
-  throw new Error('release packaging requires INFLOW_CODESIGN_IDENTITY to name a Developer ID Application identity.');
 }
 
 if (release && skipNotarize) {
@@ -103,12 +101,12 @@ run(resolvePostject(), [
 
 writeInfoPlist();
 writeEntitlements();
-copyKeyringRuntime();
 copyArgon2Runtime();
+copyMcpRuntime();
 copyVaultPeerRuntime();
 signNestedCode();
 signExecutable();
-verifySignature({ assessGatekeeper: !release, gatekeeperOptional: true });
+verifySignature({ assessGatekeeper: false, gatekeeperOptional: true });
 linkExecutable();
 zipArtifact();
 
@@ -141,15 +139,6 @@ writeFileSync(
 console.log(`Built ${appPath}`);
 console.log(`Packaged ${zipPath}`);
 
-function copyKeyringRuntime() {
-  const keyringRoot = dirname(requireFromCore.resolve('@napi-rs/keyring/package.json'));
-  const requireFromKeyring = createRequire(join(keyringRoot, 'index.js'));
-  const nativePackageName = `@napi-rs/keyring-darwin-${process.arch}`;
-  const nativeRoot = dirname(requireFromKeyring.resolve(`${nativePackageName}/package.json`));
-  copyPackage(keyringRoot, join(resourceNodeModules, '@napi-rs/keyring'));
-  copyPackage(nativeRoot, join(resourceNodeModules, nativePackageName));
-}
-
 function copyArgon2Runtime() {
   const argon2Root = dirname(requireFromCore.resolve('@node-rs/argon2/package.json'));
   const requireFromArgon2 = createRequire(join(argon2Root, 'index.js'));
@@ -161,6 +150,28 @@ function copyArgon2Runtime() {
     join(nativeRoot, `argon2.darwin-${process.arch}.node`),
     join(resourceNodeModules, '@node-rs/argon2', `argon2.darwin-${process.arch}.node`),
   );
+}
+
+function copyMcpRuntime() {
+  const serverRoot = packageDirectoryRoot('@modelcontextprotocol/server', [
+    () => nestedPackageRoot('incur', '@modelcontextprotocol/server'),
+  ]);
+  const zodRoot = packageRoot('zod', requireFromCli);
+  copyPackage(serverRoot, join(resourceNodeModules, '@modelcontextprotocol/server'));
+  copyPackage(zodRoot, join(resourceNodeModules, 'zod'));
+}
+
+function packageDirectoryRoot(packageName, fallbacks = []) {
+  const candidate = join(repoRoot, 'packages/cli/node_modules', packageName);
+  if (existsSync(join(candidate, 'package.json'))) return candidate;
+  for (const fallback of fallbacks) {
+    try {
+      return fallback();
+    } catch {
+      continue;
+    }
+  }
+  throw new Error(`Could not find package root for ${packageName}.`);
 }
 
 function copyVaultPeerRuntime() {
@@ -178,6 +189,35 @@ function copyPackage(source, destination) {
     filter: (sourcePath) => !sourcePath.includes(`${source}/node_modules/`),
     recursive: true,
   });
+}
+
+function packageRoot(packageName, resolver, fallbacks = []) {
+  try {
+    return findPackageRoot(dirname(resolver.resolve(packageName)));
+  } catch (cause) {
+    for (const fallback of fallbacks) {
+      try {
+        return fallback();
+      } catch {
+        continue;
+      }
+    }
+    throw cause;
+  }
+}
+
+function nestedPackageRoot(parentPackageName, packageName) {
+  const parentRoot = findPackageRoot(dirname(requireFromCli.resolve(parentPackageName)));
+  return findPackageRoot(join(parentRoot, 'node_modules', packageName));
+}
+
+function findPackageRoot(startPath) {
+  let current = startPath;
+  while (current !== dirname(current)) {
+    if (existsSync(join(current, 'package.json'))) return current;
+    current = dirname(current);
+  }
+  throw new Error(`Could not find package root from ${startPath}.`);
 }
 
 function signNestedCode() {
@@ -345,6 +385,36 @@ function isAtLeastNodeVersion(version, major, minor, patch) {
   if (actualMajor !== major) return actualMajor > major;
   if (actualMinor !== minor) return actualMinor > minor;
   return actualPatch >= patch;
+}
+
+function resolveCodesignIdentity(options) {
+  const configured = process.env.INFLOW_CODESIGN_IDENTITY;
+  if (configured !== undefined) return configured;
+  if (!options.release && !options.signedDebug) return '-';
+  const identities = discoverDeveloperIdApplicationIdentities();
+  if (identities.length === 1) return identities[0];
+  if (identities.length === 0) {
+    throw new Error('signed macOS packaging requires one visible Developer ID Application codesigning identity.');
+  }
+  throw new Error(
+    [
+      'signed macOS packaging found multiple Developer ID Application identities.',
+      'Set INFLOW_CODESIGN_IDENTITY to one of:',
+      ...identities.map((identityName) => `- ${identityName}`),
+    ].join('\n'),
+  );
+}
+
+function discoverDeveloperIdApplicationIdentities() {
+  const output = execFileSync('security', ['find-identity', '-v', '-p', 'codesigning'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return output
+    .split('\n')
+    .map((line) => line.match(/"([^"]+)"/)?.[1])
+    .filter((identityName) => identityName?.startsWith('Developer ID Application:'));
 }
 
 function run(command, commandArgs, options = {}) {

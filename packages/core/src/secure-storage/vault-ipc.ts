@@ -30,6 +30,7 @@ export type VaultIpcResponse =
 export type VaultIpcMessage = VaultIpcRequest | VaultIpcResponse;
 
 export type VaultIpcMethod =
+  | 'daemon.info'
   | 'daemon.shutdown'
   | 'secret.delete'
   | 'secret.deleteExpired'
@@ -47,6 +48,7 @@ export type VaultIpcMethod =
 
 export const VAULT_IPC_MAX_MESSAGE_BYTES = 1024 * 1024;
 export const VAULT_IPC_METHODS = [
+  'daemon.info',
   'daemon.shutdown',
   'secret.delete',
   'secret.deleteExpired',

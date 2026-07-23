@@ -537,6 +537,38 @@ describe('CLI AEP approval resolver', () => {
     });
   });
 
+  it('lets an outer human payment view own the pending approval display', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ status: 'APPROVED' }));
+    const showPendingApproval = vi.fn(() => true);
+    const clearPendingApproval = vi.fn();
+    const options = createCliAepAgentOptions({
+      approvalDisplay: { clearPendingApproval, showPendingApproval },
+      authStorage: new MemoryStorage(),
+      context: {
+        agent: false,
+        error: (error: { code: string }): never => {
+          throw new Error(error.code);
+        },
+        formatExplicit: false,
+      },
+      inflow: inflow(),
+      interval: 0.001,
+      timeout: 1,
+    });
+
+    const result = await options.pendingSignResolver?.(
+      resolverInput(() => Promise.resolve({ clientAssertion: 'jwt', status: 'completed' })),
+    );
+
+    expect(result).toEqual({ clientAssertion: 'jwt', status: 'completed' });
+    expect(showPendingApproval).toHaveBeenCalledWith({
+      approvalId: 'approval-1',
+      approvalUrl: 'https://platform.example/approvals/approval-1/view/',
+      cancel: expect.any(Function) as () => Promise<void>,
+    });
+    expect(clearPendingApproval).toHaveBeenCalledOnce();
+  });
+
   it('maps declined approval to the stable AEP denial error', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ status: 'DECLINED' }));
     const options = createCliAepAgentOptions({

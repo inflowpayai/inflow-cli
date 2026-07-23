@@ -247,7 +247,6 @@ export const StatusView: React.FC<StatusViewProps> = ({
   useComplete(() => onComplete());
   const rows: DetailRow[] = [
     { field: 'Service DID', value: serviceDid },
-    { field: 'Enrollment', value: service.status },
     { field: 'Authentication', value: 'AEP JWT' },
     { field: 'Stored credentials', value: grants.length === 0 ? 'None' : String(grants.length) },
     { field: 'Available credential types', value: listed(availableGrantTypes) },
