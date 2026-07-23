@@ -1,0 +1,75 @@
+name: linux-release
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload artifacts to the matching GitHub release
+        required: true
+        type: boolean
+        default: false
+      tag:
+        description: Existing GitHub release tag
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: x64
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      attestations: write
+      contents: ${{ inputs.publish && 'write' || 'read' }}
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Linux package
+        run: pnpm build:linux-package
+
+      - name: Test packaged vault
+        run: pnpm smoke:linux-packaged-vault
+
+      - name: Attest archive
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-linux-${{ matrix.architecture }}
+          path: |
+            dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz
+            dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Upload release assets
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run:
+          gh release upload "${{ inputs.tag }}" dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz
+          dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz.sha256 --clobber

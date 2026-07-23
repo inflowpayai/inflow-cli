@@ -36,6 +36,7 @@ interface VaultPeerVerifierDependencies {
 const DEFAULT_TEAM_ID = 'B96U57DTR2';
 
 export function shouldRequireVaultPeerVerification(): boolean {
+  if (process.platform === 'linux') return true;
   return process.platform === 'darwin' && realExecutablePath().includes('/InFlow.app/Contents/MacOS/');
 }
 
@@ -43,13 +44,14 @@ export function createVaultSocketPeerVerifier(
   options: VaultPeerVerifierOptions = {},
   dependencies: VaultPeerVerifierDependencies = defaultPeerVerifierDependencies,
 ): VaultSocketPeerVerifier {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') {
     throw new SecureStorageError('secure_storage_unavailable', 'Vault peer verification is unavailable.');
   }
   const native = dependencies.loadNativeModule(options.nativeModulePath ?? defaultNativeModulePath());
   const expectedPath = dependencies.realpath(options.expectedExecutablePath ?? process.execPath);
   const expectedTeamId = options.expectedTeamId ?? DEFAULT_TEAM_ID;
-  const requireSignature = options.requireSignature ?? expectedPath.includes('/InFlow.app/Contents/MacOS/');
+  const requireSignature =
+    options.requireSignature ?? (process.platform === 'darwin' && expectedPath.includes('/InFlow.app/Contents/MacOS/'));
 
   return (socket) => {
     const peer = native.peerInfo(socketFileDescriptor(socket));
@@ -78,7 +80,11 @@ function defaultNativeModulePath(): string {
   if (executablePath.includes('/InFlow.app/Contents/MacOS/')) {
     return resolve(dirname(executablePath), '../Resources/app/native/vault_peer_darwin.node');
   }
-  return resolve(dirname(fileURLToPath(import.meta.url)), '../../native/build/vault_peer_darwin.node');
+  if (process.platform === 'linux' && executablePath.includes('/bin/inflow')) {
+    return resolve(dirname(executablePath), '../lib/inflow/native/vault_peer_linux.node');
+  }
+  const platformName = process.platform === 'linux' ? 'linux' : 'darwin';
+  return resolve(dirname(fileURLToPath(import.meta.url)), `../../native/build/vault_peer_${platformName}.node`);
 }
 
 function realExecutablePath(): string {

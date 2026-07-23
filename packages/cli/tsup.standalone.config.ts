@@ -45,9 +45,9 @@ const reactDevtoolsAlias = resolve(here, 'src/stubs/react-devtools-core.ts');
 const BUNDLE_BANNER = [
   '#!/usr/bin/env node',
   "import { createRequire as __createRequire, Module as __Module } from 'node:module';",
-  "import { dirname as __dirnamePath, resolve as __resolvePath } from 'node:path';",
+  "import { delimiter as __pathDelimiter, dirname as __dirnamePath, resolve as __resolvePath } from 'node:path';",
   'const require = __createRequire(process.execPath);',
-  "process.env.NODE_PATH = [__resolvePath(__dirnamePath(process.execPath), '../Resources/app/node_modules'), process.env.NODE_PATH ?? ''].filter(Boolean).join(':');",
+  "process.env.NODE_PATH = [__resolvePath(__dirnamePath(process.execPath), '../Resources/app/node_modules'), __resolvePath(__dirnamePath(process.execPath), '../lib/inflow/node_modules'), process.env.NODE_PATH ?? ''].filter(Boolean).join(__pathDelimiter);",
   '__Module._initPaths();',
 ].join('\n');
 

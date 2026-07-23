@@ -12,7 +12,15 @@ export interface VaultFilePaths {
 }
 
 export function defaultVaultRoot(): string {
-  return path.join(homedir(), 'Library', 'Application Support', 'InFlow');
+  if (process.platform === 'darwin') return path.join(homedir(), 'Library', 'Application Support', 'InFlow');
+  if (process.platform === 'linux') {
+    const dataHome = process.env['XDG_DATA_HOME'];
+    return path.join(
+      dataHome === undefined || dataHome.length === 0 ? path.join(homedir(), '.local', 'share') : dataHome,
+      'inflow',
+    );
+  }
+  return path.join(homedir(), '.inflow');
 }
 
 export function vaultFilePaths(rootDirectory = defaultVaultRoot()): VaultFilePaths {

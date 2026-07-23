@@ -46,6 +46,13 @@ describe('vault peer verifier', () => {
     }
   });
 
+  it('requires peer verification on Linux', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    Object.defineProperty(process, 'execPath', { value: '/opt/inflow/bin/inflow' });
+
+    expect(shouldRequireVaultPeerVerification()).toBe(true);
+  });
+
   it('accepts same-user same-executable peers and verifies release signatures', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     const verified: { path: string; teamId: string }[] = [];
@@ -129,8 +136,28 @@ describe('vault peer verifier', () => {
     ).toMatchObject({ secureStorageCode: 'secure_storage_unavailable' });
   });
 
-  it('rejects unsupported platforms and sockets without exposed descriptors', () => {
+  it('accepts same-user same-executable Linux peers without a signing check', () => {
     Object.defineProperty(process, 'platform', { value: 'linux' });
+    const verified = vi.fn();
+    const verifier = createVaultSocketPeerVerifier(
+      {
+        expectedExecutablePath: '/opt/inflow/bin/inflow',
+        nativeModulePath: '/opt/inflow/lib/inflow/native/vault_peer_linux.node',
+      },
+      dependencies({
+        currentUserId: 1000,
+        peer: { path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 },
+        realpaths: new Map([['/opt/inflow/bin/inflow', '/opt/inflow/bin/inflow']]),
+        verifySignature: verified,
+      }),
+    );
+
+    expect(() => verifier(socketWithFd(42))).not.toThrow();
+    expect(verified).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsupported platforms and sockets without exposed descriptors', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
 
     expect(() => createVaultSocketPeerVerifier()).toThrow(SecureStorageError);
     expect(() => socketFileDescriptor(new Socket())).toThrow(SecureStorageError);
