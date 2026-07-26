@@ -1,5 +1,6 @@
 import { Socket } from 'node:net';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -10,6 +11,7 @@ import {
   shouldRequireVaultPeerVerification,
   socketFileDescriptor,
   type VaultSocketPeer,
+  verifyVaultNativeModule,
 } from '../../../src/secure-storage/vault-peer-verifier.js';
 
 describe('vault peer verifier', () => {
@@ -72,7 +74,11 @@ describe('vault peer verifier', () => {
       }),
     );
 
-    expect(() => verifier(socketWithFd(42))).not.toThrow();
+    expect(verifier(socketWithFd(42))).toEqual({
+      path: '/Applications/InFlow.app/Contents/MacOS/inflow',
+      pid: 123,
+      uid: 501,
+    });
     expect(verified).toEqual([{ path: '/Applications/InFlow.app/Contents/MacOS/inflow', teamId: 'B96U57DTR2' }]);
   });
 
@@ -96,7 +102,11 @@ describe('vault peer verifier', () => {
       }),
     );
 
-    expect(() => verifier(socketWithFd(42))).not.toThrow();
+    expect(verifier(socketWithFd(42))).toEqual({
+      path: '/Applications/InFlow.app/Contents/MacOS/inflow',
+      pid: 123,
+      uid: 501,
+    });
     expect(verified).toEqual([{ path: '/Applications/InFlow.app/Contents/MacOS/inflow', teamId: 'TEAM123456' }]);
   });
 
@@ -110,7 +120,7 @@ describe('vault peer verifier', () => {
         { path: '/usr/bin/inflow', pid: 123, uid: 501 },
         {
           verifySignature() {
-            throw new SecureStorageError('secure_storage_unavailable', 'Vault peer verification failed.');
+            throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
           },
         },
       ),
@@ -119,21 +129,21 @@ describe('vault peer verifier', () => {
 
   it('uses stable secure storage error codes for rejected peers', () => {
     expect(peerVerifierError({ path: '/usr/bin/inflow', pid: 123, uid: 502 })).toMatchObject({
-      secureStorageCode: 'secure_storage_unavailable',
+      secureStorageCode: 'secure_storage_peer_verification_failed',
     });
     expect(peerVerifierError({ path: '/tmp/fake-inflow', pid: 123, uid: 501 })).toMatchObject({
-      secureStorageCode: 'secure_storage_unavailable',
+      secureStorageCode: 'secure_storage_peer_verification_failed',
     });
     expect(
       peerVerifierError(
         { path: '/usr/bin/inflow', pid: 123, uid: 501 },
         {
           verifySignature() {
-            throw new SecureStorageError('secure_storage_unavailable', 'Vault peer verification failed.');
+            throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
           },
         },
       ),
-    ).toMatchObject({ secureStorageCode: 'secure_storage_unavailable' });
+    ).toMatchObject({ secureStorageCode: 'secure_storage_peer_verification_failed' });
   });
 
   it('accepts same-user same-executable Linux peers without a signing check', () => {
@@ -152,8 +162,62 @@ describe('vault peer verifier', () => {
       }),
     );
 
-    expect(() => verifier(socketWithFd(42))).not.toThrow();
+    expect(verifier(socketWithFd(42))).toEqual({
+      path: '/opt/inflow/bin/inflow',
+      pid: 123,
+      uid: 1000,
+    });
     expect(verified).not.toHaveBeenCalled();
+  });
+
+  it('binds a service peer to an explicit operating-system user identity', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const verifier = createVaultSocketPeerVerifier(
+      {
+        expectedExecutablePath: '/opt/inflow/bin/inflow',
+        expectedUserId: 991,
+        nativeModulePath: '/opt/inflow/lib/inflow/native/vault_peer_linux.node',
+        requireSameUser: false,
+      },
+      dependencies({
+        currentUserId: 1000,
+        peer: { path: '/opt/inflow/bin/inflow', pid: 123, uid: 991 },
+        realpaths: new Map([['/opt/inflow/bin/inflow', '/opt/inflow/bin/inflow']]),
+      }),
+    );
+
+    expect(verifier(socketWithFd(42))).toMatchObject({ uid: 991 });
+    expect(() =>
+      createVaultSocketPeerVerifier(
+        {
+          expectedExecutablePath: '/opt/inflow/bin/inflow',
+          expectedUserId: 991,
+          nativeModulePath: '/opt/inflow/lib/inflow/native/vault_peer_linux.node',
+          requireSameUser: false,
+        },
+        dependencies({
+          currentUserId: 1000,
+          peer: { path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 },
+          realpaths: new Map([['/opt/inflow/bin/inflow', '/opt/inflow/bin/inflow']]),
+        }),
+      )(socketWithFd(42)),
+    ).toThrow(SecureStorageError);
+  });
+
+  it('fails closed when a packaged executable has no embedded native module digest', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    Object.defineProperty(process, 'execPath', { value: '/opt/inflow/bin/inflow' });
+
+    expect(() =>
+      createVaultSocketPeerVerifier(
+        {},
+        dependencies({
+          currentUserId: 1000,
+          peer: { path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 },
+          realpaths: new Map([['/opt/inflow/bin/inflow', '/opt/inflow/bin/inflow']]),
+        }),
+      ),
+    ).toThrow(SecureStorageError);
   });
 
   it('rejects unsupported platforms and sockets without exposed descriptors', () => {
@@ -161,6 +225,73 @@ describe('vault peer verifier', () => {
 
     expect(() => createVaultSocketPeerVerifier()).toThrow(SecureStorageError);
     expect(() => socketFileDescriptor(new Socket())).toThrow(SecureStorageError);
+  });
+
+  it('accepts a canonical non-writable native module with the expected digest', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'inflow-native-module-'));
+    try {
+      const nativeModule = join(tmpDir, 'vault_peer.node');
+      const content = Buffer.from('native-module');
+      writeFileSync(nativeModule, content, { mode: 0o755 });
+
+      expect(() =>
+        verifyVaultNativeModule(nativeModule, {
+          expectedSha256: createHash('sha256').update(content).digest('hex'),
+          expectedTeamId: 'TEAM123456',
+          requireSignature: false,
+        }),
+      ).not.toThrow();
+    } finally {
+      rmSync(tmpDir, { force: true, recursive: true });
+    }
+  });
+
+  it('uses the native module digest instead of POSIX mode bits on Windows', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'inflow-native-module-'));
+    try {
+      const nativeModule = join(tmpDir, 'vault_peer.node');
+      const content = Buffer.from('native-module');
+      writeFileSync(nativeModule, content, { mode: 0o777 });
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+
+      expect(() =>
+        verifyVaultNativeModule(nativeModule, {
+          expectedSha256: createHash('sha256').update(content).digest('hex'),
+          expectedTeamId: '',
+          requireSignature: false,
+        }),
+      ).not.toThrow();
+    } finally {
+      rmSync(tmpDir, { force: true, recursive: true });
+    }
+  });
+
+  it('rejects modified, writable, and symlinked native modules', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'inflow-native-module-'));
+    try {
+      const nativeModule = join(tmpDir, 'vault_peer.node');
+      const linkedModule = join(tmpDir, 'linked.node');
+      writeFileSync(nativeModule, 'native-module', { mode: 0o755 });
+      symlinkSync(nativeModule, linkedModule);
+      const options = {
+        expectedSha256: createHash('sha256').update('different-module').digest('hex'),
+        expectedTeamId: 'TEAM123456',
+        requireSignature: false,
+      };
+
+      expect(() => verifyVaultNativeModule(nativeModule, options)).toThrow(SecureStorageError);
+      chmodSync(nativeModule, 0o777);
+      expect(() =>
+        verifyVaultNativeModule(nativeModule, {
+          ...options,
+          expectedSha256: createHash('sha256').update('native-module').digest('hex'),
+        }),
+      ).toThrow(SecureStorageError);
+      chmodSync(nativeModule, 0o755);
+      expect(() => verifyVaultNativeModule(linkedModule, options)).toThrow(SecureStorageError);
+    } finally {
+      rmSync(tmpDir, { force: true, recursive: true });
+    }
   });
 });
 
@@ -210,9 +341,11 @@ function dependencies(input: TestDependencyInput) {
   return {
     currentUserId: vi.fn(() => input.currentUserId),
     loadNativeModule: vi.fn(() => ({
+      peerCredentials: vi.fn(() => ({ pid: input.peer.pid, uid: input.peer.uid })),
       peerInfo: vi.fn(() => input.peer),
     })),
     realpath: vi.fn((path: string) => input.realpaths.get(path) ?? path),
+    verifyNativeModule: vi.fn(),
     verifySignature: vi.fn(input.verifySignature ?? (() => undefined)),
   };
 }

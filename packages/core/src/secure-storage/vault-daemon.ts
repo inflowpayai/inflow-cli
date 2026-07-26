@@ -1,25 +1,28 @@
 import process from 'node:process';
-import type {
-  DeleteExpiredVaultSecretsInput,
-  DeleteVaultSecretInput,
-  GetVaultSecretInput,
-  PutVaultSecretInput,
-  TouchVaultSecretInput,
-  VaultBackend,
-  VaultPolicy,
-  VaultSecretPayload,
-  VaultStatus,
-} from './vault-backend.js';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { closeSync, lstatSync } from 'node:fs';
+import { createServer, Socket, type Server } from 'node:net';
+import type { VaultBackend } from './vault-backend.js';
+import { authenticateLinuxVaultBrokerClient, ensureLinuxVaultBrokerKey } from './vault-broker-auth.js';
+import {
+  LifetimeVaultBackend,
+  VaultBackendLifetime,
+  type VaultBackendLifetimeOptions,
+} from './vault-backend-lifetime.js';
+import { SecureStorageError } from './errors.js';
 import { SecureSqliteRepository } from './sqlite.js';
 import { LocalVaultBackend } from './vault-local-backend.js';
 import {
   createVaultSocketPeerVerifier,
   shouldRequireVaultPeerVerification,
+  verifyTransferredVaultSocketPeer,
+  type VaultSocketPeer,
   type VaultSocketPeerVerifier,
 } from './vault-peer-verifier.js';
 import { vaultFilePaths } from './vault-files.js';
-import { startVaultSocketServer, type VaultSocketServer } from './vault-socket.js';
-import type { VaultSecretReference } from './vault-types.js';
+import { hardenVaultDaemonProcess } from './vault-protected-key.js';
+import { createVaultSocketConnectionHandler, startVaultSocketServer, type VaultSocketServer } from './vault-socket.js';
+import { MultiTenantVaultBackendManager } from './vault-tenant-manager.js';
 
 export interface LocalVaultDaemonOptions {
   buildId?: string;
@@ -27,6 +30,26 @@ export interface LocalVaultDaemonOptions {
   rootDirectory?: string;
   sleepCheckIntervalMilliseconds?: number;
   sleepDriftThresholdMilliseconds?: number;
+}
+
+export interface LinuxVaultServiceOptions {
+  buildId?: string;
+  cliVersion?: string;
+  listenFd?: number;
+  peerVerifier?: VaultSocketPeerVerifier;
+  rootDirectory?: string;
+  sleepCheckIntervalMilliseconds?: number;
+  sleepDriftThresholdMilliseconds?: number;
+  socketPath?: string;
+}
+
+export interface LinuxVaultBrokerOptions {
+  buildId?: string;
+  cliVersion?: string;
+  listenFd?: number;
+  serviceGroupId?: number;
+  serviceUserId?: number;
+  socketPath?: string;
 }
 
 export interface LocalVaultDaemon {
@@ -44,7 +67,7 @@ export async function startLocalVaultDaemon(options: LocalVaultDaemonOptions = {
   const paths = vaultFilePaths(options.rootDirectory);
   const repository = new SecureSqliteRepository({ databasePath: paths.database });
   const backend = new LocalVaultBackend({ paths, repository });
-  const lifetime = new VaultDaemonLifetime(lifetimeOptions(options));
+  const lifetime = new VaultBackendLifetime(lifetimeOptions(options));
   const shutdown = { close: undefined as (() => Promise<void>) | undefined };
   let resolveClosed: () => void;
   const closedPromise = new Promise<void>((resolve) => {
@@ -73,11 +96,57 @@ export async function startLocalVaultDaemon(options: LocalVaultDaemonOptions = {
     }
   };
   shutdown.close = close;
-  lifetime.closeWith(close);
+  lifetime.expireWith(close);
   return {
     close,
     closed: closedPromise,
     socketPath: paths.socket,
+  };
+}
+
+export async function startLinuxVaultService(options: LinuxVaultServiceOptions = {}): Promise<LocalVaultDaemon> {
+  const manager = new MultiTenantVaultBackendManager({
+    rootDirectory: options.rootDirectory ?? '/var/lib/inflow/vaults',
+    ...lifetimeOptions(options),
+  });
+  let resolveClosed: () => void;
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+  let server: VaultSocketServer;
+  try {
+    server = await startVaultSocketServer({
+      backendForPeer: (peer) => manager.backendForPeer(peer),
+      daemonInfo: {
+        buildId: options.buildId ?? null,
+        cliVersion: options.cliVersion ?? null,
+        executablePath: process.execPath,
+        pid: process.pid,
+      },
+      ...(options.listenFd === undefined ? {} : { listenFd: options.listenFd }),
+      peerVerifier: options.peerVerifier ?? createVaultSocketPeerVerifier({ requireSameUser: false }),
+      socketMode: 0o666,
+      socketPath: options.socketPath ?? '/run/inflow/vault.sock',
+    });
+  } catch (cause) {
+    await manager.close();
+    throw cause;
+  }
+  let isClosed = false;
+  const close = async (): Promise<void> => {
+    if (isClosed) return;
+    isClosed = true;
+    try {
+      await server.close();
+    } finally {
+      await manager.close();
+      resolveClosed();
+    }
+  };
+  return {
+    close,
+    closed,
+    socketPath: server.socketPath,
   };
 }
 
@@ -110,9 +179,222 @@ function socketServerOptions(
 }
 
 export async function runLocalVaultDaemon(options: LocalVaultDaemonOptions = {}): Promise<void> {
+  hardenVaultDaemonProcess();
   const daemon = await startLocalVaultDaemon(options);
   attachLocalVaultDaemonSignalHandlers(daemon, process);
   await daemon.closed;
+}
+
+export async function runLinuxVaultService(options: LinuxVaultServiceOptions = {}): Promise<void> {
+  if (process.platform !== 'linux') {
+    throw new Error('The Linux vault service is available only on Linux.');
+  }
+  hardenVaultDaemonProcess();
+  const activationFileDescriptor = options.listenFd ?? systemdSocketFileDescriptor(process.env, process.pid);
+  closeSync(activationFileDescriptor);
+  const { listenFd: _activationFileDescriptor, ...serviceOptions } = options;
+  const daemon = await startLinuxVaultService(serviceOptions);
+  attachLocalVaultDaemonSignalHandlers(daemon, process);
+  await daemon.closed;
+}
+
+export async function runLinuxVaultBroker(options: LinuxVaultBrokerOptions = {}): Promise<void> {
+  if (process.platform !== 'linux') {
+    throw new Error('The Linux vault broker is available only on Linux.');
+  }
+  hardenVaultDaemonProcess();
+  const activationFileDescriptor = options.listenFd ?? systemdSocketFileDescriptor(process.env, process.pid);
+  const serviceIdentity =
+    options.serviceUserId === undefined || options.serviceGroupId === undefined
+      ? linuxVaultServiceIdentity('/var/lib/inflow')
+      : { gid: options.serviceGroupId, uid: options.serviceUserId };
+  const child = spawn(process.execPath, ['--daemon', 'vault-service'], {
+    env: process.env,
+    gid: serviceIdentity.gid,
+    stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+    uid: serviceIdentity.uid,
+  });
+  await waitForVaultServiceReady(child);
+  const brokerPrivateKey = await ensureLinuxVaultBrokerKey();
+  const verifyPeer = createVaultSocketPeerVerifier({ requireSameUser: false });
+  const server = createServer({ pauseOnConnect: true }, (socket) => {
+    void Promise.resolve()
+      .then(() => verifyPeer(socket))
+      .then(async (peer) => {
+        socket.resume();
+        await authenticateLinuxVaultBrokerClient(socket, peer, brokerPrivateKey);
+        socket.pause();
+        return peer;
+      })
+      .then(
+        (peer) => transferSocketToVaultService(child, socket, peer),
+        () => socket.destroy(),
+      );
+  });
+  await listenBroker(server, activationFileDescriptor);
+  const close = async (): Promise<void> => {
+    await closeBroker(server);
+    if (child.connected) child.disconnect();
+  };
+  process.once('SIGINT', () => {
+    void close();
+  });
+  process.once('SIGTERM', () => {
+    void close();
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      void closeBroker(server).finally(() => {
+        if (code === 0 || signal === 'SIGTERM') resolve();
+        else reject(new Error('The InFlow vault service exited unexpectedly.'));
+      });
+    });
+  });
+}
+
+export async function runLinuxTransferredVaultService(options: LinuxVaultServiceOptions = {}): Promise<void> {
+  if (process.platform !== 'linux' || typeof process.send !== 'function') {
+    throw new Error('The Linux vault service requires its authenticated broker.');
+  }
+  hardenVaultDaemonProcess();
+  const manager = new MultiTenantVaultBackendManager({
+    rootDirectory: options.rootDirectory ?? '/var/lib/inflow/vaults',
+    ...lifetimeOptions(options),
+  });
+  const handleConnection = createVaultSocketConnectionHandler({
+    backendForPeer: (peer) => manager.backendForPeer(peer),
+    daemonInfo: {
+      buildId: options.buildId ?? null,
+      cliVersion: options.cliVersion ?? null,
+      executablePath: process.execPath,
+      pid: process.pid,
+    },
+    peerVerifier: () => {
+      throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+    },
+    socketPath: 'broker-transferred',
+  });
+  process.on('message', (message: unknown, handle: unknown) => {
+    if (!isBrokerTransferMessage(message) || !isSocket(handle)) {
+      if (isSocket(handle)) handle.destroy();
+      return;
+    }
+    handle.pause();
+    try {
+      const peer = verifyTransferredVaultSocketPeer(handle, message.peer);
+      handleConnection(handle, peer);
+      handle.resume();
+    } catch {
+      handle.destroy();
+    }
+  });
+  const close = async (): Promise<void> => {
+    await manager.close();
+    process.exit(0);
+  };
+  process.once('SIGINT', () => {
+    void close();
+  });
+  process.once('SIGTERM', () => {
+    void close();
+  });
+  process.once('disconnect', () => {
+    void close();
+  });
+  process.send({ type: 'vault-service-ready' });
+  await new Promise<void>(() => undefined);
+}
+
+function linuxVaultServiceIdentity(stateDirectory: string): { gid: number; uid: number } {
+  const stat = lstatSync(stateDirectory);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid === 0 || stat.gid === 0 || (stat.mode & 0o077) !== 0) {
+    throw new SecureStorageError('secure_storage_unavailable', 'The InFlow vault service identity is invalid.');
+  }
+  return { gid: stat.gid, uid: stat.uid };
+}
+
+function waitForVaultServiceReady(child: ChildProcess): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (cause: Error): void => {
+      child.off('message', onMessage);
+      child.off('exit', onExit);
+      reject(cause);
+    };
+    const onExit = (): void => {
+      child.off('error', onError);
+      child.off('message', onMessage);
+      reject(new Error('The InFlow vault service did not start.'));
+    };
+    const onMessage = (message: unknown): void => {
+      if (!isReadyMessage(message)) return;
+      child.off('error', onError);
+      child.off('exit', onExit);
+      resolve();
+    };
+    child.once('error', onError);
+    child.once('exit', onExit);
+    child.on('message', onMessage);
+  });
+}
+
+function transferSocketToVaultService(child: ChildProcess, socket: Socket, peer: VaultSocketPeer): void {
+  if (!child.connected) {
+    socket.destroy();
+    return;
+  }
+  child.send({ peer, type: 'vault-client' }, socket, { keepOpen: true }, () => {
+    socket.destroy();
+  });
+}
+
+function listenBroker(server: Server, fileDescriptor: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen({ fd: fileDescriptor }, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+}
+
+function closeBroker(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!server.listening) {
+      resolve();
+      return;
+    }
+    server.close((cause) => {
+      if (cause !== undefined) {
+        reject(cause);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function isSocket(handle: unknown): handle is Socket {
+  return handle instanceof Socket;
+}
+
+function isReadyMessage(message: unknown): boolean {
+  return typeof message === 'object' && message !== null && 'type' in message && message.type === 'vault-service-ready';
+}
+
+function isBrokerTransferMessage(message: unknown): message is { peer: VaultSocketPeer; type: 'vault-client' } {
+  if (typeof message !== 'object' || message === null || !('type' in message) || message.type !== 'vault-client') {
+    return false;
+  }
+  if (!('peer' in message) || typeof message.peer !== 'object' || message.peer === null) return false;
+  const peer = message.peer as Record<string, unknown>;
+  return (
+    typeof peer['path'] === 'string' &&
+    Number.isSafeInteger(peer['pid']) &&
+    Number.isSafeInteger(peer['uid']) &&
+    (peer['pid'] as number) > 0 &&
+    (peer['uid'] as number) >= 0
+  );
 }
 
 export function attachLocalVaultDaemonSignalHandlers(daemon: LocalVaultDaemon, runtime: LocalVaultDaemonRuntime): void {
@@ -129,16 +411,8 @@ async function closeLocalVaultDaemon(repository: SecureSqliteRepository, server:
   repository.close();
 }
 
-const DEFAULT_SLEEP_CHECK_INTERVAL_MILLISECONDS = 30_000;
-const DEFAULT_SLEEP_DRIFT_THRESHOLD_MILLISECONDS = 120_000;
-
-interface VaultDaemonLifetimeOptions {
-  sleepCheckIntervalMilliseconds?: number;
-  sleepDriftThresholdMilliseconds?: number;
-}
-
-function lifetimeOptions(options: LocalVaultDaemonOptions): VaultDaemonLifetimeOptions {
-  const result: VaultDaemonLifetimeOptions = {};
+function lifetimeOptions(options: LocalVaultDaemonOptions | LinuxVaultServiceOptions): VaultBackendLifetimeOptions {
+  const result: VaultBackendLifetimeOptions = {};
   if (options.sleepCheckIntervalMilliseconds !== undefined) {
     result.sleepCheckIntervalMilliseconds = options.sleepCheckIntervalMilliseconds;
   }
@@ -148,132 +422,22 @@ function lifetimeOptions(options: LocalVaultDaemonOptions): VaultDaemonLifetimeO
   return result;
 }
 
-class VaultDaemonLifetime {
-  private close: (() => Promise<void>) | undefined;
-  private idleTimer: NodeJS.Timeout | undefined;
-  private sleepTimer: NodeJS.Timeout | undefined;
-
-  constructor(private readonly options: VaultDaemonLifetimeOptions = {}) {}
-
-  clear(): void {
-    if (this.idleTimer !== undefined) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = undefined;
-    }
-    if (this.sleepTimer !== undefined) {
-      clearInterval(this.sleepTimer);
-      this.sleepTimer = undefined;
-    }
+export function systemdSocketFileDescriptor(environment: NodeJS.ProcessEnv, processId: number): number {
+  const listenProcessId = parseNonNegativeInteger(environment['LISTEN_PID']);
+  const descriptorCount = parseNonNegativeInteger(environment['LISTEN_FDS']);
+  const descriptorNames = environment['LISTEN_FDNAMES'];
+  if (
+    listenProcessId !== processId ||
+    descriptorCount !== 1 ||
+    (descriptorNames !== undefined && descriptorNames !== 'inflow-vault')
+  ) {
+    throw new SecureStorageError('secure_storage_unavailable', 'Vault socket activation is unavailable.');
   }
-
-  closeWith(close: () => Promise<void>): void {
-    this.close = close;
-  }
-
-  refresh(policy: VaultPolicy): void {
-    this.clear();
-    if (policy.idleTimeoutSeconds !== null) {
-      this.idleTimer = setTimeout(() => {
-        void this.close?.();
-      }, policy.idleTimeoutSeconds * 1_000);
-      this.idleTimer.unref();
-    }
-    if (policy.lockOnSleep) this.watchForSleep();
-  }
-
-  private watchForSleep(): void {
-    const interval = this.options.sleepCheckIntervalMilliseconds ?? DEFAULT_SLEEP_CHECK_INTERVAL_MILLISECONDS;
-    const threshold = this.options.sleepDriftThresholdMilliseconds ?? DEFAULT_SLEEP_DRIFT_THRESHOLD_MILLISECONDS;
-    let lastTick = Date.now();
-    this.sleepTimer = setInterval(() => {
-      const now = Date.now();
-      const drift = now - lastTick - interval;
-      lastTick = now;
-      if (drift >= threshold) void this.close?.();
-    }, interval);
-    this.sleepTimer.unref();
-  }
+  return 3;
 }
 
-class LifetimeVaultBackend implements VaultBackend {
-  constructor(
-    private readonly backend: VaultBackend,
-    private readonly lifetime: VaultDaemonLifetime,
-  ) {}
-
-  async changePassphrase(currentUnlockFactor: Uint8Array, nextUnlockFactor: Uint8Array): Promise<void> {
-    await this.backend.changePassphrase(currentUnlockFactor, nextUnlockFactor);
-    await this.refresh();
-  }
-
-  async deleteExpired(input: DeleteExpiredVaultSecretsInput): Promise<void> {
-    await this.backend.deleteExpired(input);
-    await this.refresh();
-  }
-
-  async deleteSecret(input: DeleteVaultSecretInput): Promise<void> {
-    await this.backend.deleteSecret(input);
-    await this.refresh();
-  }
-
-  async exists(input: GetVaultSecretInput): Promise<boolean> {
-    const result = await this.backend.exists(input);
-    await this.refresh();
-    return result;
-  }
-
-  async getPolicy(): Promise<VaultPolicy> {
-    const policy = await this.backend.getPolicy();
-    this.lifetime.refresh(policy);
-    return policy;
-  }
-
-  async getSecret(input: GetVaultSecretInput): Promise<VaultSecretPayload> {
-    const result = await this.backend.getSecret(input);
-    await this.refresh();
-    return result;
-  }
-
-  async lock(): Promise<void> {
-    await this.backend.lock();
-    this.lifetime.clear();
-  }
-
-  async putSecret(input: PutVaultSecretInput): Promise<VaultSecretReference> {
-    const result = await this.backend.putSecret(input);
-    await this.refresh();
-    return result;
-  }
-
-  async reset(): Promise<void> {
-    await this.backend.reset();
-    this.lifetime.clear();
-  }
-
-  async setPolicy(policy: VaultPolicy): Promise<VaultPolicy> {
-    const result = await this.backend.setPolicy(policy);
-    this.lifetime.refresh(result);
-    return result;
-  }
-
-  async status(): Promise<VaultStatus> {
-    const result = await this.backend.status();
-    if (result.lockState !== 'not_initialized') await this.refresh();
-    return { ...result, daemonRunning: true };
-  }
-
-  async touch(input: TouchVaultSecretInput): Promise<void> {
-    await this.backend.touch(input);
-    await this.refresh();
-  }
-
-  async unlock(unlockFactor: Uint8Array): Promise<VaultStatus> {
-    const result = await this.backend.unlock(unlockFactor);
-    await this.refresh();
-    return { ...result, daemonRunning: true };
-  }
-
-  private async refresh(): Promise<void> {
-    this.lifetime.refresh(await this.backend.getPolicy());
-  }
+function parseNonNegativeInteger(value: string | undefined): number | undefined {
+  if (value === undefined || !/^(0|[1-9][0-9]*)$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
 }

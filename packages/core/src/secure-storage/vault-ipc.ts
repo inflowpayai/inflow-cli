@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { randomFillSync } from 'node:crypto';
 import { SecureStorageError } from './errors.js';
 
 export interface VaultIpcError {
@@ -44,7 +45,8 @@ export type VaultIpcMethod =
   | 'vault.reset'
   | 'vault.setPolicy'
   | 'vault.status'
-  | 'vault.unlock';
+  | 'vault.unlock'
+  | 'vault.unlockSalt';
 
 export const VAULT_IPC_MAX_MESSAGE_BYTES = 1024 * 1024;
 export const VAULT_IPC_METHODS = [
@@ -63,35 +65,131 @@ export const VAULT_IPC_METHODS = [
   'vault.setPolicy',
   'vault.status',
   'vault.unlock',
+  'vault.unlockSalt',
 ] as const satisfies readonly VaultIpcMethod[];
 
 const LENGTH_BYTES = 4;
+const ATTACHMENT_HEADER_BYTES = 8;
+const ATTACHMENT_MARKER = '$inflowVaultAttachment';
 
 export function encodeVaultIpcMessage(message: VaultIpcMessage): Buffer {
-  const body = Buffer.from(JSON.stringify(message), 'utf8');
-  if (body.byteLength > VAULT_IPC_MAX_MESSAGE_BYTES) {
+  const attachments: Uint8Array[] = [];
+  const json = Buffer.from(JSON.stringify(encodeAttachments(message, attachments)), 'utf8');
+  const attachmentBytes = attachments.reduce(
+    (total, attachment) => total + LENGTH_BYTES + attachment.byteLength * 2,
+    0,
+  );
+  const bodyLength = ATTACHMENT_HEADER_BYTES + json.byteLength + attachmentBytes;
+  if (bodyLength > VAULT_IPC_MAX_MESSAGE_BYTES) {
     throw new SecureStorageError('secure_storage_invalid_path', 'Vault IPC message is too large.');
   }
-  const frame = Buffer.alloc(LENGTH_BYTES + body.byteLength);
-  frame.writeUInt32BE(body.byteLength, 0);
-  body.copy(frame, LENGTH_BYTES);
+  const frame = Buffer.alloc(LENGTH_BYTES + bodyLength);
+  frame.writeUInt32BE(bodyLength, 0);
+  frame.writeUInt32BE(json.byteLength, LENGTH_BYTES);
+  frame.writeUInt32BE(attachments.length, LENGTH_BYTES * 2);
+  json.copy(frame, LENGTH_BYTES + ATTACHMENT_HEADER_BYTES);
+  let offset = LENGTH_BYTES + ATTACHMENT_HEADER_BYTES + json.byteLength;
+  for (const attachment of attachments) {
+    frame.writeUInt32BE(attachment.byteLength * 2, offset);
+    offset += LENGTH_BYTES;
+    const mask = frame.subarray(offset, offset + attachment.byteLength);
+    randomFillSync(mask);
+    offset += attachment.byteLength;
+    for (let index = 0; index < attachment.byteLength; index += 1) {
+      frame[offset + index] = (attachment[index] ?? 0) ^ (mask[index] ?? 0);
+    }
+    offset += attachment.byteLength;
+  }
+  json.fill(0);
   return frame;
 }
 
 export function decodeVaultIpcFrame(frame: Uint8Array): VaultIpcMessage {
-  if (frame.byteLength < LENGTH_BYTES) {
+  if (frame.byteLength < LENGTH_BYTES + ATTACHMENT_HEADER_BYTES) {
     throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC frame is truncated.');
   }
   const bytes = Buffer.from(frame);
-  const length = bytes.readUInt32BE(0);
-  if (length > VAULT_IPC_MAX_MESSAGE_BYTES) {
-    throw new SecureStorageError('secure_storage_invalid_path', 'Vault IPC message is too large.');
+  try {
+    const length = bytes.readUInt32BE(0);
+    if (length > VAULT_IPC_MAX_MESSAGE_BYTES) {
+      throw new SecureStorageError('secure_storage_invalid_path', 'Vault IPC message is too large.');
+    }
+    if (bytes.byteLength !== LENGTH_BYTES + length) {
+      throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC frame length is invalid.');
+    }
+    const jsonLength = bytes.readUInt32BE(LENGTH_BYTES);
+    const attachmentCount = bytes.readUInt32BE(LENGTH_BYTES * 2);
+    const jsonStart = LENGTH_BYTES + ATTACHMENT_HEADER_BYTES;
+    const jsonEnd = jsonStart + jsonLength;
+    if (jsonEnd > bytes.byteLength) {
+      throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC frame attachments are malformed.');
+    }
+    const attachments: Buffer[] = [];
+    let offset = jsonEnd;
+    for (let index = 0; index < attachmentCount; index += 1) {
+      if (offset + LENGTH_BYTES > bytes.byteLength) {
+        throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC frame attachments are malformed.');
+      }
+      const attachmentLength = bytes.readUInt32BE(offset);
+      offset += LENGTH_BYTES;
+      if (offset + attachmentLength > bytes.byteLength) {
+        throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC frame attachments are malformed.');
+      }
+      if (attachmentLength % 2 !== 0) {
+        throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC attachment masking is malformed.');
+      }
+      const valueLength = attachmentLength / 2;
+      const attachment = Buffer.alloc(valueLength);
+      for (let index = 0; index < valueLength; index += 1) {
+        attachment[index] = (bytes[offset + index] ?? 0) ^ (bytes[offset + valueLength + index] ?? 0);
+      }
+      attachments.push(attachment);
+      offset += attachmentLength;
+    }
+    if (offset !== bytes.byteLength) {
+      throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC frame attachments are malformed.');
+    }
+    const parsed = JSON.parse(bytes.subarray(jsonStart, jsonEnd).toString('utf8')) as unknown;
+    return parseVaultIpcMessage(decodeAttachments(parsed, attachments));
+  } finally {
+    bytes.fill(0);
   }
-  if (bytes.byteLength !== LENGTH_BYTES + length) {
-    throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC frame length is invalid.');
+}
+
+export function clearVaultIpcBytes(value: unknown): void {
+  if (value instanceof Uint8Array) {
+    value.fill(0);
+    return;
   }
-  const parsed = JSON.parse(bytes.subarray(LENGTH_BYTES).toString('utf8')) as unknown;
-  return parseVaultIpcMessage(parsed);
+  if (Array.isArray(value)) {
+    for (const item of value) clearVaultIpcBytes(item);
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const item of Object.values(value)) clearVaultIpcBytes(item);
+}
+
+function encodeAttachments(value: unknown, attachments: Uint8Array[]): unknown {
+  if (value instanceof Uint8Array) {
+    const index = attachments.push(value) - 1;
+    return { [ATTACHMENT_MARKER]: index };
+  }
+  if (Array.isArray(value)) return value.map((item) => encodeAttachments(item, attachments));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, encodeAttachments(item, attachments)]));
+}
+
+function decodeAttachments(value: unknown, attachments: Buffer[]): unknown {
+  if (isRecord(value) && Object.keys(value).length === 1 && ATTACHMENT_MARKER in value) {
+    const index = value[ATTACHMENT_MARKER];
+    if (!Number.isSafeInteger(index) || (index as number) < 0 || (index as number) >= attachments.length) {
+      throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC attachment reference is malformed.');
+    }
+    return attachments[index as number];
+  }
+  if (Array.isArray(value)) return value.map((item) => decodeAttachments(item, attachments));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, decodeAttachments(item, attachments)]));
 }
 
 function parseVaultIpcMessage(value: unknown): VaultIpcMessage {

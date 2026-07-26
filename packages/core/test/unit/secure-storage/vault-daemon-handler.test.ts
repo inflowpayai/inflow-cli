@@ -24,6 +24,8 @@ class FakeVaultBackend implements VaultBackend {
 
   async changePassphrase(_currentUnlockFactor: Uint8Array, _nextUnlockFactor: Uint8Array): Promise<void> {}
 
+  changeWrappingKey(_currentWrappingKey: Uint8Array, _nextWrappingKey: Uint8Array, _nextSalt: Uint8Array): void {}
+
   deleteExpired(_input: { now: string }): void {}
 
   deleteSecret(_input: { expectedKind: 'inflow_api_key'; reference: VaultSecretReference }): void {}
@@ -67,6 +69,15 @@ class FakeVaultBackend implements VaultBackend {
     this.unlocked = true;
     return this.status();
   }
+
+  unlockSalt(): Uint8Array {
+    return Buffer.alloc(16);
+  }
+
+  unlockWithWrappingKey(_wrappingKey: Uint8Array, _salt: Uint8Array): VaultStatus {
+    this.unlocked = true;
+    return this.status();
+  }
 }
 
 function request(method: VaultIpcRequest['method'], params: Record<string, unknown> = {}): VaultIpcRequest {
@@ -81,7 +92,7 @@ describe('handleVaultIpcRequest', () => {
     await expect(
       handleVaultIpcRequest(
         backend,
-        request('vault.unlock', { unlockFactor: Buffer.from('123456').toString('base64') }),
+        request('vault.unlock', { salt: Buffer.alloc(16), wrappingKey: Buffer.alloc(32) }),
       ),
     ).resolves.toMatchObject({ ok: true, result: { lockState: 'unlocked' } });
     await expect(
@@ -109,7 +120,7 @@ describe('handleVaultIpcRequest', () => {
         backend,
         request('secret.put', {
           expectedKind: 'inflow_api_key',
-          payload: Buffer.from('api-key').toString('base64'),
+          payload: Buffer.from('api-key'),
         }),
       ),
     ).resolves.toMatchObject({ ok: true, result: { reference } });
@@ -117,7 +128,7 @@ describe('handleVaultIpcRequest', () => {
       handleVaultIpcRequest(backend, request('secret.get', { expectedKind: 'inflow_api_key', reference })),
     ).resolves.toMatchObject({
       ok: true,
-      result: { payload: Buffer.from('secret').toString('base64'), reference },
+      result: { payload: Buffer.from('secret'), reference },
     });
     await expect(
       handleVaultIpcRequest(backend, request('secret.exists', { expectedKind: 'inflow_api_key', reference })),
@@ -152,8 +163,9 @@ describe('handleVaultIpcRequest', () => {
       handleVaultIpcRequest(
         backend,
         request('vault.changePassphrase', {
-          currentUnlockFactor: Buffer.from('123456').toString('base64'),
-          nextUnlockFactor: Buffer.from('654321').toString('base64'),
+          currentWrappingKey: Buffer.alloc(32),
+          nextSalt: Buffer.alloc(16),
+          nextWrappingKey: Buffer.alloc(32),
         }),
       ),
     ).resolves.toMatchObject({ ok: true, result: {} });
@@ -226,13 +238,13 @@ describe('handleVaultIpcRequest', () => {
       request('secret.put', {
         expectedKind: 'inflow_api_key',
         expiresAt: '',
-        payload: Buffer.from('api-key').toString('base64'),
+        payload: Buffer.from('api-key'),
       }),
       request('secret.put', {
         expectedKind: 'unknown',
-        payload: Buffer.from('api-key').toString('base64'),
+        payload: Buffer.from('api-key'),
       }),
-      request('vault.unlock', { unlockFactor: 'not-base64!' }),
+      request('vault.unlock', { salt: Buffer.alloc(16), wrappingKey: 'not-bytes' }),
     ]) {
       await expect(handleVaultIpcRequest(backend, ipcRequest)).resolves.toMatchObject({
         error: {
@@ -255,7 +267,7 @@ describe('handleVaultIpcRequest', () => {
         backend,
         request('secret.put', {
           expectedKind: 'inflow_api_key',
-          payload: Buffer.from('api-key').toString('base64'),
+          payload: Buffer.from('api-key'),
         }),
       ),
     ).resolves.toMatchObject({

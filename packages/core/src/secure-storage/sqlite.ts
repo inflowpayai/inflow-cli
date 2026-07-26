@@ -1,10 +1,12 @@
 import { chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, realpathSync } from 'node:fs';
 import { access, chmod, copyFile, mkdir, stat } from 'node:fs/promises';
-import { homedir, userInfo } from 'node:os';
+import { userInfo } from 'node:os';
 import path from 'node:path';
-import { createRequire } from 'node:module';
+import process from 'node:process';
 import { SecureStorageError } from './errors.js';
+import { runtimeRequire } from './runtime-require.js';
 import type { SecretReference } from './secret-store.js';
+import { defaultVaultRoot } from './vault-files.js';
 import {
   vaultRecordStatusCode,
   vaultRecordStatusName,
@@ -14,7 +16,7 @@ import {
   type VaultSecretKind,
 } from './vault-types.js';
 
-const require = createRequire(import.meta.url);
+const require = runtimeRequire();
 
 type SQLiteValue = Uint8Array | bigint | number | string | null;
 type SQLiteRow = Record<string, SQLiteValue>;
@@ -83,7 +85,7 @@ const SCHEMA_VERSION = 1;
 const STICKY_BIT_MODE = 0o1000;
 
 function defaultDatabasePath(): string {
-  return path.join(homedir(), 'Library', 'Application Support', 'InFlow', 'inflow.sqlite3');
+  return path.join(defaultVaultRoot(), 'inflow.sqlite3');
 }
 
 function loadDefaultSqlite(): SQLiteModule {
@@ -150,15 +152,19 @@ function ensureDatabasePath(databasePath: string): void {
   if (!parentStat.isDirectory()) {
     throw new SecureStorageError('secure_storage_invalid_path', 'The InFlow application data directory is invalid.');
   }
-  const currentUid = userInfo().uid;
-  if (parentStat.uid !== currentUid && (parentStat.mode & STICKY_BIT_MODE) !== STICKY_BIT_MODE) {
-    throw new SecureStorageError(
-      'secure_storage_invalid_path',
-      'The InFlow application data directory is not owned by this user.',
-    );
-  }
-  if (parentStat.uid === currentUid) {
-    chmodSync(realParent, APPLICATION_DIRECTORY_MODE);
+  if (process.platform === 'win32') {
+    assertCanonicalWindowsPath(parent, realParent);
+  } else {
+    const currentUid = userInfo().uid;
+    if (parentStat.uid !== currentUid && (parentStat.mode & STICKY_BIT_MODE) !== STICKY_BIT_MODE) {
+      throw new SecureStorageError(
+        'secure_storage_invalid_path',
+        'The InFlow application data directory is not owned by this user.',
+      );
+    }
+    if (parentStat.uid === currentUid) {
+      chmodSync(realParent, APPLICATION_DIRECTORY_MODE);
+    }
   }
 
   if (!existsSync(databasePath)) {
@@ -168,6 +174,11 @@ function ensureDatabasePath(databasePath: string): void {
   if (dbStat.isSymbolicLink() || !dbStat.isFile()) {
     throw new SecureStorageError('secure_storage_invalid_path', 'The InFlow SQLite database path is invalid.');
   }
+  if (process.platform === 'win32') {
+    assertCanonicalWindowsPath(databasePath, realpathSync(databasePath));
+    return;
+  }
+  const currentUid = userInfo().uid;
   if (dbStat.uid !== currentUid) {
     throw new SecureStorageError(
       'secure_storage_invalid_path',
@@ -175,6 +186,12 @@ function ensureDatabasePath(databasePath: string): void {
     );
   }
   chmodSync(databasePath, DATABASE_FILE_MODE);
+}
+
+function assertCanonicalWindowsPath(requestedPath: string, realPath: string): void {
+  if (path.resolve(requestedPath).toLowerCase() !== path.resolve(realPath).toLowerCase()) {
+    throw new SecureStorageError('secure_storage_invalid_path', 'The InFlow SQLite path is invalid.');
+  }
 }
 
 export class SecureSqliteRepository {

@@ -9,11 +9,13 @@ const platformRecovery = vi.hoisted<{
   identityNotFoundOnSign: boolean;
   notRecognized: boolean;
   provisioned: boolean;
+  statusErrorCode: string | undefined;
 }>(() => ({
   identity: undefined,
   identityNotFoundOnSign: false,
   notRecognized: false,
   provisioned: false,
+  statusErrorCode: undefined,
 }));
 
 const fetchScenario = vi.hoisted(() => ({
@@ -158,10 +160,14 @@ vi.mock('@aep-foundation/agent', () => {
       serviceDid: identity.serviceDid,
     }),
     statusService: () => {
-      if (platformRecovery.notRecognized || platformRecovery.provisioned) {
+      if (
+        platformRecovery.notRecognized ||
+        platformRecovery.provisioned ||
+        platformRecovery.statusErrorCode !== undefined
+      ) {
         platformRecovery.provisioned = false;
         const error = new AepCommandError();
-        error.problem = { code: 'not_recognized' };
+        error.problem = { code: platformRecovery.statusErrorCode ?? 'not_recognized' };
         throw error;
       }
       return { body: { status: 'active' } };
@@ -198,6 +204,7 @@ afterEach(() => {
   platformRecovery.identityNotFoundOnSign = false;
   platformRecovery.notRecognized = false;
   platformRecovery.provisioned = false;
+  platformRecovery.statusErrorCode = undefined;
   probeScenario.classification = 'success';
   probeScenario.calls = 0;
   probeScenario.status = 204;
@@ -733,7 +740,10 @@ describe('aep commands', () => {
       __testing.runEnroll(context({ interval: 1, maxAttempts: 1, timeout: 1 }), client, storage),
     ).resolves.toEqual({ status: 'active' });
     await expect(__testing.runStatus(context(), client, storage)).resolves.toMatchObject({
-      local: { grants: [] },
+      local: {
+        available_grant_types: ['oauth-bearer'],
+        grants: [],
+      },
       service: { status: 'active' },
     });
     await expect(
@@ -746,11 +756,45 @@ describe('aep commands', () => {
       service_did: 'did:web:service.example',
       scopes: ['read'],
     });
+    await expect(__testing.runStatus(context(), client, storage)).resolves.toMatchObject({
+      local: {
+        grants: [
+          {
+            credential_id: 'credential-1',
+            grant_type: 'oauth-bearer',
+            scopes: ['read'],
+            status: 'active',
+            usable: true,
+          },
+        ],
+      },
+      service: { status: 'active' },
+    });
     await expect(__testing.runRevoke(context(), client, storage)).resolves.toEqual({
       all_grant_types: true,
       revoked: true,
     });
+    await expect(__testing.runStatus(context(), client, storage)).resolves.toMatchObject({
+      local: { grants: [] },
+      service: { status: 'active' },
+    });
   });
+
+  it.each(['agent_identity_not_found', 'not_recognized'])(
+    'maps Status %s failures to an actionable not-enrolled error',
+    async (code) => {
+      const storage = new MemoryStorage();
+      storage.setApiKey('key');
+      const aepStorage = new AepStorage(storage, {
+        platformOrigin: 'https://platform.example',
+        userId: 'user-1',
+      });
+      await aepStorage.identities().saveIdentity(identity);
+      platformRecovery.statusErrorCode = code;
+
+      await expect(__testing.runStatus(context(), inflow(), storage)).rejects.toThrow('AEP_NOT_ENROLLED');
+    },
+  );
 
   it('reports AEP and unrelated authentication classifications for the exact resource', async () => {
     probeScenario.classification = 'aep-challenge';

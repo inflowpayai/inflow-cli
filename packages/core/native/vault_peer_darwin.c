@@ -8,6 +8,8 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include "vault_crypto_native.h"
+#include "vault_secure_memory.h"
 
 static napi_value make_error(napi_env env, const char *code, const char *message) {
   napi_value error;
@@ -77,6 +79,12 @@ static napi_value init(napi_env env, napi_value exports) {
   napi_value peer_info_fn;
   napi_create_function(env, "peerInfo", NAPI_AUTO_LENGTH, peer_info, NULL, &peer_info_fn);
   napi_set_named_property(env, exports, "peerInfo", peer_info_fn);
+  if (register_vault_secure_memory(env, exports) != napi_ok) {
+    return NULL;
+  }
+  if (register_vault_crypto_native(env, exports) != napi_ok) {
+    return NULL;
+  }
   return exports;
 }
 

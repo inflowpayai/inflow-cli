@@ -227,7 +227,7 @@ export const RevokeView: React.FC<RevokeViewProps> = ({ onComplete, selector }) 
 
 interface StatusViewProps extends ViewProps {
   availableGrantTypes: string[];
-  grants: Array<{ credential_id: string; expires_at?: string; grant_type: string; scopes: unknown }>;
+  grants: StoredCredentialRow[];
   service: {
     owner_action_required?: string;
     requirements_pending?: string[];
@@ -236,6 +236,26 @@ interface StatusViewProps extends ViewProps {
   };
   serviceDid: string;
 }
+
+interface StoredCredentialRow {
+  credential_id: string;
+  expires_at?: string;
+  grant_type: string;
+  scopes: unknown;
+  status: 'active';
+}
+
+function listedScopes(scopes: unknown): string {
+  return Array.isArray(scopes) ? listed(scopes.filter((scope): scope is string => typeof scope === 'string')) : 'None';
+}
+
+const STORED_CREDENTIAL_COLUMNS: ReadonlyArray<TableColumn<StoredCredentialRow>> = [
+  { header: 'Grant Type', cell: (row) => row.grant_type },
+  { header: 'Credential ID', cell: (row) => row.credential_id },
+  { header: 'Status', cell: (row) => row.status },
+  { header: 'Scopes', cell: (row) => listedScopes(row.scopes) },
+  { header: 'Expires', cell: (row) => row.expires_at ?? 'None' },
+];
 
 export const StatusView: React.FC<StatusViewProps> = ({
   availableGrantTypes,
@@ -259,14 +279,9 @@ export const StatusView: React.FC<StatusViewProps> = ({
       <Text bold>AEP Service Status</Text>
       <Table columns={DETAIL_COLUMNS} rows={rows} />
       {grants.length > 0 && (
-        <Box flexDirection="column">
-          <Text bold>Stored session credentials</Text>
-          {grants.map((grant) => (
-            <Text key={grant.credential_id}>
-              {grant.grant_type} · {grant.credential_id}
-              {grant.expires_at === undefined ? '' : ` · expires ${grant.expires_at}`}
-            </Text>
-          ))}
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>Stored Session Credentials</Text>
+          <Table columns={STORED_CREDENTIAL_COLUMNS} rows={grants} />
         </Box>
       )}
     </Box>

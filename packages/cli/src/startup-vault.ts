@@ -39,6 +39,17 @@ export function shouldStartVaultDaemon(argv: readonly string[], hasDirectApiKey 
   return false;
 }
 
+export function shouldReconcileVaultDaemon(argv: readonly string[], hasDirectApiKey = false): boolean {
+  if (hasDirectApiKey || argv.includes('--schema')) return false;
+  const [group, subcommand] = commandPath(argv);
+  if (group === 'auth') return subcommand === 'login' || subcommand === 'logout' || subcommand === 'status';
+  if (group === 'aep') return subcommand !== 'inspect';
+  if (group === 'mpp' || group === 'x402') {
+    return subcommand === 'pay' || subcommand === 'fetch' || subcommand === 'status' || subcommand === 'supported';
+  }
+  return group === 'balances' || group === 'deposit-addresses' || group === 'user';
+}
+
 export function shouldUnlockVault(
   argv: readonly string[],
   options: { hasDirectApiKey?: boolean; isAgent?: boolean } = {},

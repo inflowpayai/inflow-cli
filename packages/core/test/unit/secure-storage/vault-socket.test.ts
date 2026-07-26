@@ -4,13 +4,14 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   VaultBackend,
   VaultPolicy,
   VaultSecretPayload,
   VaultStatus,
 } from '../../../src/secure-storage/vault-backend.js';
+import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import {
   sendVaultIpcRequest,
   startVaultSocketServer,
@@ -25,12 +26,20 @@ import {
 import type { VaultSecretReference } from '../../../src/secure-storage/vault-types.js';
 
 class SocketVaultBackend implements VaultBackend {
-  secret: VaultSecretPayload = {
-    payload: Buffer.from('socket-secret'),
-    reference: { reference: 'vlt_22222222222222222222222222222222' },
-  };
+  private active = true;
+  private locked = false;
+  readonly secret: VaultSecretPayload;
+
+  constructor(payload = 'socket-secret') {
+    this.secret = {
+      payload: Buffer.from(payload),
+      reference: { reference: 'vlt_22222222222222222222222222222222' },
+    };
+  }
 
   changePassphrase(_currentUnlockFactor: Uint8Array, _nextUnlockFactor: Uint8Array): void {}
+
+  changeWrappingKey(_currentWrappingKey: Uint8Array, _nextWrappingKey: Uint8Array, _nextSalt: Uint8Array): void {}
 
   deleteExpired(_input: { now: string }): void {}
 
@@ -48,29 +57,73 @@ class SocketVaultBackend implements VaultBackend {
   }
 
   getSecret(_input: { expectedKind: 'inflow_api_key'; reference: VaultSecretReference }): VaultSecretPayload {
-    return this.secret;
+    if (!this.active) {
+      throw new SecureStorageError('secure_storage_secret_missing', 'The vault secret was not found.');
+    }
+    return { payload: Buffer.from(this.secret.payload), reference: this.secret.reference };
   }
 
-  lock(): void {}
+  lock(): void {
+    this.locked = true;
+  }
 
   putSecret(_input: { expectedKind: 'inflow_api_key'; payload: Uint8Array }): VaultSecretReference {
     return this.secret.reference;
   }
 
-  reset(): void {}
+  reset(): Promise<void> {
+    this.active = false;
+    return Promise.resolve();
+  }
 
   setPolicy(policy: VaultPolicy): VaultPolicy {
     return policy;
   }
 
   status(): VaultStatus {
-    return { daemonRunning: true, lockState: 'unlocked' };
+    return { daemonRunning: true, lockState: this.locked ? 'locked' : 'unlocked' };
   }
 
   touch(_input: { expectedKind: 'inflow_api_key'; reference: VaultSecretReference }): void {}
 
   unlock(_unlockFactor: Uint8Array): VaultStatus {
+    this.locked = false;
     return this.status();
+  }
+
+  unlockSalt(): Uint8Array {
+    return Buffer.alloc(16);
+  }
+
+  unlockWithWrappingKey(_wrappingKey: Uint8Array, _salt: Uint8Array): VaultStatus {
+    this.locked = false;
+    return this.status();
+  }
+}
+
+class BlockingSocketVaultBackend extends SocketVaultBackend {
+  private releaseReset: () => void = () => undefined;
+  private resolveResetStarted: () => void = () => undefined;
+  readonly resetStarted = new Promise<void>((resolve) => {
+    this.resolveResetStarted = resolve;
+  });
+  statusCalls = 0;
+
+  finishReset(): void {
+    this.releaseReset();
+  }
+
+  override async reset(): Promise<void> {
+    this.resolveResetStarted();
+    await new Promise<void>((resolve) => {
+      this.releaseReset = resolve;
+    });
+    await super.reset();
+  }
+
+  override status(): VaultStatus {
+    this.statusCalls += 1;
+    return super.status();
   }
 }
 
@@ -108,8 +161,44 @@ describe('vault socket transport', () => {
       ),
     ).resolves.toMatchObject({
       ok: true,
-      result: { payload: Buffer.from('socket-secret').toString('base64') },
+      result: { payload: Buffer.from('socket-secret') },
     });
+  });
+
+  it('authenticates the daemon before transmitting request bytes', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'run', 'vault.sock');
+    mkdirSync(join(tmpDir, 'run'));
+    let receivedBytes = false;
+    const fakeDaemon = createServer((socket) => {
+      socket.on('data', () => {
+        receivedBytes = true;
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      fakeDaemon.once('error', reject);
+      fakeDaemon.listen(socketPath, resolve);
+    });
+    servers.push({
+      close: () =>
+        new Promise<void>((resolve, reject) => {
+          fakeDaemon.close((cause) => {
+            if (cause !== undefined) {
+              reject(cause);
+              return;
+            }
+            resolve();
+          });
+        }),
+      socketPath,
+    });
+
+    await expect(
+      sendVaultIpcRequest(socketPath, request('vault.status'), () => {
+        throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+      }),
+    ).rejects.toMatchObject({ secureStorageCode: 'secure_storage_peer_verification_failed' });
+    expect(receivedBytes).toBe(false);
   });
 
   it('removes stale socket files before listening', async () => {
@@ -220,6 +309,81 @@ describe('vault socket transport', () => {
       id: 'unknown',
       ok: false,
     });
+  });
+
+  it('routes authenticated peers to isolated tenant backends', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'run', 'vault.sock');
+    const backends = new Map([
+      [1001, new SocketVaultBackend('tenant-a-secret')],
+      [1002, new SocketVaultBackend('tenant-b-secret')],
+    ]);
+    const peerUserIds = [1001, 1002, 1001, 1002, 1001, 1002];
+    const backendForPeer = vi.fn((peer: { uid: number }) => {
+      const backend = backends.get(peer.uid);
+      if (backend === undefined) throw new Error('unknown peer');
+      return backend;
+    });
+    servers.push(
+      await startVaultSocketServer({
+        backendForPeer,
+        peerVerifier() {
+          const uid = peerUserIds.shift();
+          if (uid === undefined) throw new Error('unexpected connection');
+          return { path: '/usr/bin/inflow', pid: uid, uid };
+        },
+        socketPath,
+      }),
+    );
+    const secretRequest = request('secret.get', {
+      expectedKind: 'inflow_api_key',
+      reference: 'vlt_22222222222222222222222222222222',
+    });
+
+    await expect(sendVaultIpcRequest(socketPath, secretRequest)).resolves.toMatchObject({
+      ok: true,
+      result: { payload: Buffer.from('tenant-a-secret') },
+    });
+    await expect(sendVaultIpcRequest(socketPath, secretRequest)).resolves.toMatchObject({
+      ok: true,
+      result: { payload: Buffer.from('tenant-b-secret') },
+    });
+    await expect(sendVaultIpcRequest(socketPath, request('vault.reset'))).resolves.toMatchObject({ ok: true });
+    await expect(sendVaultIpcRequest(socketPath, secretRequest)).resolves.toMatchObject({
+      ok: true,
+      result: { payload: Buffer.from('tenant-b-secret') },
+    });
+    await expect(sendVaultIpcRequest(socketPath, request('daemon.shutdown'))).resolves.toMatchObject({
+      error: {
+        code: 'secure_storage_unavailable',
+        message: 'The vault service lifecycle is managed by the operating system.',
+      },
+      ok: false,
+    });
+    await expect(sendVaultIpcRequest(socketPath, request('vault.status'))).resolves.toMatchObject({
+      ok: true,
+      result: { lockState: 'unlocked' },
+    });
+    expect(backendForPeer.mock.calls.map(([peer]) => peer.uid)).toEqual([1001, 1002, 1001, 1002, 1001, 1002]);
+  });
+
+  it('serializes concurrent requests for one tenant backend', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'run', 'vault.sock');
+    const backend = new BlockingSocketVaultBackend();
+    servers.push(await startVaultSocketServer({ backend, socketPath }));
+
+    const reset = sendVaultIpcRequest(socketPath, request('vault.reset'));
+    await backend.resetStarted;
+    const status = sendVaultIpcRequest(socketPath, request('vault.status'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(backend.statusCalls).toBe(0);
+
+    backend.finishReset();
+
+    await expect(reset).resolves.toMatchObject({ ok: true });
+    await expect(status).resolves.toMatchObject({ ok: true });
+    expect(backend.statusCalls).toBe(1);
   });
 
   it('rejects malformed socket responses', async () => {

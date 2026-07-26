@@ -1,6 +1,8 @@
+import { lstatSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { SecureStorageError } from './errors.js';
 
 export interface VaultFilePaths {
   database: string;
@@ -23,17 +25,64 @@ export function defaultVaultRoot(): string {
   return path.join(homedir(), '.inflow');
 }
 
-export function vaultFilePaths(rootDirectory = defaultVaultRoot()): VaultFilePaths {
-  const database = path.join(rootDirectory, 'inflow.sqlite3');
-  const runDirectory = path.join(rootDirectory, 'run');
+export function vaultFilePaths(rootDirectory?: string): VaultFilePaths {
+  const root = rootDirectory ?? defaultVaultRoot();
+  const database = path.join(root, 'inflow.sqlite3');
+  const runDirectory = path.join(root, 'run');
   return {
     database,
     runDirectory,
     sharedMemory: `${database}-shm`,
-    sidecar: path.join(rootDirectory, 'inflow.vault'),
-    socket: path.join(runDirectory, 'vault.sock'),
+    sidecar: path.join(root, 'inflow.vault'),
+    socket:
+      rootDirectory === undefined && usesLinuxVaultService()
+        ? '/run/inflow/vault.sock'
+        : rootDirectory === undefined && process.platform === 'win32'
+          ? '\\\\.\\pipe\\InFlowVault'
+          : path.join(runDirectory, 'vault.sock'),
     writeAheadLog: `${database}-wal`,
   };
+}
+
+export function usesLinuxVaultService(): boolean {
+  if (process.platform !== 'linux') return false;
+  try {
+    return realpathSync(process.execPath) === '/opt/inflow/bin/inflow';
+  } catch {
+    return process.execPath === '/opt/inflow/bin/inflow';
+  }
+}
+
+export function linuxVaultServiceUserId(socketPath: string): number {
+  try {
+    const parent = path.dirname(socketPath);
+    const parentStat = lstatSync(parent);
+    const socketStat = lstatSync(socketPath);
+    if (
+      realpathSync(parent) !== parent ||
+      !parentStat.isDirectory() ||
+      parentStat.uid !== socketStat.uid ||
+      (parentStat.mode & 0o022) !== 0 ||
+      !socketStat.isSocket() ||
+      socketStat.isSymbolicLink()
+    ) {
+      throw new Error('unsafe vault service socket');
+    }
+    return socketStat.uid;
+  } catch (cause) {
+    if (isMissingPath(cause)) {
+      throw new SecureStorageError('secure_storage_unavailable', 'The InFlow vault service is unavailable.', { cause });
+    }
+    throw new SecureStorageError(
+      'secure_storage_peer_verification_failed',
+      'The InFlow vault service socket identity is invalid.',
+      { cause },
+    );
+  }
+}
+
+function isMissingPath(cause: unknown): boolean {
+  return cause instanceof Error && 'code' in cause && (cause.code === 'ENOENT' || cause.code === 'ENOTDIR');
 }
 
 export async function removeVaultLocalState(paths: VaultFilePaths): Promise<void> {

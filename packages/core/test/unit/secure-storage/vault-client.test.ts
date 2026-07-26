@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LocalVaultClient } from '../../../src/secure-storage/vault-client.js';
 import {
+  decodeVaultIpcFrame,
   encodeVaultIpcMessage,
   type VaultIpcRequest,
   type VaultIpcResponse,
@@ -85,11 +86,66 @@ describe('LocalVaultClient', () => {
     });
   });
 
+  it('rejects an unlock response when an independent status request remains locked', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
+    await listenWithResponder(tmpDir, (request) => ({
+      id: request.id,
+      ok: true,
+      result:
+        request.method === 'vault.unlockSalt'
+          ? { salt: Buffer.alloc(16) }
+          : request.method === 'vault.unlock'
+            ? { daemonRunning: true, lockState: 'unlocked' }
+            : { daemonRunning: true, lockState: 'locked' },
+      version: 1,
+    }));
+    const client = new LocalVaultClient({ rootDirectory: tmpDir });
+
+    await expect(client.unlock(Buffer.from('123456'))).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_corrupt',
+    });
+  });
+
+  it('rejects a response for a different request', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
+    await listenWithResponder(tmpDir, () => ({
+      id: 'req_stale',
+      ok: true,
+      result: { daemonRunning: true, lockState: 'locked' },
+      version: 1,
+    }));
+    const client = new LocalVaultClient({ rootDirectory: tmpDir });
+
+    await expect(client.status()).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_corrupt',
+    });
+  });
+
   it('sends lifecycle and policy update requests', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
     const methods: string[] = [];
+    let statusRequests = 0;
+    let unlockRequests = 0;
     await listenWithResponder(tmpDir, (request) => {
       methods.push(request.method);
+      if (request.method === 'vault.unlock') {
+        unlockRequests += 1;
+        if (unlockRequests === 1) {
+          return {
+            error: { code: 'secure_storage_corrupt', message: 'Vault material could not be unwrapped.' },
+            id: request.id,
+            ok: false,
+            version: 1,
+          };
+        }
+        return {
+          id: request.id,
+          ok: true,
+          result: { daemonRunning: true, lockState: 'unlocked' },
+          version: 1,
+        };
+      }
+      if (request.method === 'vault.status') statusRequests += 1;
       return {
         id: request.id,
         ok: true,
@@ -99,7 +155,11 @@ describe('LocalVaultClient', () => {
                 idleTimeoutSeconds: null,
                 lockOnSleep: false,
               }
-            : {},
+            : request.method === 'vault.unlockSalt'
+              ? { salt: Buffer.alloc(16) }
+              : request.method === 'vault.status'
+                ? { daemonRunning: true, lockState: statusRequests === 1 ? 'locked' : 'unlocked' }
+                : {},
         version: 1,
       };
     });
@@ -121,7 +181,15 @@ describe('LocalVaultClient', () => {
 
     expect(methods).toEqual([
       'vault.setPolicy',
+      'vault.unlockSalt',
       'vault.changePassphrase',
+      'vault.lock',
+      'vault.unlockSalt',
+      'vault.unlock',
+      'vault.status',
+      'vault.unlockSalt',
+      'vault.unlock',
+      'vault.status',
       'vault.lock',
       'vault.reset',
       'daemon.shutdown',
@@ -143,6 +211,15 @@ describe('LocalVaultClient', () => {
     await expect(client.getPolicy()).rejects.toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
   });
 
+  it('rejects an unchanged passphrase before contacting the daemon', async () => {
+    const client = new LocalVaultClient({ rootDirectory: join(tmpdir(), 'missing-inflow-vault') });
+    const factor = Buffer.from('current');
+
+    await expect(client.changePassphrase(factor, Buffer.from(factor))).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_invalid_path',
+    });
+  });
+
   async function listenWithResponder(rootDirectory: string, respond: (request: VaultIpcRequest) => VaultIpcResponse) {
     const socketPath = join(rootDirectory, 'run', 'vault.sock');
     mkdirSync(join(rootDirectory, 'run'));
@@ -154,7 +231,8 @@ describe('LocalVaultClient', () => {
         if (frame.byteLength < 4) return;
         const length = frame.readUInt32BE(0);
         if (frame.byteLength < length + 4) return;
-        const parsed = JSON.parse(frame.subarray(4, length + 4).toString('utf8')) as VaultIpcRequest;
+        const parsed = decodeVaultIpcFrame(frame.subarray(0, length + 4));
+        if (!('method' in parsed)) throw new Error('expected request');
         socket.end(encodeVaultIpcMessage(respond(parsed)));
       });
     });

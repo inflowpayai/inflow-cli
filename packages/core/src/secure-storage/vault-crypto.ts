@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
-import { hashRaw } from '@node-rs/argon2';
+import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from 'node:crypto';
 import { SecureStorageError } from './errors.js';
+import { deriveVaultWrappingKey } from './vault-protected-key.js';
 import {
   vaultRecordStatusCode,
   vaultSecretKindCode,
@@ -14,11 +14,6 @@ export interface VaultHeader {
   nonce: Buffer;
   salt: Buffer;
   tag: Buffer;
-}
-
-export interface VaultKeys {
-  databaseKey: Buffer;
-  recordKey: Buffer;
 }
 
 export interface EncryptedVaultRecordPayload {
@@ -41,22 +36,12 @@ export interface WrappedVaultMaterial {
 
 export const VAULT_MASTER_KEY_BYTES = 32;
 export const VAULT_SIDECAR_BYTES = 76;
+export const VAULT_SALT_BYTES = 16;
 export const VAULT_UNLOCK_FACTOR_MIN_BYTES = 6;
 
-const ARGON2_MEMORY_COST_KIB = 64 * 1024;
-const ARGON2_OUTPUT_BYTES = 32;
-const ARGON2_PARALLELISM = 1;
-const ARGON2_TIME_COST = 3;
-const ARGON2ID_ALGORITHM = 2;
-const ARGON2_VERSION_13 = 1;
-const HEADER_SALT_BYTES = 16;
 const HEADER_NONCE_BYTES = 12;
 const HEADER_TAG_BYTES = 16;
-const RECORD_NONCE_BYTES = 12;
 const HEADER_AAD = Buffer.from('inflow-vault-header-v1', 'utf8');
-const RECORD_KEY_LABEL = Buffer.from('inflow vault record encryption', 'utf8');
-const SQLITE_KEY_LABEL = Buffer.from('inflow sqlite database encryption', 'utf8');
-const WRAPPING_LABEL = Buffer.from('inflow vault material wrapping', 'utf8');
 
 export function assertUnlockFactor(value: Uint8Array): void {
   if (value.byteLength < VAULT_UNLOCK_FACTOR_MIN_BYTES) {
@@ -64,84 +49,99 @@ export function assertUnlockFactor(value: Uint8Array): void {
   }
 }
 
-export async function createVaultMaterial(unlockFactor: Uint8Array): Promise<WrappedVaultMaterial> {
+export function createVaultMaterial(unlockFactor: Uint8Array): WrappedVaultMaterial {
   assertUnlockFactor(unlockFactor);
-  const masterKey = randomBytes(VAULT_MASTER_KEY_BYTES);
-  const salt = randomBytes(HEADER_SALT_BYTES);
-  const wrappingKey = await deriveWrappingKey(unlockFactor, salt);
-  const encrypted = encryptMaterial(masterKey, wrappingKey, salt);
-  return {
-    header: encodeVaultHeader(encrypted),
-    masterKey,
-  };
+  const salt = randomBytes(VAULT_SALT_BYTES);
+  const wrappingKey = deriveWrappingKey(unlockFactor, salt);
+  try {
+    return createVaultMaterialWithWrappingKey(wrappingKey, salt);
+  } finally {
+    wrappingKey.fill(0);
+  }
 }
 
-export async function unwrapVaultMaterial(headerBytes: Uint8Array, unlockFactor: Uint8Array): Promise<Buffer> {
+export function unwrapVaultMaterial(headerBytes: Uint8Array, unlockFactor: Uint8Array): Buffer {
   assertUnlockFactor(unlockFactor);
   const header = decodeVaultHeader(headerBytes);
-  const wrappingKey = await deriveWrappingKey(unlockFactor, header.salt);
-  const decipher = createDecipheriv('aes-256-gcm', wrappingKey, header.nonce);
-  decipher.setAAD(HEADER_AAD);
-  decipher.setAuthTag(header.tag);
+  const wrappingKey = deriveWrappingKey(unlockFactor, header.salt);
   try {
+    return unwrapVaultMaterialWithWrappingKey(headerBytes, wrappingKey);
+  } finally {
+    wrappingKey.fill(0);
+  }
+}
+
+export function changeVaultUnlockFactor(
+  headerBytes: Uint8Array,
+  currentUnlockFactor: Uint8Array,
+  nextUnlockFactor: Uint8Array,
+): Buffer {
+  if (equalBytes(currentUnlockFactor, nextUnlockFactor)) {
+    throw new SecureStorageError(
+      'secure_storage_invalid_path',
+      'The new vault PIN or passphrase must differ from the current one.',
+    );
+  }
+  const masterKey = unwrapVaultMaterial(headerBytes, currentUnlockFactor);
+  let wrappingKey: Buffer | undefined;
+  try {
+    assertUnlockFactor(nextUnlockFactor);
+    const salt = randomBytes(VAULT_SALT_BYTES);
+    wrappingKey = deriveWrappingKey(nextUnlockFactor, salt);
+    return encodeVaultHeader(encryptMaterial(masterKey, wrappingKey, salt));
+  } finally {
+    masterKey.fill(0);
+    wrappingKey?.fill(0);
+  }
+}
+
+export function createVaultMaterialWithWrappingKey(wrappingKey: Uint8Array, salt: Uint8Array): WrappedVaultMaterial {
+  assertWrappingMaterial(wrappingKey, salt);
+  const masterKey = randomBytes(VAULT_MASTER_KEY_BYTES);
+  try {
+    return {
+      header: encodeVaultHeader(encryptMaterial(masterKey, wrappingKey, salt)),
+      masterKey,
+    };
+  } catch (cause) {
+    masterKey.fill(0);
+    throw cause;
+  }
+}
+
+export function unwrapVaultMaterialWithWrappingKey(headerBytes: Uint8Array, wrappingKey: Uint8Array): Buffer {
+  if (wrappingKey.byteLength !== VAULT_MASTER_KEY_BYTES) {
+    throw new SecureStorageError('secure_storage_invalid_path', 'Vault wrapping key is malformed.');
+  }
+  const header = decodeVaultHeader(headerBytes);
+  try {
+    const decipher = createDecipheriv('aes-256-gcm', wrappingKey, header.nonce);
+    decipher.setAAD(HEADER_AAD);
+    decipher.setAuthTag(header.tag);
     return Buffer.concat([decipher.update(header.material), decipher.final()]);
   } catch (cause) {
     throw new SecureStorageError('secure_storage_corrupt', 'Vault material could not be unwrapped.', { cause });
   }
 }
 
-export async function changeVaultUnlockFactor(
+export function changeVaultWrappingKey(
   headerBytes: Uint8Array,
-  currentUnlockFactor: Uint8Array,
-  nextUnlockFactor: Uint8Array,
-): Promise<Buffer> {
-  const masterKey = await unwrapVaultMaterial(headerBytes, currentUnlockFactor);
-  assertUnlockFactor(nextUnlockFactor);
-  const salt = randomBytes(HEADER_SALT_BYTES);
-  const wrappingKey = await deriveWrappingKey(nextUnlockFactor, salt);
-  return encodeVaultHeader(encryptMaterial(masterKey, wrappingKey, salt));
-}
-
-export function deriveVaultKeys(masterKey: Uint8Array): VaultKeys {
-  if (masterKey.byteLength !== VAULT_MASTER_KEY_BYTES) {
-    throw new SecureStorageError('secure_storage_corrupt', 'Vault master key has an unexpected length.');
-  }
-  return {
-    databaseKey: deriveKey(masterKey, SQLITE_KEY_LABEL),
-    recordKey: deriveKey(masterKey, RECORD_KEY_LABEL),
-  };
-}
-
-export function encryptVaultRecordPayload(
-  recordKey: Uint8Array,
-  context: VaultRecordEncryptionContext,
-  payload: Uint8Array,
-): EncryptedVaultRecordPayload {
-  const nonce = randomBytes(RECORD_NONCE_BYTES);
-  const cipher = createCipheriv('aes-256-gcm', recordKey, nonce);
-  cipher.setAAD(vaultRecordAad(context));
-  const ciphertext = Buffer.concat([cipher.update(payload), cipher.final()]);
-  return { ciphertext, nonce, tag: cipher.getAuthTag() };
-}
-
-export function decryptVaultRecordPayload(
-  recordKey: Uint8Array,
-  context: VaultRecordEncryptionContext,
-  encrypted: EncryptedVaultRecordPayload,
+  currentWrappingKey: Uint8Array,
+  nextWrappingKey: Uint8Array,
+  nextSalt: Uint8Array,
 ): Buffer {
-  const decipher = createDecipheriv('aes-256-gcm', recordKey, encrypted.nonce);
-  decipher.setAAD(vaultRecordAad(context));
-  decipher.setAuthTag(encrypted.tag);
+  assertWrappingMaterial(nextWrappingKey, nextSalt);
+  const masterKey = unwrapVaultMaterialWithWrappingKey(headerBytes, currentWrappingKey);
   try {
-    return Buffer.concat([decipher.update(encrypted.ciphertext), decipher.final()]);
-  } catch (cause) {
-    throw new SecureStorageError('secure_storage_corrupt', 'Vault record could not be decrypted.', { cause });
+    return encodeVaultHeader(encryptMaterial(masterKey, nextWrappingKey, nextSalt));
+  } finally {
+    masterKey.fill(0);
   }
 }
 
 export function encodeVaultHeader(header: VaultHeader): Buffer {
   if (
-    header.salt.byteLength !== HEADER_SALT_BYTES ||
+    header.salt.byteLength !== VAULT_SALT_BYTES ||
     header.nonce.byteLength !== HEADER_NONCE_BYTES ||
     header.tag.byteLength !== HEADER_TAG_BYTES ||
     header.material.byteLength !== VAULT_MASTER_KEY_BYTES
@@ -157,27 +157,24 @@ export function decodeVaultHeader(headerBytes: Uint8Array): VaultHeader {
   }
   const bytes = Buffer.from(headerBytes);
   return {
-    salt: bytes.subarray(0, HEADER_SALT_BYTES),
-    nonce: bytes.subarray(HEADER_SALT_BYTES, HEADER_SALT_BYTES + HEADER_NONCE_BYTES),
+    salt: bytes.subarray(0, VAULT_SALT_BYTES),
+    nonce: bytes.subarray(VAULT_SALT_BYTES, VAULT_SALT_BYTES + HEADER_NONCE_BYTES),
     tag: bytes.subarray(
-      HEADER_SALT_BYTES + HEADER_NONCE_BYTES,
-      HEADER_SALT_BYTES + HEADER_NONCE_BYTES + HEADER_TAG_BYTES,
+      VAULT_SALT_BYTES + HEADER_NONCE_BYTES,
+      VAULT_SALT_BYTES + HEADER_NONCE_BYTES + HEADER_TAG_BYTES,
     ),
-    material: bytes.subarray(HEADER_SALT_BYTES + HEADER_NONCE_BYTES + HEADER_TAG_BYTES),
+    material: bytes.subarray(VAULT_SALT_BYTES + HEADER_NONCE_BYTES + HEADER_TAG_BYTES),
   };
 }
 
-async function deriveWrappingKey(unlockFactor: Uint8Array, salt: Uint8Array): Promise<Buffer> {
-  const raw = await hashRaw(unlockFactor, {
-    algorithm: ARGON2ID_ALGORITHM,
-    memoryCost: ARGON2_MEMORY_COST_KIB,
-    outputLen: ARGON2_OUTPUT_BYTES,
-    parallelism: ARGON2_PARALLELISM,
-    salt,
-    timeCost: ARGON2_TIME_COST,
-    version: ARGON2_VERSION_13,
-  });
-  return deriveKey(raw, WRAPPING_LABEL);
+function deriveWrappingKey(unlockFactor: Uint8Array, salt: Uint8Array): Buffer {
+  return deriveVaultWrappingKey(unlockFactor, salt);
+}
+
+function assertWrappingMaterial(wrappingKey: Uint8Array, salt: Uint8Array): void {
+  if (wrappingKey.byteLength !== VAULT_MASTER_KEY_BYTES || salt.byteLength !== VAULT_SALT_BYTES) {
+    throw new SecureStorageError('secure_storage_invalid_path', 'Vault wrapping material is malformed.');
+  }
 }
 
 function encryptMaterial(masterKey: Uint8Array, wrappingKey: Uint8Array, salt: Uint8Array): VaultHeader {
@@ -193,12 +190,7 @@ function encryptMaterial(masterKey: Uint8Array, wrappingKey: Uint8Array, salt: U
   };
 }
 
-function deriveKey(masterKey: Uint8Array, label: Uint8Array): Buffer {
-  const derived = hkdfSync('sha256', masterKey, Buffer.alloc(0), label, 32);
-  return Buffer.from(derived);
-}
-
-function vaultRecordAad(context: VaultRecordEncryptionContext): Buffer {
+export function vaultRecordAad(context: VaultRecordEncryptionContext): Buffer {
   return Buffer.from(
     JSON.stringify({
       encryption_version: context.encryptionVersion,

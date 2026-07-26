@@ -1,0 +1,2 @@
+@echo off
+powershell.exe -NoLogo -NoProfile -Command "$tokens = $null; $errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('C:\Users\Public\smoke-windows-vault-lifecycle.ps1', [ref]$tokens, [ref]$errors); if ($errors.Count -ne 0) { $errors | Out-File -FilePath 'C:\Users\Public\inflow-lifecycle-parse.log' -Encoding ascii; exit 1 }; 'PowerShell 5.1 parse passed.' | Out-File -FilePath 'C:\Users\Public\inflow-lifecycle-parse.log' -Encoding ascii"

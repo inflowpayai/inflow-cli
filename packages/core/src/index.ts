@@ -114,16 +114,36 @@ export {
 export {
   type LocalVaultDaemon,
   type LocalVaultDaemonOptions,
+  type LinuxVaultBrokerOptions,
+  type LinuxVaultServiceOptions,
+  runLinuxTransferredVaultService,
+  runLinuxVaultBroker,
+  runLinuxVaultService,
   runLocalVaultDaemon,
+  startLinuxVaultService,
   startLocalVaultDaemon,
+  systemdSocketFileDescriptor,
 } from './secure-storage/vault-daemon.js';
+export {
+  isWindowsVaultWorkerData,
+  runWindowsVaultService,
+  runWindowsVaultWorker,
+  type WindowsVaultWorkerData,
+  type WindowsVaultServiceOptions,
+} from './secure-storage/vault-windows-service.js';
 export {
   LocalVaultClient,
   type LocalVaultClientOptions,
   type LocalVaultDaemonInfo,
 } from './secure-storage/vault-client.js';
 export { type VaultDaemonInfo } from './secure-storage/vault-daemon-handler.js';
-export { removeVaultLocalState, vaultFilePaths, type VaultFilePaths } from './secure-storage/vault-files.js';
+export {
+  linuxVaultServiceUserId,
+  removeVaultLocalState,
+  usesLinuxVaultService,
+  vaultFilePaths,
+  type VaultFilePaths,
+} from './secure-storage/vault-files.js';
 export {
   NoopSyncSecretReferenceManifest,
   SyncVaultSecretStore,
@@ -132,10 +152,12 @@ export {
 export {
   sendVaultIpcRequest,
   startVaultSocketServer,
+  type StartMultiTenantVaultSocketServerOptions,
+  type StartSingleTenantVaultSocketServerOptions,
   type StartVaultSocketServerOptions,
   type VaultSocketServer,
 } from './secure-storage/vault-socket.js';
-export { type VaultSocketPeerVerifier } from './secure-storage/vault-peer-verifier.js';
+export { type VaultSocketPeer, type VaultSocketPeerVerifier } from './secure-storage/vault-peer-verifier.js';
 export {
   type VaultIpcError,
   type VaultIpcMessage,

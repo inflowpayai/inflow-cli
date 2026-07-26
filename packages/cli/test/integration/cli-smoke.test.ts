@@ -5,7 +5,7 @@
  * `dist/cli.js`).
  *
  * If you want a live-sandbox smoke run, set `INFLOW_API_KEY` and `INFLOW_SMOKE_SANDBOX=1` — the gated `live sandbox`
- * block below hits `user get` and `balances list` against `sandbox.inflowpay.ai`.
+ * block below hits `balances list` against `sandbox.inflowpay.ai`.
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -230,21 +230,6 @@ describe('cli smoke', () => {
   });
 
   describe.skipIf(process.env['INFLOW_SMOKE_SANDBOX'] !== '1')('live sandbox', () => {
-    it('user get --format json returns a userId when INFLOW_API_KEY is valid', async () => {
-      const apiKey = process.env['INFLOW_API_KEY'];
-      if (apiKey === undefined || apiKey.length === 0) {
-        throw new Error('INFLOW_SMOKE_SANDBOX=1 requires INFLOW_API_KEY to be set');
-      }
-      const result = await run(['--sandbox', 'user', 'get', '--format', 'json'], {
-        INFLOW_API_KEY: apiKey,
-        INFLOW_BASE_URL: 'https://sandbox.inflowpay.ai',
-      });
-      expect(result.exitCode).toBe(0);
-      const user = parseAgentJson(result.stdout) as { userId: string };
-      expect(typeof user.userId).toBe('string');
-      expect(user.userId.length).toBeGreaterThan(0);
-    });
-
     it('balances list --format json returns an array', async () => {
       const apiKey = process.env['INFLOW_API_KEY'];
       if (apiKey === undefined || apiKey.length === 0) {

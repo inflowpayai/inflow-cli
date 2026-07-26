@@ -72,6 +72,40 @@ describe('SecureSqliteRepository', () => {
     await expect(repository.ensureBackup()).resolves.toBeUndefined();
   });
 
+  it.runIf(process.platform === 'linux')('uses the Linux vault root for the default database', () => {
+    const originalDataHome = process.env['XDG_DATA_HOME'];
+    const dataHome = join(tmpDir, 'xdg-data');
+    process.env['XDG_DATA_HOME'] = dataHome;
+    let databasePath: string | undefined;
+    const defaultRepository = new SecureSqliteRepository({
+      loadSqlite: () => ({
+        DatabaseSync: class {
+          constructor(filename: string) {
+            databasePath = filename;
+          }
+
+          close(): void {}
+
+          exec(_sql: string): void {}
+
+          prepare(sql: string): EmptySqliteStatement {
+            return sql === 'PRAGMA quick_check'
+              ? new QuickCheckStatement({ quick_check: 'ok' })
+              : new EmptySqliteStatement();
+          }
+        },
+      }),
+    });
+    try {
+      defaultRepository.initialize();
+      expect(databasePath).toBe(join(dataHome, 'inflow', 'inflow.sqlite3'));
+    } finally {
+      defaultRepository.close();
+      if (originalDataHome === undefined) delete process.env['XDG_DATA_HOME'];
+      else process.env['XDG_DATA_HOME'] = originalDataHome;
+    }
+  });
+
   it('stores principal rows with stable owner lookup columns', () => {
     const created = repository.upsertPrincipal('https://platform.example.test', 'user-1', { displayName: 'User One' });
     const loaded = repository.getPrincipal('https://platform.example.test', 'user-1');

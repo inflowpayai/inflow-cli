@@ -2,4 +2,5 @@
 '@inflowpayai/inflow': minor
 ---
 
-Add a self-contained Linux archive with encrypted local vault storage and same-executable Unix socket peer verification.
+Add self-contained Linux archives, Debian and RPM system-service packages, and a checksummed hosted installer with
+encrypted local vault storage, same-executable Unix socket peer verification, and repository-scoped signed APT metadata.

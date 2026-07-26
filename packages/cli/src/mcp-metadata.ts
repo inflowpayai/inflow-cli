@@ -20,7 +20,6 @@ type ToolName =
   | 'mpp_pay'
   | 'mpp_status'
   | 'mpp_supported'
-  | 'user_get'
   | 'vault_change-passphrase'
   | 'vault_lock'
   | 'vault_policy'
@@ -96,7 +95,6 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
   }),
   mpp_status: read('MPP: Check Payment', 'Poll the status of an MPP payment transaction.'),
   mpp_supported: read('MPP: List Payment Methods', 'List MPP payment methods available to the buyer.'),
-  user_get: read('User: Get InFlow User', 'Retrieve the current authenticated InFlow user.'),
   'vault_change-passphrase': write('Vault: Change Passphrase', 'Change the local vault PIN or passphrase.', {
     destructive: true,
   }),

@@ -68,6 +68,7 @@ mkdirSync(resourcesPath, { recursive: true });
 
 run('pnpm', ['--filter', '@inflowpayai/inflow-core', 'build']);
 run(process.execPath, ['scripts/build-vault-peer-native.mjs']);
+signVaultPeerBuild();
 run('pnpm', ['--filter', '@inflowpayai/inflow', 'build:standalone']);
 
 mkdirSync(dirname(standaloneBundlePath), { recursive: true });
@@ -104,6 +105,7 @@ writeEntitlements();
 copyArgon2Runtime();
 copyMcpRuntime();
 copyVaultPeerRuntime();
+run('xattr', ['-cr', appPath]);
 signNestedCode();
 signExecutable();
 verifySignature({ assessGatekeeper: false, gatekeeperOptional: true });
@@ -182,6 +184,17 @@ function copyVaultPeerRuntime() {
   );
 }
 
+function signVaultPeerBuild() {
+  run('codesign', [
+    '--force',
+    '--sign',
+    identity,
+    ...timestampArgs(),
+    ...runtimeArgs(),
+    join(repoRoot, 'packages/core/native/build/vault_peer_darwin.node'),
+  ]);
+}
+
 function copyPackage(source, destination) {
   mkdirSync(dirname(destination), { recursive: true });
   cpSync(source, destination, {
@@ -222,6 +235,7 @@ function findPackageRoot(startPath) {
 
 function signNestedCode() {
   for (const file of listFiles(appPath)) {
+    if (file === join(nativeRuntimePath, 'vault_peer_darwin.node')) continue;
     if (file.endsWith('.node') || isMachO(file)) {
       run('codesign', ['--force', '--sign', identity, ...timestampArgs(), ...runtimeArgs(), file]);
     }

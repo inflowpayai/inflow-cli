@@ -189,7 +189,9 @@ describe('vault command runners', () => {
   });
 
   it('unlocks and initializes with the first-run prompt', async () => {
-    const harness = deps();
+    const harness = deps({
+      readVaultStatus: vi.fn(() => Promise.resolve({ daemonRunning: true, lockState: 'unlocked' })),
+    });
     harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'not_initialized' });
 
     await expect(__testing.runVaultUnlock(context({}, false), harness)).resolves.toEqual({
@@ -204,7 +206,9 @@ describe('vault command runners', () => {
   });
 
   it('unlocks an existing vault with the returning prompt and human message', async () => {
-    const harness = deps();
+    const harness = deps({
+      readVaultStatus: vi.fn(() => Promise.resolve({ daemonRunning: true, lockState: 'unlocked' })),
+    });
 
     await expect(__testing.runVaultUnlock(context({}, false), harness)).resolves.toEqual({
       lock_state: 'unlocked',
@@ -215,6 +219,44 @@ describe('vault command runners', () => {
       expect.anything(),
     );
     expect(harness.write).toHaveBeenCalledWith('Vault unlocked.\n');
+  });
+
+  it('does not prompt when a human unlocks an already-unlocked vault', async () => {
+    const harness = deps();
+    harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'unlocked' });
+
+    await expect(__testing.runVaultUnlock(context({}, false), harness)).resolves.toEqual({
+      lock_state: 'unlocked',
+    });
+
+    expect(harness.readPassphrase).not.toHaveBeenCalled();
+    expect(harness.client.unlock).not.toHaveBeenCalled();
+    expect(harness.write).toHaveBeenCalledWith('Vault already unlocked.\n');
+  });
+
+  it('reports an authentication failure for a rejected passphrase', async () => {
+    const harness = deps();
+    harness.client.unlock.mockRejectedValue(
+      new SecureStorageError('secure_storage_corrupt', 'Vault material could not be unwrapped.'),
+    );
+
+    await expect(__testing.runVaultUnlock(context({}, false), harness)).rejects.toMatchObject({
+      code: 'VAULT_UNLOCK_FAILED',
+      message: 'The vault could not be unlocked. Check the PIN or passphrase and try again.',
+    });
+
+    expect(harness.write).not.toHaveBeenCalled();
+  });
+
+  it('does not print success when an independent status check remains locked', async () => {
+    const harness = deps();
+
+    await expect(__testing.runVaultUnlock(context({}, false), harness)).rejects.toMatchObject({
+      code: 'VAULT_UNLOCK_FAILED',
+      message: 'The vault could not be unlocked. Check the PIN or passphrase and try again.',
+    });
+
+    expect(harness.write).not.toHaveBeenCalled();
   });
 
   it('rejects short unlock passphrases before calling the daemon', async () => {

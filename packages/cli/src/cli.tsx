@@ -1,5 +1,17 @@
 import process from 'node:process';
-import { type AuthStorage, Inflow, runLocalVaultDaemon, Storage, SyncVaultSecretStore } from '@inflowpayai/inflow-core';
+import { isMainThread, workerData } from 'node:worker_threads';
+import {
+  type AuthStorage,
+  Inflow,
+  runLinuxTransferredVaultService,
+  runLinuxVaultBroker,
+  runLocalVaultDaemon,
+  isWindowsVaultWorkerData,
+  runWindowsVaultService,
+  runWindowsVaultWorker,
+  Storage,
+  SyncVaultSecretStore,
+} from '@inflowpayai/inflow-core';
 import { Cli, Help } from 'incur';
 import { createAuthCli } from './commands/auth/index.js';
 import { createAepCli } from './commands/aep/index.js';
@@ -7,11 +19,11 @@ import { createBalancesCli } from './commands/balances/index.js';
 import { createDepositAddressesCli } from './commands/deposit-addresses/index.js';
 import { createInspectCommand } from './commands/inspect/index.js';
 import { createMppCli } from './commands/mpp/index.js';
-import { createUserCli } from './commands/user/index.js';
 import {
   createVaultCli,
   ensureLocalVaultDaemon,
   ensureLocalVaultUnlocked,
+  readVaultStatusWithoutStarting,
   type LocalVaultDaemonClientOptions,
 } from './commands/vault/index.js';
 import { createX402Cli } from './commands/x402/index.js';
@@ -21,7 +33,7 @@ import {
   makeFrozenUpdateProbe,
   type UpdateProbe,
 } from './utils/update-probe.js';
-import { shouldStartVaultDaemon, shouldUnlockVault } from './startup-vault.js';
+import { shouldReconcileVaultDaemon, shouldStartVaultDaemon, shouldUnlockVault } from './startup-vault.js';
 
 declare const __CLI_VERSION__: string;
 declare const __CLI_BUILD_ID__: string;
@@ -53,16 +65,31 @@ async function printBody(body: string): Promise<never> {
 }
 
 async function main(): Promise<void> {
+  if (!isMainThread && isWindowsVaultWorkerData(workerData)) {
+    await runWindowsVaultWorker(workerData, new URL(import.meta.url));
+    return;
+  }
   const daemonMode = extractHiddenDaemonMode();
   if (daemonMode !== undefined) {
-    if (daemonMode !== 'vault') {
+    if (
+      daemonMode !== 'vault' &&
+      daemonMode !== 'vault-broker' &&
+      daemonMode !== 'vault-service' &&
+      daemonMode !== 'vault-windows-service'
+    ) {
       process.stderr.write(`Unknown daemon mode: ${daemonMode}\n`);
       process.exit(2);
     }
-    await runLocalVaultDaemon({
+    const daemonOptions = {
       cliVersion,
       buildId: cliBuildId,
-    });
+    };
+    if (daemonMode === 'vault-broker') await runLinuxVaultBroker(daemonOptions);
+    else if (daemonMode === 'vault-service') await runLinuxTransferredVaultService(daemonOptions);
+    else if (daemonMode === 'vault-windows-service') {
+      await runWindowsVaultService(new URL(import.meta.url), daemonOptions);
+    } else await runLocalVaultDaemon(daemonOptions);
+    return;
   }
 
   if (process.argv.includes('--bootstrap')) {
@@ -134,6 +161,10 @@ async function main(): Promise<void> {
   const isAgent = process.argv.includes('--format') || process.argv.includes('--mcp') || !process.stdout.isTTY;
   const vaultOptions: LocalVaultDaemonClientOptions = { buildId: cliBuildId, cliVersion };
   const hasDirectApiKey = apiKeyFromFlag !== undefined || process.env['INFLOW_API_KEY'] !== undefined;
+  if (shouldReconcileVaultDaemon(process.argv, hasDirectApiKey)) {
+    const status = await readVaultStatusWithoutStarting(vaultOptions);
+    if (status.daemonRunning) await ensureLocalVaultDaemon(vaultOptions);
+  }
   if (shouldStartVaultDaemon(process.argv, hasDirectApiKey)) {
     await ensureLocalVaultDaemon(vaultOptions);
   }
@@ -266,7 +297,6 @@ async function main(): Promise<void> {
       vaultOptions,
     }),
   );
-  cli.command(createUserCli(inflow.user, authStorage, inflow));
   cli.command(createBalancesCli(inflow.balances, authStorage, inflow));
   cli.command(createDepositAddressesCli(inflow.depositAddresses, authStorage, inflow));
   cli.command(createVaultCli(vaultOptions));

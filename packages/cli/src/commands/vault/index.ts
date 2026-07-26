@@ -12,6 +12,7 @@ import {
   type VaultLockState,
   type VaultPolicy,
   type VaultStatus,
+  usesLinuxVaultService,
   vaultFilePaths,
 } from '@inflowpayai/inflow-core';
 import { Cli } from 'incur';
@@ -92,6 +93,11 @@ async function runVaultUnlock(c: VaultCommandContext, deps: VaultDeps = defaultD
   }
   const client = await deps.ensureDaemon();
   const before = await mapSecureStorageError(c, () => client.status());
+  if (before.lockState === 'unlocked') {
+    const frame = statusFrame(before);
+    deps.write('Vault already unlocked.\n');
+    return frame;
+  }
   const passphrase = await deps.readPassphrase(
     before.lockState === 'not_initialized'
       ? 'Create an InFlow vault PIN or passphrase: '
@@ -101,9 +107,16 @@ async function runVaultUnlock(c: VaultCommandContext, deps: VaultDeps = defaultD
   validatePassphrase(c, passphrase);
   let status: VaultStatus;
   try {
-    status = await mapSecureStorageError(c, () => client.unlock(passphrase));
+    status = await mapVaultUnlockError(c, () => client.unlock(passphrase));
   } finally {
     passphrase.fill(0);
+  }
+  const confirmed = await mapSecureStorageError(c, () => deps.readVaultStatus());
+  if (status.lockState !== 'unlocked' || confirmed.lockState !== 'unlocked') {
+    return c.error({
+      code: 'VAULT_UNLOCK_FAILED',
+      message: 'The vault could not be unlocked. Check the PIN or passphrase and try again.',
+    });
   }
   const frame = statusFrame(status);
   deps.write(before.lockState === 'not_initialized' ? 'Vault initialized and unlocked.\n' : 'Vault unlocked.\n');
@@ -431,20 +444,56 @@ async function vaultSidecarExists(path: string): Promise<boolean> {
 export async function ensureLocalVaultDaemon(options: LocalVaultDaemonClientOptions = {}): Promise<LocalVaultClient> {
   const client = new LocalVaultClient(options);
   if (await canUseDaemon(client, options)) return client;
+  if (options.rootDirectory === undefined && (usesLinuxVaultService() || process.platform === 'win32')) {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      if (await canUseDaemon(client, options)) return client;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new SecureStorageError('secure_storage_unavailable', 'The InFlow vault service did not start.');
+  }
   await shutdownStaleDaemon(client);
   const command = daemonCommand();
   const child = spawn(command.file, command.args, {
     detached: true,
-    env: process.env,
+    env: daemonEnvironment(process.env),
     stdio: 'ignore',
   });
+  const childState = { stopped: false };
+  child.once('error', () => {
+    childState.stopped = true;
+  });
+  child.once('exit', () => {
+    childState.stopped = true;
+  });
   child.unref();
-  const deadline = Date.now() + 2_000;
-  while (Date.now() < deadline) {
+  const deadline = Date.now() + 60_000;
+  while (!childState.stopped && Date.now() < deadline) {
     if (await canUseDaemon(client, options)) return client;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new SecureStorageError('secure_storage_unavailable', 'The InFlow vault daemon did not start.');
+}
+
+function daemonEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {};
+  for (const name of [
+    'APPDATA',
+    'HOME',
+    'LOCALAPPDATA',
+    'SystemDrive',
+    'SystemRoot',
+    'TEMP',
+    'TMP',
+    'TMPDIR',
+    'USERPROFILE',
+    'WINDIR',
+    'XDG_DATA_HOME',
+  ]) {
+    const value = environment[name];
+    if (value !== undefined) result[name] = value;
+  }
+  return result;
 }
 
 async function canUseDaemon(client: LocalVaultClient, options: LocalVaultDaemonClientOptions): Promise<boolean> {
@@ -452,16 +501,18 @@ async function canUseDaemon(client: LocalVaultClient, options: LocalVaultDaemonC
     await client.status();
     const info = await client.info();
     return isCompatibleDaemon(info, options, process.execPath);
-  } catch {
-    return false;
+  } catch (cause) {
+    if (isVaultDaemonUnavailable(cause)) return false;
+    throw cause;
   }
 }
 
 async function shutdownStaleDaemon(client: LocalVaultClient): Promise<void> {
   try {
     await client.shutdown();
-  } catch {
-    return;
+  } catch (cause) {
+    if (isVaultDaemonUnavailable(cause)) return;
+    throw cause;
   }
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
@@ -553,6 +604,23 @@ async function mapSecureStorageError<T>(c: VaultCommandContext, run: () => Promi
   try {
     return await run();
   } catch (cause) {
+    if (cause instanceof SecureStorageError) {
+      return c.error({ code: cause.secureStorageCode, message: cause.message });
+    }
+    throw cause;
+  }
+}
+
+async function mapVaultUnlockError<T>(c: VaultCommandContext, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (cause) {
+    if (cause instanceof SecureStorageError && cause.secureStorageCode === 'secure_storage_corrupt') {
+      return c.error({
+        code: 'VAULT_UNLOCK_FAILED',
+        message: 'The vault could not be unlocked. Check the PIN or passphrase and try again.',
+      });
+    }
     if (cause instanceof SecureStorageError) {
       return c.error({ code: cause.secureStorageCode, message: cause.message });
     }

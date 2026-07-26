@@ -1,0 +1,125 @@
+#!/bin/sh
+set -eu
+
+version='__INFLOW_VERSION__'
+repository='inflowpayai/inflow-cli'
+release_base_url="${INFLOW_RELEASE_BASE_URL:-https://github.com/$repository/releases/download/v$version}"
+temporary_directory=''
+
+say() {
+  printf '%s\n' "[inflow] $*"
+}
+
+fail() {
+  printf '%s\n' "[inflow] $*" >&2
+  exit 1
+}
+
+cleanup() {
+  if [ -n "$temporary_directory" ]; then
+    rm -rf "$temporary_directory"
+  fi
+}
+
+privileged() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    fail "Installation requires root privileges. Install sudo or run this installer as root."
+  fi
+}
+
+checksum() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c "$1"
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -c "$1"
+  else
+    fail "SHA-256 verification requires sha256sum or shasum."
+  fi
+}
+
+if [ "$(uname -s)" != 'Linux' ]; then
+  fail "This installer supports Linux only."
+fi
+
+architecture="$(uname -m)"
+case "$architecture" in
+  aarch64 | arm64)
+    debian_architecture='arm64'
+    rpm_architecture='aarch64'
+    ;;
+  x86_64 | amd64)
+    debian_architecture='amd64'
+    rpm_architecture='x86_64'
+    ;;
+  *)
+    fail "Unsupported Linux architecture: $architecture"
+    ;;
+esac
+
+action="${1:-install}"
+case "$action" in
+  --uninstall)
+    if command -v apt-get >/dev/null 2>&1; then
+      privileged env DEBIAN_FRONTEND=noninteractive apt-get remove --yes inflow
+    elif command -v dnf >/dev/null 2>&1; then
+      privileged dnf remove --assumeyes inflow
+    else
+      fail "Uninstall requires apt-get or dnf."
+    fi
+    say "InFlow was uninstalled. Encrypted vault data was preserved."
+    exit 0
+    ;;
+  --purge)
+    if command -v apt-get >/dev/null 2>&1; then
+      privileged env DEBIAN_FRONTEND=noninteractive apt-get purge --yes inflow
+    elif command -v dnf >/dev/null 2>&1; then
+      privileged dnf remove --assumeyes inflow
+      privileged rm -rf /var/lib/inflow
+    else
+      fail "Purge requires apt-get or dnf."
+    fi
+    say "InFlow and its system vault data were removed."
+    exit 0
+    ;;
+  install)
+    ;;
+  *)
+    fail "Usage: install.sh [--uninstall|--purge]"
+    ;;
+esac
+
+command -v curl >/dev/null 2>&1 || fail "Installation requires curl."
+temporary_directory="$(mktemp -d)"
+trap cleanup EXIT HUP INT TERM
+
+if command -v apt-get >/dev/null 2>&1; then
+  asset="inflow_${version}_${debian_architecture}.deb"
+  installer='apt'
+elif command -v dnf >/dev/null 2>&1; then
+  asset="inflow-${version}-1.${rpm_architecture}.rpm"
+  installer='dnf'
+else
+  fail "Installation requires a supported Debian/Ubuntu or Fedora/RHEL system with systemd."
+fi
+
+say "Downloading InFlow $version for $architecture."
+curl --fail --location --silent --show-error --output "$temporary_directory/$asset" "$release_base_url/$asset"
+curl --fail --location --silent --show-error --output "$temporary_directory/$asset.sha256" "$release_base_url/$asset.sha256"
+(
+  cd "$temporary_directory"
+  checksum "$asset.sha256"
+)
+
+if [ "$installer" = 'apt' ]; then
+  privileged env DEBIAN_FRONTEND=noninteractive apt-get install --yes "$temporary_directory/$asset"
+else
+  privileged dnf install --assumeyes "$temporary_directory/$asset"
+fi
+
+command -v inflow >/dev/null 2>&1 || fail "InFlow was installed but is not available on PATH."
+say "Installed $(inflow --version)."
+say "Run 'inflow vault unlock' in a terminal before using credential-dependent commands."

@@ -6,6 +6,186 @@ The target is a macOS-first proof of the cross-platform local vault model. The i
 intelligence in CLI/Core and make the daemon a secure dumb vault. The daemon is not an AEP, MPP, x402, payment, HTTP, or
 signing engine.
 
+## Accepted Improved proposal
+
+This proposal is the controlling security specification.
+
+### Accepted architecture clarification
+
+- One InFlow application executable and process identity contains CLI, MCP, and daemon behavior.
+- Security-sensitive native code may be a packaged native library loaded into that process when it is fixed-path,
+  non-user-writable, platform-signed or integrity-bound, verified before loading, and never executed as a separate
+  helper identity.
+- Standard Node native modules are permitted under this rule.
+- Do not build a custom Node runtime, use Electron, or extract native code to a temporary path.
+
+### A. One executable architecture proof
+
+- Prove one InFlow executable and process identity can load the native security core as an integrity-bound packaged
+  component.
+- CLI, MCP, daemon dispatch stay same executable.
+- macOS signing/notarization, Linux ARM64/AMD64, Windows feasibility.
+- No separate native executable identity, writable native library, or temporary extraction.
+
+### B. Cross-platform mutual peer verification
+
+- Internal abstraction like:
+
+  ```ts
+  interface VerifiedLocalPeer {
+    executableIdentity: string;
+    processId: number;
+    userIdentity: string;
+  }
+  interface LocalPeerVerifier {
+    verifyClient(connection: LocalConnection): VerifiedLocalPeer;
+    verifyServer(connection: LocalConnection): VerifiedLocalPeer;
+  }
+  ```
+
+- Both directions verify before protocol traffic.
+- Platform facts + shared enforcement: exact app identity, executable, user/session relationship, build/install
+  identity, fail closed.
+
+### C. Rust protected-memory core
+
+- Move only master-key lifecycle, key derivation, record encryption/decryption, zeroization, memory locking/dump
+  exclusion, platform peer inspection.
+- Preserve CRUD semantics and repository orchestration unless security invariant demands movement.
+
+### D. Unified executable hardening
+
+- Cross-platform matrix:
+  - Publisher identity: Developer ID / signed Linux digest-package trust / Authenticode.
+  - Client verifies daemon required.
+  - Daemon verifies client required.
+  - Canonical executable required.
+  - Protected key memory native.
+  - Dump/debug restrictions platform-specific.
+  - Strict state permissions.
+  - Fake client and fake server rejection.
+
+### E. Adversarial verification before features
+
+- Tests: fake client, fake daemon/socket, correct signer wrong path, wrong signer correct-looking path, replacement
+  after daemon start, symlink launcher, PID reuse, peer exit during verify, missing verification service, unreadable
+  executable, cross-user, malformed/oversized/truncated frames/reset, locked access, dump attempt, plaintext scan,
+  binary/native tampering, upgrade while daemon running, downgrade.
+- No installer/APT/new vault ops/payment policies/external provider implementation until invariants pass.
+
+### Native Linux verification
+
+- The bounded packaged release smoke passes on native ARM64 and AMD64 GitHub runners. Both architectures verify native
+  module loading, daemon startup, vault initialization and unlock, credential round trip, Debian installation and
+  system-vault behavior, tamper rejection, artifact attestation, and artifact upload.
+
+### Remaining core security work
+
+- Implement an installer-managed, socket-activated Linux daemon under a dedicated `inflow` service account and disable
+  dumpability. Debian and RPM packages create the account and service; the executable remains world-executable.
+- Implement the equivalent Windows service under a dedicated service identity.
+- Wire the multi-tenant backend manager into the installer-managed services. Authenticated socket peers are routed to
+  server-selected tenant backends, client-requested global service shutdown is rejected, and tenant reset does not stop
+  the service. Each backend owns a separate database, `inflow.vault`, protected key, policy, lock state, and lifetime.
+  Requests for one tenant are serialized while different tenants remain independent. IPC never accepts a caller-selected
+  tenant identifier.
+- Complete adversarial dump and plaintext scanning and upgrade/downgrade verification.
+- Implement and verify equivalent protected memory, mutual peer authentication, package integrity, and process hardening
+  on Windows.
+
+### Approved platform service model
+
+- Linux uses one installer-managed, socket-activated, multi-tenant daemon under a dedicated `inflow` service account.
+- Windows uses one installer-managed, on-demand, multi-tenant service under a dedicated Windows service identity.
+- macOS retains the signed, hardened per-user daemon. A real same-user task-memory probe must remain in the packaged
+  smoke suite and must fail to obtain or read the daemon task.
+
+### Verified Linux implementation status
+
+The Linux service-account and multi-tenant bullets under Remaining core security work are implemented for ARM64:
+
+- systemd owns `/run/inflow/vault.sock`; Debian and RPM installation create the `inflow` account and state directories.
+- The root authentication broker and unprivileged vault are two modes of `/opt/inflow/bin/inflow`, not separate
+  executable identities.
+- The broker holds only `CAP_SYS_PTRACE`, `CAP_SETUID`, and `CAP_SETGID`. It authenticates the client executable and
+  kernel identity, answers a fixed Ed25519 machine-identity challenge, and transfers the accepted socket descriptor. It
+  does not parse vault frames or open tenant vault files.
+- The vault runs as `inflow` with no permitted or effective capabilities. It verifies that transferred socket
+  credentials match the broker attestation before reading a vault frame.
+- Root and an ordinary user completed packaged lock, unlock, API-key login, and status operations through the same
+  systemd socket. The ordinary user could not read the vault process memory, and the broker held no tenant-vault file
+  descriptors.
+- The ARM64 Debian lifecycle passed initialization, upgrade, downgrade, credential persistence, broker-identity
+  continuity, capability checks, and persistent-file and resident-memory scans for raw UTF-8, Base64, hexadecimal, and
+  UTF-16 representations of the passphrase and stored API key.
+- The emulated AMD64 build and native AMD64 release runner pass the root-owned standalone package smoke and the
+  installed Debian multi-tenant service smoke, including peer rejection, cross-user isolation, capability checks, and
+  persistent-file and resident-memory scans.
+- The AMD64 RPM contains the same executable bytes as the tested Debian package, preserves the single-executable payload
+  without RPM stripping, uses portable systemd lifecycle scripts, starts successfully after extraction, and contains no
+  group- or world-writable runtime files.
+- Debian and RPM installation fails closed instead of reusing a conflicting human `inflow` login account. A compatible
+  service identity is a non-root system user with `/var/lib/inflow` as its home and a non-login shell.
+- IPC attachments use a fresh random mask before entering transport frames. The mask is not treated as transport
+  encryption; it prevents stale Node transport allocations from retaining raw, Base64, hexadecimal, or UTF-16 secret
+  representations after the tracked decoded buffer is wiped.
+- Debian and RPM package transitions stop both service and activation socket before restarting socket activation.
+  Corrected package transitions shut down the broker and vault cleanly without privileged process signaling.
+- The signed macOS package rejects a tampered native module, a fake daemon, an unsigned client, and same-user
+  task-memory access. Its isolated smoke can run alongside a normal user daemon, requires its own daemon process to exit
+  after logout, and scans persistent state for raw UTF-8, Base64, hexadecimal, and UTF-16 representations of the unlock
+  factor and stored API key.
+- Signed macOS in-place upgrade, downgrade, and re-upgrade transitions preserve the encrypted vault and stored API key,
+  replace incompatible running daemons, require a fresh human unlock after daemon replacement, and leave no raw UTF-8,
+  UTF-16, Base64, lowercase hexadecimal, or uppercase hexadecimal secret representation in persistent vault files.
+
+### Verified Windows implementation status
+
+- The ARM64 native module uses Windows virtual memory locking, same-process memory protection, process mitigations,
+  Windows CNG for HKDF-SHA256 and AES-256-GCM, and the pinned Argon2 `20190702` reference implementation.
+- The Windows production native-build path passes cross-platform key-derivation parity, authenticated-encryption
+  round-trip, and authentication-tag tamper rejection.
+- Named-pipe peers are verified before vault protocol frames are transmitted. The client verifies the daemon before
+  sending a fixed non-secret authentication handshake; the daemon uses that handshake to establish the Windows
+  impersonation context and verifies the client before reading a vault frame. Verification binds the process identifier,
+  canonical executable path, full user security identifier, Authenticode publisher, and signing-certificate thumbprint.
+- The client grants only `PROCESS_QUERY_LIMITED_INFORMATION` on its own process to the `NT SERVICE\InFlowVault` security
+  identifier. The unprivileged service receives no general process-inspection privilege.
+- The signed ARM64 Windows Installer package installs an on-demand service under the passwordless
+  `NT SERVICE\InFlowVault` virtual account. Signed package installation, service readiness, authenticated vault status,
+  cancellable shutdown, executable/native-module integrity binding, and clean process exit pass in Windows 11 ARM64.
+- Unit coverage exercises native-module integrity verification, mutual-authentication ordering, peer rejection, service
+  dispatch, pipe request handling, malformed request rejection, lock control, and clean shutdown. The full repository
+  test and coverage gate passes.
+- The signed ARM64 package passes a reversible Windows security smoke that verifies the dedicated service identity,
+  active process mitigations, authenticated vault status, client-side daemon identity rejection, daemon-side foreign
+  client rejection before vault protocol data, native-module tamper rejection, restoration, and clean shutdown.
+- The packaged client tolerates service startup and named-pipe instance replacement by retrying the complete
+  wait-and-open operation within a bounded deadline. Twenty-five consecutive packaged status requests pass in Windows 11
+  ARM64.
+- Windows vault database path validation uses canonical-path and file-type checks; the installer-managed service-only
+  access-control list protects the vault root. Unix user identifiers and permission bits are not treated as Windows
+  ownership evidence. A native Windows backend run reaches the integrity-gated key-derivation boundary after creating
+  its database.
+- The signed ARM64 package passes first-run initialization, interactive unlock, API-key storage and retrieval through
+  the mutually authenticated native transport, explicit lock, re-unlock, and credential persistence in Windows 11 ARM64.
+  The stored credential is absent from persistent tenant vault files in raw UTF-8, UTF-16, Base64, lowercase
+  hexadecimal, and uppercase hexadecimal representations.
+- With the pagefile disabled and verified inactive, the packaged credential-storage path leaves no matching raw UTF-8,
+  UTF-16, Base64, lowercase hexadecimal, or uppercase hexadecimal representation in readable committed memory owned by
+  the long-lived vault service. The virtual machine's original automatically managed pagefile configuration was restored
+  and verified active after reboot.
+- The signed ARM64 package verifies unlock state through an independent status request before reporting success. Manual
+  Windows Terminal testing confirms correct lock and unlock behavior, rejection of incorrect PINs and passphrases, and
+  idempotent unlock without another credential prompt when the vault is already unlocked.
+- The signed ARM64 MSI passes passphrase change, old-passphrase rejection, new-passphrase unlock, tenant reset, and
+  clean vault reinitialization. Signed `0.9.0` and `0.9.1` MSI fixtures pass upgrade with vault preservation, direct
+  downgrade rejection without state loss, supported uninstall/install rollback with vault preservation, and final
+  re-upgrade with vault preservation.
+
+Task 126 has no incomplete core-security verification. Linux and Windows production distribution work remains tracked
+separately in `_QUEUE2-SIGNED-SECURE-CLI.md`.
+
 ## Non-negotiable decisions
 
 - Do not use macOS Keychain for credential payload storage.

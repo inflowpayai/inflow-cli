@@ -7,7 +7,6 @@ import {
   changeVaultUnlockFactor,
   createVaultMaterial,
   decodeVaultHeader,
-  deriveVaultKeys,
   encodeVaultHeader,
   equalBytes,
   unwrapVaultMaterial,
@@ -17,8 +16,8 @@ const firstFactor = Buffer.from('123456', 'utf8');
 const secondFactor = Buffer.from('better-passphrase', 'utf8');
 
 describe('vault crypto', () => {
-  it('wraps one random 32-byte vault master key in the fixed binary sidecar', async () => {
-    const wrapped = await createVaultMaterial(firstFactor);
+  it('wraps one random 32-byte vault master key in the fixed binary sidecar', () => {
+    const wrapped = createVaultMaterial(firstFactor);
 
     expect(wrapped.header.byteLength).toBe(VAULT_SIDECAR_BYTES);
     expect(wrapped.masterKey.byteLength).toBe(VAULT_MASTER_KEY_BYTES);
@@ -29,41 +28,36 @@ describe('vault crypto', () => {
       tag: expect.any(Buffer) as Buffer,
     });
 
-    const unwrapped = await unwrapVaultMaterial(wrapped.header, firstFactor);
+    const unwrapped = unwrapVaultMaterial(wrapped.header, firstFactor);
     expect(equalBytes(unwrapped, wrapped.masterKey)).toBe(true);
   });
 
-  it('derives separate record and database keys from the unwrapped master key', async () => {
-    const wrapped = await createVaultMaterial(firstFactor);
-    const keys = deriveVaultKeys(await unwrapVaultMaterial(wrapped.header, firstFactor));
+  it('rewraps material when changing the unlock factor without changing the master key', () => {
+    const wrapped = createVaultMaterial(firstFactor);
+    const nextHeader = changeVaultUnlockFactor(wrapped.header, firstFactor, secondFactor);
 
-    expect(keys.recordKey.byteLength).toBe(32);
-    expect(keys.databaseKey.byteLength).toBe(32);
-    expect(equalBytes(keys.recordKey, keys.databaseKey)).toBe(false);
-  });
-
-  it('rewraps material when changing the unlock factor without changing the master key', async () => {
-    const wrapped = await createVaultMaterial(firstFactor);
-    const nextHeader = await changeVaultUnlockFactor(wrapped.header, firstFactor, secondFactor);
-
-    await expect(unwrapVaultMaterial(nextHeader, firstFactor)).rejects.toMatchObject({
-      secureStorageCode: 'secure_storage_corrupt',
-    });
-    const unwrapped = await unwrapVaultMaterial(nextHeader, secondFactor);
+    expect(() => unwrapVaultMaterial(nextHeader, firstFactor)).toThrow('Vault material could not be unwrapped.');
+    const unwrapped = unwrapVaultMaterial(nextHeader, secondFactor);
     expect(equalBytes(unwrapped, wrapped.masterKey)).toBe(true);
   });
 
-  it('rejects short unlock factors', async () => {
+  it('rejects an unchanged unlock factor', () => {
+    const wrapped = createVaultMaterial(firstFactor);
+
+    expect(() => changeVaultUnlockFactor(wrapped.header, firstFactor, Buffer.from(firstFactor))).toThrow(
+      'The new vault PIN or passphrase must differ from the current one.',
+    );
+  });
+
+  it('rejects short unlock factors', () => {
     const short = Buffer.from('12345', 'utf8');
 
     expect(() => assertUnlockFactor(short)).toThrow('PIN or passphrase must be at least 6 characters.');
-    await expect(createVaultMaterial(short)).rejects.toMatchObject({
-      secureStorageCode: 'secure_storage_invalid_path',
-    });
+    expect(() => createVaultMaterial(short)).toThrow('PIN or passphrase must be at least 6 characters.');
   });
 
-  it('fails closed for malformed and tampered sidecars', async () => {
-    const wrapped = await createVaultMaterial(firstFactor);
+  it('fails closed for malformed and tampered sidecars', () => {
+    const wrapped = createVaultMaterial(firstFactor);
     const truncated = wrapped.header.subarray(0, wrapped.header.byteLength - 1);
     const tamperedTag = Buffer.from(wrapped.header);
     const tamperedMaterial = Buffer.from(wrapped.header);
@@ -71,15 +65,11 @@ describe('vault crypto', () => {
     tamperedMaterial[tamperedMaterial.byteLength - 1] = tamperedMaterial[tamperedMaterial.byteLength - 1] === 0 ? 1 : 0;
 
     expect(() => decodeVaultHeader(truncated)).toThrow('Vault header has an unexpected length.');
-    await expect(unwrapVaultMaterial(tamperedTag, firstFactor)).rejects.toMatchObject({
-      secureStorageCode: 'secure_storage_corrupt',
-    });
-    await expect(unwrapVaultMaterial(tamperedMaterial, firstFactor)).rejects.toMatchObject({
-      secureStorageCode: 'secure_storage_corrupt',
-    });
+    expect(() => unwrapVaultMaterial(tamperedTag, firstFactor)).toThrow('Vault material could not be unwrapped.');
+    expect(() => unwrapVaultMaterial(tamperedMaterial, firstFactor)).toThrow('Vault material could not be unwrapped.');
   });
 
-  it('rejects unexpected field lengths when encoding sidecars and master keys', () => {
+  it('rejects unexpected field lengths when encoding sidecars', () => {
     const header = decodeVaultHeader(Buffer.alloc(VAULT_SIDECAR_BYTES));
 
     expect(() =>
@@ -88,8 +78,5 @@ describe('vault crypto', () => {
         material: Buffer.alloc(VAULT_MASTER_KEY_BYTES - 1),
       }),
     ).toThrow('Vault header fields have unexpected lengths.');
-    expect(() => deriveVaultKeys(Buffer.alloc(VAULT_MASTER_KEY_BYTES - 1))).toThrow(
-      'Vault master key has an unexpected length.',
-    );
   });
 });

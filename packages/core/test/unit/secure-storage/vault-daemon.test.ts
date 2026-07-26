@@ -3,10 +3,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import { sendVaultIpcRequest } from '../../../src/secure-storage/vault-socket.js';
 import {
   attachLocalVaultDaemonSignalHandlers,
+  runLinuxTransferredVaultService,
+  runLinuxVaultBroker,
+  runLinuxVaultService,
+  startLinuxVaultService,
   startLocalVaultDaemon,
+  systemdSocketFileDescriptor,
   type LocalVaultDaemon,
   type LocalVaultDaemonRuntime,
 } from '../../../src/secure-storage/vault-daemon.js';
@@ -47,7 +53,7 @@ describe('local vault daemon lifecycle', () => {
       sendVaultIpcRequest(daemon.socketPath, {
         id: 'req_1',
         method: 'vault.unlock',
-        params: { unlockFactor: Buffer.from('123456').toString('base64') },
+        params: { salt: Buffer.alloc(16), wrappingKey: Buffer.alloc(32) },
         version: 1,
       }),
     ).resolves.toMatchObject({ ok: true, result: { lockState: 'unlocked' } });
@@ -56,12 +62,86 @@ describe('local vault daemon lifecycle', () => {
       method: 'secret.put',
       params: {
         expectedKind: 'inflow_api_key',
-        payload: Buffer.from('api-key').toString('base64'),
+        payload: Buffer.from('api-key'),
       },
       version: 1,
     });
 
     expect(vaultReferenceFromPut(putResponse)).toMatch(/^vlt_[0-9a-f]{32}$/);
+  });
+
+  it('serves isolated tenants without allowing a client to stop the Linux service', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-service-'));
+    const socketPath = join(tmpDir, 'run', 'vault.sock');
+    const peerUserIds = [1001, 1002, 1001, 1002, 1002];
+    daemon = await startLinuxVaultService({
+      peerVerifier() {
+        const uid = peerUserIds.shift();
+        if (uid === undefined) throw new Error('unexpected connection');
+        return { path: '/opt/inflow/bin/inflow', pid: uid, uid };
+      },
+      rootDirectory: join(tmpDir, 'vaults'),
+      socketPath,
+    });
+
+    await expect(
+      sendVaultIpcRequest(socketPath, {
+        id: 'unlock_a',
+        method: 'vault.unlock',
+        params: { salt: Buffer.alloc(16), wrappingKey: Buffer.alloc(32) },
+        version: 1,
+      }),
+    ).resolves.toMatchObject({ ok: true, result: { lockState: 'unlocked' } });
+    await expect(
+      sendVaultIpcRequest(socketPath, {
+        id: 'status_b',
+        method: 'vault.status',
+        params: {},
+        version: 1,
+      }),
+    ).resolves.toMatchObject({ ok: true, result: { lockState: 'not_initialized' } });
+    await expect(
+      sendVaultIpcRequest(socketPath, {
+        id: 'reset_a',
+        method: 'vault.reset',
+        params: {},
+        version: 1,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      sendVaultIpcRequest(socketPath, {
+        id: 'shutdown_b',
+        method: 'daemon.shutdown',
+        params: {},
+        version: 1,
+      }),
+    ).resolves.toMatchObject({ error: { code: 'secure_storage_unavailable' }, ok: false });
+    await expect(
+      sendVaultIpcRequest(socketPath, {
+        id: 'status_b_after',
+        method: 'vault.status',
+        params: {},
+        version: 1,
+      }),
+    ).resolves.toMatchObject({ ok: true, result: { lockState: 'not_initialized' } });
+  });
+
+  it('accepts exactly one named systemd socket owned by the current service process', () => {
+    expect(
+      systemdSocketFileDescriptor({ LISTEN_FDNAMES: 'inflow-vault', LISTEN_FDS: '1', LISTEN_PID: '123' }, 123),
+    ).toBe(3);
+    expect(() =>
+      systemdSocketFileDescriptor({ LISTEN_FDNAMES: 'other', LISTEN_FDS: '1', LISTEN_PID: '123' }, 123),
+    ).toThrow(SecureStorageError);
+    expect(() =>
+      systemdSocketFileDescriptor({ LISTEN_FDNAMES: 'inflow-vault', LISTEN_FDS: '2', LISTEN_PID: '123' }, 123),
+    ).toThrow(SecureStorageError);
+  });
+
+  it('rejects Linux service entry points on other operating systems', async () => {
+    await expect(runLinuxVaultService()).rejects.toThrow('available only on Linux');
+    await expect(runLinuxVaultBroker()).rejects.toThrow('available only on Linux');
+    await expect(runLinuxTransferredVaultService()).rejects.toThrow('requires its authenticated broker');
   });
 
   it('closes the daemon before exiting on termination signals', async () => {
@@ -153,7 +233,7 @@ describe('local vault daemon lifecycle', () => {
     await sendVaultIpcRequest(daemon.socketPath, {
       id: 'req_unlock',
       method: 'vault.unlock',
-      params: { unlockFactor: Buffer.from('123456').toString('base64') },
+      params: { salt: Buffer.alloc(16), wrappingKey: Buffer.alloc(32) },
       version: 1,
     });
     await expect(
@@ -193,7 +273,7 @@ describe('local vault daemon lifecycle', () => {
     await sendVaultIpcRequest(daemon.socketPath, {
       id: 'req_unlock',
       method: 'vault.unlock',
-      params: { unlockFactor: Buffer.from('123456').toString('base64') },
+      params: { salt: Buffer.alloc(16), wrappingKey: Buffer.alloc(32) },
       version: 1,
     });
     await sendVaultIpcRequest(daemon.socketPath, {

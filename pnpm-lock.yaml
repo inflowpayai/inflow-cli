@@ -78,8 +78,8 @@ importers:
   packages/cli:
     dependencies:
       '@aep-foundation/agent':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.3.0
+        version: 0.3.0
       '@inflowpayai/mpp':
         specifier: ^0.7.0
         version: 0.7.1(mppx@0.6.31(typescript@5.9.3)(viem@2.55.2(typescript@5.9.3)(zod@4.4.3)))
@@ -146,8 +146,8 @@ importers:
         version: 7.2.0
     devDependencies:
       '@aep-foundation/agent':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.3.0
+        version: 0.3.0
       '@inflowpayai/mpp':
         specifier: ^0.7.0
         version: 0.7.1(mppx@0.6.31(typescript@5.9.3)(viem@2.55.2(typescript@5.9.3)(zod@4.4.3)))
@@ -175,16 +175,16 @@ packages:
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
-  '@aep-foundation/agent@0.2.0':
-    resolution: {integrity: sha512-8howkD9j+qStuEDw/cIr68M5+F3Ybu9pXtcbqGMI2AdGmelYSXxzOqE+K7/FhcDilQvVdvjm+KuHk/kfUvmtUA==}
+  '@aep-foundation/agent@0.3.0':
+    resolution: {integrity: sha512-jVq7tzcv0ITy6NgClHHE3Le2uKUrNAkzaFEhpGPwP0yb3kywZI9I4l21ss/n8vHBqHcSv23JH2WJKrWhGhy9Yg==}
     engines: {node: '>=22.0.0'}
 
-  '@aep-foundation/core@0.2.0':
-    resolution: {integrity: sha512-Zc6Tyzi/A3z2YOPoND89JVD0xZYi4XzxMEcotCmMWD8epsfOYZ3EmgCVtgadfGYcAkxkzE6MlKQN0yQtG+CfHA==}
+  '@aep-foundation/core@0.3.0':
+    resolution: {integrity: sha512-QiK/Uhu2VT3lf6D+3+fcBpd4Y10rdBfSPR28jWCsPExh835EkmLZMQn4gBxUwa6F+1MUtX6p523XeugJ3Hn50w==}
     engines: {node: '>=22.0.0'}
 
-  '@aep-foundation/platform@0.2.0':
-    resolution: {integrity: sha512-XYbz4J6M+/sbdjt53igKHhPZkn3dbn2g5J9Hd3Lo2lrRgv7fQ1LhUaEzTao+XS5i1siNt6/Y8JtXVB3lbzfyFg==}
+  '@aep-foundation/platform@0.2.1':
+    resolution: {integrity: sha512-HOZ5NfmCWhAyTFjRCpVoov2evmZoysetYshrPTKbqA9oPV9PbLlRLE82cPG49wTBTLzD/8KrpmufkajehiuQYg==}
     engines: {node: '>=22.0.0'}
 
   '@alcalzone/ansi-tokenize@0.1.3':
@@ -3001,18 +3001,18 @@ snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@aep-foundation/agent@0.2.0':
+  '@aep-foundation/agent@0.3.0':
     dependencies:
-      '@aep-foundation/core': 0.2.0
-      '@aep-foundation/platform': 0.2.0
+      '@aep-foundation/core': 0.3.0
+      '@aep-foundation/platform': 0.2.1
 
-  '@aep-foundation/core@0.2.0':
+  '@aep-foundation/core@0.3.0':
     dependencies:
       jose: 6.2.3
 
-  '@aep-foundation/platform@0.2.0':
+  '@aep-foundation/platform@0.2.1':
     dependencies:
-      '@aep-foundation/core': 0.2.0
+      '@aep-foundation/core': 0.3.0
 
   '@alcalzone/ansi-tokenize@0.1.3':
     dependencies:

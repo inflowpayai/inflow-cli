@@ -34,7 +34,6 @@ The current CLI command inventory is:
 - `balances list`
 - `deposit-addresses list`
 - `inspect`
-- `user get`
 - `x402 inspect`
 - `x402 pay`
 - `x402 status`
@@ -57,7 +56,6 @@ words are preserved. The current tool inventory is:
 - `balances_list`
 - `deposit-addresses_list`
 - `inspect`
-- `user_get`
 - `x402_inspect`
 - `x402_pay`
 - `x402_status`

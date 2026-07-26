@@ -155,6 +155,55 @@ const { dirname } = require('node:path');
 const net = require('node:net');
 const socketPath = process.argv[1];
 const values = new Map();
+function transform(value, attachments, decode) {
+  if (decode && value && typeof value === 'object' && !Array.isArray(value) &&
+      Object.keys(value).length === 1 && Number.isSafeInteger(value.$inflowVaultAttachment)) {
+    return attachments[value.$inflowVaultAttachment];
+  }
+  if (!decode && value instanceof Uint8Array) {
+    const index = attachments.push(value) - 1;
+    return { $inflowVaultAttachment: index };
+  }
+  if (Array.isArray(value)) return value.map((item) => transform(item, attachments, decode));
+  if (typeof value !== 'object' || value === null) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    transform(item, attachments, decode)
+  ]));
+}
+function decodeFrame(buffer) {
+  const jsonLength = buffer.readUInt32BE(4);
+  const attachmentCount = buffer.readUInt32BE(8);
+  const jsonEnd = 12 + jsonLength;
+  const attachments = [];
+  let offset = jsonEnd;
+  for (let index = 0; index < attachmentCount; index += 1) {
+    const length = buffer.readUInt32BE(offset);
+    offset += 4;
+    attachments.push(Buffer.from(buffer.subarray(offset, offset + length)));
+    offset += length;
+  }
+  return transform(JSON.parse(buffer.subarray(12, jsonEnd).toString('utf8')), attachments, true);
+}
+function encodeFrame(message) {
+  const attachments = [];
+  const json = Buffer.from(JSON.stringify(transform(message, attachments, false)), 'utf8');
+  const bodyLength = 8 + json.byteLength +
+    attachments.reduce((total, attachment) => total + 4 + attachment.byteLength, 0);
+  const frame = Buffer.alloc(4 + bodyLength);
+  frame.writeUInt32BE(bodyLength, 0);
+  frame.writeUInt32BE(json.byteLength, 4);
+  frame.writeUInt32BE(attachments.length, 8);
+  json.copy(frame, 12);
+  let offset = 12 + json.byteLength;
+  for (const attachment of attachments) {
+    frame.writeUInt32BE(attachment.byteLength, offset);
+    offset += 4;
+    Buffer.from(attachment).copy(frame, offset);
+    offset += attachment.byteLength;
+  }
+  return frame;
+}
 mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
 rmSync(socketPath, { force: true });
 const server = net.createServer((socket) => {
@@ -165,7 +214,7 @@ const server = net.createServer((socket) => {
     if (buffer.byteLength < 4) return;
     const length = buffer.readUInt32BE(0);
     if (buffer.byteLength < length + 4) return;
-    const request = JSON.parse(buffer.subarray(4, length + 4).toString('utf8'));
+    const request = decodeFrame(buffer.subarray(0, length + 4));
     const params = request.params;
     let response;
     if (request.method === 'secret.put') {
@@ -186,11 +235,7 @@ const server = net.createServer((socket) => {
     } else {
       response = { id: request.id, ok: false, error: { code: 'secure_storage_invalid_path', message: 'bad method' }, version: 1 };
     }
-    const body = Buffer.from(JSON.stringify(response), 'utf8');
-    const frame = Buffer.alloc(4 + body.byteLength);
-    frame.writeUInt32BE(body.byteLength, 0);
-    body.copy(frame, 4);
-    socket.end(frame);
+    socket.end(encodeFrame(response));
   });
 });
 server.listen(socketPath, () => {

@@ -52,7 +52,6 @@ const MCP_TOOL_EXPECTATIONS = [
   ['mpp_pay', 'MPP: Pay Resource', false, true],
   ['mpp_status', 'MPP: Check Payment', true, false],
   ['mpp_supported', 'MPP: List Payment Methods', true, false],
-  ['user_get', 'User: Get InFlow User', true, false],
   ['vault_change-passphrase', 'Vault: Change Passphrase', false, true],
   ['vault_lock', 'Vault: Lock Vault', false, false],
   ['vault_policy', 'Vault: Show Policy', true, false],
@@ -88,7 +87,6 @@ const CLI_SCHEMA_COMMANDS = [
   'mpp pay',
   'mpp status',
   'mpp supported',
-  'user get',
   'vault change-passphrase',
   'vault lock',
   'vault policy',
@@ -312,6 +310,15 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(combined).toContain('inflow');
       expect(combined).toContain('agent enrollment and agentic payments');
       expect(combined).not.toContain('--daemon');
+      expect(combined).not.toMatch(/^\s+user\b/m);
+    });
+
+    it('does not dispatch the internal user command', async () => {
+      const { exitCode, stdout, stderr } = await run(['user', 'get', '--format', 'json'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).not.toBe(0);
+      expect(`${stdout}${stderr}`).not.toContain('"userId"');
     });
 
     it('rejects invalid hidden daemon modes before command registration', async () => {
@@ -541,18 +548,14 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(stdout.endsWith('\n')).toBe(true);
     });
 
-    it('--llms manifest lists the user get command', async () => {
-      const { exitCode, stdout } = await run(['--llms', '--format', 'json'], {
+    it.each(['--llms', '--llms-full'] as const)('%s omits the user command', async (flag) => {
+      const { exitCode, stdout } = await run([flag, '--format', 'json'], {
         env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
-      const manifest = JSON.parse(stdout) as {
-        commands: { name: string; description?: string }[];
-      };
+      const manifest = JSON.parse(stdout) as { commands: { name: string }[] };
       const names = manifest.commands.map((c) => c.name);
-      expect(names).toContain('user get');
-      const userGet = manifest.commands.find((c) => c.name === 'user get');
-      expect(userGet?.description).toBe('Retrieve the current authenticated user');
+      expect(names).not.toContain('user get');
     });
 
     it('--llms manifest lists the balances list command', async () => {
@@ -601,18 +604,6 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(names).toEqual(expect.arrayContaining([...VAULT_COMMANDS]));
     });
 
-    it('user get --schema returns an empty-properties JSON Schema', async () => {
-      const { exitCode, stdout } = await run(['user', 'get', '--schema', '--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
-      });
-      expect(exitCode).toBe(0);
-      const parsed = JSON.parse(stdout) as {
-        options?: { type?: string; properties?: Record<string, unknown> };
-      };
-      expect(parsed.options?.type).toBe('object');
-      expect(parsed.options?.properties ?? {}).toEqual({});
-    });
-
     it('balances list --schema returns an empty-properties JSON Schema', async () => {
       const { exitCode, stdout } = await run(['balances', 'list', '--schema', '--format', 'json'], {
         env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
@@ -656,7 +647,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
       }
     });
 
-    it('--mcp tools/list exposes user_get with an empty input schema', async () => {
+    it('--mcp tools/list exposes the expected public tools and omits user_get', async () => {
       const request =
         JSON.stringify({
           jsonrpc: '2.0',
@@ -699,17 +690,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
           inputSchema: { type: 'object' },
         });
       }
-      const tool = tools.find((t) => t.name === 'user_get');
-      expect(tool).toBeDefined();
-      expect(tool?.title).toBe('User: Get InFlow User');
-      expect(tool?.annotations).toMatchObject({
-        destructiveHint: false,
-        idempotentHint: true,
-        readOnlyHint: true,
-        title: 'User: Get InFlow User',
-      });
-      expect(tool?.inputSchema?.type).toBe('object');
-      expect(tool?.inputSchema?.properties ?? {}).toEqual({});
+      expect(tools.map((entry) => entry.name)).not.toContain('user_get');
       expect(tools.find((entry) => entry.name === 'auth_status')).toMatchObject({
         title: 'InFlow Account: Check Login',
         annotations: { readOnlyHint: true, title: 'InFlow Account: Check Login' },
@@ -792,29 +773,6 @@ describe.skipIf(!existsSync(DIST_CLI))(
       } finally {
         rmSync(root, { force: true, recursive: true });
       }
-    });
-
-    it('user get --format json without auth emits NOT_AUTHENTICATED and exits 1', async () => {
-      const cleanEnv: Record<string, string | undefined> = {
-        ...process.env,
-        NO_UPDATE_NOTIFIER: '1',
-        INFLOW_API_KEY: undefined,
-        INFLOW_AUTH_FILE: undefined,
-      };
-      for (const key of Object.keys(cleanEnv)) {
-        if (cleanEnv[key] === undefined) delete cleanEnv[key];
-      }
-      const { exitCode, stdout } = await run(
-        ['--auth', '/tmp/inflow-test-no-auth.json', 'user', 'get', '--format', 'json'],
-        { env: cleanEnv },
-      );
-      expect(exitCode).toBe(1);
-      const payload = JSON.parse(stdout) as {
-        code?: string;
-        message?: string;
-      };
-      expect(payload.code).toBe('NOT_AUTHENTICATED');
-      expect(payload.message).toContain('Not authenticated.');
     });
   },
 );

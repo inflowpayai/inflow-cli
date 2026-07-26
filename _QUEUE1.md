@@ -660,7 +660,7 @@ extensions.
 | 70    | Done        | Grant command             | Implement LOGIN approval-backed Grant, complete expiry-aware credential storage, and concise non-secret action output.       |
 | 80    | Done        | Revoke command            | Implement direct-sign Service revocation, optional narrowing selectors, and local reconciliation.                            |
 | 82    | Done        | Exact CLI contracts       | Implement approved schemas, JSON fields, human projections, errors, expiry cleanup, and partial-success behavior.            |
-| 110   | Done        | Enterprise secure store   | Delivered by Queue 2 Task 126 encrypted local vault daemon.                                                                 |
+| 110   | Done        | Enterprise secure store   | Delivered by Queue 2 Task 126 encrypted local vault daemon.                                                                  |
 
 ## No Buried Work Rule
 
@@ -1067,7 +1067,8 @@ unless it is a blocker carve-out.
   Revoke. `_PLAN1.md` indexes separate repository implementation plans for aep-specs, aep-node, inflow-server, and
   inflow-cli so execution can use repository-scoped writable tasks.
 - Completed tasks: 10, 12, 14, 20, 30, 40, 42, 44, 60, 70, 80, 82, and 120.
-- Cut or deferred tasks and where they moved: Tasks 46 and 48 remain parked in this queue by user instruction. Task 110 was delivered by Queue 2 Task 126.
+- Cut or deferred tasks and where they moved: Tasks 46 and 48 remain parked in this queue by user instruction. Task 110
+  was delivered by Queue 2 Task 126.
 - Decisions resolved: Public command surface, transport, storage, Platform Sign, Approval, claim disclosure, output,
   error, expiry, idempotency, cleanup, and release-order contracts.
 - Completion evidence: Decision log, source-backed state, completion-evidence table, implementation batch map,

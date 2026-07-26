@@ -19,7 +19,6 @@ For host-specific skill and MCP installation, see the repository's
 | `inflow auth login`                  | Run the OAuth device flow to authenticate. Saves a refreshable access token.                                                      |
 | `inflow auth logout`                 | Clear the saved access token and API key from local config.                                                                       |
 | `inflow auth status`                 | Show which credential the CLI would use, plus the active environment and resolved API URL.                                        |
-| `inflow user get`                    | Fetch the authenticated user's profile.                                                                                           |
 | `inflow balances list`               | List the authenticated user's balances.                                                                                           |
 | `inflow deposit-addresses list`      | List the user's configured deposit addresses, grouped by network.                                                                 |
 | `inflow inspect <url>`               | Detect a URL's payment protocol(s) and show MPP and x402 challenges together. Read-only probe — no auth, no payment.              |
@@ -110,17 +109,6 @@ inflow auth status --probe      # validate the token via GET /v1/users/self
 
 Reports which credential the CLI would use (OAuth access token, API key, or none), the active environment, and the
 resolved API URL — including the SDK's built-in defaults when nothing is overridden.
-
-## `user`
-
-### `user get`
-
-```bash
-inflow user get
-inflow user get --format json
-```
-
-Fetches the authenticated user's profile (`GET /v1/users/self`). Requires authentication.
 
 ## `balances`
 

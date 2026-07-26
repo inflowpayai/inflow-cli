@@ -27,6 +27,14 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Install Linux packaging tools
+        run: sudo apt-get update && sudo apt-get install --yes cpio rpm
+
+      - name: Prepare pinned Argon2 source
+        run: |
+          node scripts/prepare-argon2-source.mjs "$RUNNER_TEMP/argon2-20190702"
+          echo "INFLOW_ARGON2_SOURCE_DIR=$RUNNER_TEMP/argon2-20190702" >> "$GITHUB_ENV"
+
       - name: Build vault peer verifier
         run: node scripts/build-vault-peer-native.mjs
 
@@ -56,10 +64,21 @@ jobs:
         run: pnpm build
 
       - name: Build Linux package
-        run: pnpm build:linux-package
+        run: sudo env "PATH=$PATH" "INFLOW_ARGON2_SOURCE_DIR=$INFLOW_ARGON2_SOURCE_DIR" pnpm build:linux-package
 
       - name: Test packaged Linux vault
-        run: pnpm smoke:linux-packaged-vault
+        run: |
+          sudo rm -rf /opt/inflow-package-smoke
+          sudo mkdir /opt/inflow-package-smoke
+          sudo tar -xzf dist/linux/inflow-*-linux-*.tar.gz -C /opt/inflow-package-smoke --strip-components=1
+          sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/opt/inflow-package-smoke/bin/inflow \
+            pnpm smoke:linux-packaged-vault
+
+      - name: Test Debian system vault
+        run: |
+          sudo dpkg -i dist/linux/inflow_*_amd64.deb
+          sudo swapoff -a
+          sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/usr/bin/inflow pnpm smoke:linux-system-vault
 
       - name: Publish dry-run
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

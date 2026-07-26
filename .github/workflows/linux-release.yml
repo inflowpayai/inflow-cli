@@ -30,7 +30,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       attestations: write
-      contents: ${{ inputs.publish && 'write' || 'read' }}
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v5
@@ -45,17 +45,58 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Install Linux packaging tools
+        run: sudo apt-get update && sudo apt-get install --yes cpio rpm
+
+      - name: Prepare pinned Argon2 source
+        run: |
+          node scripts/prepare-argon2-source.mjs "$RUNNER_TEMP/argon2-20190702"
+          echo "INFLOW_ARGON2_SOURCE_DIR=$RUNNER_TEMP/argon2-20190702" >> "$GITHUB_ENV"
+
       - name: Build Linux package
-        run: pnpm build:linux-package
+        run: sudo env "PATH=$PATH" "INFLOW_ARGON2_SOURCE_DIR=$INFLOW_ARGON2_SOURCE_DIR" pnpm build:linux-package
+
+      - name: Render Linux installer
+        run: sudo env "PATH=$PATH" pnpm build:linux-installer
 
       - name: Test packaged vault
-        run: pnpm smoke:linux-packaged-vault
+        run: |
+          sudo rm -rf /opt/inflow-package-smoke
+          sudo mkdir /opt/inflow-package-smoke
+          sudo tar -xzf dist/linux/inflow-*-linux-*.tar.gz -C /opt/inflow-package-smoke --strip-components=1
+          sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/opt/inflow-package-smoke/bin/inflow \
+            pnpm smoke:linux-packaged-vault
+
+      - name: Reject a tampered Linux package
+        run: |
+          mkdir "$RUNNER_TEMP/inflow-tampered-installer"
+          cp dist/linux/install.sh dist/linux/inflow_*.deb "$RUNNER_TEMP/inflow-tampered-installer/"
+          checksum="$RUNNER_TEMP/inflow-tampered-installer/$(basename dist/linux/inflow_*.deb).sha256"
+          printf '%064d  %s\n' 0 "$(basename dist/linux/inflow_*.deb)" > "$checksum"
+          if INFLOW_RELEASE_BASE_URL="file://$RUNNER_TEMP/inflow-tampered-installer" \
+            sh "$RUNNER_TEMP/inflow-tampered-installer/install.sh"; then
+            echo "::error::The Linux installer accepted a tampered package"
+            exit 1
+          fi
+          if dpkg-query --show inflow >/dev/null 2>&1; then
+            echo "::error::The Linux installer installed a package after checksum rejection"
+            exit 1
+          fi
+
+      - name: Test Debian system vault
+        run: |
+          INFLOW_RELEASE_BASE_URL="file://$PWD/dist/linux" sh dist/linux/install.sh
+          sudo swapoff -a
+          sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/usr/bin/inflow pnpm smoke:linux-system-vault
 
       - name: Attest archive
         if: github.event_name != 'pull_request'
         uses: actions/attest@v4
         with:
-          subject-path: dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz
+          subject-path: |
+            dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz
+            dist/linux/*.deb
+            dist/linux/*.rpm
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v6
@@ -64,12 +105,100 @@ jobs:
           path: |
             dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz
             dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz.sha256
+            dist/linux/*.deb
+            dist/linux/*.deb.sha256
+            dist/linux/*.rpm
+            dist/linux/*.rpm.sha256
+            dist/linux/install.sh
+            dist/linux/manifest.json
           if-no-files-found: error
 
       - name: Upload release assets
         if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run:
-          gh release upload "${{ inputs.tag }}" dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz
-          dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz.sha256 --clobber
+        run: |
+          gh release upload "${{ inputs.tag }}" \
+            dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz \
+            dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz.sha256 \
+            dist/linux/*.deb \
+            dist/linux/*.deb.sha256 \
+            dist/linux/*.rpm \
+            dist/linux/*.rpm.sha256 \
+            dist/linux/install.sh \
+            dist/linux/manifest.json \
+            --clobber
+
+  apt-repository:
+    name: signed APT repository
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install APT repository tools
+        run: sudo apt-get update && sudo apt-get install --yes apt-utils dpkg-dev
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: inflow-linux-*
+          path: dist/linux/packages
+          merge-multiple: true
+
+      - name: Create disposable repository signing key
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/inflow-apt-gpg"
+          mkdir --mode=0700 "$GNUPGHOME"
+          gpg --batch --passphrase '' --quick-gen-key \
+            'InFlow Linux CI Signing <support@inflowpay.ai>' rsa3072 sign 1d
+          key_id="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "sec" { print $5; exit }')"
+          test -n "$key_id"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "INFLOW_LINUX_SIGNING_KEY_ID=$key_id" >> "$GITHUB_ENV"
+
+      - name: Build signed APT repository
+        run: pnpm build:linux-apt-repository
+
+      - name: Verify APT repository signature
+        run: |
+          gpgv --keyring dist/linux/apt/inflow-archive-keyring.gpg \
+            dist/linux/apt/dists/stable/InRelease
+          cp dist/linux/apt/inflow-archive-keyring.gpg "$RUNNER_TEMP/inflow-archive-keyring.gpg"
+          mkdir "$RUNNER_TEMP/inflow-apt-state" "$RUNNER_TEMP/inflow-apt-cache"
+          printf 'deb [arch=amd64 signed-by=%s] file:%s stable main\n' \
+            "$RUNNER_TEMP/inflow-archive-keyring.gpg" "$PWD/dist/linux/apt" \
+            > "$RUNNER_TEMP/inflow.list"
+          sudo apt-get \
+            -o "Dir::Etc::sourcelist=$RUNNER_TEMP/inflow.list" \
+            -o "Dir::Etc::sourceparts=-" \
+            -o "Dir::State=$RUNNER_TEMP/inflow-apt-state" \
+            -o "Dir::Cache=$RUNNER_TEMP/inflow-apt-cache" \
+            update
+
+      - name: Reject a modified APT repository
+        run: |
+          printf '\n' >> dist/linux/apt/dists/stable/Release
+          if gpgv --keyring dist/linux/apt/inflow-archive-keyring.gpg \
+            dist/linux/apt/dists/stable/Release.gpg \
+            dist/linux/apt/dists/stable/Release; then
+            echo "::error::The modified APT repository passed signature verification"
+            exit 1
+          fi
+
+      - name: Upload APT repository
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-linux-apt-repository
+          path: dist/linux/apt
+          if-no-files-found: error

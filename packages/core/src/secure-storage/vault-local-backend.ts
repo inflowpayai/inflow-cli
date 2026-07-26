@@ -1,17 +1,21 @@
 import { Buffer } from 'node:buffer';
+import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SecureStorageError } from './errors.js';
 import type { SecureSqliteRepository, StoredVaultRecord } from './sqlite.js';
 import {
   changeVaultUnlockFactor,
+  changeVaultWrappingKey,
   createVaultMaterial,
-  decryptVaultRecordPayload,
-  deriveVaultKeys,
-  encryptVaultRecordPayload,
+  createVaultMaterialWithWrappingKey,
+  decodeVaultHeader,
   unwrapVaultMaterial,
+  unwrapVaultMaterialWithWrappingKey,
+  VAULT_SALT_BYTES,
 } from './vault-crypto.js';
 import { removeVaultLocalState, vaultFilePaths, type VaultFilePaths } from './vault-files.js';
+import { ProtectedVaultKey } from './vault-protected-key.js';
 import {
   DEFAULT_VAULT_POLICY,
   type DeleteExpiredVaultSecretsInput,
@@ -38,7 +42,7 @@ const RECORD_ENCRYPTION_VERSION = 1;
 const SIDECAR_FILE_MODE = 0o600;
 
 export class LocalVaultBackend implements VaultBackend {
-  private masterKey: Buffer | undefined;
+  private masterKey: ProtectedVaultKey | undefined;
   private readonly now: () => Date;
   private readonly paths: VaultFilePaths;
   private readonly repository: SecureSqliteRepository;
@@ -53,10 +57,22 @@ export class LocalVaultBackend implements VaultBackend {
 
   async changePassphrase(currentUnlockFactor: Uint8Array, nextUnlockFactor: Uint8Array): Promise<void> {
     const header = await readFile(this.sidecarPath);
-    const nextHeader = await changeVaultUnlockFactor(header, currentUnlockFactor, nextUnlockFactor);
+    const nextHeader = changeVaultUnlockFactor(header, currentUnlockFactor, nextUnlockFactor);
     await writeFile(this.sidecarPath, nextHeader, { flag: 'w', mode: SIDECAR_FILE_MODE });
     await chmod(this.sidecarPath, SIDECAR_FILE_MODE);
-    this.masterKey = await unwrapVaultMaterial(nextHeader, nextUnlockFactor);
+    this.replaceMasterKey(unwrapVaultMaterial(nextHeader, nextUnlockFactor));
+  }
+
+  async changeWrappingKey(
+    currentWrappingKey: Uint8Array,
+    nextWrappingKey: Uint8Array,
+    nextSalt: Uint8Array,
+  ): Promise<void> {
+    const header = await readFile(this.sidecarPath);
+    const nextHeader = changeVaultWrappingKey(header, currentWrappingKey, nextWrappingKey, nextSalt);
+    await writeFile(this.sidecarPath, nextHeader, { flag: 'w', mode: SIDECAR_FILE_MODE });
+    await chmod(this.sidecarPath, SIDECAR_FILE_MODE);
+    this.replaceMasterKey(unwrapVaultMaterialWithWrappingKey(nextHeader, nextWrappingKey));
   }
 
   deleteExpired(input: DeleteExpiredVaultSecretsInput): void {
@@ -82,11 +98,11 @@ export class LocalVaultBackend implements VaultBackend {
   }
 
   getSecret(input: GetVaultSecretInput): VaultSecretPayload {
-    const keys = this.unlockedKeys();
+    const masterKey = this.requireMasterKey();
     const reference = parseVaultSecretReference(input.reference.reference);
     const record = this.requireActiveRecord(reference.reference, input.expectedKind);
     return {
-      payload: decryptVaultRecordPayload(keys.recordKey, recordContext(record), {
+      payload: masterKey.decrypt(recordContext(record), {
         ciphertext: Buffer.from(record.ciphertext),
         nonce: Buffer.from(record.nonce),
         tag: Buffer.from(record.tag),
@@ -96,12 +112,12 @@ export class LocalVaultBackend implements VaultBackend {
   }
 
   lock(): void {
-    this.masterKey?.fill(0);
+    this.masterKey?.destroy();
     this.masterKey = undefined;
   }
 
   putSecret(input: PutVaultSecretInput): { reference: string } {
-    const keys = this.unlockedKeys();
+    const masterKey = this.requireMasterKey();
     const reference =
       input.reference === undefined
         ? createVaultSecretReference()
@@ -116,7 +132,7 @@ export class LocalVaultBackend implements VaultBackend {
       reference: reference.reference,
       status,
     } as const;
-    const encrypted = encryptVaultRecordPayload(keys.recordKey, context, input.payload);
+    const encrypted = masterKey.encrypt(context, input.payload);
     const record: StoredVaultRecord = {
       ciphertext: encrypted.ciphertext,
       encryptionVersion: RECORD_ENCRYPTION_VERSION,
@@ -161,14 +177,44 @@ export class LocalVaultBackend implements VaultBackend {
     let header: Buffer;
     try {
       header = await readFile(this.sidecarPath);
-      this.masterKey = await unwrapVaultMaterial(header, unlockFactor);
+      this.replaceMasterKey(unwrapVaultMaterial(header, unlockFactor));
     } catch (cause) {
       if (!isMissingFileError(cause)) throw cause;
-      const material = await createVaultMaterial(unlockFactor);
+      const material = createVaultMaterial(unlockFactor);
       await mkdir(path.dirname(this.sidecarPath), { mode: 0o700, recursive: true });
       await writeFile(this.sidecarPath, material.header, { flag: 'wx', mode: SIDECAR_FILE_MODE });
       await chmod(this.sidecarPath, SIDECAR_FILE_MODE);
-      this.masterKey = material.masterKey;
+      this.replaceMasterKey(material.masterKey);
+    }
+    return this.status();
+  }
+
+  async unlockSalt(): Promise<Uint8Array> {
+    try {
+      return Buffer.from(decodeVaultHeader(await readFile(this.sidecarPath)).salt);
+    } catch (cause) {
+      if (!isMissingFileError(cause)) throw cause;
+      return randomBytes(VAULT_SALT_BYTES);
+    }
+  }
+
+  async unlockWithWrappingKey(wrappingKey: Uint8Array, salt: Uint8Array): Promise<VaultStatus> {
+    this.repository.initialize();
+    let header: Buffer;
+    try {
+      header = await readFile(this.sidecarPath);
+      const storedSalt = decodeVaultHeader(header).salt;
+      if (!storedSalt.equals(salt)) {
+        throw new SecureStorageError('secure_storage_corrupt', 'Vault unlock salt changed.');
+      }
+      this.replaceMasterKey(unwrapVaultMaterialWithWrappingKey(header, wrappingKey));
+    } catch (cause) {
+      if (!isMissingFileError(cause)) throw cause;
+      const material = createVaultMaterialWithWrappingKey(wrappingKey, salt);
+      await mkdir(path.dirname(this.sidecarPath), { mode: 0o700, recursive: true });
+      await writeFile(this.sidecarPath, material.header, { flag: 'wx', mode: SIDECAR_FILE_MODE });
+      await chmod(this.sidecarPath, SIDECAR_FILE_MODE);
+      this.replaceMasterKey(material.masterKey);
     }
     return this.status();
   }
@@ -200,11 +246,17 @@ export class LocalVaultBackend implements VaultBackend {
     return this.now().toISOString();
   }
 
-  private unlockedKeys(): ReturnType<typeof deriveVaultKeys> {
+  private requireMasterKey(): ProtectedVaultKey {
     if (this.masterKey === undefined) {
       throw new SecureStorageError('vault_locked', 'The InFlow vault is locked.');
     }
-    return deriveVaultKeys(this.masterKey);
+    return this.masterKey;
+  }
+
+  private replaceMasterKey(masterKey: Buffer): void {
+    const protectedKey = new ProtectedVaultKey(masterKey);
+    this.masterKey?.destroy();
+    this.masterKey = protectedKey;
   }
 }
 

@@ -942,6 +942,7 @@ async function runStatus(c: Context, inflow: Inflow, authStorage: AuthStorage): 
         ...(grant.expiresAt === undefined ? {} : { expires_at: grant.expiresAt }),
         grant_type: grant.grantType,
         scopes: Array.isArray(grant.credential['scopes']) ? grant.credential['scopes'] : [],
+        status: 'active' as const,
         usable: true,
       }))
       .sort((left, right) =>
@@ -964,6 +965,15 @@ async function runStatus(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       frame,
     );
   } catch (error) {
+    if (
+      error instanceof AepCommandError &&
+      (error.problem?.code === 'agent_identity_not_found' || error.problem?.code === 'not_recognized')
+    )
+      return c.error({
+        code: 'AEP_NOT_ENROLLED',
+        message:
+          'The Service does not recognize the locally stored Agent identity. Use `inflow aep enroll <service>` to enroll again.',
+      });
     return c.error(commandError(error));
   }
 }

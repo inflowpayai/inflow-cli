@@ -8,9 +8,10 @@ export async function handleVaultIpcRequest(
   backend: VaultBackend,
   request: VaultIpcRequest,
   daemonInfo?: VaultDaemonInfo,
+  options: VaultDaemonHandlerOptions = {},
 ): Promise<VaultIpcResponse> {
   try {
-    const result = await dispatchVaultIpcRequest(backend, request, daemonInfo);
+    const result = await dispatchVaultIpcRequest(backend, request, daemonInfo, options);
     return { id: request.id, ok: true, result, version: 1 };
   } catch (cause) {
     return {
@@ -29,15 +30,26 @@ export interface VaultDaemonInfo {
   pid: number;
 }
 
+export interface VaultDaemonHandlerOptions {
+  allowDaemonShutdown?: boolean;
+}
+
 async function dispatchVaultIpcRequest(
   backend: VaultBackend,
   request: VaultIpcRequest,
   daemonInfo: VaultDaemonInfo | undefined,
+  options: VaultDaemonHandlerOptions,
 ): Promise<Record<string, unknown>> {
   switch (request.method) {
     case 'daemon.info':
       return daemonInfoResult(daemonInfo);
     case 'daemon.shutdown':
+      if (options.allowDaemonShutdown === false) {
+        throw new SecureStorageError(
+          'secure_storage_unavailable',
+          'The vault service lifecycle is managed by the operating system.',
+        );
+      }
       await backend.lock();
       return {};
     case 'secret.delete':
@@ -50,17 +62,30 @@ async function dispatchVaultIpcRequest(
       return { exists: await backend.exists(parseSecretReferenceParams(request.params)) };
     case 'secret.get':
       return secretPayloadResult(await backend.getSecret(parseSecretReferenceParams(request.params)));
-    case 'secret.put':
-      return { reference: (await backend.putSecret(parsePutSecretParams(request.params))).reference };
+    case 'secret.put': {
+      const input = parsePutSecretParams(request.params);
+      try {
+        return { reference: (await backend.putSecret(input)).reference };
+      } finally {
+        input.payload.fill(0);
+      }
+    }
     case 'secret.touch':
       await backend.touch(parseSecretReferenceParams(request.params));
       return {};
-    case 'vault.changePassphrase':
-      await backend.changePassphrase(
-        parseBase64Param(request.params, 'currentUnlockFactor'),
-        parseBase64Param(request.params, 'nextUnlockFactor'),
-      );
-      return {};
+    case 'vault.changePassphrase': {
+      const currentWrappingKey = parseBytesParam(request.params, 'currentWrappingKey');
+      const nextWrappingKey = parseBytesParam(request.params, 'nextWrappingKey');
+      const nextSalt = parseBytesParam(request.params, 'nextSalt');
+      try {
+        await backend.changeWrappingKey(currentWrappingKey, nextWrappingKey, nextSalt);
+        return {};
+      } finally {
+        currentWrappingKey.fill(0);
+        nextWrappingKey.fill(0);
+        nextSalt.fill(0);
+      }
+    }
     case 'vault.getPolicy':
       return policyResult(await backend.getPolicy());
     case 'vault.lock':
@@ -73,8 +98,18 @@ async function dispatchVaultIpcRequest(
       return policyResult(await backend.setPolicy(parsePolicyParam(request.params)));
     case 'vault.status':
       return statusResult(await backend.status());
-    case 'vault.unlock':
-      return statusResult(await backend.unlock(parseBase64Param(request.params, 'unlockFactor')));
+    case 'vault.unlock': {
+      const wrappingKey = parseBytesParam(request.params, 'wrappingKey');
+      const salt = parseBytesParam(request.params, 'salt');
+      try {
+        return statusResult(await backend.unlockWithWrappingKey(wrappingKey, salt));
+      } finally {
+        wrappingKey.fill(0);
+        salt.fill(0);
+      }
+    }
+    case 'vault.unlockSalt':
+      return { salt: await backend.unlockSalt() };
   }
 }
 
@@ -93,7 +128,7 @@ function daemonInfoResult(info: VaultDaemonInfo | undefined): Record<string, unk
 function parsePutSecretParams(params: Record<string, unknown>) {
   const input = {
     expectedKind: parseKindParam(params),
-    payload: parseBase64Param(params, 'payload'),
+    payload: parseBytesParam(params, 'payload'),
   };
   const reference = parseOptionalStringParam(params, 'reference');
   const withReference = reference === undefined ? input : { ...input, reference: parseVaultSecretReference(reference) };
@@ -130,12 +165,12 @@ function parseKindParam(params: Record<string, unknown>): VaultSecretKind {
   return kind;
 }
 
-function parseBase64Param(params: Record<string, unknown>, name: string): Buffer {
-  const value = parseStringParam(params, name);
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value) || value.length % 4 !== 0) {
+function parseBytesParam(params: Record<string, unknown>, name: string): Buffer {
+  const value = params[name];
+  if (!(value instanceof Uint8Array) || value.byteLength === 0) {
     throw new SecureStorageError('secure_storage_invalid_path', 'Vault IPC request parameters are malformed.');
   }
-  return Buffer.from(value, 'base64');
+  return Buffer.from(value);
 }
 
 function parseStringParam(params: Record<string, unknown>, name: string): string {
@@ -157,7 +192,7 @@ function parseOptionalStringParam(params: Record<string, unknown>, name: string)
 
 function secretPayloadResult(secret: VaultSecretPayload): Record<string, unknown> {
   return {
-    payload: Buffer.from(secret.payload).toString('base64'),
+    payload: secret.payload,
     reference: secret.reference.reference,
   };
 }

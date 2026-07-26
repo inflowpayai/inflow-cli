@@ -5,6 +5,7 @@ export type Awaitable<T> = Promise<T> | T;
 
 export const VAULT_BACKEND_METHODS = [
   'changePassphrase',
+  'changeWrappingKey',
   'deleteExpired',
   'deleteSecret',
   'exists',
@@ -17,6 +18,8 @@ export const VAULT_BACKEND_METHODS = [
   'status',
   'touch',
   'unlock',
+  'unlockSalt',
+  'unlockWithWrappingKey',
 ] as const;
 
 export const DEFAULT_VAULT_POLICY = {
@@ -67,6 +70,7 @@ export interface DeleteExpiredVaultSecretsInput {
 
 export interface VaultBackend {
   changePassphrase(currentUnlockFactor: Uint8Array, nextUnlockFactor: Uint8Array): Awaitable<void>;
+  changeWrappingKey(currentWrappingKey: Uint8Array, nextWrappingKey: Uint8Array, nextSalt: Uint8Array): Awaitable<void>;
   deleteExpired(input: DeleteExpiredVaultSecretsInput): Awaitable<void>;
   deleteSecret(input: DeleteVaultSecretInput): Awaitable<void>;
   exists(input: GetVaultSecretInput): Awaitable<boolean>;
@@ -79,6 +83,8 @@ export interface VaultBackend {
   status(): Awaitable<VaultStatus>;
   touch(input: TouchVaultSecretInput): Awaitable<void>;
   unlock(unlockFactor: Uint8Array): Awaitable<VaultStatus>;
+  unlockSalt(): Awaitable<Uint8Array>;
+  unlockWithWrappingKey(wrappingKey: Uint8Array, salt: Uint8Array): Awaitable<VaultStatus>;
 }
 
 export interface StoredVaultSecretEnvelope {

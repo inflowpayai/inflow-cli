@@ -45,6 +45,23 @@ describe('vault IPC framing', () => {
     expect(methods).not.toContain('sign' as VaultIpcMethod);
   });
 
+  it('keeps sensitive bytes out of immutable JSON values', () => {
+    const secret = Buffer.from('binary-only-secret');
+    const frame = encodeVaultIpcMessage({
+      id: 'req_secret',
+      method: 'secret.put',
+      params: { expectedKind: 'inflow_api_key', payload: secret },
+      version: 1,
+    });
+    const jsonLength = frame.readUInt32BE(4);
+    const json = frame.subarray(12, 12 + jsonLength).toString('utf8');
+
+    expect(json).not.toContain(secret.toString('utf8'));
+    expect(decodeVaultIpcFrame(frame)).toMatchObject({
+      params: { payload: secret },
+    });
+  });
+
   it('rejects malformed, trailing, oversized, and unknown-method frames', () => {
     const request = {
       id: 'req_1',
@@ -53,7 +70,7 @@ describe('vault IPC framing', () => {
       version: 1 as const,
     };
     const frame = encodeVaultIpcMessage(request);
-    const oversized = Buffer.alloc(4);
+    const oversized = Buffer.alloc(12);
     oversized.writeUInt32BE(VAULT_IPC_MAX_MESSAGE_BYTES + 1, 0);
 
     expect(() => decodeVaultIpcFrame(frame.subarray(0, 3))).toThrow('Vault IPC frame is truncated.');
@@ -72,16 +89,20 @@ describe('vault IPC framing', () => {
   });
 
   it('rejects unknown versions and malformed responses', () => {
-    const unknownVersion = Buffer.from(JSON.stringify({ id: 'req_1', params: {}, version: 2 }), 'utf8');
-    const malformedResponse = Buffer.from(JSON.stringify({ id: 'req_1', ok: false, version: 1 }), 'utf8');
-    const unknownVersionFrame = Buffer.alloc(4 + unknownVersion.byteLength);
-    const malformedResponseFrame = Buffer.alloc(4 + malformedResponse.byteLength);
-    unknownVersionFrame.writeUInt32BE(unknownVersion.byteLength, 0);
-    malformedResponseFrame.writeUInt32BE(malformedResponse.byteLength, 0);
-    unknownVersion.copy(unknownVersionFrame, 4);
-    malformedResponse.copy(malformedResponseFrame, 4);
+    const unknownVersionFrame = rawFrame({ id: 'req_1', params: {}, version: 2 });
+    const malformedResponseFrame = rawFrame({ id: 'req_1', ok: false, version: 1 });
 
     expect(() => decodeVaultIpcFrame(unknownVersionFrame)).toThrow('Vault IPC message is malformed.');
     expect(() => decodeVaultIpcFrame(malformedResponseFrame)).toThrow('Vault IPC response is malformed.');
   });
 });
+
+function rawFrame(value: unknown): Buffer {
+  const json = Buffer.from(JSON.stringify(value), 'utf8');
+  const frame = Buffer.alloc(12 + json.byteLength);
+  frame.writeUInt32BE(8 + json.byteLength, 0);
+  frame.writeUInt32BE(json.byteLength, 4);
+  frame.writeUInt32BE(0, 8);
+  json.copy(frame, 12);
+  return frame;
+}
