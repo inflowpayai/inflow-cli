@@ -202,3 +202,98 @@ jobs:
           name: inflow-linux-apt-repository
           path: dist/linux/apt
           if-no-files-found: error
+
+  rpm-repository:
+    name: signed RPM repository
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install RPM repository tools
+        run: sudo apt-get update && sudo apt-get install --yes createrepo-c gnupg rpm
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: inflow-linux-*
+          path: dist/linux/packages
+          merge-multiple: true
+
+      - name: Create disposable repository signing key
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/inflow-rpm-gpg"
+          mkdir --mode=0700 "$GNUPGHOME"
+          gpg --batch --passphrase '' --quick-gen-key \
+            'InFlow Linux CI Signing <support@inflowpay.ai>' rsa3072 sign 1d
+          key_id="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "sec" { print $5; exit }')"
+          test -n "$key_id"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "INFLOW_LINUX_SIGNING_KEY_ID=$key_id" >> "$GITHUB_ENV"
+
+      - name: Build signed RPM repository
+        run: pnpm build:linux-rpm-repository
+
+      - name: Verify RPM package and repository signatures
+        run: |
+          sudo rpmkeys --import dist/linux/rpm/inflow-signing-key.asc
+          sudo rpmkeys --checksig dist/linux/rpm/packages/*.rpm
+          gpgv --keyring dist/linux/rpm/inflow-signing-key.gpg \
+            dist/linux/rpm/repodata/repomd.xml.asc \
+            dist/linux/rpm/repodata/repomd.xml
+
+      - name: Reject modified RPM package and repository metadata
+        run: |
+          cp dist/linux/rpm/packages/*."$(uname -m)".rpm "$RUNNER_TEMP/tampered.rpm"
+          package_size="$(stat --format=%s "$RUNNER_TEMP/tampered.rpm")"
+          printf 'X' | dd of="$RUNNER_TEMP/tampered.rpm" bs=1 \
+            seek="$((package_size - 4096))" conv=notrunc status=none
+          if sudo rpmkeys --checksig "$RUNNER_TEMP/tampered.rpm"; then
+            echo "::error::The modified RPM package passed signature verification"
+            exit 1
+          fi
+          cp dist/linux/rpm/repodata/repomd.xml "$RUNNER_TEMP/repomd.xml"
+          printf '\n' >> "$RUNNER_TEMP/repomd.xml"
+          if gpgv --keyring dist/linux/rpm/inflow-signing-key.gpg \
+            dist/linux/rpm/repodata/repomd.xml.asc \
+            "$RUNNER_TEMP/repomd.xml"; then
+            echo "::error::The modified RPM repository passed signature verification"
+            exit 1
+          fi
+
+      - name: Install from signed RPM repository
+        run: |
+          docker run --rm \
+            --volume "$PWD/dist/linux/rpm:/repository:ro" \
+            fedora:42 \
+            sh -c '
+              printf "%s\n" \
+                "[inflow]" \
+                "name=InFlow" \
+                "baseurl=file:///repository" \
+                "enabled=1" \
+                "gpgcheck=1" \
+                "repo_gpgcheck=1" \
+                "gpgkey=file:///repository/inflow-signing-key.asc" \
+                > /etc/yum.repos.d/inflow.repo
+              dnf --assumeyes --disablerepo="*" --enablerepo=inflow install inflow
+              inflow --version
+              dnf --assumeyes remove inflow
+            '
+
+      - name: Upload RPM repository
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-linux-rpm-repository
+          path: dist/linux/rpm
+          if-no-files-found: error

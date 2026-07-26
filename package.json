@@ -24,6 +24,7 @@
     "build:linux-apt-repository": "node scripts/build-linux-apt-repository.mjs",
     "build:linux-installer": "node scripts/render-linux-installer.mjs",
     "build:linux-package": "node scripts/build-linux-package.mjs",
+    "build:linux-rpm-repository": "node scripts/build-linux-rpm-repository.mjs",
     "build:macos-app": "node scripts/build-macos-app.mjs --skip-notarize",
     "build:macos-debug-signed": "node scripts/build-macos-app.mjs --signed-debug --skip-notarize",
     "build:macos-release": "node scripts/build-macos-app.mjs --release",
