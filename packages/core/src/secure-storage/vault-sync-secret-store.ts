@@ -210,6 +210,15 @@ function codeFromResponse(code: string): SecureStorageErrorCode {
   }
 }
 
+/** @internal */
+export const __testing = {
+  codeFromResponse,
+  errorFromWorker,
+  kindForReference,
+  responseResult,
+  vaultReferenceFor,
+};
+
 const WORKER_SOURCE = `
 let catchState;
 let catchOutput;

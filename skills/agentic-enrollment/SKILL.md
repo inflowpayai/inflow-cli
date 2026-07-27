@@ -35,6 +35,10 @@ Use structured output when acting programmatically:
 inflow aep <command> ... --format json
 ```
 
+Credential-bearing commands require the encrypted local vault. If the CLI reports that the vault is uninitialized or
+locked, tell the user to run `inflow vault unlock` themselves in a terminal, then retry. Never ask for or accept the
+vault PIN or passphrase through chat, an MCP tool, a command-line flag, or an environment variable.
+
 Use `inflow aep <command> --schema` for exact arguments and flags. Use `inflow --llms-full` for the complete command
 reference.
 

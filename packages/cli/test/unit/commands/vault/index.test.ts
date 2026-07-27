@@ -145,7 +145,7 @@ describe('vault command runners', () => {
   });
 
   it('treats an overlong socket path as an unavailable daemon for status reads', async () => {
-    const rootDirectory = join('/private/tmp', `inflow-${'x'.repeat(120)}`);
+    const rootDirectory = join(tmpdir(), `inflow-${'x'.repeat(120)}`);
 
     await expect(__testing.readVaultStatusWithoutStarting({ rootDirectory })).resolves.toMatchObject({
       daemonRunning: false,
@@ -154,7 +154,7 @@ describe('vault command runners', () => {
   });
 
   it('reports locked from local sidecar state when no daemon is reachable', async (testContext) => {
-    const rootDirectory = join('/private/tmp', testContext.task.id.replaceAll(/[^a-z0-9_-]/giu, '_'));
+    const rootDirectory = join(tmpdir(), testContext.task.id.replaceAll(/[^a-z0-9_-]/giu, '_'));
     await mkdir(rootDirectory, { recursive: true });
     await writeFile(join(rootDirectory, 'inflow.vault'), Buffer.from('vault sidecar'));
 
@@ -290,6 +290,29 @@ describe('vault command runners', () => {
       idleTimeoutSeconds: null,
       lockOnSleep: false,
     });
+  });
+
+  it('preserves policy fields when no recognized options are supplied', async () => {
+    const harness = deps();
+
+    await expect(__testing.runVaultPolicySet(context({ ignored: true }), harness)).resolves.toEqual({
+      idle_timeout_seconds: 28_800,
+      lock_on_sleep: true,
+    });
+    expect(__testing.parsePolicySetOptions({ idleTimeoutSeconds: '60', lockOnSleep: 'yes' })).toEqual({
+      idleTimeoutSeconds: undefined,
+      lockOnSleep: undefined,
+    });
+    expect(harness.client.setPolicy).toHaveBeenCalledWith({
+      idleTimeoutSeconds: 28_800,
+      lockOnSleep: true,
+    });
+  });
+
+  it('renders a disabled policy', () => {
+    expect(__testing.renderPolicy({ idle_timeout_seconds: null, lock_on_sleep: false })).toBe(
+      'Idle timeout: disabled\nLock on sleep: no\n',
+    );
   });
 
   it('renders and updates vault policy in human mode', async () => {
@@ -488,6 +511,55 @@ describe('vault command runners', () => {
     expect(harness.removeLocalState).not.toHaveBeenCalled();
   });
 
+  it('does not remove local state when daemon discovery fails unexpectedly', async () => {
+    const harness = resetDeps();
+    harness.client.status.mockRejectedValueOnce(new Error('status failed'));
+
+    await expect(__testing.resetLocalVaultWithDeps({}, harness)).rejects.toThrow('status failed');
+    expect(harness.removeLocalState).not.toHaveBeenCalled();
+  });
+
+  it('continues cleanup when a stale daemon disappears during shutdown', async () => {
+    const harness = resetDeps();
+    harness.client.info.mockResolvedValueOnce({
+      buildId: 'other',
+      cliVersion: '0.9.0',
+      executablePath: harness.executablePath,
+      pid: 123,
+    });
+    harness.client.shutdown.mockRejectedValueOnce(
+      new SecureStorageError('secure_storage_unavailable', 'The daemon stopped.'),
+    );
+
+    await expect(__testing.resetLocalVaultWithDeps({ buildId: 'build-1' }, harness)).resolves.toBeUndefined();
+    expect(harness.removeLocalState).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when a stale daemon remains reachable past the deadline', async () => {
+    const harness = resetDeps({
+      now: vi.fn().mockReturnValueOnce(0).mockReturnValueOnce(1).mockReturnValueOnce(2_000),
+    });
+    harness.client.info.mockResolvedValueOnce({
+      buildId: 'other',
+      cliVersion: '0.9.0',
+      executablePath: harness.executablePath,
+      pid: 123,
+    });
+
+    await expect(__testing.resetLocalVaultWithDeps({ buildId: 'build-1' }, harness)).rejects.toMatchObject({
+      secureStorageCode: 'vault_daemon_busy',
+    });
+    expect(harness.sleep).toHaveBeenCalledWith(25);
+    expect(harness.removeLocalState).not.toHaveBeenCalled();
+  });
+
+  it('propagates unexpected status failures while waiting for shutdown', async () => {
+    const harness = resetDeps();
+    harness.client.status.mockRejectedValueOnce(new Error('status failed'));
+
+    await expect(__testing.shutdownReachableDaemon(harness)).rejects.toThrow('status failed');
+  });
+
   it('does not prompt when ensuring an unlocked vault', async () => {
     const harness = deps();
     harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'unlocked' });
@@ -598,6 +670,42 @@ describe('vault command runners', () => {
     expect(harness.client.changePassphrase).not.toHaveBeenCalled();
   });
 
+  it('rejects a short replacement passphrase and clears it', async () => {
+    const current = Buffer.from('current1');
+    const next = Buffer.from('123');
+    const harness = deps({
+      readPassphrase: vi.fn().mockResolvedValueOnce(current).mockResolvedValueOnce(next),
+    });
+
+    await expect(__testing.runVaultChangePassphrase(context({}, false), harness)).rejects.toMatchObject({
+      code: 'VAULT_PASSPHRASE_TOO_SHORT',
+    });
+    expect(current).toEqual(Buffer.alloc(8));
+    expect(next).toEqual(Buffer.alloc(3));
+    expect(harness.client.changePassphrase).not.toHaveBeenCalled();
+  });
+
+  it('clears passphrases when changing the daemon credential fails', async () => {
+    const current = Buffer.from('current1');
+    const next = Buffer.from('next123');
+    const harness = deps({
+      readPassphrase: vi
+        .fn()
+        .mockResolvedValueOnce(current)
+        .mockResolvedValueOnce(next)
+        .mockResolvedValueOnce(Buffer.from('next123')),
+    });
+    harness.client.changePassphrase.mockRejectedValueOnce(
+      new SecureStorageError('secure_storage_unavailable', 'change failed'),
+    );
+
+    await expect(__testing.runVaultChangePassphrase(context({}, false), harness)).rejects.toMatchObject({
+      code: 'secure_storage_unavailable',
+    });
+    expect(current).toEqual(Buffer.alloc(8));
+    expect(next).toEqual(Buffer.alloc(7));
+  });
+
   it('maps secure storage errors through the command context', async () => {
     const harness = deps();
     harness.readVaultStatus.mockRejectedValue(
@@ -607,6 +715,29 @@ describe('vault command runners', () => {
     await expect(__testing.runVaultStatus(context(), harness)).rejects.toMatchObject({
       code: 'secure_storage_secret_missing',
     });
+  });
+
+  it('propagates non-storage errors and maps non-corruption unlock errors', async () => {
+    const c = context();
+    await expect(__testing.mapSecureStorageError(c, () => Promise.reject(new Error('unexpected')))).rejects.toThrow(
+      'unexpected',
+    );
+    await expect(
+      __testing.mapVaultUnlockError(c, () =>
+        Promise.reject(new SecureStorageError('secure_storage_unavailable', 'unavailable')),
+      ),
+    ).rejects.toMatchObject({ code: 'secure_storage_unavailable' });
+    await expect(__testing.mapVaultUnlockError(c, () => Promise.reject(new Error('unexpected')))).rejects.toThrow(
+      'unexpected',
+    );
+  });
+
+  it('classifies only daemon transport failures as unavailable', () => {
+    expect(__testing.isVaultDaemonUnavailable({ code: 'ECONNREFUSED' })).toBe(true);
+    expect(__testing.isVaultDaemonUnavailable({ code: 'EINVAL' })).toBe(true);
+    expect(__testing.isVaultDaemonUnavailable({ code: 'EACCES' })).toBe(false);
+    expect(__testing.isVaultDaemonUnavailable(new Error('other'))).toBe(false);
+    expect(__testing.isVaultDaemonUnavailable(new SecureStorageError('secure_storage_corrupt', 'corrupt'))).toBe(false);
   });
 
   it('registers the visible vault command surface', () => {

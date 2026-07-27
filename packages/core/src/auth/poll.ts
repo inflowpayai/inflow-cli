@@ -239,3 +239,6 @@ function readStorageValue<T>(read: () => T, fallback: T): T {
     throw cause;
   }
 }
+
+/** @internal */
+export const __testing = { readStorageValue };

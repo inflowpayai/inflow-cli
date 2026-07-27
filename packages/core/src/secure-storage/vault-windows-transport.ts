@@ -150,7 +150,19 @@ export function createPackagedWindowsVaultTransport(): WindowsVaultTransport {
 }
 
 export function sendWindowsVaultIpcRequest(path: string, request: VaultIpcRequest): VaultIpcResponse {
-  const transport = createPackagedWindowsVaultTransport();
+  return sendWindowsVaultIpcRequestWithTransport(createPackagedWindowsVaultTransport(), path, request);
+}
+
+/** @internal */
+export function sendWindowsVaultIpcRequestWithTransport<Connection>(
+  transport: {
+    close(connection: Connection): void;
+    connect(path: string): Connection;
+    exchange(connection: Connection, frame: Buffer): Buffer;
+  },
+  path: string,
+  request: VaultIpcRequest,
+): VaultIpcResponse {
   const connection = transport.connect(path);
   const requestFrame = encodeVaultIpcMessage(request);
   let responseFrame: Buffer | undefined;
@@ -164,6 +176,7 @@ export function sendWindowsVaultIpcRequest(path: string, request: VaultIpcReques
   } finally {
     requestFrame.fill(0);
     responseFrame?.fill(0);
+    transport.close(connection);
   }
 }
 

@@ -33,7 +33,11 @@ vi.mock('../../../src/secure-storage/vault-peer-verifier.js', async (importOrigi
   return { ...original, verifyVaultNativeModule: mocks.verifyVaultNativeModule };
 });
 
-import { WindowsVaultTransport } from '../../../src/secure-storage/vault-windows-transport.js';
+import {
+  sendWindowsVaultIpcRequestWithTransport,
+  WindowsVaultTransport,
+} from '../../../src/secure-storage/vault-windows-transport.js';
+import { encodeVaultIpcMessage } from '../../../src/secure-storage/vault-ipc.js';
 
 const executablePath = 'C:\\Program Files\\InFlow\\inflow.exe';
 const nativeModulePath = 'C:\\Program Files\\InFlow\\native\\vault_peer_windows.node';
@@ -157,6 +161,57 @@ describe('Windows vault transport', () => {
       throw new Error('unreadable');
     });
     expect(() => createTransport()).toThrow(SecureStorageError);
+  });
+
+  it('exchanges one Windows IPC request and clears request and response frames', () => {
+    const connection = {};
+    const responseFrame = encodeVaultIpcMessage({
+      id: 'request-1',
+      ok: true,
+      result: { lockState: 'locked' },
+      version: 1,
+    });
+    const transport = {
+      close: vi.fn(),
+      connect: vi.fn(() => ({ connection, peer })),
+      exchange: vi.fn(() => responseFrame),
+    };
+
+    expect(
+      sendWindowsVaultIpcRequestWithTransport(transport, '\\\\.\\pipe\\InFlowVault', {
+        id: 'request-1',
+        method: 'vault.status',
+        params: {},
+        version: 1,
+      }),
+    ).toMatchObject({ id: 'request-1', ok: true });
+    expect(transport.connect).toHaveBeenCalledWith('\\\\.\\pipe\\InFlowVault');
+    expect(transport.close).toHaveBeenCalledWith({ connection, peer });
+    expect(responseFrame).toEqual(Buffer.alloc(responseFrame.byteLength));
+  });
+
+  it('rejects malformed Windows IPC responses and still clears their bytes', () => {
+    for (const response of [
+      { id: 'other', ok: true as const, result: {}, version: 1 as const },
+      { id: 'request-1', method: 'vault.status' as const, params: {}, version: 1 as const },
+    ]) {
+      const responseFrame = encodeVaultIpcMessage(response);
+      const transport = {
+        close: vi.fn(),
+        connect: vi.fn(() => ({ connection: {}, peer })),
+        exchange: vi.fn(() => responseFrame),
+      };
+      expect(() =>
+        sendWindowsVaultIpcRequestWithTransport(transport, '\\\\.\\pipe\\InFlowVault', {
+          id: 'request-1',
+          method: 'vault.status',
+          params: {},
+          version: 1,
+        }),
+      ).toThrow('Vault IPC response is malformed');
+      expect(transport.close).toHaveBeenCalledOnce();
+      expect(responseFrame).toEqual(Buffer.alloc(responseFrame.byteLength));
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import type { Socket } from 'node:net';
@@ -93,10 +93,25 @@ export function createVaultSocketPeerVerifier(
 export function verifyTransferredVaultSocketPeer(socket: Socket, attestedPeer: VaultSocketPeer): VaultSocketPeer {
   const config = createVaultPeerVerificationConfig();
   verifyVaultPeerVerificationConfig(config);
-  if (defaultPeerVerifierDependencies.realpath(attestedPeer.path) !== config.expectedExecutablePath) {
+  return verifyTransferredVaultSocketPeerWithDependencies(
+    socket,
+    attestedPeer,
+    config,
+    defaultPeerVerifierDependencies,
+  );
+}
+
+/** @internal */
+export function verifyTransferredVaultSocketPeerWithDependencies(
+  socket: Socket,
+  attestedPeer: VaultSocketPeer,
+  config: VaultPeerVerificationConfig,
+  dependencies: Pick<VaultPeerVerifierDependencies, 'loadNativeModule' | 'realpath'>,
+): VaultSocketPeer {
+  if (dependencies.realpath(attestedPeer.path) !== config.expectedExecutablePath) {
     throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
   }
-  const credentials = defaultPeerVerifierDependencies
+  const credentials = dependencies
     .loadNativeModule(config.nativeModulePath)
     .peerCredentials(socketFileDescriptor(socket));
   if (credentials.pid !== attestedPeer.pid || credentials.uid !== attestedPeer.uid) {
@@ -195,7 +210,12 @@ function defaultNativeModulePath(): string {
     return resolve(dirname(executablePath), '../lib/inflow/native/vault_peer_linux.node');
   }
   const platformName = process.platform === 'linux' ? 'linux' : 'darwin';
-  return resolve(dirname(fileURLToPath(import.meta.url)), `../../native/build/vault_peer_${platformName}.node`);
+  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+  const nativeRelativePath =
+    basename(moduleDirectory) === 'dist'
+      ? `../native/build/vault_peer_${platformName}.node`
+      : `../../native/build/vault_peer_${platformName}.node`;
+  return resolve(moduleDirectory, nativeRelativePath);
 }
 
 function realExecutablePath(): string {

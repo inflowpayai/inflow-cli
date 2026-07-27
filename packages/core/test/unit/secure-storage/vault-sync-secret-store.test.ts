@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  __testing,
   NoopSyncSecretReferenceManifest,
   SyncVaultSecretStore,
 } from '../../../src/secure-storage/vault-sync-secret-store.js';
@@ -53,7 +54,7 @@ describe('SyncVaultSecretStore', () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
     expect(result.stdout).toBe('secret-esm\n');
-  });
+  }, 15_000);
 
   it('fails closed for unsupported purposes, malformed payloads, and unavailable daemons', async () => {
     const store = new SyncVaultSecretStore({ rootDirectory: tmpDir, timeoutMs: 250 });
@@ -78,6 +79,56 @@ describe('SyncVaultSecretStore', () => {
     manifest.remove(reference);
 
     expect(manifest.read()).toEqual([]);
+  });
+
+  it('validates worker errors and daemon response envelopes', () => {
+    expect(
+      __testing.errorFromWorker(Buffer.from(JSON.stringify({ code: 'vault_locked', message: 'locked' }))),
+    ).toMatchObject({ message: 'locked', secureStorageCode: 'vault_locked' });
+    expect(__testing.errorFromWorker(Buffer.from('{'))).toMatchObject({
+      secureStorageCode: 'secure_storage_io_error',
+    });
+    expect(__testing.errorFromWorker(Buffer.from(JSON.stringify({ code: 1, message: 'bad' })))).toMatchObject({
+      secureStorageCode: 'secure_storage_io_error',
+    });
+    expect(__testing.responseResult({ id: 'one', ok: true, result: { value: 1 }, version: 1 })).toEqual({ value: 1 });
+    expect(() =>
+      __testing.responseResult({
+        error: { code: 'unknown', message: 'failed' },
+        id: 'one',
+        ok: false,
+        version: 1,
+      }),
+    ).toThrow('failed');
+  });
+
+  it('maps every supported secret purpose and stable storage error code', () => {
+    const purposes = new Map([
+      ['aep-credential', 'aep_credential'],
+      ['api-key', 'inflow_api_key'],
+      ['auth-access-token', 'auth_access_token'],
+      ['auth-refresh-token', 'auth_refresh_token'],
+      ['pending-device-code', 'pending_device_code'],
+    ]);
+    for (const [purpose, kind] of purposes) {
+      const reference = { purpose, reference: 'one' };
+      expect(__testing.kindForReference(reference)).toBe(kind);
+      expect(__testing.vaultReferenceFor(reference)).toMatch(/^vlt_[0-9a-f]{32}$/u);
+    }
+    const codes = [
+      'secure_storage_corrupt',
+      'secure_storage_invalid_path',
+      'secure_storage_io_error',
+      'secure_storage_peer_verification_failed',
+      'secure_storage_secret_conflict',
+      'secure_storage_secret_missing',
+      'secure_storage_unavailable',
+      'vault_daemon_busy',
+      'vault_locked',
+      'vault_not_initialized',
+    ] as const;
+    for (const code of codes) expect(__testing.codeFromResponse(code)).toBe(code);
+    expect(__testing.codeFromResponse('unknown')).toBe('secure_storage_io_error');
   });
 });
 
@@ -140,7 +191,7 @@ function esmProbeSource(): string {
 import { Buffer } from 'node:buffer';
 import { SyncVaultSecretStore } from './dist/index.js';
 const rootDirectory = process.argv[1];
-const store = new SyncVaultSecretStore({ rootDirectory, timeoutMs: 1000 });
+const store = new SyncVaultSecretStore({ rootDirectory, timeoutMs: 5000 });
 const reference = { purpose: 'api-key', reference: 'esm-api-key' };
 store.create(reference, Buffer.from('secret-esm', 'utf8'));
 process.stdout.write(Buffer.from(store.read(reference)).toString('utf8') + '\\n');

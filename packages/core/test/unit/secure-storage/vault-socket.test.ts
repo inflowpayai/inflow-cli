@@ -291,6 +291,25 @@ describe('vault socket transport', () => {
     await expect(closed).resolves.toBe(false);
   });
 
+  it('rejects a frame whose accumulated bytes exceed the transport limit', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'run', 'vault.sock');
+    servers.push(await startVaultSocketServer({ backend: new SocketVaultBackend(), socketPath }));
+    const socket = createConnection(socketPath);
+    const closed = new Promise<boolean>((resolve) => {
+      socket.once('close', resolve);
+      socket.once('error', () => undefined);
+    });
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve);
+      socket.once('error', reject);
+    });
+
+    socket.write(Buffer.alloc(VAULT_IPC_MAX_MESSAGE_BYTES + 5));
+
+    await expect(closed).resolves.toEqual(expect.any(Boolean));
+  });
+
   it('returns a redacted socket response when peer verification fails', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
     const socketPath = join(tmpDir, 'run', 'vault.sock');

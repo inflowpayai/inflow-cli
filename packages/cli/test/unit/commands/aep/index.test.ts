@@ -7,12 +7,14 @@ import type * as InflowCore from '@inflowpayai/inflow-core';
 const platformRecovery = vi.hoisted<{
   identity: unknown;
   identityNotFoundOnSign: boolean;
+  immediateSignResult: 'completed' | 'string' | undefined;
   notRecognized: boolean;
   provisioned: boolean;
   statusErrorCode: string | undefined;
 }>(() => ({
   identity: undefined,
   identityNotFoundOnSign: false,
+  immediateSignResult: undefined,
   notRecognized: false,
   provisioned: false,
   statusErrorCode: undefined,
@@ -108,6 +110,14 @@ vi.mock('@aep-foundation/agent', () => {
       error.problem = { code: 'agent_identity_not_found' };
       throw error;
     }
+    if (platformRecovery.immediateSignResult === 'string') return 'immediate-assertion';
+    if (platformRecovery.immediateSignResult === 'completed') {
+      return {
+        clientAssertion: 'immediate-assertion',
+        platformContext: { approved_claims: { 'contact.email': 'agent@example.test' } },
+        status: 'completed' as const,
+      };
+    }
     if (context.platformContext?.['claims'] !== undefined || context.platformContext?.['grant_type'] !== undefined) {
       return { platformContext: { approval_id: 'approval-1' }, retryAfterSeconds: 1, status: 'pending' as const };
     }
@@ -202,6 +212,7 @@ function inflow() {
 afterEach(() => {
   platformRecovery.identity = undefined;
   platformRecovery.identityNotFoundOnSign = false;
+  platformRecovery.immediateSignResult = undefined;
   platformRecovery.notRecognized = false;
   platformRecovery.provisioned = false;
   platformRecovery.statusErrorCode = undefined;
@@ -346,6 +357,12 @@ describe('aep commands', () => {
     ).toEqual({
       code: 'VAULT_LOCKED',
       message: 'The InFlow vault is locked.',
+    });
+    expect(
+      __testing.commandError(new SecureStorageError('vault_not_initialized', 'The InFlow vault is not initialized.')),
+    ).toEqual({
+      code: 'VAULT_NOT_INITIALIZED',
+      message: 'The InFlow vault is not initialized.',
     });
   });
 
@@ -860,6 +877,16 @@ describe('aep commands', () => {
     const approvalRequests = approvalFetch.mock.calls.length;
     await expect(__testing.runEnroll(options, client, storage)).resolves.toEqual({ status: 'active' });
     expect(approvalFetch).toHaveBeenCalledTimes(approvalRequests);
+  });
+
+  it.each(['completed', 'string'] as const)('accepts an immediate %s Platform signature', async (resultKind) => {
+    platformRecovery.immediateSignResult = resultKind;
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+
+    await expect(__testing.runEnroll(context({ maxAttempts: 1, timeout: 1 }), inflow(), storage)).resolves.toEqual({
+      status: 'active',
+    });
   });
 
   it('returns an agentic pending approval frame for a new enrollment without polling inline', async () => {

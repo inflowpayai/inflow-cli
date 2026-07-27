@@ -244,3 +244,12 @@ function codeFromResponse(code: string): SecureStorageErrorCode {
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
+
+/** @internal */
+export const __testing = {
+  codeFromResponse,
+  parseInfo,
+  parsePolicy,
+  parseSalt,
+  parseStatus,
+};

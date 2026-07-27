@@ -63,6 +63,13 @@ export interface LocalVaultDaemonRuntime {
   once(signal: 'SIGINT' | 'SIGTERM', handler: () => Promise<void>): void;
 }
 
+interface LinuxTransferredVaultServiceRuntime {
+  exit(code: number): void;
+  on(event: 'message', handler: (message: unknown, handle: unknown) => void): void;
+  once(event: 'SIGINT' | 'SIGTERM' | 'disconnect', handler: () => void): void;
+  send(message: unknown): void;
+}
+
 export async function startLocalVaultDaemon(options: LocalVaultDaemonOptions = {}): Promise<LocalVaultDaemon> {
   const paths = vaultFilePaths(options.rootDirectory);
   const repository = new SecureSqliteRepository({ databasePath: paths.database });
@@ -257,6 +264,32 @@ export async function runLinuxTransferredVaultService(options: LinuxVaultService
   if (process.platform !== 'linux' || typeof process.send !== 'function') {
     throw new Error('The Linux vault service requires its authenticated broker.');
   }
+  const send = process.send.bind(process);
+  await runLinuxTransferredVaultServiceWithRuntime(options, process.platform, {
+    exit(code) {
+      process.exit(code);
+    },
+    on(event, handler) {
+      process.on(event, handler);
+    },
+    once(event, handler) {
+      process.once(event, handler);
+    },
+    send(message) {
+      send(message);
+    },
+  });
+}
+
+/** @internal */
+export async function runLinuxTransferredVaultServiceWithRuntime(
+  options: LinuxVaultServiceOptions,
+  platform: NodeJS.Platform,
+  runtime: LinuxTransferredVaultServiceRuntime,
+): Promise<void> {
+  if (platform !== 'linux') {
+    throw new Error('The Linux vault service requires its authenticated broker.');
+  }
   hardenVaultDaemonProcess();
   const manager = new MultiTenantVaultBackendManager({
     rootDirectory: options.rootDirectory ?? '/var/lib/inflow/vaults',
@@ -275,7 +308,7 @@ export async function runLinuxTransferredVaultService(options: LinuxVaultService
     },
     socketPath: 'broker-transferred',
   });
-  process.on('message', (message: unknown, handle: unknown) => {
+  runtime.on('message', (message, handle) => {
     if (!isBrokerTransferMessage(message) || !isSocket(handle)) {
       if (isSocket(handle)) handle.destroy();
       return;
@@ -289,21 +322,29 @@ export async function runLinuxTransferredVaultService(options: LinuxVaultService
       handle.destroy();
     }
   });
+  let closed = false;
+  let resolveClosed: () => void;
+  const closedPromise = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
   const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
     await manager.close();
-    process.exit(0);
+    resolveClosed();
+    runtime.exit(0);
   };
-  process.once('SIGINT', () => {
+  runtime.once('SIGINT', () => {
     void close();
   });
-  process.once('SIGTERM', () => {
+  runtime.once('SIGTERM', () => {
     void close();
   });
-  process.once('disconnect', () => {
+  runtime.once('disconnect', () => {
     void close();
   });
-  process.send({ type: 'vault-service-ready' });
-  await new Promise<void>(() => undefined);
+  runtime.send({ type: 'vault-service-ready' });
+  await closedPromise;
 }
 
 function linuxVaultServiceIdentity(stateDirectory: string): { gid: number; uid: number } {
@@ -421,6 +462,19 @@ function lifetimeOptions(options: LocalVaultDaemonOptions | LinuxVaultServiceOpt
   }
   return result;
 }
+
+/** @internal */
+export const __testing = {
+  closeBroker,
+  isBrokerTransferMessage,
+  isReadyMessage,
+  linuxVaultServiceIdentity,
+  listenBroker,
+  lifetimeOptions,
+  parseNonNegativeInteger,
+  transferSocketToVaultService,
+  waitForVaultServiceReady,
+};
 
 export function systemdSocketFileDescriptor(environment: NodeJS.ProcessEnv, processId: number): number {
   const listenProcessId = parseNonNegativeInteger(environment['LISTEN_PID']);

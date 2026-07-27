@@ -169,20 +169,18 @@ async function runVaultChangePassphrase(
   const client = await deps.ensureDaemon();
   const current = await deps.readPassphrase('Enter the current InFlow vault PIN or passphrase: ', c);
   const next = await deps.readPassphrase('Enter the new InFlow vault PIN or passphrase: ', c);
-  validatePassphrase(c, next);
-  const confirmation = await deps.readPassphrase('Confirm the new InFlow vault PIN or passphrase: ', c);
-  const confirmed = confirmation.equals(next);
-  confirmation.fill(0);
-  if (!confirmed) {
-    current.fill(0);
-    next.fill(0);
-    return c.error({ code: 'VAULT_PASSPHRASE_MISMATCH', message: 'The passphrases did not match.' });
-  }
+  let confirmation: Buffer | undefined;
   try {
+    validatePassphrase(c, next);
+    confirmation = await deps.readPassphrase('Confirm the new InFlow vault PIN or passphrase: ', c);
+    if (!confirmation.equals(next)) {
+      return c.error({ code: 'VAULT_PASSPHRASE_MISMATCH', message: 'The passphrases did not match.' });
+    }
     await mapSecureStorageError(c, () => client.changePassphrase(current, next));
   } finally {
     current.fill(0);
     next.fill(0);
+    confirmation?.fill(0);
   }
   deps.write('Vault passphrase changed.\n');
   return { changed: true };
@@ -684,6 +682,12 @@ export const __testing = {
   runVaultUnlock,
   ensureLocalVaultUnlockedWithDeps,
   isCompatibleDaemon,
+  isVaultDaemonUnavailable,
+  mapSecureStorageError,
+  mapVaultUnlockError,
+  parsePolicySetOptions,
   readVaultStatusWithoutStarting,
+  renderPolicy,
   resetLocalVaultWithDeps,
+  shutdownReachableDaemon,
 };

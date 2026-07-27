@@ -20,13 +20,17 @@ if ($uninstall) {
 }
 
 $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
-if ($architecture -ne 'arm64') {
+if ($architecture -notin @('x64', 'arm64')) {
   throw "InFlow $version is not published for Windows architecture '$architecture'."
 }
 
 $asset = "inflow-$version-windows-$architecture.msi"
 $uri = "https://github.com/inflowpayai/inflow-cli/releases/download/v$version/$asset"
-$expectedHash = '__INFLOW_MSI_SHA256__'
+$expectedHash = if ($architecture -eq 'arm64') {
+  '__INFLOW_MSI_SHA256_ARM64__'
+} else {
+  '__INFLOW_MSI_SHA256_X64__'
+}
 $expectedPublisher = '__INFLOW_WINDOWS_PUBLISHER__'
 $installerPath = Join-Path ([System.IO.Path]::GetTempPath()) "$([Guid]::NewGuid()).msi"
 $logPath = Join-Path ([System.IO.Path]::GetTempPath()) "inflow-install-$([Guid]::NewGuid()).log"

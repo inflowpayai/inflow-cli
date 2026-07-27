@@ -1,0 +1,395 @@
+name: windows release
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: Sign with the production Azure Artifact Signing profile.
+        required: true
+        type: boolean
+        default: false
+      publish:
+        description: Upload signed artifacts to the matching GitHub release.
+        required: true
+        type: boolean
+        default: false
+      tag:
+        description: Existing GitHub release tag. Required when publishing.
+        required: false
+        type: string
+
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-inputs:
+    runs-on: windows-2025
+    steps:
+      - name: Validate release inputs
+        shell: pwsh
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          SIGN: ${{ inputs.sign }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ($env:PUBLISH -eq 'true' -and $env:SIGN -ne 'true') {
+            throw 'Publishing requires production signing.'
+          }
+          if ($env:PUBLISH -eq 'true' -and [string]::IsNullOrWhiteSpace($env:TAG)) {
+            throw 'Publishing requires an existing GitHub release tag.'
+          }
+
+  build-payload:
+    needs: validate-inputs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            runner: windows-2025
+          - architecture: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Configure Visual C++ tools
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: ${{ matrix.architecture }}
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare pinned native build dependencies
+        shell: pwsh
+        run: |
+          $argon2 = Join-Path $env:RUNNER_TEMP 'argon2-20190702'
+          node scripts/prepare-argon2-source.mjs $argon2
+
+          $headersArchive = Join-Path $env:RUNNER_TEMP 'node-v24.15.0-headers.tar.gz'
+          $headersRoot = Join-Path $env:RUNNER_TEMP 'node-headers'
+          Invoke-WebRequest `
+            -Uri 'https://nodejs.org/dist/v24.15.0/node-v24.15.0-headers.tar.gz' `
+            -OutFile $headersArchive
+          $headersSha256 = (Get-FileHash -Algorithm SHA256 $headersArchive).Hash.ToLowerInvariant()
+          if ($headersSha256 -ne '9a9250039fef572d0bcc110ac5e78055faf5604421211d2d5f578ebc5a34e703') {
+            throw "Node header checksum mismatch: $headersSha256"
+          }
+          New-Item -ItemType Directory -Force $headersRoot | Out-Null
+          tar -xzf $headersArchive -C $headersRoot
+
+          "INFLOW_ARGON2_SOURCE_DIR=$argon2" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "INFLOW_NODE_INCLUDE_DIR=$(Join-Path $headersRoot 'node-v24.15.0/include/node')" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Prepare unsigned executable payload
+        run: pnpm build:windows-external-prepare
+
+      - name: Verify executable architecture
+        shell: pwsh
+        env:
+          EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          $headers = (& dumpbin.exe /headers dist/windows/payload/inflow.exe) -join "`n"
+          $expected = if ($env:EXPECTED_ARCHITECTURE -eq 'arm64') { 'AA64 machine' } else { '8664 machine' }
+          if ($headers -notmatch [regex]::Escape($expected)) {
+            throw "The executable does not target $($env:EXPECTED_ARCHITECTURE)."
+          }
+
+      - name: Upload executable payload
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-windows-payload-${{ matrix.architecture }}
+          path: dist/windows/payload
+          if-no-files-found: error
+
+  package-dry-run:
+    if: github.event_name == 'pull_request' || inputs.sign == false
+    needs: build-payload
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture:
+          - x64
+          - arm64
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install WiX
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Download executable payload
+        uses: actions/download-artifact@v7
+        with:
+          name: inflow-windows-payload-${{ matrix.architecture }}
+          path: dist/windows/payload
+
+      - name: Build unsigned MSI
+        env:
+          INFLOW_WINDOWS_TARGET_ARCH: ${{ matrix.architecture }}
+        run: node scripts/build-windows-package.mjs --build-msi-from-prepared-payload
+
+      - name: Render unsigned release metadata
+        env:
+          INFLOW_WINDOWS_TARGET_ARCH: ${{ matrix.architecture }}
+        run: node scripts/build-windows-package.mjs --write-unsigned-release-metadata
+
+      - name: Verify MSI architecture
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem dist/windows/inflow-*-windows-${{ matrix.architecture }}.msi
+          if ($msi.Count -ne 1) {
+            throw 'Expected exactly one MSI.'
+          }
+
+      - name: Upload dry-run package
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-windows-dry-run-${{ matrix.architecture }}
+          path: |
+            dist/windows/inflow-*-windows-${{ matrix.architecture }}.msi
+            dist/windows/inflow-*-windows-${{ matrix.architecture }}.msi.sha256
+            dist/windows/manifest.json
+          if-no-files-found: error
+
+  package-signed:
+    if: github.event_name == 'workflow_dispatch' && inputs.sign
+    needs: build-payload
+    runs-on: windows-2025
+    environment: windows-production
+    permissions:
+      contents: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture:
+          - x64
+          - arm64
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install WiX
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Locate SignTool
+        shell: pwsh
+        run: |
+          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if ($null -eq $signTool) {
+            throw 'SignTool is unavailable.'
+          }
+          "INFLOW_SIGNTOOL_PATH=$($signTool.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Download executable payload
+        uses: actions/download-artifact@v7
+        with:
+          name: inflow-windows-payload-${{ matrix.architecture }}
+          path: dist/windows/payload
+
+      - name: Authenticate to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_ARTIFACT_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_ARTIFACT_SIGNING_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_ARTIFACT_SIGNING_SUBSCRIPTION_ID }}
+
+      - name: Sign executable
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\dist\windows\payload\inflow.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Build MSI from signed executable
+        env:
+          INFLOW_WINDOWS_TARGET_ARCH: ${{ matrix.architecture }}
+        run: pnpm build:windows-external-msi
+
+      - name: Sign MSI
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist\windows
+          files-folder-filter: inflow-*-windows-${{ matrix.architecture }}.msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Render signed release metadata
+        env:
+          INFLOW_WINDOWS_SIGNING_SUBJECT: ${{ vars.AZURE_ARTIFACT_SIGNING_SUBJECT }}
+          INFLOW_WINDOWS_TARGET_ARCH: ${{ matrix.architecture }}
+        run: pnpm build:windows-external-metadata
+
+      - name: Verify signed artifacts
+        shell: pwsh
+        env:
+          EXPECTED_SUBJECT: ${{ vars.AZURE_ARTIFACT_SIGNING_SUBJECT }}
+        run: |
+          $files = @(
+            'dist/windows/payload/inflow.exe',
+            (Get-ChildItem dist/windows/inflow-*-windows-${{ matrix.architecture }}.msi).FullName
+          )
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+              throw "Invalid Authenticode signature for ${file}: $($signature.StatusMessage)"
+            }
+            if ($signature.SignerCertificate.Subject -ne $env:EXPECTED_SUBJECT) {
+              throw "Unexpected Authenticode subject for ${file}: $($signature.SignerCertificate.Subject)"
+            }
+            if ($null -eq $signature.TimeStamperCertificate) {
+              throw "Missing trusted timestamp for ${file}."
+            }
+          }
+
+      - name: Upload signed package
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-windows-signed-${{ matrix.architecture }}
+          path: |
+            dist/windows/inflow-*-windows-${{ matrix.architecture }}.msi
+            dist/windows/inflow-*-windows-${{ matrix.architecture }}.msi.sha256
+            dist/windows/manifest.json
+          if-no-files-found: error
+
+  aggregate-dry-run:
+    if: github.event_name == 'pull_request' || inputs.sign == false
+    needs: package-dry-run
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Download dry-run packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: inflow-windows-dry-run-*
+          path: dist/windows
+          merge-multiple: true
+
+      - name: Render combined release metadata
+        env:
+          INFLOW_WINDOWS_SIGNING_SUBJECT: CN=Unsigned InFlow Dry Run
+        run: pnpm build:windows-release-metadata
+
+      - name: Upload combined dry-run release
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-windows-dry-run-release
+          path: |
+            dist/windows/inflow-*-windows-*.msi
+            dist/windows/inflow-*-windows-*.msi.sha256
+            dist/windows/install.ps1
+            dist/windows/winget
+          if-no-files-found: error
+
+  aggregate-signed:
+    if: github.event_name == 'workflow_dispatch' && inputs.sign
+    needs: package-signed
+    runs-on: windows-2025
+    environment: windows-production
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Download signed packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: inflow-windows-signed-*
+          path: dist/windows
+          merge-multiple: true
+
+      - name: Render combined release metadata
+        env:
+          INFLOW_WINDOWS_SIGNING_SUBJECT: ${{ vars.AZURE_ARTIFACT_SIGNING_SUBJECT }}
+        run: pnpm build:windows-release-metadata
+
+      - name: Upload combined signed release
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-windows-signed-release
+          path: |
+            dist/windows/inflow-*-windows-*.msi
+            dist/windows/inflow-*-windows-*.msi.sha256
+            dist/windows/install.ps1
+            dist/windows/winget
+          if-no-files-found: error
+
+      - name: Upload release assets
+        if: inputs.publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $assets = @(
+            Get-ChildItem dist/windows/inflow-*-windows-*.msi
+            Get-ChildItem dist/windows/inflow-*-windows-*.msi.sha256
+          )
+          gh release upload $env:RELEASE_TAG `
+            $assets.FullName `
+            --clobber

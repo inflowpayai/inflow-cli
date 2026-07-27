@@ -259,4 +259,60 @@ describe('LocalVaultBackend', () => {
       secureStorageCode: 'secure_storage_corrupt',
     });
   });
+
+  it('returns a stable unlock salt and rejects a changed salt for wrapping-key authentication', async () => {
+    const firstSalt = await backend.unlockSalt();
+    expect(firstSalt).toHaveLength(16);
+    const wrappingKey = Buffer.alloc(32, 7);
+    await expect(backend.unlockWithWrappingKey(wrappingKey, firstSalt)).resolves.toMatchObject({
+      lockState: 'unlocked',
+    });
+    backend.lock();
+
+    expect(await backend.unlockSalt()).toEqual(firstSalt);
+    const changedSalt = Buffer.from(firstSalt);
+    changedSalt[0] = (changedSalt[0] ?? 0) ^ 1;
+    await expect(backend.unlockWithWrappingKey(wrappingKey, changedSalt)).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_corrupt',
+      message: 'Vault unlock salt changed.',
+    });
+  });
+
+  it('rotates wrapping keys without changing stored secret material', async () => {
+    const originalSalt = await backend.unlockSalt();
+    const originalWrappingKey = Buffer.alloc(32, 7);
+    await backend.unlockWithWrappingKey(originalWrappingKey, originalSalt);
+    const reference = backend.putSecret({
+      expectedKind: 'auth_refresh_token',
+      payload: Buffer.from('refresh-token'),
+    });
+    const nextSalt = Buffer.alloc(originalSalt.byteLength, 9);
+    const nextWrappingKey = Buffer.alloc(32, 8);
+
+    await backend.changeWrappingKey(originalWrappingKey, nextWrappingKey, nextSalt);
+    backend.lock();
+
+    await expect(backend.unlockWithWrappingKey(originalWrappingKey, originalSalt)).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_corrupt',
+    });
+    await expect(backend.unlockWithWrappingKey(nextWrappingKey, nextSalt)).resolves.toMatchObject({
+      lockState: 'unlocked',
+    });
+    expect(backend.getSecret({ expectedKind: 'auth_refresh_token', reference }).payload).toEqual(
+      Buffer.from('refresh-token'),
+    );
+  });
+
+  it('rejects non-object, array, and incorrectly typed policy settings', () => {
+    repository.initialize();
+    for (const policy of [
+      null,
+      [],
+      { idleTimeoutSeconds: 1.5, lockOnSleep: true },
+      { idleTimeoutSeconds: 1, lockOnSleep: 'yes' },
+    ]) {
+      repository.upsertSetting('vault-policy', policy);
+      expect(() => backend.getPolicy()).toThrow('The vault policy is malformed.');
+    }
+  });
 });

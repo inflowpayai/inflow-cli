@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   VAULT_IPC_MAX_MESSAGE_BYTES,
   VAULT_IPC_METHODS,
+  clearVaultIpcBytes,
   decodeVaultIpcFrame,
   encodeVaultIpcMessage,
   type VaultIpcMethod,
@@ -95,14 +96,57 @@ describe('vault IPC framing', () => {
     expect(() => decodeVaultIpcFrame(unknownVersionFrame)).toThrow('Vault IPC message is malformed.');
     expect(() => decodeVaultIpcFrame(malformedResponseFrame)).toThrow('Vault IPC response is malformed.');
   });
+
+  it('rejects malformed attachment framing and references', () => {
+    expect(() =>
+      encodeVaultIpcMessage({
+        id: 'large',
+        method: 'secret.put',
+        params: { expectedKind: 'inflow_api_key', payload: Buffer.alloc(VAULT_IPC_MAX_MESSAGE_BYTES) },
+        version: 1,
+      }),
+    ).toThrow('Vault IPC message is too large.');
+
+    expect(() => decodeVaultIpcFrame(rawFrame({}, { jsonLength: 100 }))).toThrow(
+      'Vault IPC frame attachments are malformed.',
+    );
+    expect(() => decodeVaultIpcFrame(rawFrame({}, { attachmentCount: 1 }))).toThrow(
+      'Vault IPC frame attachments are malformed.',
+    );
+    expect(() =>
+      decodeVaultIpcFrame(rawFrame({}, { attachment: Buffer.from([0, 0, 0, 4]), attachmentCount: 1 })),
+    ).toThrow('Vault IPC frame attachments are malformed.');
+    expect(() =>
+      decodeVaultIpcFrame(rawFrame({}, { attachment: Buffer.from([0, 0, 0, 1, 0]), attachmentCount: 1 })),
+    ).toThrow('Vault IPC attachment masking is malformed.');
+    expect(() => decodeVaultIpcFrame(rawFrame({}, { attachment: Buffer.from([0]) }))).toThrow(
+      'Vault IPC frame attachments are malformed.',
+    );
+    expect(() =>
+      decodeVaultIpcFrame(rawFrame({ id: 'req', params: { payload: { $inflowVaultAttachment: 0 } }, version: 1 })),
+    ).toThrow('Vault IPC attachment reference is malformed.');
+  });
+
+  it('clears nested mutable IPC byte values', () => {
+    const first = Buffer.from('first');
+    const second = Buffer.from('second');
+    clearVaultIpcBytes({ nested: [first, { second }], scalar: 'unchanged' });
+    expect(first).toEqual(Buffer.alloc(5));
+    expect(second).toEqual(Buffer.alloc(6));
+  });
 });
 
-function rawFrame(value: unknown): Buffer {
+function rawFrame(
+  value: unknown,
+  options: { attachment?: Buffer; attachmentCount?: number; jsonLength?: number } = {},
+): Buffer {
   const json = Buffer.from(JSON.stringify(value), 'utf8');
-  const frame = Buffer.alloc(12 + json.byteLength);
-  frame.writeUInt32BE(8 + json.byteLength, 0);
-  frame.writeUInt32BE(json.byteLength, 4);
-  frame.writeUInt32BE(0, 8);
+  const attachment = options.attachment ?? Buffer.alloc(0);
+  const frame = Buffer.alloc(12 + json.byteLength + attachment.byteLength);
+  frame.writeUInt32BE(8 + json.byteLength + attachment.byteLength, 0);
+  frame.writeUInt32BE(options.jsonLength ?? json.byteLength, 4);
+  frame.writeUInt32BE(options.attachmentCount ?? 0, 8);
   json.copy(frame, 12);
+  attachment.copy(frame, 12 + json.byteLength);
   return frame;
 }

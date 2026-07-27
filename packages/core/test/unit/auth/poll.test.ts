@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { pollAuthStatus } from '../../../src/auth/poll.js';
+import { __testing, pollAuthStatus } from '../../../src/auth/poll.js';
+import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import type { IAuthResource } from '../../../src/resources/interfaces.js';
 import type { AuthTokens } from '../../../src/types/index.js';
 import { MemoryStorage } from '../../../src/utils/storage.js';
@@ -36,6 +37,24 @@ async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
 }
 
 describe('pollAuthStatus', () => {
+  it('uses a fallback only for an exact missing-vault-secret error', () => {
+    expect(
+      __testing.readStorageValue(() => {
+        throw new SecureStorageError('secure_storage_secret_missing', 'A referenced vault secret is missing.');
+      }, null),
+    ).toBeNull();
+    expect(() =>
+      __testing.readStorageValue(() => {
+        throw new SecureStorageError('secure_storage_secret_missing', 'A different secret is missing.');
+      }, null),
+    ).toThrow('A different secret is missing.');
+    expect(() =>
+      __testing.readStorageValue(() => {
+        throw new Error('storage failed');
+      }, null),
+    ).toThrow('storage failed');
+  });
+
   it('yields authenticated:true once the in-flight device flow succeeds', async () => {
     const storage = new MemoryStorage();
     storage.setPendingDeviceAuth({

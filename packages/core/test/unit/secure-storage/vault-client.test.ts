@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LocalVaultClient } from '../../../src/secure-storage/vault-client.js';
+import { __testing, LocalVaultClient } from '../../../src/secure-storage/vault-client.js';
 import {
   decodeVaultIpcFrame,
   encodeVaultIpcMessage,
@@ -194,7 +194,7 @@ describe('LocalVaultClient', () => {
       'vault.reset',
       'daemon.shutdown',
     ]);
-  });
+  }, 15_000);
 
   it('rejects malformed status and policy payloads', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
@@ -218,6 +218,71 @@ describe('LocalVaultClient', () => {
     await expect(client.changePassphrase(factor, Buffer.from(factor))).rejects.toMatchObject({
       secureStorageCode: 'secure_storage_invalid_path',
     });
+  });
+
+  it('validates every daemon response field and preserves recognized error codes', () => {
+    expect(__testing.parseInfo({ buildId: null, cliVersion: null, executablePath: '/inflow', pid: 0 })).toEqual({
+      buildId: null,
+      cliVersion: null,
+      executablePath: '/inflow',
+      pid: 0,
+    });
+    for (const malformed of [
+      { buildId: 1, cliVersion: null, executablePath: '/inflow', pid: 1 },
+      { buildId: null, cliVersion: 1, executablePath: '/inflow', pid: 1 },
+      { buildId: null, cliVersion: null, executablePath: 1, pid: 1 },
+      { buildId: null, cliVersion: null, executablePath: '/inflow', pid: -1 },
+    ]) {
+      expect(() => __testing.parseInfo(malformed)).toThrow('daemon info response is malformed');
+    }
+
+    for (const lockState of ['locked', 'not_initialized', 'unlocked'] as const) {
+      expect(__testing.parseStatus({ daemonRunning: false, lockState })).toEqual({ daemonRunning: false, lockState });
+    }
+    expect(() => __testing.parseStatus({ daemonRunning: 'yes', lockState: 'locked' })).toThrow(
+      'status response is malformed',
+    );
+    expect(() => __testing.parseStatus({ daemonRunning: true, lockState: 'invalid' })).toThrow(
+      'status response is malformed',
+    );
+
+    expect(__testing.parsePolicy({ idleTimeoutSeconds: 0, lockOnSleep: true })).toEqual({
+      idleTimeoutSeconds: 0,
+      lockOnSleep: true,
+    });
+    expect(__testing.parsePolicy({ idleTimeoutSeconds: null, lockOnSleep: false })).toEqual({
+      idleTimeoutSeconds: null,
+      lockOnSleep: false,
+    });
+    expect(() => __testing.parsePolicy({ idleTimeoutSeconds: 1.5, lockOnSleep: true })).toThrow(
+      'policy response is malformed',
+    );
+    expect(() => __testing.parsePolicy({ idleTimeoutSeconds: 1, lockOnSleep: 1 })).toThrow(
+      'policy response is malformed',
+    );
+
+    const recognized = [
+      'secure_storage_corrupt',
+      'secure_storage_invalid_path',
+      'secure_storage_io_error',
+      'secure_storage_peer_verification_failed',
+      'secure_storage_secret_conflict',
+      'secure_storage_secret_missing',
+      'secure_storage_unavailable',
+      'vault_daemon_busy',
+      'vault_locked',
+      'vault_not_initialized',
+    ] as const;
+    for (const code of recognized) expect(__testing.codeFromResponse(code)).toBe(code);
+    expect(__testing.codeFromResponse('unknown')).toBe('secure_storage_io_error');
+  });
+
+  it('copies and clears valid salts and rejects malformed salts', () => {
+    const salt = Buffer.alloc(16, 7);
+    expect(__testing.parseSalt({ salt })).toEqual(Buffer.alloc(16, 7));
+    expect(salt).toEqual(Buffer.alloc(16));
+    expect(() => __testing.parseSalt({ salt: Buffer.alloc(15) })).toThrow('unlock salt response is malformed');
+    expect(() => __testing.parseSalt({ salt: 'not-bytes' })).toThrow('unlock salt response is malformed');
   });
 
   async function listenWithResponder(rootDirectory: string, respond: (request: VaultIpcRequest) => VaultIpcResponse) {

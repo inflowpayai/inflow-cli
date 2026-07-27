@@ -40,12 +40,16 @@ InFlow runs as a **standalone CLI** or an **MCP server**.
 - `inflow --skill` - print this playbook (no frontmatter) to stdout. Use it to paste into the system-prompt field of an MCP host that doesn't natively load skills: `inflow --skill | pbcopy`.
 - Default output is `toon`. Override with `--format <fmt>`; for programmatic parsing prefer `json` (single document) or `jsonl` (line-delimited).
 - Multi-step flows return `_next.command` - run it to continue.
-- `--auth <path>` overrides the credentials file location.
+- `--auth <path>` identifies a legacy plaintext credential file for deletion; it is not a credential backend.
 - `--api-key <key>` or `INFLOW_API_KEY=<key>` is an alternative to device-flow auth.
 
 ## Authenticate
 
 Authentication is shared by both protocols - do it once, before either payment flow. **Don't start a payment until the user is authenticated.**
+
+Credential-bearing commands require the encrypted local vault. If the CLI reports that the vault is uninitialized or
+locked, tell the user to run `inflow vault unlock` themselves in a terminal, then retry. Never ask for or accept the
+vault PIN or passphrase through chat, an MCP tool, a command-line flag, or an environment variable.
 
 Check the current state first - the user may already be logged in:
 

@@ -7,6 +7,24 @@
       "inputs": ["src/**", "tsconfig.json", "tsup.config.ts", "package.json"],
       "outputs": ["dist/**"]
     },
+    "@inflowpayai/inflow#build": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "src/**",
+        "tsconfig.json",
+        "tsup.config.ts",
+        "tsup.standalone.config.ts",
+        "package.json",
+        "../../package.json",
+        "../../pnpm-lock.yaml",
+        "../../patches/incur.patch",
+        "../../skills/**",
+        "../core/package.json",
+        "../core/native/**",
+        "../core/src/**"
+      ],
+      "outputs": ["dist/**"]
+    },
     "dev": {
       "cache": false,
       "persistent": true

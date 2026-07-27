@@ -12,8 +12,25 @@ const requireFromCore = createRequire(join(repoRoot, 'packages/core/package.json
 const args = new Set(process.argv.slice(2));
 const release = args.has('--release');
 const signedDebug = args.has('--signed-debug');
+const prepareExternalSigning = args.has('--prepare-external-signing');
+const buildMsiFromPreparedPayload = args.has('--build-msi-from-prepared-payload');
+const buildMsiFromSignedPayload = args.has('--build-msi-from-signed-payload');
+const writeUnsignedReleaseMetadata = args.has('--write-unsigned-release-metadata');
+const writeSignedReleaseMetadata = args.has('--write-signed-release-metadata');
+const externalSigningPhases = [
+  prepareExternalSigning,
+  buildMsiFromPreparedPayload,
+  buildMsiFromSignedPayload,
+  writeUnsignedReleaseMetadata,
+  writeSignedReleaseMetadata,
+].filter(Boolean);
 const version = packageVersion();
-const architecture = windowsArchitecture();
+const architecture = windowsArchitecture(
+  buildMsiFromPreparedPayload ||
+    buildMsiFromSignedPayload ||
+    writeUnsignedReleaseMetadata ||
+    writeSignedReleaseMetadata,
+);
 const artifactRoot = resolve(process.env.INFLOW_WINDOWS_ARTIFACT_DIR ?? join(repoRoot, 'dist/windows'));
 const payloadRoot = join(artifactRoot, 'payload');
 const runtimePath = join(payloadRoot, 'runtime');
@@ -31,54 +48,83 @@ if (!isAtLeastNodeVersion(process.versions.node, 24, 15, 0)) {
   throw new Error(`Windows packaging requires Node 24.15.0 or newer; current Node is ${process.versions.node}.`);
 }
 if (release && signedDebug) throw new Error('Choose either release signing or development signing.');
+if (externalSigningPhases.length > 1 || (externalSigningPhases.length === 1 && (release || signedDebug))) {
+  throw new Error('Choose exactly one external-signing phase, release signing, or development signing.');
+}
 
-rmSync(artifactRoot, { force: true, recursive: true });
-mkdirSync(buildRoot, { recursive: true });
-mkdirSync(runtimePath, { recursive: true });
+if (buildMsiFromPreparedPayload || buildMsiFromSignedPayload) {
+  requirePreparedPayload();
+  if (buildMsiFromSignedPayload) verifyAuthenticode(executablePath);
+  buildMsi();
+  const payloadState = buildMsiFromSignedPayload ? 'signed' : 'prepared';
+  process.stdout.write(`Packaged unsigned ${msiPath} from the ${payloadState} executable payload.\n`);
+} else if (writeUnsignedReleaseMetadata || writeSignedReleaseMetadata) {
+  requirePreparedPayload();
+  if (writeSignedReleaseMetadata) {
+    verifyAuthenticode(executablePath);
+    verifyAuthenticode(msiPath);
+  } else if (!existsSync(msiPath)) {
+    throw new Error(`Windows installer is unavailable: ${msiPath}`);
+  }
+  writeReleaseMetadata(writeSignedReleaseMetadata);
+  const signatureState = writeSignedReleaseMetadata ? 'signed' : 'unsigned';
+  process.stdout.write(`Rendered ${signatureState} Windows release metadata for ${msiPath}.\n`);
+} else {
+  buildExecutablePayload();
+  if (prepareExternalSigning) {
+    process.stdout.write(`Prepared unsigned ${executablePath} for external signing.\n`);
+  } else {
+    sign(executablePath);
+    buildMsi();
+    sign(msiPath);
+    writeReleaseMetadata(release || signedDebug);
+    process.stdout.write(`Packaged ${msiPath}\n`);
+  }
+}
 
-const tsupCli = join(repoRoot, 'node_modules/tsup/dist/cli-default.js');
-run(process.execPath, [tsupCli], { cwd: join(repoRoot, 'packages/core') });
-buildPackagedNodeImportLibrary();
-run(process.execPath, ['scripts/build-vault-peer-native.mjs'], {
-  env: { INFLOW_NODE_LIBRARY: packagedNodeLibraryPath },
-});
-verifyPackagedNativeImports();
-run(process.execPath, [tsupCli, '--config', 'tsup.standalone.config.ts'], {
-  cwd: join(repoRoot, 'packages/cli'),
-});
-copyArgon2Runtime();
-copyMcpRuntime();
-copyVaultPeerRuntime();
-writeSeaMain();
-writeFileSync(
-  seaConfigPath,
-  `${JSON.stringify(
-    {
-      disableExperimentalSEAWarning: true,
-      main: seaMainPath,
-      output: seaBlobPath,
-    },
-    null,
-    2,
-  )}\n`,
-);
-run(process.execPath, ['--experimental-sea-config', seaConfigPath]);
-copyFileSync(process.execPath, executablePath);
-removeExistingSignature(executablePath);
-run(process.execPath, [
-  resolvePostject(),
-  executablePath,
-  'NODE_SEA_BLOB',
-  seaBlobPath,
-  '--sentinel-fuse',
-  'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2',
-]);
-sign(executablePath);
-buildMsi();
-sign(msiPath);
-writeReleaseMetadata();
+function buildExecutablePayload() {
+  rmSync(artifactRoot, { force: true, recursive: true });
+  mkdirSync(buildRoot, { recursive: true });
+  mkdirSync(runtimePath, { recursive: true });
 
-process.stdout.write(`Packaged ${msiPath}\n`);
+  const tsupCli = join(repoRoot, 'node_modules/tsup/dist/cli-default.js');
+  run(process.execPath, [tsupCli], { cwd: join(repoRoot, 'packages/core') });
+  buildPackagedNodeImportLibrary();
+  run(process.execPath, ['scripts/build-vault-peer-native.mjs'], {
+    env: { INFLOW_NODE_LIBRARY: packagedNodeLibraryPath },
+  });
+  verifyPackagedNativeImports();
+  run(process.execPath, [tsupCli, '--config', 'tsup.standalone.config.ts'], {
+    cwd: join(repoRoot, 'packages/cli'),
+  });
+  copyArgon2Runtime();
+  copyMcpRuntime();
+  copyVaultPeerRuntime();
+  writeSeaMain();
+  writeFileSync(
+    seaConfigPath,
+    `${JSON.stringify(
+      {
+        disableExperimentalSEAWarning: true,
+        main: seaMainPath,
+        output: seaBlobPath,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  run(process.execPath, ['--experimental-sea-config', seaConfigPath]);
+  copyFileSync(process.execPath, executablePath);
+  removeExistingSignature(executablePath);
+  run(process.execPath, [
+    resolvePostject(),
+    executablePath,
+    'NODE_SEA_BLOB',
+    seaBlobPath,
+    '--sentinel-fuse',
+    'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2',
+  ]);
+}
 
 function buildPackagedNodeImportLibrary() {
   run('lib.exe', [
@@ -200,39 +246,20 @@ function sign(path) {
   run(signtool, ['verify', '/pa', '/v', path]);
 }
 
+function verifyAuthenticode(path) {
+  if (!existsSync(path)) throw new Error(`Signed Windows artifact is unavailable: ${path}`);
+  const signtool = process.env.INFLOW_SIGNTOOL_PATH ?? 'signtool.exe';
+  run(signtool, ['verify', '/pa', '/v', path]);
+}
+
 function removeExistingSignature(path) {
   const signtool = process.env.INFLOW_SIGNTOOL_PATH ?? 'signtool.exe';
   run(signtool, ['remove', '/s', path]);
 }
 
-function writeReleaseMetadata() {
+function writeReleaseMetadata(signed) {
   const checksum = sha256(msiPath);
-  const publisher = process.env.INFLOW_WINDOWS_SIGNING_SUBJECT ?? '';
   writeFileSync(`${msiPath}.sha256`, `${checksum}  ${msiPath.split(/[\\/]/u).at(-1)}\n`);
-  renderTemplate('packaging/windows/install.ps1.template', 'install.ps1', checksum, checksum.toUpperCase(), publisher);
-  const wingetRoot = join(artifactRoot, 'winget');
-  mkdirSync(wingetRoot, { recursive: true });
-  renderTemplate(
-    'packaging/windows/winget/installer.yaml.template',
-    'winget/InFlowPayAI.InFlow.installer.yaml',
-    checksum,
-    checksum.toUpperCase(),
-    publisher,
-  );
-  renderTemplate(
-    'packaging/windows/winget/locale.en-US.yaml.template',
-    'winget/InFlowPayAI.InFlow.locale.en-US.yaml',
-    checksum,
-    checksum.toUpperCase(),
-    publisher,
-  );
-  renderTemplate(
-    'packaging/windows/winget/version.yaml.template',
-    'winget/InFlowPayAI.InFlow.yaml',
-    checksum,
-    checksum.toUpperCase(),
-    publisher,
-  );
   writeFileSync(
     join(artifactRoot, 'manifest.json'),
     `${JSON.stringify(
@@ -242,22 +269,13 @@ function writeReleaseMetadata() {
         node: process.versions.node,
         platform: process.platform,
         sha256: checksum,
-        signed: release || signedDebug,
+        signed,
         version,
       },
       null,
       2,
     )}\n`,
   );
-}
-
-function renderTemplate(source, destination, checksum, uppercaseChecksum, publisher) {
-  const content = readFileSync(join(repoRoot, source), 'utf8')
-    .replaceAll('__INFLOW_VERSION__', version)
-    .replaceAll('__INFLOW_MSI_SHA256__', checksum)
-    .replaceAll('__INFLOW_MSI_SHA256_UPPER__', uppercaseChecksum)
-    .replaceAll('__INFLOW_WINDOWS_PUBLISHER__', publisher);
-  writeFileSync(join(artifactRoot, destination), content);
 }
 
 function runtimeFiles(root = runtimePath) {
@@ -327,9 +345,18 @@ function packageVersion() {
   return manifest.version;
 }
 
-function windowsArchitecture() {
+function windowsArchitecture(allowTargetOverride) {
+  const target = allowTargetOverride ? process.env.INFLOW_WINDOWS_TARGET_ARCH : undefined;
+  if (target === 'x64' || target === 'arm64') return target;
+  if (target !== undefined) throw new Error(`Unsupported Windows target architecture: ${target}.`);
   if (process.arch === 'x64' || process.arch === 'arm64') return process.arch;
   throw new Error(`Unsupported Windows architecture: ${process.arch}.`);
+}
+
+function requirePreparedPayload() {
+  if (!existsSync(executablePath) || !existsSync(runtimePath)) {
+    throw new Error(`Prepared Windows payload is unavailable under ${payloadRoot}.`);
+  }
 }
 
 function sha256(path) {

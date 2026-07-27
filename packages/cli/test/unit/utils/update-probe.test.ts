@@ -6,11 +6,14 @@ import {
   makeFrozenUpdateProbe,
 } from '../../../src/utils/update-probe.js';
 
-function githubFetch(version: string): { calls: { headers: Headers; url: string }[]; fetch: typeof globalThis.fetch } {
-  const calls: { headers: Headers; url: string }[] = [];
+function githubFetch(version: string): {
+  calls: { headers: Headers; signal: AbortSignal | null | undefined; url: string }[];
+  fetch: typeof globalThis.fetch;
+} {
+  const calls: { headers: Headers; signal: AbortSignal | null | undefined; url: string }[] = [];
   const fetch = ((input, init) => {
     const url = typeof input === 'string' ? input : (input as URL).toString();
-    calls.push({ headers: new Headers(init?.headers), url });
+    calls.push({ headers: new Headers(init?.headers), signal: init?.signal, url });
     return Promise.resolve(Response.json({ tag_name: `v${version}` }));
   }) as typeof globalThis.fetch;
   return { calls, fetch };
@@ -50,6 +53,7 @@ describe('makeBackgroundUpdateProbe', () => {
     expect(calls[0]?.url).toBe('https://api.github.com/repos/inflowpayai/inflow-cli/releases/latest');
     expect(calls[0]?.headers.get('Accept')).toBe('application/vnd.github+json');
     expect(calls[0]?.headers.get('User-Agent')).toBe('inflow/1.0.0');
+    expect(calls[0]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('returns undefined when the GitHub release version equals the current version', async () => {
@@ -101,7 +105,13 @@ describe('makeFrozenUpdateProbe', () => {
 });
 
 describe('formatUpdateNotice', () => {
-  it('renders one human-facing line', () => {
-    expect(formatUpdateNotice({ current: '0.5.0', latest: '0.5.1' })).toBe('A newer InFlow CLI is available: 0.5.1.\n');
+  it('renders the available version and signed-binary upgrade guidance', () => {
+    expect(formatUpdateNotice({ current: '0.5.0', latest: '0.5.1' })).toBe(
+      [
+        'A newer InFlow CLI is available: 0.5.1.',
+        'Upgrade with Homebrew or rerun the hosted installer: https://inflowcli.ai/',
+        '',
+      ].join('\n'),
+    );
   });
 });

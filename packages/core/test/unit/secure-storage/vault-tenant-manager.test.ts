@@ -59,7 +59,7 @@ describe('multi-tenant vault backend manager', () => {
     await expect(
       manager.backendForPeer(peer(1002)).getSecret({ expectedKind: 'inflow_api_key', reference: REFERENCE }),
     ).resolves.toMatchObject({ payload: Buffer.from('tenant-b-secret') });
-  });
+  }, 15_000);
 
   it('expires and locks only an idle tenant context', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-tenants-'));

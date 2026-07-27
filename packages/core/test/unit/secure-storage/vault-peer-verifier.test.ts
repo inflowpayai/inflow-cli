@@ -11,7 +11,9 @@ import {
   shouldRequireVaultPeerVerification,
   socketFileDescriptor,
   type VaultSocketPeer,
+  type VaultPeerVerificationConfig,
   verifyVaultNativeModule,
+  verifyTransferredVaultSocketPeerWithDependencies,
 } from '../../../src/secure-storage/vault-peer-verifier.js';
 
 describe('vault peer verifier', () => {
@@ -202,6 +204,90 @@ describe('vault peer verifier', () => {
         }),
       )(socketWithFd(42)),
     ).toThrow(SecureStorageError);
+  });
+
+  it('binds broker-transferred sockets to the attested executable, process, and user', () => {
+    const config: VaultPeerVerificationConfig = {
+      expectedExecutablePath: '/opt/inflow/bin/inflow',
+      expectedTeamId: '',
+      nativeModulePath: '/opt/inflow/lib/inflow/native/vault_peer_linux.node',
+      requireSameUser: false,
+      requireSignature: false,
+    };
+    const attested = { path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 };
+    const transferredDependencies = (credentials: { pid: number; uid: number }) => ({
+      loadNativeModule: () => ({
+        peerCredentials: () => credentials,
+        peerInfo: () => attested,
+      }),
+      realpath: (path: string) => path,
+    });
+
+    expect(
+      verifyTransferredVaultSocketPeerWithDependencies(
+        socketWithFd(42),
+        attested,
+        config,
+        transferredDependencies({ pid: 123, uid: 1000 }),
+      ),
+    ).toEqual(attested);
+    expect(() =>
+      verifyTransferredVaultSocketPeerWithDependencies(
+        socketWithFd(42),
+        { ...attested, path: '/tmp/inflow' },
+        config,
+        transferredDependencies({ pid: 123, uid: 1000 }),
+      ),
+    ).toThrow(SecureStorageError);
+    expect(() =>
+      verifyTransferredVaultSocketPeerWithDependencies(
+        socketWithFd(42),
+        attested,
+        config,
+        transferredDependencies({ pid: 124, uid: 1000 }),
+      ),
+    ).toThrow(SecureStorageError);
+    expect(() =>
+      verifyTransferredVaultSocketPeerWithDependencies(
+        socketWithFd(42),
+        attested,
+        config,
+        transferredDependencies({ pid: 123, uid: 1001 }),
+      ),
+    ).toThrow(SecureStorageError);
+  });
+
+  it('rejects invalid explicit user identifiers and unavailable current-user identities', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    for (const expectedUserId of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() =>
+        createVaultSocketPeerVerifier(
+          {
+            expectedExecutablePath: '/opt/inflow/bin/inflow',
+            expectedUserId,
+            nativeModulePath: '/native/vault_peer_linux.node',
+          },
+          dependencies({
+            currentUserId: 1000,
+            peer: { path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 },
+            realpaths: new Map([['/opt/inflow/bin/inflow', '/opt/inflow/bin/inflow']]),
+          }),
+        ),
+      ).toThrow('configuration is invalid');
+    }
+
+    const verifier = createVaultSocketPeerVerifier(
+      {
+        expectedExecutablePath: '/opt/inflow/bin/inflow',
+        nativeModulePath: '/native/vault_peer_linux.node',
+      },
+      dependencies({
+        currentUserId: undefined,
+        peer: { path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 },
+        realpaths: new Map([['/opt/inflow/bin/inflow', '/opt/inflow/bin/inflow']]),
+      }),
+    );
+    expect(() => verifier(socketWithFd(42))).toThrow(SecureStorageError);
   });
 
   it('fails closed when a packaged executable has no embedded native module digest', () => {

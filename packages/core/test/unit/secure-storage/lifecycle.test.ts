@@ -226,4 +226,33 @@ describe('SecureSecretLifecycleCoordinator', () => {
     syncCoordinator.recoverInterruptedWork();
     expect(repository.listSecretLifecycle('deleting')).toEqual([]);
   });
+
+  it('rejects malformed asynchronous and synchronous reference manifests', async () => {
+    const manifestReference = { purpose: 'manifest', reference: 'fixed-secret-references' };
+    await store.create(manifestReference, Buffer.from('{"not":"an array"}'));
+    await expect(manifest.read()).rejects.toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
+
+    await store.delete(manifestReference);
+    await store.create(manifestReference, Buffer.from('[null]'));
+    await expect(manifest.read()).rejects.toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
+
+    const syncStore = new SyncMemorySecretStore();
+    const syncManifest = new SyncSecretReferenceManifestStore(syncStore);
+    syncStore.create(manifestReference, Buffer.from('not json'));
+    expect(() => syncManifest.read()).toThrow('manifest is malformed');
+
+    syncStore.delete(manifestReference);
+    syncStore.create(manifestReference, Buffer.from('[{"purpose":1,"reference":"value"}]'));
+    expect(() => syncManifest.read()).toThrow('malformed entry');
+  });
+
+  it('accepts a missing manifest and rejects empty secret references', async () => {
+    await expect(manifest.read()).resolves.toEqual([]);
+    expect(() =>
+      new SyncMemorySecretStore().create({ purpose: '', reference: 'value' }, Buffer.from('secret')),
+    ).toThrow('Secret references require a purpose and opaque reference.');
+    expect(() => store.create({ purpose: 'value', reference: '' }, Buffer.from('secret'))).toThrow(
+      'Secret references require a purpose and opaque reference.',
+    );
+  });
 });
