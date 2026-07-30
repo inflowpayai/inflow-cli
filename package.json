@@ -1,7 +1,7 @@
 {
   "name": "inflow",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.9.1",
   "type": "module",
   "description": "InFlow — agentic MPP / x402 payments from your machine.",
   "repository": {
@@ -20,6 +20,7 @@
   "scripts": {
     "cli": "node packages/cli/dist/cli.js",
     "build": "turbo run build && node scripts/align-skill-version.js && node scripts/publish-skills.mjs",
+    "smoke": "node scripts/smoke-package.mjs",
     "verify": "node scripts/clean-bundle-artifacts.mjs && pnpm format && pnpm typecheck && pnpm lint && pnpm test && pnpm typedoc && pnpm build",
     "dev": "turbo run dev --parallel",
     "test": "turbo run test",

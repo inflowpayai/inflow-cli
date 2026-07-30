@@ -53,6 +53,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Smoke packaged CLI
+        run: pnpm smoke
+
       - name: Publish dry-run
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.node == 22
         run: pnpm --filter @inflowpayai/inflow publish --dry-run --no-git-checks

@@ -63,6 +63,7 @@ export default defineConfig({
   },
   entry: { cli: 'src/cli.tsx' },
   external: ['update-notifier'],
+  noExternal: ['incur'],
   format: ['esm'],
   outDir: 'dist',
   platform: 'node',
