@@ -1,5 +1,11 @@
 # @inflowpayai/inflow
 
+## 0.9.1
+
+### Patch Changes
+
+- Bundle the patched Incur runtime into the npm executable and smoke-test the packed package from a clean installation.
+
 ## 0.9.0
 
 ### Minor Changes
