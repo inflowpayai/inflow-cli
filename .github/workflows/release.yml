@@ -3,6 +3,7 @@ name: release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: release
@@ -15,6 +16,7 @@ permissions:
 
 jobs:
   release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -71,3 +73,47 @@ jobs:
             fi
             echo "ok: $name@$version has attestations"
           done
+
+  maintenance-release:
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/release/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Upgrade npm for Trusted Publishing
+        run: npm install --global npm@^11.5.1
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Typedoc
+        run: pnpm typedoc
+
+      - name: Build
+        run: pnpm build
+
+      - name: Smoke packaged CLI
+        run: pnpm smoke
+
+      - name: Publish maintenance release
+        run: pnpm release
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
