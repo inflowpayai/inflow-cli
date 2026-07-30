@@ -2,16 +2,8 @@
 /**
  * Revert the local-inflow-node overrides written by `link-local-inflow-node.mjs`.
  *
- * Asymmetry worth understanding: `link` redirects all four buyer-side SDK
- * packages to a local `inflow-node` checkout, but only some of them are
- * published to npm. `unlink` can only revert a package to the registry if a
- * registry version actually exists — so it reverts the PUBLISHED packages and
- * deliberately KEEPS the UNPUBLISHED ones linked. Removing an unpublished
- * package's override would leave an unresolvable spec and make `pnpm install`
- * fail with ERR_PNPM_FETCH_404.
- *
- * When an UNPUBLISHED package later ships to npm, move it from `UNPUBLISHED`
- * to `PUBLISHED` below and `unlink` will start reverting it too.
+ * `link` redirects the buyer-side SDK packages and AEP dependency closure to local checkouts. `unlink` removes those
+ * overrides after the corresponding packages are available from npm.
  *
  * Also scrubs stray override entries in `package.json` (top-level `overrides` or `pnpm.overrides`) if present.
  */
@@ -31,10 +23,15 @@ const PUBLISHED = [
   '@inflowpayai/x402-buyer',
   '@inflowpayai/mpp',
   '@inflowpayai/mpp-buyer',
+  '@aep-foundation/agent',
+  '@aep-foundation/core',
+  '@aep-foundation/express',
+  '@aep-foundation/platform',
+  '@aep-foundation/service',
 ];
-// Packages not yet on npm — only resolvable via the local link, so `unlink` keeps them linked.
 const UNPUBLISHED = [];
 const LINKED = [...PUBLISHED, ...UNPUBLISHED];
+const INFLOW_NODE_AEP_LINKED = ['@aep-foundation/core', '@aep-foundation/express', '@aep-foundation/service'];
 
 const BEGIN_MARK = '# >>> link-local-inflow-node:overrides';
 const END_MARK = '# <<< link-local-inflow-node:overrides';
@@ -54,10 +51,41 @@ function run(cmd, args, opts = {}) {
   });
 }
 
+function resolveInflowNodePath() {
+  const fromEnv = process.env.INFLOW_NODE_PATH;
+  return fromEnv === undefined || fromEnv.length === 0
+    ? path.resolve(REPO_ROOT, '..', 'inflow-node')
+    : path.resolve(fromEnv);
+}
+
+async function removeInflowNodeOverrides() {
+  const inflowNodePath = resolveInflowNodePath();
+  const workspaceYaml = path.join(inflowNodePath, 'pnpm-workspace.yaml');
+  const existing = await fs.readFile(workspaceYaml, 'utf-8');
+  const blockRe = new RegExp(`\\n?${escapeRe(BEGIN_MARK)}[\\s\\S]*?${escapeRe(END_MARK)}\\n?`);
+  const next = existing.replace(blockRe, '\n').replace(/\n{3,}/g, '\n\n');
+  if (next !== existing) await fs.writeFile(workspaceYaml, next, 'utf-8');
+  const packageJson = path.join(inflowNodePath, 'package.json');
+  const manifest = JSON.parse(await fs.readFile(packageJson, 'utf-8'));
+  let packageChanged = false;
+  for (const dependencyKind of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+    const dependencies = manifest[dependencyKind];
+    if (dependencies === undefined) continue;
+    for (const name of INFLOW_NODE_AEP_LINKED) {
+      if (typeof dependencies[name] === 'string' && dependencies[name].startsWith('link:')) {
+        delete dependencies[name];
+        packageChanged = true;
+      }
+    }
+    if (Object.keys(dependencies).length === 0) delete manifest[dependencyKind];
+  }
+  if (packageChanged) await fs.writeFile(packageJson, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+  return next !== existing || packageChanged;
+}
+
 /**
- * Rewrite the managed overrides block, dropping entries for PUBLISHED packages
- * (reverted to registry) while preserving entries for UNPUBLISHED packages
- * (kept linked). Removes the block entirely when nothing is left to keep.
+ * Rewrite the managed overrides block, dropping entries for PUBLISHED packages (reverted to registry) while preserving
+ * entries for UNPUBLISHED packages (kept linked). Removes the block entirely when nothing is left to keep.
  */
 async function revertWorkspaceYaml() {
   const existing = await fs.readFile(WORKSPACE_YAML, 'utf-8');
@@ -123,6 +151,7 @@ async function stripFromPackageJson() {
 
 const { changed: yamlChanged, reverted, kept } = await revertWorkspaceYaml();
 const pkgChanged = await stripFromPackageJson();
+const inflowNodeChanged = await removeInflowNodeOverrides();
 
 if (!yamlChanged && !pkgChanged) {
   process.stdout.write('unlink-local-inflow-node: no published-package link overrides present; nothing to revert.\n');
@@ -138,4 +167,5 @@ if (kept.length > 0) {
 }
 
 await run('pnpm', ['install']);
+if (inflowNodeChanged) await run('pnpm', ['install'], { cwd: resolveInflowNodePath() });
 process.stdout.write('unlink-local-inflow-node: done.\n');

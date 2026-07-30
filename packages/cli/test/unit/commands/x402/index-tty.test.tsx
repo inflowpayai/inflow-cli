@@ -173,6 +173,9 @@ describe('x402 TTY runners (renderInkUntilExit paths)', () => {
     fetchSpy.mockResolvedValueOnce(
       new Response('payment required', { status: 402, headers: { 'PAYMENT-REQUIRED': header } }),
     );
+    fetchSpy.mockResolvedValueOnce(
+      new Response('payment required', { status: 402, headers: { 'PAYMENT-REQUIRED': header } }),
+    );
     fetchSpy.mockResolvedValueOnce(new Response('still payment required', { status: 402 }));
     const { inflow, storage } = authedResources(makeClient());
     const ctx = ttyCtx({ url: 'https://seller/api' }, PAY_OPTIONS);

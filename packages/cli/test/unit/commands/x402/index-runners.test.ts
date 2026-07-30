@@ -1,5 +1,5 @@
 import type { AuthStorage } from '@inflowpayai/inflow-core';
-import { Inflow, MemoryStorage } from '@inflowpayai/inflow-core';
+import { Inflow, InflowApiError, MemoryStorage } from '@inflowpayai/inflow-core';
 import {
   X402AdapterRoutingError,
   X402ApprovalFailedError,
@@ -13,8 +13,15 @@ import type { PaymentRequired } from '@x402/core/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing } from '../../../../src/commands/x402/index.js';
 
-const { runPayCommand, runStatusCommand, runCancelCommand, runDecodeCommand, runSupportedCommand, runInspectCommand } =
-  __testing;
+const {
+  runPayCommand,
+  runFetchCommand,
+  runStatusCommand,
+  runCancelCommand,
+  runDecodeCommand,
+  runSupportedCommand,
+  runInspectCommand,
+} = __testing;
 
 function makePaymentRequired(): PaymentRequired {
   return {
@@ -259,10 +266,15 @@ describe('runPayCommand (agent mode)', () => {
     const { inflow, storage } = authedResources(makeClient());
     const yields = await drain(runPayCommand(ctx, inflow, storage, 'https://api.inflowpay.ai'));
     expect(yields).toHaveLength(1);
-    const payload = yields[0] as { transaction_id: string; approval_id: string; _next?: { command: string } };
+    const payload = yields[0] as {
+      transaction_id: string;
+      approval_id: string;
+      _next?: { command: string; tool: string };
+    };
     expect(payload.transaction_id).toBe('txn_1');
     expect(payload.approval_id).toBe('appr_1');
-    expect(payload._next?.command).toContain('x402 status txn_1');
+    expect(payload._next?.command).toContain('x402 fetch txn_1 https://seller/api');
+    expect(payload._next?.tool).toBe('x402_fetch');
   });
 
   it('completes the full pay flow (probe → prepare → await → replay) when interval > 0', async () => {
@@ -298,6 +310,108 @@ describe('runPayCommand (agent mode)', () => {
     expect(final.outcome).toBe('paid');
     expect(final.body).toBe('ok-body');
     expect(final.response_status).toBe(200);
+  });
+
+  it('runFetchCommand fetches a signed transaction without preparing a new payment or exposing encoded payload', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response('payment required', {
+          status: 402,
+          headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(makePaymentRequired()) },
+        }),
+      )
+      .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+    const prepareInflowPayment = vi.fn();
+    const client = makeClient({
+      prepareInflowPayment,
+      getX402Payload: vi.fn(() =>
+        Promise.resolve({
+          status: 'APPROVED',
+          encodedPayload: 'ENC',
+          paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
+        }),
+      ),
+    });
+    const ctx = agentContext(
+      { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
+      {
+        method: 'GET',
+        header: ['PAYMENT-SIGNATURE: caller'],
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: true,
+      },
+    );
+    const { inflow, storage } = authedResources(client);
+
+    const frames = await drain(runFetchCommand(ctx as never, inflow, storage));
+
+    expect(prepareInflowPayment).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(frames.at(-1)).toMatchObject({
+      protocol: 'x402',
+      outcome: 'paid',
+      transaction_id: 'txn_1',
+      requested_url: 'https://seller/api',
+      body: 'DONE',
+    });
+    expect(frames.at(-1)).not.toHaveProperty('encoded_payload');
+    const [, init] = fetchSpy.mock.calls.at(-1) ?? [];
+    expect(new Headers(init?.headers).get('PAYMENT-SIGNATURE')).toBe('ENC');
+  });
+
+  it('runFetchCommand renders the human fetch path for signed transactions', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response('payment required', {
+          status: 402,
+          headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(makePaymentRequired()) },
+        }),
+      )
+      .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+    const client = makeClient({
+      getX402Payload: vi.fn(() =>
+        Promise.resolve({
+          status: 'APPROVED',
+          encodedPayload: 'ENC',
+          paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
+        }),
+      ),
+    });
+    const ctx = {
+      agent: false,
+      formatExplicit: false,
+      args: { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
+      options: { method: 'GET', header: [], interval: 0, maxAttempts: 0, timeout: 900, showBody: true },
+      error: vi.fn(),
+    };
+    const { inflow, storage } = authedResources(client);
+
+    const result = await drainWithReturn(runFetchCommand(ctx as never, inflow, storage));
+
+    expect(result.values).toEqual([]);
+    expect(ctx.error).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('runFetchCommand stops terminal failures before contacting the seller', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const client = makeClient({
+      getX402Payload: vi.fn(() => Promise.resolve({ status: 'DECLINED' })),
+    });
+    const ctx = agentContextReturningError(
+      { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
+      { method: 'GET', header: [], interval: 0, maxAttempts: 0, timeout: 900, showBody: false },
+    );
+    const { inflow, storage } = authedResources(client);
+
+    const result = await drainWithReturn(runFetchCommand(ctx as never, inflow, storage));
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.returnValue).toMatchObject({ code: 'APPROVAL_CANCELLED' });
   });
 
   it('routes X402PaymentIdFormatError to INVALID_PAYMENT_ID via c.error', async () => {
@@ -625,6 +739,12 @@ describe('runPayCommand (agent mode)', () => {
         headers: { 'PAYMENT-REQUIRED': header },
       }),
     );
+    fetchSpy.mockResolvedValueOnce(
+      new Response('payment required', {
+        status: 402,
+        headers: { 'PAYMENT-REQUIRED': header },
+      }),
+    );
     fetchSpy.mockResolvedValueOnce(new Response('still payment required', { status: 402 }));
     const ctx = agentContext(
       { url: 'https://seller/api' },
@@ -698,6 +818,16 @@ describe('runStatusCommand (agent mode)', () => {
     const yields = await drain(runStatusCommand(ctx, inflow, storage));
     expect(yields).toHaveLength(1);
     expect(yields[0]).toMatchObject({ transaction_id: 'txn_1', status: 'INITIATED' });
+  });
+
+  it('maps server 401 responses to NOT_AUTHENTICATED', async () => {
+    const client = makeClient({
+      getX402Payload: vi.fn(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 }))),
+    });
+    const ctx = agentContextReturningError({ transactionId: 'txn_1' }, { interval: 0, maxAttempts: 0, timeout: 900 });
+    const { inflow, storage } = authedResources(client);
+    const result = await drainWithReturn(runStatusCommand(ctx, inflow, storage));
+    expect(result.returnValue).toMatchObject({ code: 'NOT_AUTHENTICATED' });
   });
 
   it('emits POLLING_TIMEOUT when polling exhausts max_attempts', async () => {
@@ -807,6 +937,27 @@ describe('runCancelCommand', () => {
     expect(cancelApproval).toHaveBeenCalledWith('appr_1');
   });
 
+  it('maps server 401 responses to NOT_AUTHENTICATED', async () => {
+    const client = makeClient({
+      cancelApproval: vi.fn(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 }))),
+    });
+    const ctx = agentContextReturningError({ approvalId: 'appr_1' }, {});
+    const { inflow, storage } = authedResources(client);
+    const result = await runCancelCommand(ctx, inflow, storage);
+    expect(result).toMatchObject({ code: 'NOT_AUTHENTICATED' });
+  });
+
+  it('rethrows non-authentication failures', async () => {
+    const failure = new Error('cancel unavailable');
+    const client = makeClient({
+      cancelApproval: vi.fn(() => Promise.reject(failure)),
+    });
+    const ctx = agentContextReturningError({ approvalId: 'appr_1' }, {});
+    const { inflow, storage } = authedResources(client);
+    await expect(runCancelCommand(ctx, inflow, storage)).rejects.toBe(failure);
+    expect(ctx.error).not.toHaveBeenCalled();
+  });
+
   it('short-circuits via c.error when not authenticated', async () => {
     const storage = new MemoryStorage();
     const inflow = new Inflow({
@@ -842,6 +993,27 @@ describe('runSupportedCommand', () => {
     const { inflow, storage } = authedResources(makeClient());
     const result = await runSupportedCommand(ctx, inflow, storage);
     expect(result?.kinds[0]?.scheme).toBe('balance');
+  });
+
+  it('maps server 401 responses to NOT_AUTHENTICATED', async () => {
+    const client = makeClient({
+      getSupported: vi.fn(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 }))),
+    });
+    const ctx = agentContextReturningError({}, {});
+    const { inflow, storage } = authedResources(client);
+    const result = await runSupportedCommand(ctx, inflow, storage);
+    expect(result).toMatchObject({ code: 'NOT_AUTHENTICATED' });
+  });
+
+  it('rethrows non-authentication failures', async () => {
+    const failure = new Error('supported unavailable');
+    const client = makeClient({
+      getSupported: vi.fn(() => Promise.reject(failure)),
+    });
+    const ctx = agentContextReturningError({}, {});
+    const { inflow, storage } = authedResources(client);
+    await expect(runSupportedCommand(ctx, inflow, storage)).rejects.toBe(failure);
+    expect(ctx.error).not.toHaveBeenCalled();
   });
 
   it('short-circuits via c.error when not authenticated', async () => {

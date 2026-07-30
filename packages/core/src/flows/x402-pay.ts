@@ -15,14 +15,9 @@ import {
 import { decodePaymentRequiredHeader, decodePaymentResponseHeader } from '@x402/core/http';
 import type { PaymentRequired } from '@x402/core/types';
 import { approvalUrlFor } from '../x402/dashboard-url.js';
-import {
-  describeBody,
-  replayWithPayment,
-  sellerProbe,
-  type SellerProbeOptions,
-  type SellerProbeResult,
-} from '@inflowpayai/x402-buyer/probe';
+import { describeBody, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { userFacingApiError } from './api-error.js';
+import { SellerAuthenticationError, sellerRequest, type SellerRequestTransport } from './payment-fetch.js';
 import { type DecodedHeader } from './x402-decode.js';
 import {
   type AcceptsFilters,
@@ -215,6 +210,7 @@ export interface PayPipelineDeps {
    * approval URL to the user, and resumes signing state via `x402 status`. Defaults to `true` (full lifecycle).
    */
   awaitPayment?: boolean;
+  sellerTransport?: SellerRequestTransport;
 }
 
 /**
@@ -336,7 +332,7 @@ function cloneDecoded(input: PaymentRequired): DecodedHeader {
  */
 export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEvent) => void): Promise<void> {
   try {
-    const probe = await sellerProbe(deps.url, deps.probeOptions);
+    const probe = await sellerRequest(deps.sellerTransport, { url: deps.url, ...deps.probeOptions });
     if (probe.status !== 402) {
       // Probe came back non-402. Only 2xx means "seller served the resource without requiring payment"; anything else
       // (3xx, 4xx other than 402, 5xx) is a transport-layer surprise that the user needs to see as a failure rather
@@ -448,11 +444,12 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
       network: requirement.network,
     });
 
-    const replay = await replayWithPayment(deps.url, {
+    const replay = await sellerRequest(deps.sellerTransport, {
+      url: deps.url,
       method: deps.probeOptions.method,
       headers: deps.probeOptions.headers,
+      additionalAuthenticationHeaders: { [HEADERS.PAYMENT_SIGNATURE]: encoded.encodedPayload },
       ...(deps.probeOptions.data !== undefined ? { data: deps.probeOptions.data } : {}),
-      paymentSignature: encoded.encodedPayload,
     });
     const attachment = await buildBodyAttachment(replay.bytes, deps.showBody, deps.outputFile);
 
@@ -492,6 +489,14 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
     };
     emit({ type: 'replayed', result: success });
   } catch (err) {
+    if (err instanceof SellerAuthenticationError) {
+      emit({
+        type: 'errored',
+        code: err.code,
+        message: err.message,
+      });
+      return;
+    }
     const mapped = mapSdkError(err);
     emit({ type: 'errored', code: mapped.code, message: mapped.message });
   }

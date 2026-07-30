@@ -1,9 +1,10 @@
-import type { CombinedInspectResult } from '@inflowpayai/inflow-core';
+import { MemoryStorage, type CombinedInspectResult } from '@inflowpayai/inflow-core';
 import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
 import { encodePaymentRequiredHeader } from '@x402/core/http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildCombinedFrame,
+  createInspectCommand,
   type InspectCommandContext,
   runCombinedInspectCommand,
 } from '../../../../src/commands/inspect/index.js';
@@ -13,6 +14,12 @@ const URL = 'https://seller.test/api';
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+function requestUrl(input: string | URL | Request): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof Request) return input.url;
+  return input.href;
+}
 
 function mppHeader(method = 'inflow'): string {
   const request =
@@ -66,12 +73,70 @@ function ctx(): InspectCommandContext {
 }
 
 describe('buildCombinedFrame', () => {
+  it('includes the AEP Inspect document and lists AEP first', () => {
+    const result: CombinedInspectResult = {
+      outcome: 'inspected',
+      url: URL,
+      method: 'GET',
+      status: 401,
+      aep: {
+        kind: 'service',
+        reason: 'not_recognized',
+        source: 'challenge',
+        inspect: {
+          commandUrl: (command: string) => new globalThis.URL(`https://seller.test/aep/${command}`),
+          document: {
+            aep_version: '1.0',
+            bindings: { supported: ['http'] },
+            commands: { supported: ['inspect', 'enroll', 'status'] },
+            core: { signing_algorithms: ['ES256'] },
+            http: { endpoint_base: '/aep' },
+            identity: { methods: ['did:web'] },
+            service: { did: 'did:web:service.test' },
+          },
+          finalUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+          inspectUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+        },
+      },
+      mpp: { kind: 'absent' },
+      x402: { kind: 'absent' },
+    };
+    const frame = buildCombinedFrame(result);
+    expect(frame['detected']).toEqual(['aep']);
+    expect(frame['aep']).toMatchObject({
+      required: true,
+      challenge: { reason: 'not_recognized' },
+      inspect: { service_url: 'https://seller.test' },
+      source: 'challenge',
+    });
+  });
+
+  it('reports an AEP discovery failure without hiding the authentication requirement', () => {
+    const frame = buildCombinedFrame({
+      outcome: 'inspected',
+      url: URL,
+      method: 'GET',
+      status: 401,
+      aep: { kind: 'error', code: 'AEP_INSPECT_FAILED', message: 'discovery failed', source: 'challenge' },
+      mpp: { kind: 'absent' },
+      x402: { kind: 'absent' },
+    });
+    expect(frame['detected']).toEqual(['aep']);
+    expect(frame['aep']).toEqual({
+      required: true,
+      error: { code: 'AEP_INSPECT_FAILED', message: 'discovery failed' },
+      source: 'challenge',
+    });
+    expect(frame['warnings']).toEqual([{ protocol: 'aep', code: 'AEP_INSPECT_FAILED', message: 'discovery failed' }]);
+  });
+
   it('both protocols: fixed-shape arrays, detected lists both, no warnings', () => {
     const result: CombinedInspectResult = {
       outcome: 'inspected',
       url: URL,
       method: 'GET',
       status: 402,
+      aep: { kind: 'absent', source: 'anonymous_probe' },
       mpp: {
         kind: 'challenges',
         realm: 'mpp.test',
@@ -118,6 +183,7 @@ describe('buildCombinedFrame', () => {
       url: URL,
       method: 'GET',
       status: 402,
+      aep: { kind: 'absent', source: 'anonymous_probe' },
       mpp: { kind: 'absent' },
       x402: { kind: 'absent' },
     };
@@ -135,6 +201,7 @@ describe('buildCombinedFrame', () => {
       url: URL,
       method: 'GET',
       status: 402,
+      aep: { kind: 'absent', source: 'anonymous_probe' },
       mpp: { kind: 'none-inflow', methods: ['other'] },
       x402: { kind: 'error', code: 'DECODE_FAILED', message: 'bad header' },
     };
@@ -152,9 +219,104 @@ describe('buildCombinedFrame', () => {
     expect(mppWarning?.message).toContain('other');
     expect(warnings.some((w) => w.protocol === 'x402' && w.code === 'DECODE_FAILED')).toBe(true);
   });
+
+  it('keeps OpenAPI fallback metadata on anonymous-probe AEP source', () => {
+    const frame = buildCombinedFrame({
+      outcome: 'inspected',
+      url: URL,
+      method: 'GET',
+      status: 200,
+      aep: {
+        kind: 'absent',
+        openApiPolicy: {
+          freshness: 'fresh',
+          methods: [],
+          source: 'openapi',
+          state: 'fallback',
+          strictSlashSuggestion: '/api',
+        },
+        source: 'anonymous_probe',
+      },
+      mpp: { kind: 'absent' },
+      x402: { kind: 'absent' },
+    });
+
+    expect(frame['aep']).toEqual({
+      openapi: { accepted_methods: [], freshness: 'fresh', state: 'fallback', strict_slash_suggestion: '/api' },
+      required: false,
+      source: 'anonymous_probe',
+    });
+  });
+
+  it('reports blocked AEP payment inspection from definitive OpenAPI policy', () => {
+    const frame = buildCombinedFrame({
+      outcome: 'inspected',
+      url: URL,
+      method: 'GET',
+      status: 401,
+      aep: {
+        kind: 'blocked',
+        inspect: {
+          commandUrl: (command: string) => new globalThis.URL(`https://seller.test/aep/${command}`),
+          document: {
+            aep_version: '1.0',
+            bindings: { supported: ['http'] },
+            commands: { supported: ['inspect', 'status'] },
+            core: { signing_algorithms: ['ES256'] },
+            http: { endpoint_base: '/aep' },
+            identity: { methods: ['did:web'] },
+            service: { did: 'did:web:seller.test' },
+          },
+          finalUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+          inspectUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+        },
+        message: 'AEP authentication is required before payment terms can be inspected.',
+        policy: {
+          freshness: 'fresh',
+          matchedOperation: { method: 'GET', pathTemplate: '/api' },
+          methods: ['aep-jwt'],
+          source: 'openapi',
+          state: 'required',
+        },
+        source: 'openapi',
+      },
+      mpp: { kind: 'absent' },
+      x402: { kind: 'absent' },
+    });
+
+    expect(frame['detected']).toEqual(['aep']);
+    expect(frame['aep']).toMatchObject({
+      blocked: true,
+      inspect: { service_url: 'https://seller.test' },
+      message: 'AEP authentication is required before payment terms can be inspected.',
+      openapi: {
+        accepted_methods: ['aep-jwt'],
+        matched_operation: { method: 'GET', path_template: '/api' },
+        state: 'required',
+      },
+      required: true,
+      source: 'openapi',
+    });
+    expect(frame['warnings']).toEqual([
+      {
+        code: 'AEP_PAYMENT_INSPECT_BLOCKED',
+        message: 'AEP authentication is required before payment terms can be inspected.',
+        protocol: 'aep',
+      },
+    ]);
+  });
 });
 
 describe('runCombinedInspectCommand (agent path)', () => {
+  it('registers the top-level Inspect command metadata', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+    const command = createInspectCommand({} as never, new MemoryStorage());
+    expect(command.description).toContain('AEP authentication and payment requirements');
+    expect(command.outputPolicy).toBe('agent-only');
+    expect(command.examples).toHaveLength(2);
+    expect(await command.run(ctx())).toBeDefined();
+  });
+
   it('returns a combined frame decoding both protocols from one 402', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('payment required', {
@@ -166,6 +328,64 @@ describe('runCombinedInspectCommand (agent path)', () => {
     expect(frame?.['detected']).toEqual(['mpp', 'x402']);
     expect((frame?.['mpp'] as unknown[]).length).toBe(1);
     expect((frame?.['x402'] as unknown[]).length).toBe(1);
+  });
+
+  it('returns OpenAPI AEP policy without probing the protected resource', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = requestUrl(input);
+      if (url !== 'https://seller.test/openapi.json') {
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            openapi: '3.1.0',
+            components: {
+              securitySchemes: {
+                session: { type: 'http', scheme: 'bearer', 'x-aep-authentication-method': 'aep-jwt' },
+              },
+            },
+            security: [{ session: [] }],
+            paths: { '/api': { get: {} } },
+          }),
+          { headers: { 'cache-control': 'max-age=300', 'content-type': 'application/json' } },
+        ),
+      );
+    });
+    const inspect = {
+      commandUrl: (command: string) => new globalThis.URL(`https://seller.test/aep/${command}`),
+      document: {
+        aep_version: '1.0',
+        bindings: { supported: ['http'] },
+        commands: { supported: ['inspect', 'status'] },
+        core: { signing_algorithms: ['ES256'] },
+        http: {
+          endpoint_base: '/aep',
+          openapi: { path_matching: { trailing_slash: 'strict' }, url: '/openapi.json' },
+        },
+        identity: { methods: ['did:web'] },
+        service: { did: 'did:web:seller.test' },
+      },
+      finalUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+      inspectUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+    };
+
+    const frame = await runCombinedInspectCommand(
+      ctx(),
+      { aep: { inspect: vi.fn().mockResolvedValue(inspect) } } as never,
+      new MemoryStorage(),
+    );
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(frame?.['aep']).toMatchObject({
+      openapi: {
+        freshness: 'fetched',
+        matched_operation: { method: 'GET', path_template: '/api' },
+        state: 'required',
+      },
+      required: true,
+      source: 'openapi',
+    });
   });
 
   it('returns a no-payment frame on a 2xx probe', async () => {

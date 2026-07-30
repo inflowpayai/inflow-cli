@@ -9,6 +9,7 @@ import {
 import { Cli } from 'incur';
 import React from 'react';
 import { assertSessionGuard } from '../../utils/assert-session.js';
+import { authenticatedApiError } from '../../utils/api-error.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { DepositAddressesList } from './list.js';
 import { listOptions } from './schema.js';
@@ -50,8 +51,14 @@ async function runDepositAddressesList(
     );
   }
 
-  const configured = await runDepositAddressesListFlow({ depositAddressResource: deps.depositAddressResource });
-  return sanitizeDeep(configured);
+  try {
+    const configured = await runDepositAddressesListFlow({ depositAddressResource: deps.depositAddressResource });
+    return sanitizeDeep(configured);
+  } catch (error) {
+    const mapped = authenticatedApiError(error);
+    if (mapped !== undefined) return c.error(mapped);
+    throw error;
+  }
 }
 
 export function createDepositAddressesCli(

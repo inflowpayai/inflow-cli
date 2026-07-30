@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { decodeArgs, inspectOptions, payOptions, statusOptions } from '../../../../src/commands/mpp/schema.js';
+import {
+  decodeArgs,
+  fetchArgs,
+  fetchOptions,
+  inspectOptions,
+  payOptions,
+  statusOptions,
+} from '../../../../src/commands/mpp/schema.js';
 
 describe('mpp schema', () => {
   it('applies pay option defaults', () => {
@@ -26,6 +33,19 @@ describe('mpp schema', () => {
   it('defaults status + inspect options', () => {
     expect(statusOptions.parse({}).interval).toBe(0);
     expect(inspectOptions.parse({}).method).toBe('GET');
+  });
+
+  it('defaults fetch options and requires transaction/resource args', () => {
+    expect(fetchArgs.parse({ transactionId: 'tx-1', resourceUrl: 'https://seller/api' })).toEqual({
+      transactionId: 'tx-1',
+      resourceUrl: 'https://seller/api',
+    });
+    const parsed = fetchOptions.parse({});
+    expect(parsed.method).toBe('GET');
+    expect(parsed.header).toEqual([]);
+    expect(parsed.interval).toBe(0);
+    expect(parsed.timeout).toBe(900);
+    expect(parsed.showBody).toBe(true);
   });
 
   it('leaves pay filter flags undefined by default and accepts them', () => {

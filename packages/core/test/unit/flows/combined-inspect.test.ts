@@ -52,7 +52,110 @@ async function collect(): Promise<CombinedInspectEvent[]> {
   return events;
 }
 
+const aepInspect = {
+  document: {
+    commands: { supported: ['inspect', 'enroll', 'status'] },
+    identity: { methods: ['did:web'] },
+    service: { did: 'did:web:service.test' },
+  },
+  finalUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+  inspectUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+};
+
 describe('runCombinedInspectPipeline', () => {
+  it('blocks definitive OpenAPI AEP policy without probing the resource when no credential is available', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('probe should not run'));
+    const inspectAep = vi.fn().mockResolvedValue(aepInspect);
+    const inspectAepPolicy = vi.fn().mockResolvedValue({
+      freshness: 'fresh',
+      matchedOperation: { method: 'GET', pathTemplate: '/api' },
+      methods: ['api-key'],
+      source: 'openapi',
+      state: 'required',
+    });
+    const events: CombinedInspectEvent[] = [];
+
+    await runCombinedInspectPipeline(
+      { inspectAep, inspectAepPolicy, url: URL, probeOptions: { method: 'GET', headers: {} } },
+      (event) => events.push(event),
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(inspectAep).toHaveBeenCalledWith(URL);
+    expect(inspectAepPolicy).toHaveBeenCalledWith(aepInspect, { method: 'GET', url: URL });
+    expect(events[0]?.type).toBe('inspected');
+    if (events[0]?.type !== 'inspected') return;
+    expect(events[0].result.aep).toMatchObject({
+      kind: 'blocked',
+      policy: { state: 'required', matchedOperation: { method: 'GET', pathTemplate: '/api' } },
+      source: 'openapi',
+    });
+    expect(events[0].result.mpp).toEqual({ kind: 'absent' });
+  });
+
+  it('uses a supplied stored-credential probe to reveal payment terms behind definitive OpenAPI AEP policy', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('anonymous probe should not run'));
+    const authenticatedResponse = new Response('payment required', {
+      status: 402,
+      headers: { 'WWW-Authenticate': renderChallengeHeader(mppChallenge()), 'PAYMENT-REQUIRED': x402Header() },
+    });
+    const authenticatedProbe = vi.fn().mockResolvedValue({
+      bytes: new Uint8Array(await authenticatedResponse.arrayBuffer()),
+      contentType: authenticatedResponse.headers.get('content-type') ?? undefined,
+      headers: authenticatedResponse.headers,
+      status: authenticatedResponse.status,
+    });
+    const events: CombinedInspectEvent[] = [];
+
+    await runCombinedInspectPipeline(
+      {
+        authenticatedProbe,
+        inspectAep: vi.fn().mockResolvedValue(aepInspect),
+        inspectAepPolicy: vi.fn().mockResolvedValue({
+          freshness: 'fresh',
+          matchedOperation: { method: 'GET', pathTemplate: '/api' },
+          methods: ['api-key'],
+          source: 'openapi',
+          state: 'required',
+        }),
+        url: URL,
+        probeOptions: { method: 'GET', headers: {} },
+      },
+      (event) => events.push(event),
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(authenticatedProbe).toHaveBeenCalledOnce();
+    expect(events[0]?.type).toBe('inspected');
+    if (events[0]?.type !== 'inspected') return;
+    expect(events[0].result.aep.kind).toBe('openapi');
+    expect(events[0].result.mpp.kind).toBe('challenges');
+    expect(events[0].result.x402.kind).toBe('accepts');
+  });
+
+  it('falls back to one resource probe when OpenAPI is not definitive', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('hi', { status: 200 }));
+    const events: CombinedInspectEvent[] = [];
+
+    await runCombinedInspectPipeline(
+      {
+        inspectAep: vi.fn().mockResolvedValue(aepInspect),
+        inspectAepPolicy: vi.fn().mockResolvedValue({
+          freshness: 'fresh',
+          methods: [],
+          source: 'openapi',
+          state: 'fallback',
+        }),
+        url: URL,
+        probeOptions: { method: 'GET', headers: {} },
+      },
+      (event) => events.push(event),
+    );
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(events[0]?.type).toBe('no-payment');
+  });
+
   it('decodes BOTH protocols from one 402 (single probe)', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('payment required', {
@@ -74,6 +177,46 @@ describe('runCombinedInspectPipeline', () => {
       expect(event.result.x402.accepts).toHaveLength(1);
       expect(event.result.x402.x402Version).toBe(2);
     }
+  });
+
+  it('discovers AEP from a 401 authentication challenge', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('authentication required', {
+        status: 401,
+        headers: { 'WWW-Authenticate': 'AEP reason="not_recognized"' },
+      }),
+    );
+    const inspectAep = vi.fn().mockResolvedValue(aepInspect);
+    const events: CombinedInspectEvent[] = [];
+    await runCombinedInspectPipeline({ inspectAep, url: URL, probeOptions: { method: 'GET', headers: {} } }, (event) =>
+      events.push(event),
+    );
+    expect(inspectAep).toHaveBeenCalledWith(URL);
+    expect(events[0]?.type).toBe('inspected');
+    if (events[0]?.type !== 'inspected') return;
+    expect(events[0].result.aep).toMatchObject({ kind: 'service', reason: 'not_recognized', source: 'challenge' });
+    expect(events[0].result.mpp).toEqual({ kind: 'absent' });
+  });
+
+  it('keeps an AEP discovery failure inside the AEP section', async () => {
+    mock402({ 'WWW-Authenticate': 'AEP' });
+    const events: CombinedInspectEvent[] = [];
+    await runCombinedInspectPipeline(
+      {
+        inspectAep: vi.fn().mockRejectedValue(new Error('discovery failed')),
+        url: URL,
+        probeOptions: { method: 'GET', headers: {} },
+      },
+      (event) => events.push(event),
+    );
+    expect(events[0]?.type).toBe('inspected');
+    if (events[0]?.type !== 'inspected') return;
+    expect(events[0].result.aep).toEqual({
+      kind: 'error',
+      code: 'AEP_INSPECT_FAILED',
+      message: 'discovery failed',
+      source: 'challenge',
+    });
   });
 
   it('MPP-only: x402 section is absent', async () => {

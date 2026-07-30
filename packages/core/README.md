@@ -32,9 +32,9 @@ The package exposes three things:
    environment-derived default).
 
 3. **Helpers** — `sanitizeDeep`, `sanitizeResource`, the `Storage` / `MemoryStorage` classes, the `pollAsync` generic,
-   the seller-probe primitives (`sellerProbe`, `replayWithPayment`, `describeBody`), the x402 decode helpers
-   (`decodeHeader`, `summarizeAccepts`), plus the `approvalUrlFor` / `dashboardHostFor` URL helpers. All used inside the
-   augmented handles; all re-exported for direct consumption.
+   the seller-request primitives (`sellerProbe`, `sellerRequest`, `replayWithPayment`, `replayPaymentRequest`,
+   `describeBody`), the x402 decode helpers (`decodeHeader`, `summarizeAccepts`), plus the `approvalUrlFor` /
+   `dashboardHostFor` URL helpers. All used inside the augmented handles; all re-exported for direct consumption.
 
 ## Two-minute tour
 
@@ -88,9 +88,9 @@ passes a custom `fetch` — bring your own dispatcher in that case.
 
 ## Boundary
 
-This package is the headless contract. It must not import any CLI-rendering library (`react`, `ink`, `incur`,
-`update-notifier`, etc.). The repo's ESLint config has a `no-restricted-imports` rule scoped to `packages/core/src/**`
-that fails the lint step on any such import. Add new bans there when promoting more CLI-only deps.
+This package is the headless contract. It must not import any CLI-rendering library (`react`, `ink`, `incur`, etc.). The
+repo's ESLint config has a `no-restricted-imports` rule scoped to `packages/core/src/**` that fails the lint step on any
+such import. Add new bans there when promoting more CLI-only deps.
 
 The CLI binary (`@inflowpayai/inflow`) is the only sanctioned consumer today; the package is workspace-internal
 (`private: true` in `package.json`).

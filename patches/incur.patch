@@ -2,7 +2,7 @@ diff --git a/dist/Cli.js b/dist/Cli.js
 index 4d3ac1f385f1d00095fffae9d5f0017a1715b976..d72d02bfa53b102253c6d6d62232dbe9cacff88c 100644
 --- a/dist/Cli.js
 +++ b/dist/Cli.js
-@@ -1547,12 +1547,15 @@ function extractBuiltinFlags(argv, options = {}) {
+@@ -1802,12 +1802,15 @@ function extractBuiltinFlags(argv, options = {}) {
              format = 'json';
              formatExplicit = true;
          }
@@ -26,7 +26,7 @@ diff --git a/dist/Formatter.js b/dist/Formatter.js
 index 82bc6e25713eb8578dd566c5b7bfcc2b956f6092..2b2ad0e2669ba5f059905eb087deefbdb2e27b33 100644
 --- a/dist/Formatter.js
 +++ b/dist/Formatter.js
-@@ -53,15 +53,22 @@ function table(headers, rows) {
+@@ -54,15 +54,22 @@ function table(headers, rows) {
      const body = rows.map((r) => `| ${headers.map((_, i) => pad(r[i] ?? '', i)).join(' | ')} |`);
      return `${headerRow}\n${sep}\n${body.join('\n')}`;
  }
@@ -54,8 +54,9 @@ index 82bc6e25713eb8578dd566c5b7bfcc2b956f6092..2b2ad0e2669ba5f059905eb087deefbd
 diff --git a/dist/Help.d.ts b/dist/Help.d.ts
 --- a/dist/Help.d.ts
 +++ b/dist/Help.d.ts
-@@ -1,4 +1,9 @@
+@@ -1,5 +1,10 @@
  import { z } from 'zod';
+ import type { GlobalsDescriptor } from './Cli.js';
 +/** Registers app-level global flags to include in generated help output. */
 +export declare function registerGlobalFlags(flags: ReadonlyArray<{
 +    flag: string;
@@ -77,10 +78,10 @@ diff --git a/dist/Help.js b/dist/Help.js
 +    extraGlobalFlags.push(...flags);
 +}
  export function formatRoot(name, options = {}) {
-     const { aliases, configFlag, description, version, commands = [], root = false } = options;
+     const { aliases, configFlag, description, globals, version, commands = [], root = false, } = options;
      const lines = [];
-@@ -276,6 +281,7 @@
-         lines.push('', 'Integrations:', ...builtins.map((b) => `  ${b.name}${' '.repeat(maxCmd - b.name.length)}  ${b.desc}`));
+@@ -290,6 +295,7 @@
+         }
      }
      const flags = [
 +        ...extraGlobalFlags,

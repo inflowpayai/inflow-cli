@@ -61,13 +61,11 @@ export default defineConfig({
       'react-devtools-core': reactDevtoolsAlias,
     };
   },
-  entry: { cli: 'src/cli.tsx' },
-  external: ['update-notifier'],
-  noExternal: ['incur'],
+  entry: { cli: 'src/cli.tsx', 'npm-shim': 'src/npm-shim.ts' },
   format: ['esm'],
   outDir: 'dist',
   platform: 'node',
   splitting: false,
   sourcemap: false,
-  target: 'node22',
+  target: 'node24',
 });

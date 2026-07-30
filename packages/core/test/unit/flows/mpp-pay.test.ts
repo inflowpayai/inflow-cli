@@ -90,6 +90,46 @@ describe('runMppPayPipeline', () => {
     }
   });
 
+  it('creates the payment transaction only after the shared seller transport returns a payment challenge', async () => {
+    const order: string[] = [];
+    const request = (input: {
+      additionalAuthenticationHeaders?: Record<string, string>;
+      headers: Record<string, string>;
+      method: string;
+      url: string;
+    }) => {
+      order.push(input.additionalAuthenticationHeaders === undefined ? 'aep-then-payment-challenge' : 'paid-replay');
+      if (input.additionalAuthenticationHeaders !== undefined) {
+        expect(input.additionalAuthenticationHeaders).toEqual({ Authorization: 'Payment CRED-ORDER' });
+        return Promise.resolve({
+          bytes: new Uint8Array(Buffer.from('paid')),
+          contentType: 'text/plain',
+          headers: new Headers(),
+          status: 200,
+        });
+      }
+      return Promise.resolve({
+        bytes: new Uint8Array(),
+        contentType: undefined,
+        headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(challenge()) }),
+        status: 402,
+      });
+    };
+    const client = {
+      createTransaction: () => {
+        order.push('payment-created');
+        return Promise.resolve({ state: 'ready', credential: 'CRED-ORDER', transactionId: 'tx-order' });
+      },
+    };
+
+    const terminal = (await collect(deps({ client: client as unknown as MppClient, sellerTransport: { request } }))).at(
+      -1,
+    );
+
+    expect(order).toEqual(['aep-then-payment-challenge', 'payment-created', 'paid-replay']);
+    expect(terminal?.type).toBe('replayed');
+  });
+
   it('pays a Tempo challenge when selected by payment method', async () => {
     let createdMethod: string | undefined;
     server.use(
@@ -292,6 +332,7 @@ describe('runMppPayPipeline', () => {
       challengeId: 'chal-inflow',
       method: 'inflow',
       reference: 'ref-42',
+      settlement: { amount: '10.5', currency: 'USDC' },
       status: 'success',
       timestamp: '2025-01-01T00:00:00Z',
     };
@@ -317,6 +358,8 @@ describe('runMppPayPipeline', () => {
     expect(terminal?.type).toBe('replayed');
     if (terminal?.type === 'replayed') {
       expect(terminal.result.settled).toEqual({
+        amount: '10.5',
+        currency: 'USDC',
         reference: 'ref-42',
         status: 'success',
         timestamp: '2025-01-01T00:00:00Z',
@@ -423,15 +466,15 @@ describe('buildSettlement', () => {
     expect(buildSettlement(headers)).toBeUndefined();
   });
 
-  it('returns undefined when every receipt field is empty', () => {
-    const receipt: MppReceipt = {
-      challengeId: '',
-      method: 'inflow',
-      reference: '',
-      status: '',
-      timestamp: '',
-    };
-    const headers = new Headers({ [HEADERS.PAYMENT_RECEIPT]: encode(receipt) });
+  it('returns undefined when a core receipt has no settlement extension', () => {
+    const headers = new Headers({
+      [HEADERS.PAYMENT_RECEIPT]: encode({
+        method: 'tempo',
+        reference: 'ref-8',
+        status: 'success',
+        timestamp: '2025-02-02T00:00:00Z',
+      }),
+    });
     expect(buildSettlement(headers)).toBeUndefined();
   });
 
@@ -440,6 +483,7 @@ describe('buildSettlement', () => {
       challengeId: 'chal-1',
       method: 'inflow',
       reference: 'ref-9',
+      settlement: { amount: '10.5', currency: 'USDC' },
       status: 'success',
       timestamp: '2025-02-02T00:00:00Z',
     };
@@ -448,26 +492,27 @@ describe('buildSettlement', () => {
       reference: 'ref-9',
       status: 'success',
       timestamp: '2025-02-02T00:00:00Z',
+      amount: '10.5',
+      currency: 'USDC',
     });
   });
 
-  it('includes settled amount and currency when the receipt carries them', () => {
+  it('preserves Tempo settlement identifiers', () => {
     const receipt: MppReceipt = {
       challengeId: 'chal-2',
-      method: 'inflow',
+      method: 'tempo',
       reference: 'ref-10',
+      settlement: { amount: '1000', currency: '0x20c0000000000000000000000000000000000000' },
       status: 'success',
       timestamp: '2025-02-02T00:00:00Z',
-      amount: '10.5',
-      currency: 'USDC',
     };
     const headers = new Headers({ [HEADERS.PAYMENT_RECEIPT]: encode(receipt) });
     expect(buildSettlement(headers)).toEqual({
       reference: 'ref-10',
       status: 'success',
       timestamp: '2025-02-02T00:00:00Z',
-      amount: '10.5',
-      currency: 'USDC',
+      amount: '1000',
+      currency: '0x20c0000000000000000000000000000000000000',
     });
   });
 });

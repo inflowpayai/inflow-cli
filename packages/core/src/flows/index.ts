@@ -25,10 +25,12 @@ import { runAuthLogout } from './auth-logout.js';
 import { type UserAgentPayload, runUserGet } from './user-get.js';
 import { type InspectEvent, type InspectPipelineDeps, runInspectPipeline } from './x402-inspect.js';
 import { type PayEvent, type PayPipelineDeps, runPayPipeline } from './x402-pay.js';
+import { type X402FetchEvent, type X402FetchInput, type X402FetchRun, runX402Fetch } from './x402-fetch.js';
 import { type X402CancelResult, runX402Cancel } from './x402-cancel.js';
 import { type X402StatusRun, runX402Status } from './x402-status.js';
 import { runX402Supported } from './x402-supported.js';
 import { type MppCancelResult, runMppCancel } from './mpp-cancel.js';
+import { type MppFetchEvent, type MppFetchInput, type MppFetchRun, runMppFetch } from './mpp-fetch.js';
 import { type MppInspectEvent, type MppInspectPipelineDeps, runMppInspectPipeline } from './mpp-inspect.js';
 import { type MppPayEvent, type MppPayPipelineDeps, runMppPayPipeline } from './mpp-pay.js';
 import { type MppStatusRun, runMppStatus } from './mpp-status.js';
@@ -69,6 +71,8 @@ export interface X402StatusRequest {
   timeout: number;
 }
 
+export type X402FetchRequest = Omit<X402FetchInput, 'client'>;
+
 export interface X402CancelRequest {
   approvalId: string;
 }
@@ -87,6 +91,8 @@ export interface MppStatusRequest {
   maxAttempts: number;
   timeout: number;
 }
+
+export type MppFetchRequest = Omit<MppFetchInput, 'client'>;
 
 export interface MppCancelRequest {
   approvalId: string;
@@ -232,6 +238,8 @@ export interface IX402 extends IX402Resource {
   pay(input: X402PayRequest): FlowRun<PayEvent>;
   /** Poll the signing state of an in-flight x402 transaction. */
   status(input: X402StatusRequest): X402StatusRun;
+  /** Poll signing state when needed, then fetch the seller resource with the signed payload. */
+  fetch(input: X402FetchRequest): X402FetchRun;
   /** Best-effort cancel of an in-flight x402 approval. */
   cancel(input: X402CancelRequest): Promise<X402CancelResult>;
 }
@@ -253,6 +261,8 @@ export interface IMpp extends IMppResource {
   pay(input: MppPayRequest): FlowRun<MppPayEvent>;
   /** Poll the buyer-side state of an in-flight MPP transaction. */
   status(input: MppStatusRequest): MppStatusRun;
+  /** Poll payment state when needed, then fetch the seller resource with the ready payment credential. */
+  fetch(input: MppFetchRequest): MppFetchRun;
   /** Best-effort cancel of an in-flight MPP approval (delegated to `@inflowpayai/mpp-buyer`). */
   cancel(input: MppCancelRequest): Promise<MppCancelResult>;
 }
@@ -363,6 +373,12 @@ export function augmentX402(x402Resource: IX402Resource, resolvedApiBaseUrl: str
       maxAttempts: input.maxAttempts,
       timeout: input.timeout,
     });
+  augmented.fetch = (input) => ({
+    events: (async function* () {
+      const client = await x402Resource.client();
+      yield* runX402Fetch({ ...input, client }).events;
+    })(),
+  });
   augmented.cancel = async (input) => runX402Cancel({ x402: x402Resource, approvalId: input.approvalId });
   return augmented as IX402;
 }
@@ -400,6 +416,12 @@ export function augmentMpp(mppResource: IMppResource, resolvedApiBaseUrl: string
       maxAttempts: input.maxAttempts,
       timeout: input.timeout,
     });
+  augmented.fetch = (input) => ({
+    events: (async function* () {
+      const client = await mppResource.client();
+      yield* runMppFetch({ ...input, client }).events;
+    })(),
+  });
   augmented.cancel = async (input) => runMppCancel({ mpp: mppResource, approvalId: input.approvalId });
   return augmented as IMpp;
 }
@@ -423,11 +445,15 @@ export type {
   UserAgentPayload,
   X402BuyerSupportedResponse,
   X402CancelResult,
+  X402FetchEvent,
+  X402FetchRun,
   X402StatusRun,
   IBalanceResource,
   IDepositAddressResource,
   MppSupportedResponse,
   MppCancelResult,
+  MppFetchEvent,
+  MppFetchRun,
   MppInspectEvent,
   MppPayEvent,
   MppStatusRun,

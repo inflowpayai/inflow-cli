@@ -9,10 +9,11 @@
 [![Discord](https://img.shields.io/discord/1488618872461332562?logo=discord&logoColor=white&label=Discord)](https://discord.gg/Z9nmMAgaR4)
 [![skills.sh](https://skills.sh/b/inflowpayai/inflow-cli)](https://skills.sh/inflowpayai/inflow-cli)
 
-InFlow — agentic MPP (Machine Payments Protocol) / x402 payments from your machine.
+InFlow — Agent Enrollment Protocol access and agentic MPP (Machine Payments Protocol) / x402 payments from your machine.
 
 The agent-native and human-accessible command-line entry point to InFlow. Agentic buyers perform agent-native payments
-via MPP and x402; humans hit the same functionality from MCP-integrated assistants or the raw CLI.
+via MPP and x402, manage Agent Enrollment Protocol Service enrollment, and fetch resources that require AEP
+authentication before payment; humans hit the same functionality from MCP-integrated assistants or the raw CLI.
 
 New here? Start with the command reference in [`packages/cli/README.md`](./packages/cli/README.md) — it covers `auth`,
 the `x402` and `mpp` command groups, the global flags, and the agent (`--format`) renderings.
@@ -22,19 +23,63 @@ Installing into an agent host? Use the per-surface guide:
 
 ## Install
 
-```bash
-npm install -g @inflowpayai/inflow
-```
+The signed native `inflow` binary is distributed for Apple Silicon and Intel Macs.
 
-Or run directly with `npx`:
+### Homebrew Cask
 
 ```bash
-npx @inflowpayai/inflow
+brew tap inflowpayai/tap
+brew install --cask inflow
+inflow --version
 ```
+
+Upgrade or uninstall through Homebrew:
+
+```bash
+brew upgrade --cask inflow
+brew uninstall --cask inflow
+```
+
+### Hosted installer
+
+```bash
+curl -fsSL https://inflowcli.ai/install.sh | bash
+```
+
+The installer selects the current Mac architecture, downloads the matching GitHub Release asset and checksum, verifies
+the checksum plus macOS code-signing and Gatekeeper checks, installs `InFlow.app` into `~/.local/share/inflow`, and
+links `inflow` into `~/.local/bin`.
+
+Run the installer again to upgrade to the latest GitHub Release. Uninstall with:
+
+```bash
+curl -fsSL https://inflowcli.ai/install.sh | bash -s -- --uninstall
+```
+
+PowerShell on macOS can use the same hosted installer surface:
+
+```powershell
+iwr -useb https://inflowcli.ai/install.ps1 | iex
+```
+
+PowerShell uninstall:
+
+```powershell
+$env:INFLOW_UNINSTALL = "1"; iwr -useb https://inflowcli.ai/install.ps1 | iex
+```
+
+### Direct download
+
+Download the matching zip from the `inflowpayai/inflow-cli` GitHub Release for the package version:
+
+- `inflow-<version>-darwin-arm64.zip` for Apple Silicon Macs
+- `inflow-<version>-darwin-x64.zip` for Intel Macs
+
+The zip contains `InFlow.app`; the executable is inside the app bundle at `InFlow.app/Contents/MacOS/inflow`.
 
 ### Use with agents
 
-Install the `agentic-payments` skill into a skills-aware agent:
+Install the `agentic-enrollment` and `agentic-payments` skills into a skills-aware agent:
 
 ```bash
 npx skills add inflowpayai/inflow-cli
@@ -56,12 +101,11 @@ The repo also ships as an installable plugin (skill + MCP server bundled) for pl
   `.agents/plugins/marketplace.json`, and `.codex-plugin/plugin.json` respectively.
 
 In every case the plugin bundles the skill and the `inflow` MCP server (`.mcp.json`). The default MCP entry runs
-`npx -y @inflowpayai/inflow --mcp`; install the binary globally only for direct CLI use or for hosts configured to run
-`inflow --mcp` from `PATH`.
+`inflow --mcp`; install the signed native binary before using the MCP server.
 
 ## Development
 
-This is a pnpm + Turborepo monorepo. Node >= 22 required.
+This is a pnpm + Turborepo monorepo. Node >= 24.15.0 required.
 
 ```bash
 pnpm install
@@ -77,6 +121,28 @@ pnpm lint
 pnpm typedoc
 pnpm changeset
 ```
+
+## macOS release automation
+
+The `macos release` workflow is manually dispatched from GitHub Actions. Its default dry run builds the Apple Silicon
+and Intel macOS artifacts, renders the Homebrew Cask, audits the Cask, and uploads workflow artifacts without
+notarizing, creating a GitHub Release, or pushing `inflowpayai/homebrew-tap`.
+
+Real release runs require these repository secrets:
+
+- `APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64`
+- `APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD`
+- `APPLE_NOTARY_APPLE_ID`
+- `APPLE_NOTARY_APP_SPECIFIC_PASSWORD`
+- `APPLE_NOTARY_TEAM_ID`
+- `HOMEBREW_TAP_APP_PRIVATE_KEY`
+
+Real release runs also require this repository variable:
+
+- `HOMEBREW_TAP_APP_CLIENT_ID`
+
+The published macOS artifacts are attached to the `inflowpayai/inflow-cli` GitHub Release for the package version, and
+the Homebrew Cask in `inflowpayai/homebrew-tap` points at those release assets for Apple Silicon and Intel Macs.
 
 ## Packages
 

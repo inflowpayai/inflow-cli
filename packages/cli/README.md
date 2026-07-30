@@ -1,7 +1,9 @@
 # @inflowpayai/inflow
 
-The InFlow binary — agentic [MPP](https://mpp.dev) / [x402](https://x402.org) payments from your machine. See the
-[repository README](../../README.md) for project-level context.
+The InFlow binary — Agent Enrollment Protocol access and agentic [MPP](https://mpp.dev) / [x402](https://x402.org)
+payments from your machine. See the [repository README](../../README.md) for project-level context.
+
+Install InFlow from [inflowcli.ai](https://inflowcli.ai/) to run commands, start MCP, or manage credentials.
 
 Every command supports a TTY rendering (Ink) and an agent rendering via `--format <json|toon|yaml|md|jsonl>`. The TTY
 view is what you get by default in an interactive terminal; the structured formats are what an AI assistant or pipeline
@@ -21,15 +23,23 @@ For host-specific skill and MCP installation, see the repository's
 | `inflow balances list`               | List the authenticated user's balances.                                                                                           |
 | `inflow deposit-addresses list`      | List the user's configured deposit addresses, grouped by network.                                                                 |
 | `inflow inspect <url>`               | Detect a URL's payment protocol(s) and show MPP and x402 challenges together. Read-only probe — no auth, no payment.              |
-| `inflow x402 pay <url>`              | Probe a seller; if it returns 402, drive the approval flow and replay the request with the signed `PAYMENT-SIGNATURE`.            |
+| `inflow aep inspect <service>`       | Inspect an Agent Enrollment Protocol Service. No InFlow login is required.                                                        |
+| `inflow aep fetch <resource-url>`    | Fetch a resource anonymously or complete AEP authentication, approval, credential storage, and replay in one invocation.          |
+| `inflow aep enroll <service>`        | Provision or reuse a Service-scoped Agent identity and enroll after InFlow approval.                                              |
+| `inflow aep status <service>`        | Fetch Service lifecycle status and list non-secret local credential summaries.                                                    |
+| `inflow aep grant <service>`         | Request a fresh Service credential and store it locally without exposing its secret.                                              |
+| `inflow aep revoke <service>`        | Revoke all Service credentials, or one credential or grant type.                                                                  |
+| `inflow x402 pay <url>`              | Create an x402 payment transaction and optionally poll/replay inline.                                                             |
+| `inflow x402 fetch <tx> <url>`       | Resume an x402 transaction, wait for a signed payload when configured, and fetch the seller resource.                             |
 | `inflow x402 inspect <url>`          | Read-only probe. Show the seller's `PAYMENT-REQUIRED` accepts for a URL — no auth, no payment.                                    |
-| `inflow x402 status <transactionId>` | Poll the signing state of an in-flight transaction. Used to resume a previous `pay` across CLI invocations.                       |
+| `inflow x402 status <transactionId>` | Poll the signing state of an in-flight transaction without contacting the seller.                                                 |
 | `inflow x402 cancel <approvalId>`    | Best-effort cancel of an in-flight approval. Requires authentication; success does not verify the server-side approval state.     |
 | `inflow x402 decode <header>`        | Decode a raw `PAYMENT-REQUIRED` header value. No auth required.                                                                   |
 | `inflow x402 supported`              | List the buyer-side `(scheme, network)` capability cache.                                                                         |
-| `inflow mpp pay <url>`               | Probe a seller; if it returns a `WWW-Authenticate: Payment` 402, fulfil the challenge and replay with `Authorization: Payment`.   |
+| `inflow mpp pay <url>`               | Create an MPP payment transaction and optionally poll/replay inline.                                                              |
+| `inflow mpp fetch <tx> <url>`        | Resume an MPP transaction, wait for a ready credential when configured, and fetch the seller resource.                            |
 | `inflow mpp inspect <url>`           | Read-only probe. Parse the seller's MPP `Payment` challenge(s) for a URL — no auth, no payment.                                   |
-| `inflow mpp status <transactionId>`  | Poll the buyer-side state of an in-flight MPP transaction. Used to resume a previous `pay` across CLI invocations.                |
+| `inflow mpp status <transactionId>`  | Poll the buyer-side state of an in-flight MPP transaction without contacting the seller.                                          |
 | `inflow mpp cancel <approvalId>`     | Best-effort cancel of an in-flight MPP approval. Requires authentication; success does not verify the server-side approval state. |
 | `inflow mpp decode <value>`          | Decode a `WWW-Authenticate: Payment` header, or a base64url credential / receipt. No auth required.                               |
 | `inflow mpp supported`               | List the methods the buyer can pay with — by intent, settlement rail, and currency.                                               |
@@ -50,7 +60,7 @@ These flags are pre-extracted from `process.argv` before subcommand dispatch, so
 | `--environment <production\|sandbox>`        | `INFLOW_ENVIRONMENT`   | Selects the public environment. Defaults to `production`.                                                                                                                                                                                                                          |
 | `--format <json\|toon\|yaml\|md\|jsonl>`     | —                      | Agent rendering. Default is TTY (Ink).                                                                                                                                                                                                                                             |
 | `--sandbox`                                  | —                      | Shorthand for `--environment sandbox`.                                                                                                                                                                                                                                             |
-| `--skill [name]`                             | —                      | Print a bundled skill body to stdout and exit. Defaults to `agentic-payments`; an unknown name lists the available skills. No frontmatter. Use for piping into a system prompt on MCP hosts that don't natively load skills: `inflow --skill \| pbcopy`.                           |
+| `--skill [name]`                             | —                      | Print a bundled skill body to stdout and exit. Available skills are `agentic-enrollment` and `agentic-payments`; the default is `agentic-payments`. No frontmatter. Use for piping into a system prompt on MCP hosts that don't natively load skills.                              |
 | `--verbose`                                  | —                      | Log every HTTP request/response to stderr.                                                                                                                                                                                                                                         |
 | —                                            | `INFLOW_HTTP_PROXY`    | Route every outbound HTTP request through this proxy URL. Requires the optional `undici` peer (`npm install undici`); the SDK throws `InflowConfigurationError` at first request when the env var is set but `undici` is missing. Ignored when the caller passes a custom `fetch`. |
 
@@ -134,15 +144,51 @@ inflow deposit-addresses list --format json
 
 Lists the configured deposit addresses for the authenticated user. TTY groups by network with a deposit address per row.
 
+## `aep`
+
+The `aep` group implements six Agent Enrollment Protocol Service commands. `inspect` is stateless and works logged out.
+The other commands use the existing InFlow authentication session to authenticate to the InFlow Platform; the
+Platform-issued AEP assertion separately authenticates the Agent to the Service.
+
+```bash
+inflow aep inspect service.example
+inflow aep inspect https://service.example/private --method GET
+inflow aep fetch https://service.example/private --format json
+inflow aep enroll service.example --interval 5
+inflow aep status service.example --format json
+inflow aep grant service.example --scope read:resource
+inflow aep revoke service.example
+```
+
+The CLI stores Service-scoped identities and complete credential material in the existing mode-`0o600` credentials file.
+Stored state belongs to the canonical InFlow Platform origin and authenticated user. Logout clears it. Agent output
+never exposes credential secrets: `grant` reports only credential metadata, and `status` reports only usable local grant
+summaries.
+
+`aep inspect` probes an exact URL when one is supplied and reports `resource_authentication` as `not-required`,
+`aep-authenticatable`, or `other-authentication-required`. DID input reports `not-checked`. Service discovery remains
+origin-based. `enroll` returns the complete validated Service response. `status` returns
+`{ service, local: { grants } }`; when the Agent is not enrolled, it returns
+`{ enrolled: false, service: null, local: { grants: [] } }`. `grant` returns `granted`, credential metadata, and scopes;
+`revoke` returns `revoked` and its single selector field.
+
+`aep fetch` preserves the original method, headers, replayable body, redirect and response bounds, and output controls.
+When authenticated AEP access reaches a legitimate payment `402`, the command exits successfully with
+`payment_required.protocols` and copyable `payment_required.commands` so callers can continue with `mpp pay` or
+`x402 pay`; it never creates a payment transaction itself.
+
 ## `inspect`
 
 ```bash
 inflow inspect https://seller.example.com/api/widgets
 ```
 
-Protocol-agnostic, read-only pre-flight. Probes the URL **once** and decodes both MPP and x402 challenges from the same
-402 response — so you don't have to know the protocol before inspecting. **No authentication required.** This is the
-recommended first step: read `detected` to decide which `pay` rail to use (MPP wins when a seller advertises both).
+Protocol-agnostic, read-only pre-flight. It decodes AEP, MPP, and x402 requirements without creating AEP Grant, AEP Sign
+approval, or payment. When a fresh OpenAPI policy proves AEP authentication is required, `inspect` stops at the AEP gate
+unless a compatible stored AEP session credential can reveal the downstream payment layer. Otherwise it probes the URL
+once and decodes both MPP and x402 challenges from the same 402 response — so you don't have to know the protocol before
+inspecting. **No authentication required.** This is the recommended first step: read `detected` to decide which rail
+owns the next action.
 
 Unlike the per-protocol probes it carries only the probe-shape flags (`--method`, `--data`, `--header`) — it is
 deliberately unfiltered. For filtered probes or full per-protocol detail (pay-to, timeout, extras, challenge ids /
@@ -179,6 +225,7 @@ protocols that have at least one entry:
   "url": "https://seller.example.com/api/widgets",
   "method": "GET",
   "detected": ["x402"],
+  "aep": { "required": false, "source": "anonymous_probe" },
   "mpp": [],
   "x402": [
     {
@@ -198,7 +245,9 @@ protocols that have at least one entry:
 
 Section-level problems are surfaced (without failing the command) in an optional `warnings` array — for example an MPP
 header advertising no inflow-payable challenge (`NO_INFLOW_MATCH`), a present-but-undecodable header (`DECODE_FAILED`),
-or a 402 carrying neither protocol header (`NO_PAYMENT_CHALLENGE`).
+or a 402 carrying neither protocol header (`NO_PAYMENT_CHALLENGE`). If AEP authentication blocks payment inspection, the
+successful JSON frame includes `aep.blocked: true`, `aep.source: "openapi"`, and a warning with code
+`AEP_PAYMENT_INSPECT_BLOCKED`; it does not claim MPP or x402 were observed.
 
 When the seller returns 2xx (no payment required), `inspect` yields `outcome: "no-payment-required"` with `status`,
 `content_type`, and `body_size_bytes` — never the body itself.
@@ -214,11 +263,12 @@ The `x402` command group drives the buyer-side of the [x402 protocol](https://x4
 inflow x402 pay https://seller.example.com/api/widgets
 ```
 
-Probes the seller. If the seller returns 2xx (no payment required) the body is returned directly. If 402, the CLI
-decodes the `PAYMENT-REQUIRED` header, picks an `accepts[]` entry the InFlow buyer can sign (filtered by
+Probes the seller. If the seller first returns an AEP `401`, the CLI completes AEP authentication before looking for the
+payment `402`. If the seller returns 2xx (no payment required) the body is returned directly. If 402, the CLI decodes
+the `PAYMENT-REQUIRED` header, picks an `accepts[]` entry the InFlow buyer can sign (filtered by
 `--scheme`/`--network`/`--asset`/`--asset-name` if set, then routed by the buyer's preferred-scheme order), creates the
 transaction + approval, surfaces the approval URL, waits for the user to approve, then replays the protected request
-with the signed `PAYMENT-SIGNATURE` header.
+with the AEP credential and signed `PAYMENT-SIGNATURE` header when both are required.
 
 #### Useful flags
 
@@ -254,8 +304,8 @@ response metadata on success.
 inflow x402 pay https://seller.example.com/api/widgets --format json
 ```
 
-Yields once with the approval URL and a `_next.command` hint, then exits. The agent presents the URL to the user, waits
-for them to approve, then calls `x402 status` to retrieve the signed payload and replays the request itself.
+Yields once with the approval URL and a `_next` Fetch continuation, then exits. The agent presents the URL to the user,
+then calls `x402 fetch` to wait for the signed payload and fetch the seller resource.
 
 ```jsonc
 {
@@ -269,9 +319,20 @@ for them to approve, then calls `x402 status` to retrieve the signed payload and
   "network": "inflow:1",
   "instruction": "Present the approval_url to the user ...",
   "_next": {
-    "command": "x402 status txn_... --interval 5 --max-attempts 60",
+    "command": "x402 fetch txn_... https://seller.example.com/api/widgets --interval 5 --max-attempts 60",
+    "tool": "x402_fetch",
+    "input": {
+      "transactionId": "txn_...",
+      "resourceUrl": "https://seller.example.com/api/widgets",
+      "method": "GET",
+      "header": [],
+      "interval": 5,
+      "maxAttempts": 60,
+      "timeout": 900,
+      "showBody": true,
+    },
     "poll_interval_seconds": 5,
-    "until": "encoded_payload is present",
+    "until": "resource fetch completes",
   },
 }
 ```
@@ -374,9 +435,19 @@ inflow x402 status txn_abc123 --interval 5 --max-attempts 60
 inflow x402 status txn_abc123 --format json
 ```
 
-Polls the signing state of an in-flight transaction. Use to resume a previous `pay` across CLI invocations — once
-`status` reports `encoded_payload`, the caller replays the protected request itself, setting the encoded payload as the
-`PAYMENT-SIGNATURE` header.
+Polls the signing state of an in-flight transaction. It never contacts the seller. Use `x402 fetch` to complete the
+seller request.
+
+### `x402 fetch`
+
+```bash
+inflow x402 fetch txn_abc123 https://seller.example.com/api/widgets --interval 5 --max-attempts 60
+```
+
+Loads the transaction state, waits for a signed payload when `--interval` is set, completes any required AEP
+authentication, and sends one credential-bearing seller replay with `PAYMENT-SIGNATURE` plus a non-colliding AEP
+credential when needed. Terminal declined, cancelled, failed, and expired states stop before seller contact. Fetch
+output never exposes the encoded payload or AEP credential material.
 
 ### `x402 cancel`
 
@@ -413,35 +484,37 @@ Honors the SDK's 60-min cache TTL. Useful when debugging why `pay` chose one ent
 The `--format json` error envelope follows the framework contract: `{ code, message, retryable? }` plus a non-zero exit
 code. The `x402` group adds these codes:
 
-| Code                      | When                                                                                                                                                                                                                      |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NOT_AUTHENTICATED`       | No saved device token and no `--api-key`. (Not raised by `inspect` or `decode` — both are auth-free.)                                                                                                                     |
-| `INVALID_HEADER`          | A `--header` flag wasn't in `Name: Value` form.                                                                                                                                                                           |
-| `INVALID_402`             | Seller returned 402 without a `PAYMENT-REQUIRED` header.                                                                                                                                                                  |
-| `DECODE_FAILED`           | Header parse failed.                                                                                                                                                                                                      |
-| `UNEXPECTED_PROBE_STATUS` | Seller returned a non-2xx, non-402 status during the probe (e.g. 3xx, 4xx other than 402, 5xx). Raised by `pay` and `inspect`.                                                                                            |
-| `NO_INFLOW_MATCH`         | Seller's accepts list has no InFlow-signable entry.                                                                                                                                                                       |
-| `NO_FILTERED_MATCH`       | `--scheme` / `--network` / `--asset` / `--asset-name` excluded every `accepts[]` entry. The message lists each advertised entry's scheme/network plus its `asset=…` and `name=…` (when set) so the user can fix the flag. |
-| `INVALID_PAYMENT_ID`      | `--payment-id` didn't satisfy the format rules.                                                                                                                                                                           |
-| `APPROVAL_FAILED`         | The approval terminated without an encoded payload.                                                                                                                                                                       |
-| `APPROVAL_TIMEOUT`        | The approval didn't sign before `--timeout` elapsed.                                                                                                                                                                      |
-| `APPROVAL_CANCELLED`      | The approval was cancelled.                                                                                                                                                                                               |
-| `PAYMENT_NOT_ACCEPTED`    | The seller still returned non-2xx on the replayed (PAYMENT-SIGNATURE-bearing) request. The approval completed but the seller did not honour the payment.                                                                  |
-| `POLLING_TIMEOUT`         | `x402 status --interval` exhausted its budget before the transaction settled. Retryable.                                                                                                                                  |
-| `INSPECT_FAILED`          | Transport-layer failure during `x402 inspect` (DNS, connection refused, etc.).                                                                                                                                            |
+| Code                             | When                                                                                                                                                                                                                      |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NOT_AUTHENTICATED`              | No saved device token and no `--api-key`. (Not raised by `inspect` or `decode` — both are auth-free.)                                                                                                                     |
+| `INVALID_HEADER`                 | A `--header` flag wasn't in `Name: Value` form.                                                                                                                                                                           |
+| `INVALID_402`                    | Seller returned 402 without a `PAYMENT-REQUIRED` header.                                                                                                                                                                  |
+| `DECODE_FAILED`                  | Header parse failed.                                                                                                                                                                                                      |
+| `UNEXPECTED_PROBE_STATUS`        | Seller returned a non-2xx, non-402 status during the probe (e.g. 3xx, 4xx other than 402, 5xx). Raised by `pay` and `inspect`.                                                                                            |
+| `NO_INFLOW_MATCH`                | Seller's accepts list has no InFlow-signable entry.                                                                                                                                                                       |
+| `NO_FILTERED_MATCH`              | `--scheme` / `--network` / `--asset` / `--asset-name` excluded every `accepts[]` entry. The message lists each advertised entry's scheme/network plus its `asset=…` and `name=…` (when set) so the user can fix the flag. |
+| `INVALID_PAYMENT_ID`             | `--payment-id` didn't satisfy the format rules.                                                                                                                                                                           |
+| `APPROVAL_FAILED`                | The approval terminated without an encoded payload.                                                                                                                                                                       |
+| `APPROVAL_TIMEOUT`               | The approval didn't sign before `--timeout` elapsed.                                                                                                                                                                      |
+| `APPROVAL_CANCELLED`             | The approval was cancelled.                                                                                                                                                                                               |
+| `PAYMENT_NOT_ACCEPTED`           | The seller still returned non-2xx on the replayed (PAYMENT-SIGNATURE-bearing) request. The approval completed but the seller did not honour the payment.                                                                  |
+| `PAYMENT_REPLAY_OUTCOME_UNKNOWN` | A credential-bearing seller request had an indeterminate transport failure. Do not automatically replay.                                                                                                                  |
+| `POLLING_TIMEOUT`                | `x402 status --interval` exhausted its budget before the transaction settled. Retryable.                                                                                                                                  |
+| `INSPECT_FAILED`                 | Transport-layer failure during `x402 inspect` (DNS, connection refused, etc.).                                                                                                                                            |
 
 ## `mpp`
 
 The `mpp` command group is the MPP analog of `x402`, for sellers that answer `402` with `WWW-Authenticate: Payment …`
 (the MPP `Payment` auth scheme) instead of x402's `PAYMENT-REQUIRED`. It is built on `@inflowpayai/mpp`'s `MppClient`
-and mirrors `x402` command-for-command — `pay`, `inspect`, `status`, `cancel`, `decode`, `supported` — with the same
-TTY + agent renderings, the same two-process approval handoff, and the same `--output-file` / `--format` behaviour.
+and mirrors `x402` command-for-command — `pay`, `fetch`, `inspect`, `status`, `cancel`, `decode`, `supported` — with the
+same TTY + agent renderings, the same two-process approval handoff, and the same `--output-file` / `--format` behaviour.
 
 ```bash
 inflow mpp inspect <url>                                    # parse the seller's Payment challenge(s) — read-only
 inflow mpp pay <url> --interval 5 --max-attempts 60         # fast path: create -> poll -> replay -> return body
-inflow mpp pay <url> --format json                          # two-process: returns transaction_id + a `mpp status` _next hint
-inflow mpp status <transactionId> --interval 5              # resume an in-flight transaction; ready frames carry `credential`
+inflow mpp pay <url> --format json                          # two-process: returns transaction_id + a `mpp fetch` _next hint
+inflow mpp fetch <transactionId> <url> --interval 5         # resume and fetch the seller resource
+inflow mpp status <transactionId> --interval 5              # monitor state only; never contacts the seller
 inflow mpp cancel <approvalId>                              # best-effort cancel of a pending approval
 inflow mpp decode '<WWW-Authenticate: Payment value>'       # or a base64url credential / receipt
 inflow mpp supported                                        # methods the buyer can pay with: method -> intent -> rail -> currencies
@@ -452,9 +525,9 @@ Differences from `x402`:
 - The seller's challenge pins the settlement rail, so the buyer does not choose a scheme/network/asset the way x402
   does. Instead the buyer narrows _which advertised challenge_ to fulfil (see the flags below), then optionally names a
   funding instrument.
-- `pay` (when ready) and `status` surface a base64url `credential`; replay the request with
-  `Authorization: Payment <credential>`. `--credential-file <path>` writes it at mode `0o600` and the frame carries
-  `credential_saved_to` instead of `credential` — the analog of x402's `--payload-file` / `encoded_payload`.
+- `fetch` attaches the base64url credential as `Authorization: Payment <credential>` and never exposes it in Fetch
+  output. If AEP authentication is required, the replay also carries a non-colliding AEP credential such as
+  `AEP-Authorization`. `status` can still show or save the credential for diagnostics.
 - A 402 carrying no `inflow`-method challenge fails with `NO_INFLOW_MATCH`.
 
 #### Challenge-selection flags (`pay` and `inspect`)
@@ -495,4 +568,14 @@ probe/decode/match codes carry the same meaning as in the `x402` table above; th
 
 Output is intentionally machine-parseable when `--format` is set, even on the error path. AI assistants and pipelines
 should always pass `--format json` (or another structured format). The TTY rendering is for humans and is the default
-only when stdout is a TTY and no `--format` is explicitly set.
+only when stdout is a TTY and no `--format` is explicitly set. `aep fetch`, `mpp pay`, `mpp fetch`, `x402 pay`, and
+`x402 fetch` first preserve the requested method, headers, and replayable body while checking for AEP. Anonymous success
+does not require an InFlow session. On an AEP challenge, the command recovers an existing Platform identity, selects a
+requested or compatible stored credential or grant type, and delegates Grant, credential storage, authentication
+selection, redirects, and replay to the AEP Agent SDK. Pending Grant and authenticate signing use the existing approval
+view and continue inside the original invocation. Payment credentials are created only after AEP succeeds and the
+seller's payment challenge is available; the final replay carries payment material exactly once.
+
+The JSON result contains `requested_url`, `final_url`, `status`, optional `content_type`, `response_size_bytes`,
+`redirects.occurred`, optional `service_did`, and `authentication` with `outcome`, `method`, and non-secret credential
+or grant metadata. Response content is represented by `body`, `body_base64`, or `output_saved_to`.

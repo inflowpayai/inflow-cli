@@ -11,10 +11,11 @@ import {
   SCHEME_PAYMENT,
   decodeReceipt,
 } from '@inflowpayai/mpp';
-import { sellerProbe, type SellerProbeOptions } from '@inflowpayai/x402-buyer/probe';
+import type { SellerProbeOptions } from '@inflowpayai/x402-buyer/probe';
 import { userFacingApiError } from './api-error.js';
 import { pollAsync } from '../utils/async-poll.js';
 import { approvalUrlFor } from '../x402/dashboard-url.js';
+import { SellerAuthenticationError, sellerRequest, type SellerRequestTransport } from './payment-fetch.js';
 import { type DecodedChallenge, summarizeChallenge } from './mpp-decode.js';
 import { buildBodyAttachment } from './x402-pay.js';
 import {
@@ -173,6 +174,7 @@ export interface MppPayPipelineDeps {
    * Defaults to `true`.
    */
   awaitPayment?: boolean;
+  sellerTransport?: SellerRequestTransport;
 }
 
 /**
@@ -194,13 +196,15 @@ export function buildSettlement(headers: Headers): MppPaySettlement | undefined 
   } catch {
     return undefined;
   }
-  const out: MppPaySettlement = {};
-  if (receipt.reference !== '') out.reference = receipt.reference;
-  if (receipt.status !== '') out.status = receipt.status;
-  if (receipt.timestamp !== '') out.timestamp = receipt.timestamp;
-  if (receipt.amount !== undefined) out.amount = receipt.amount;
-  if (receipt.currency !== undefined) out.currency = receipt.currency;
-  return Object.keys(out).length > 0 ? out : undefined;
+  const settlement = receipt.settlement;
+  if (settlement === undefined) return undefined;
+  return {
+    amount: settlement.amount,
+    currency: settlement.currency,
+    reference: receipt.reference,
+    status: receipt.status,
+    timestamp: receipt.timestamp,
+  };
 }
 
 /** Poll `getTransaction` to a terminal state. Returns the terminal response, or `undefined` on poll exhaustion. */
@@ -235,7 +239,7 @@ async function resolveTransaction(
  */
 export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: MppPayEvent) => void): Promise<void> {
   try {
-    const probe = await sellerProbe(deps.url, deps.probeOptions);
+    const probe = await sellerRequest(deps.sellerTransport, { url: deps.url, ...deps.probeOptions });
     if (probe.status !== 402) {
       if (!isSuccessStatus(probe.status)) {
         emit({
@@ -370,9 +374,11 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
     }
 
     const credential = resolved.credential;
-    const replay = await sellerProbe(deps.url, {
+    const replay = await sellerRequest(deps.sellerTransport, {
+      url: deps.url,
       method: deps.probeOptions.method,
-      headers: { ...deps.probeOptions.headers, [HEADERS.AUTHORIZATION]: `${SCHEME_PAYMENT} ${credential}` },
+      headers: deps.probeOptions.headers,
+      additionalAuthenticationHeaders: { [HEADERS.AUTHORIZATION]: `${SCHEME_PAYMENT} ${credential}` },
       ...(deps.probeOptions.data !== undefined ? { data: deps.probeOptions.data } : {}),
     });
     const attachment = await buildBodyAttachment(replay.bytes, deps.showBody, deps.outputFile);
@@ -412,6 +418,14 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
       },
     });
   } catch (err) {
+    if (err instanceof SellerAuthenticationError) {
+      emit({
+        type: 'errored',
+        code: err.code,
+        message: err.message,
+      });
+      return;
+    }
     const mapped = mapMppError(err);
     emit({ type: 'errored', code: mapped.code, message: mapped.message });
   }

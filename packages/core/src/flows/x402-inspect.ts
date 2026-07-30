@@ -3,6 +3,7 @@ import { fromFoundationRequirements } from '@inflowpayai/x402-buyer';
 import { decodePaymentRequiredHeader } from '@x402/core/http';
 import type { PaymentRequired } from '@x402/core/types';
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
+import { PaymentInspectionBlockedError, type PaymentInspectionBlocked } from './payment-fetch.js';
 import {
   type AcceptsFilters,
   buildNoFilteredMatchMessage,
@@ -45,11 +46,13 @@ export type InspectPhase =
   | { kind: 'probing' }
   | { kind: 'accepts'; result: InspectResultAccepts }
   | { kind: 'no-payment'; result: InspectResultNoPayment }
+  | { kind: 'blocked'; result: PaymentInspectionBlocked }
   | { kind: 'error'; code: string; message: string };
 
 export type InspectEvent =
   | { type: 'accepts'; result: InspectResultAccepts }
   | { type: 'no-payment'; result: InspectResultNoPayment }
+  | { type: 'blocked'; result: PaymentInspectionBlocked }
   | { type: 'errored'; code: string; message: string };
 
 /**
@@ -61,9 +64,7 @@ export type InspectEvent =
  * - `error` — header present but the codec rejected it (`DECODE_FAILED`).
  */
 export type X402HeaderParse =
-  | { kind: 'absent' }
-  | { kind: 'parsed'; decoded: PaymentRequired }
-  | { kind: 'error'; code: string; message: string };
+  { kind: 'absent' } | { kind: 'parsed'; decoded: PaymentRequired } | { kind: 'error'; code: string; message: string };
 
 /** Read + decode the `PAYMENT-REQUIRED` header from a 402 probe response. Pure; performs no I/O and applies no filters. */
 export function parseX402HeaderFromProbe(probe: SellerProbeResult): X402HeaderParse {
@@ -82,6 +83,8 @@ export function reduceX402Inspect(state: InspectPhase, event: InspectEvent): Ins
       return { kind: 'accepts', result: event.result };
     case 'no-payment':
       return { kind: 'no-payment', result: event.result };
+    case 'blocked':
+      return { kind: 'blocked', result: event.result };
     case 'errored':
       return { kind: 'error', code: event.code, message: event.message };
     default:
@@ -92,6 +95,7 @@ export function reduceX402Inspect(state: InspectPhase, event: InspectEvent): Ins
 export interface InspectPipelineDeps {
   probeOptions: SellerProbeOptions;
   url: string;
+  probe?: (url: string, options: SellerProbeOptions) => Promise<SellerProbeResult>;
   schemeFilter?: string;
   networkFilter?: string;
   /**
@@ -122,8 +126,12 @@ export async function runInspectPipeline(
 ): Promise<void> {
   let probe: SellerProbeResult;
   try {
-    probe = await sellerProbe(deps.url, deps.probeOptions);
+    probe = await (deps.probe ?? sellerProbe)(deps.url, deps.probeOptions);
   } catch (err) {
+    if (err instanceof PaymentInspectionBlockedError) {
+      emit({ type: 'blocked', result: err.blocked });
+      return;
+    }
     emit({
       type: 'errored',
       code: 'INSPECT_FAILED',

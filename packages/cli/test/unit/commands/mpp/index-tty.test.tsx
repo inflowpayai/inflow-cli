@@ -94,6 +94,7 @@ describe('mpp TTY runners (renderInkUntilExit paths)', () => {
   it('runPayCommand calls c.error when the seller rejects the credential', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     fetchSpy.mockResolvedValueOnce(challenge402());
+    fetchSpy.mockResolvedValueOnce(challenge402());
     fetchSpy.mockResolvedValueOnce(new Response('nope', { status: 402 }));
     const client = makeClient({
       createTransaction: vi.fn(() =>

@@ -1,0 +1,343 @@
+import { Buffer } from 'node:buffer';
+import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
+import { SecureStorageError } from './errors.js';
+
+const require = createRequire(import.meta.url);
+
+type KeyringPassword = string | Buffer | Uint8Array | null | undefined;
+
+interface KeyringEntry {
+  deletePassword(): Promise<boolean>;
+  getPassword(): Promise<KeyringPassword>;
+  setPassword(password: string | Buffer | Uint8Array): Promise<void>;
+}
+
+interface KeyringModule {
+  AsyncEntry: new (service: string, account: string) => KeyringEntry;
+  Entry: new (service: string, account: string) => SyncKeyringEntry;
+}
+
+interface SyncKeyringEntry {
+  deleteCredential(): boolean;
+  getSecret(): number[] | Uint8Array | null;
+  setSecret(secret: Uint8Array): void;
+}
+
+export interface KeychainSecretStoreOptions {
+  loadKeyring?: () => KeyringModule;
+  serviceName?: string;
+}
+
+export interface SecretReference {
+  purpose: string;
+  reference: string;
+}
+
+export interface SecureSecretStore {
+  create(reference: SecretReference, value: Uint8Array): Promise<void>;
+  delete(reference: SecretReference): Promise<void>;
+  read(reference: SecretReference): Promise<Uint8Array>;
+}
+
+export interface SyncSecureSecretStore {
+  create(reference: SecretReference, value: Uint8Array): void;
+  delete(reference: SecretReference): void;
+  read(reference: SecretReference): Uint8Array;
+}
+
+const DEFAULT_SERVICE_NAME = 'ai.inflowpay.cli';
+
+function loadDefaultKeyring(): KeyringModule {
+  const loaded = require('@napi-rs/keyring') as unknown;
+  if (typeof loaded !== 'object' || loaded === null || !('AsyncEntry' in loaded)) {
+    throw new SecureStorageError('secure_storage_unavailable', 'The Keychain binding did not expose AsyncEntry.');
+  }
+  return loaded as KeyringModule;
+}
+
+function accountFor(reference: SecretReference): string {
+  if (reference.reference.length === 0 || reference.purpose.length === 0) {
+    throw new SecureStorageError(
+      'secure_storage_invalid_path',
+      'Secret references require a purpose and opaque reference.',
+    );
+  }
+  return `${reference.purpose}:${reference.reference}`;
+}
+
+function bytesFromPassword(value: KeyringPassword): Uint8Array {
+  if (value === null || value === undefined) {
+    throw new SecureStorageError('secure_storage_secret_missing', 'A referenced secret is missing from Keychain.');
+  }
+  if (typeof value === 'string') {
+    return Buffer.from(value, 'base64');
+  }
+  return Uint8Array.from(value);
+}
+
+export function createOpaqueSecretReference(purpose: string): SecretReference {
+  return { purpose, reference: randomUUID() };
+}
+
+export class KeychainSecretStore implements SecureSecretStore {
+  private readonly loadKeyring: () => KeyringModule;
+  private readonly serviceName: string;
+
+  constructor(options: KeychainSecretStoreOptions = {}) {
+    this.loadKeyring = options.loadKeyring ?? loadDefaultKeyring;
+    this.serviceName = options.serviceName ?? DEFAULT_SERVICE_NAME;
+  }
+
+  async create(reference: SecretReference, value: Uint8Array): Promise<void> {
+    try {
+      await this.entry(reference).setPassword(Buffer.from(value).toString('base64'));
+    } catch (cause) {
+      throw new SecureStorageError('secure_storage_io_error', 'Failed to write a secret to Keychain.', { cause });
+    }
+  }
+
+  async read(reference: SecretReference): Promise<Uint8Array> {
+    try {
+      return bytesFromPassword(await this.entry(reference).getPassword());
+    } catch (cause) {
+      if (cause instanceof SecureStorageError) throw cause;
+      throw new SecureStorageError('secure_storage_io_error', 'Failed to read a secret from Keychain.', { cause });
+    }
+  }
+
+  async delete(reference: SecretReference): Promise<void> {
+    try {
+      const deleted = await this.entry(reference).deletePassword();
+      if (!deleted) {
+        throw new SecureStorageError('secure_storage_secret_missing', 'A referenced secret could not be deleted.');
+      }
+    } catch (cause) {
+      if (cause instanceof SecureStorageError) throw cause;
+      throw new SecureStorageError('secure_storage_io_error', 'Failed to delete a secret from Keychain.', { cause });
+    }
+  }
+
+  private entry(reference: SecretReference): KeyringEntry {
+    return new (this.loadKeyring().AsyncEntry)(this.serviceName, accountFor(reference));
+  }
+}
+
+export class SyncKeychainSecretStore implements SyncSecureSecretStore {
+  private readonly loadKeyring: () => KeyringModule;
+  private readonly serviceName: string;
+
+  constructor(options: KeychainSecretStoreOptions = {}) {
+    this.loadKeyring = options.loadKeyring ?? loadDefaultKeyring;
+    this.serviceName = options.serviceName ?? DEFAULT_SERVICE_NAME;
+  }
+
+  create(reference: SecretReference, value: Uint8Array): void {
+    try {
+      this.entry(reference).setSecret(value);
+    } catch (cause) {
+      throw new SecureStorageError('secure_storage_io_error', 'Failed to write a secret to Keychain.', { cause });
+    }
+  }
+
+  read(reference: SecretReference): Uint8Array {
+    try {
+      const value = this.entry(reference).getSecret();
+      if (value === null) {
+        throw new SecureStorageError('secure_storage_secret_missing', 'A referenced secret is missing from Keychain.');
+      }
+      return Uint8Array.from(value);
+    } catch (cause) {
+      if (cause instanceof SecureStorageError) throw cause;
+      throw new SecureStorageError('secure_storage_io_error', 'Failed to read a secret from Keychain.', { cause });
+    }
+  }
+
+  delete(reference: SecretReference): void {
+    try {
+      if (!this.entry(reference).deleteCredential()) {
+        throw new SecureStorageError('secure_storage_secret_missing', 'A referenced secret could not be deleted.');
+      }
+    } catch (cause) {
+      if (cause instanceof SecureStorageError) throw cause;
+      throw new SecureStorageError('secure_storage_io_error', 'Failed to delete a secret from Keychain.', { cause });
+    }
+  }
+
+  private entry(reference: SecretReference): SyncKeyringEntry {
+    return new (this.loadKeyring().Entry)(this.serviceName, accountFor(reference));
+  }
+}
+
+export class KeychainReferenceManifest {
+  private readonly reference: SecretReference;
+
+  constructor(
+    private readonly store: SecureSecretStore,
+    purpose = 'manifest',
+  ) {
+    this.reference = { purpose, reference: 'fixed-keychain-references' };
+  }
+
+  async add(reference: SecretReference): Promise<void> {
+    const manifest = await this.read();
+    if (!manifest.some((candidate) => sameReference(candidate, reference))) {
+      manifest.push(reference);
+      await this.write(manifest);
+    }
+  }
+
+  async remove(reference: SecretReference): Promise<void> {
+    await this.write((await this.read()).filter((candidate) => !sameReference(candidate, reference)));
+  }
+
+  async read(): Promise<SecretReference[]> {
+    try {
+      const parsed = JSON.parse(Buffer.from(await this.store.read(this.reference)).toString('utf8')) as unknown;
+      if (!Array.isArray(parsed)) {
+        throw new SecureStorageError('secure_storage_corrupt', 'The Keychain reference manifest is malformed.');
+      }
+      return parsed.map(parseManifestEntry);
+    } catch (cause) {
+      if (cause instanceof SecureStorageError && cause.secureStorageCode === 'secure_storage_secret_missing') return [];
+      if (cause instanceof SecureStorageError) throw cause;
+      throw new SecureStorageError('secure_storage_corrupt', 'The Keychain reference manifest is malformed.', {
+        cause,
+      });
+    }
+  }
+
+  private async write(references: SecretReference[]): Promise<void> {
+    const payload = Buffer.from(JSON.stringify(references), 'utf8');
+    try {
+      await this.store.delete(this.reference);
+    } catch (cause) {
+      if (!(cause instanceof SecureStorageError) || cause.secureStorageCode !== 'secure_storage_secret_missing') {
+        throw cause;
+      }
+    }
+    await this.store.create(this.reference, payload);
+  }
+}
+
+export class SyncKeychainReferenceManifest {
+  private readonly reference: SecretReference;
+
+  constructor(
+    private readonly store: SyncSecureSecretStore,
+    purpose = 'manifest',
+  ) {
+    this.reference = { purpose, reference: 'fixed-keychain-references' };
+  }
+
+  add(reference: SecretReference): void {
+    const manifest = this.read();
+    if (!manifest.some((candidate) => sameReference(candidate, reference))) {
+      manifest.push(reference);
+      this.write(manifest);
+    }
+  }
+
+  remove(reference: SecretReference): void {
+    this.write(this.read().filter((candidate) => !sameReference(candidate, reference)));
+  }
+
+  read(): SecretReference[] {
+    try {
+      const parsed = JSON.parse(Buffer.from(this.store.read(this.reference)).toString('utf8')) as unknown;
+      if (!Array.isArray(parsed)) {
+        throw new SecureStorageError('secure_storage_corrupt', 'The Keychain reference manifest is malformed.');
+      }
+      return parsed.map(parseManifestEntry);
+    } catch (cause) {
+      if (cause instanceof SecureStorageError && cause.secureStorageCode === 'secure_storage_secret_missing') return [];
+      if (cause instanceof SecureStorageError) throw cause;
+      throw new SecureStorageError('secure_storage_corrupt', 'The Keychain reference manifest is malformed.', {
+        cause,
+      });
+    }
+  }
+
+  private write(references: SecretReference[]): void {
+    const payload = Buffer.from(JSON.stringify(references), 'utf8');
+    try {
+      this.store.delete(this.reference);
+    } catch (cause) {
+      if (!(cause instanceof SecureStorageError) || cause.secureStorageCode !== 'secure_storage_secret_missing') {
+        throw cause;
+      }
+    }
+    this.store.create(this.reference, payload);
+  }
+}
+
+function parseManifestEntry(value: unknown): SecretReference {
+  if (typeof value !== 'object' || value === null) {
+    throw new SecureStorageError(
+      'secure_storage_corrupt',
+      'The Keychain reference manifest contains a malformed entry.',
+    );
+  }
+  const candidate = value as Partial<SecretReference>;
+  if (typeof candidate.purpose !== 'string' || typeof candidate.reference !== 'string') {
+    throw new SecureStorageError(
+      'secure_storage_corrupt',
+      'The Keychain reference manifest contains a malformed entry.',
+    );
+  }
+  return { purpose: candidate.purpose, reference: candidate.reference };
+}
+
+function sameReference(left: SecretReference, right: SecretReference): boolean {
+  return left.purpose === right.purpose && left.reference === right.reference;
+}
+
+export class MemorySecretStore implements SecureSecretStore {
+  private readonly values = new Map<string, Uint8Array>();
+
+  create(reference: SecretReference, value: Uint8Array): Promise<void> {
+    this.values.set(accountFor(reference), Uint8Array.from(value));
+    return Promise.resolve();
+  }
+
+  read(reference: SecretReference): Promise<Uint8Array> {
+    const value = this.values.get(accountFor(reference));
+    if (value === undefined) {
+      return Promise.reject(
+        new SecureStorageError('secure_storage_secret_missing', 'A referenced secret is missing from Keychain.'),
+      );
+    }
+    return Promise.resolve(Uint8Array.from(value));
+  }
+
+  delete(reference: SecretReference): Promise<void> {
+    if (!this.values.delete(accountFor(reference))) {
+      return Promise.reject(
+        new SecureStorageError('secure_storage_secret_missing', 'A referenced secret could not be deleted.'),
+      );
+    }
+    return Promise.resolve();
+  }
+}
+
+export class SyncMemorySecretStore implements SyncSecureSecretStore {
+  private readonly values = new Map<string, Uint8Array>();
+
+  create(reference: SecretReference, value: Uint8Array): void {
+    this.values.set(accountFor(reference), Uint8Array.from(value));
+  }
+
+  read(reference: SecretReference): Uint8Array {
+    const value = this.values.get(accountFor(reference));
+    if (value === undefined) {
+      throw new SecureStorageError('secure_storage_secret_missing', 'A referenced secret is missing from Keychain.');
+    }
+    return Uint8Array.from(value);
+  }
+
+  delete(reference: SecretReference): void {
+    if (!this.values.delete(accountFor(reference))) {
+      throw new SecureStorageError('secure_storage_secret_missing', 'A referenced secret could not be deleted.');
+    }
+  }
+}

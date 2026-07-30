@@ -64,6 +64,41 @@ export const statusArgs = z.object({
   transactionId: z.string().describe('The transaction id returned by `mpp pay`.'),
 });
 
+export const fetchArgs = z.object({
+  transactionId: z.string().describe('The transaction id returned by `mpp pay`.'),
+  resourceUrl: z.string().describe('The MPP-protected resource URL to fetch.'),
+});
+
+export const fetchOptions = z.object({
+  method: z.string().default('GET').describe('HTTP method for the seller request.'),
+  data: z
+    .string()
+    .optional()
+    .describe(
+      'Request body. JSON or raw text. Content-Type defaults to application/json when --data is set unless a --header overrides it.',
+    ),
+  header: z.array(z.string()).default([]).describe('Repeatable. "Name: Value" format.'),
+  interval: z.coerce
+    .number()
+    .default(0)
+    .describe('Poll cadence in seconds while waiting for the transaction to become ready.'),
+  maxAttempts: z.coerce
+    .number()
+    .default(0)
+    .describe('Hard cap on poll attempts when --interval > 0. 0 means unlimited.'),
+  timeout: z.coerce.number().default(900).describe('Polling deadline in seconds.'),
+  showBody: z
+    .boolean()
+    .default(true)
+    .describe('Include the seller response body in the result. Pass --no-show-body to suppress inline body output.'),
+  outputFile: z
+    .string()
+    .optional()
+    .describe(
+      'Write the seller response body bytes to this file path. When set, the result frame includes `output_saved_to` instead of `body` / `body_base64`.',
+    ),
+});
+
 export const statusOptions = z.object({
   interval: z.coerce
     .number()

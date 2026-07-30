@@ -61,11 +61,109 @@ function renderView() {
   );
 }
 
+function renderAepView() {
+  return render(
+    <CombinedInspectView
+      url={URL}
+      method="GET"
+      deps={{
+        inspectAep: () =>
+          Promise.resolve({
+            commandUrl: (command: string) => new globalThis.URL(`https://seller.test/aep/${command}`),
+            document: {
+              aep_version: '1.0',
+              bindings: { supported: ['http'] },
+              commands: { supported: ['inspect', 'enroll', 'status'] },
+              core: { signing_algorithms: ['ES256'] },
+              http: { endpoint_base: '/aep' },
+              identity: { methods: ['did:web'] },
+              service: { did: 'did:web:service.test' },
+            },
+            finalUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+            inspectUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+          }),
+        probeOptions: { method: 'GET', headers: {} },
+        url: URL,
+      }}
+      onComplete={vi.fn()}
+    />,
+  );
+}
+
+function renderOpenApiAepView() {
+  return render(
+    <CombinedInspectView
+      url={URL}
+      method="GET"
+      deps={{
+        inspectAep: () =>
+          Promise.resolve({
+            commandUrl: (command: string) => new globalThis.URL(`https://seller.test/aep/${command}`),
+            document: {
+              aep_version: '1.0',
+              bindings: { supported: ['http'] },
+              commands: { supported: ['inspect', 'status'] },
+              core: { signing_algorithms: ['ES256'] },
+              http: { endpoint_base: '/aep' },
+              identity: { methods: ['did:web'] },
+              service: { did: 'did:web:service.test' },
+            },
+            finalUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+            inspectUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+          }),
+        inspectAepPolicy: () =>
+          Promise.resolve({
+            freshness: 'fresh',
+            matchedOperation: { method: 'GET', pathTemplate: '/api' },
+            methods: ['aep-jwt'],
+            source: 'openapi',
+            state: 'required',
+          }),
+        probeOptions: { method: 'GET', headers: {} },
+        url: URL,
+      }}
+      onComplete={vi.fn()}
+    />,
+  );
+}
+
 async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 describe('CombinedInspectView', () => {
+  it('renders definitive OpenAPI AEP policy without waiting for a resource probe', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const { lastFrame, unmount } = renderOpenApiAepView();
+    await settle();
+    const frame = lastFrame() ?? '';
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(frame).toContain('authentication required');
+    expect(frame).toContain('Resource path');
+    expect(frame).toContain('/api');
+    expect(frame).toContain('aep-jwt');
+    expect(frame).not.toContain('Policy freshness');
+    unmount();
+  });
+
+  it('renders AEP before MPP and x402 when authentication is required', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('authentication required', {
+        status: 401,
+        headers: { 'WWW-Authenticate': 'AEP reason="not_recognized"' },
+      }),
+    );
+    const { lastFrame, unmount } = renderAepView();
+    await settle();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('detected: aep');
+    expect(frame).toContain('Service DID');
+    expect(frame).toContain('did:web:service.test');
+    expect(frame.indexOf('── AEP ──')).toBeLessThan(frame.indexOf('── MPP ──'));
+    expect(frame.indexOf('── MPP ──')).toBeLessThan(frame.indexOf('── x402 ──'));
+    unmount();
+  });
+
   it('renders both sections with detected: mpp, x402 and triage columns', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response('payment required', {
@@ -145,6 +243,8 @@ describe('CombinedInspectView', () => {
     const { lastFrame, unmount } = renderView();
     await settle();
     const frame = lastFrame() ?? '';
+    expect(frame).toContain('── AEP ──');
+    expect(frame).toContain('not required for this URL');
     expect(frame).toContain('Seller accepted without payment');
     unmount();
   });

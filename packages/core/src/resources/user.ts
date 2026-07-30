@@ -1,8 +1,7 @@
 import { type InflowOptions, type ResolvedInflowSdkConfig, resolveInflowSdkConfig } from '../config.js';
-import { InflowApiError } from '../errors.js';
 import type { User } from '../types/index.js';
 import { InflowApiClient } from '../utils/api-client.js';
-import { redactRawBody } from '../utils/redact.js';
+import { createApiError } from './api-error.js';
 import type { IUserResource } from './interfaces.js';
 
 export class UserResource implements IUserResource {
@@ -15,16 +14,10 @@ export class UserResource implements IUserResource {
 
   async retrieve(options: { signal?: AbortSignal } = {}): Promise<User> {
     const requestOptions = options.signal !== undefined ? { signal: options.signal } : {};
-    const { status, data, rawBody } = await this.api.get('/v1/users/self', requestOptions);
+    const response = await this.api.get('/v1/users/self', requestOptions);
+    const { status, data } = response;
     if (status < 200 || status >= 300) {
-      throw new InflowApiError(
-        `Failed to retrieve user (${String(status)}): ${redactRawBody(rawBody) || 'unknown error'}`,
-        {
-          status,
-          rawBody,
-          details: data,
-        },
-      );
+      throw createApiError(response, 'Failed to retrieve user');
     }
     return data as User;
   }

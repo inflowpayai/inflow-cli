@@ -3,6 +3,7 @@ import {
   type InspectPipelineDeps,
   type InspectResultAccepts,
   type InspectResultNoPayment,
+  type PaymentInspectionBlocked,
   reduceX402Inspect,
   runInspectPipeline,
 } from '@inflowpayai/inflow-core';
@@ -73,7 +74,7 @@ export const InspectView: React.FC<InspectViewProps> = ({ url, method, deps, onC
   }, [deps]);
 
   useEffect(() => {
-    if (phase.kind === 'accepts' || phase.kind === 'no-payment' || phase.kind === 'error') {
+    if (phase.kind === 'accepts' || phase.kind === 'no-payment' || phase.kind === 'blocked' || phase.kind === 'error') {
       finish(phase);
     }
   }, [phase, finish]);
@@ -102,6 +103,17 @@ export const InspectView: React.FC<InspectViewProps> = ({ url, method, deps, onC
       <Box flexDirection="column">
         <Text color="red">✗ {phase.code}</Text>
         <Text color="red">{phase.message}</Text>
+      </Box>
+    );
+  }
+
+  if (phase.kind === 'blocked') {
+    return (
+      <Box flexDirection="column">
+        <Text color="yellow">AEP authentication required before x402 terms can be inspected.</Text>
+        {phase.result.serviceUrl !== undefined ? <Text>{`Service: ${phase.result.serviceUrl}`}</Text> : null}
+        {phase.result.serviceDid !== undefined ? <Text dimColor>{`DID: ${phase.result.serviceDid}`}</Text> : null}
+        <Text dimColor>{phase.result.message}</Text>
       </Box>
     );
   }
@@ -168,4 +180,16 @@ export function buildNoPaymentFrame(result: InspectResultNoPayment): Record<stri
   };
   if (result.contentType !== undefined) frame['content_type'] = result.contentType;
   return frame;
+}
+
+export function buildBlockedFrame(result: PaymentInspectionBlocked): Record<string, unknown> {
+  return {
+    outcome: 'aep-authentication-required',
+    url: result.url,
+    method: result.method,
+    source: result.source,
+    message: result.message,
+    ...(result.serviceUrl === undefined ? {} : { service_url: result.serviceUrl }),
+    ...(result.serviceDid === undefined ? {} : { service_did: result.serviceDid }),
+  };
 }

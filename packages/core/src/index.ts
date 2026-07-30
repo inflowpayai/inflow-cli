@@ -8,7 +8,7 @@
  *   inflow.user              IUser              — retrieve() (raw) + get() (agent-projected)
  *   inflow.balances          IBalanceResource   — list()
  *   inflow.depositAddresses  IDepositAddressResource — list()
- *   inflow.x402              IX402              — client() (raw buyer) + pay/status/cancel/inspect/supported
+ *   inflow.x402              IX402              — client() (raw buyer) + pay/fetch/status/cancel/inspect/supported
  *
  * Plus:
  *
@@ -23,7 +23,7 @@
  */
 
 /* Client + augmented interfaces ------------------------------------------- */
-export { Inflow, type IMppResource, type IX402Resource } from './client.js';
+export { Inflow, type IAepResource, type IMppResource, type IX402Resource } from './client.js';
 export {
   augmentAuth,
   augmentMpp,
@@ -40,10 +40,12 @@ export {
   type IUser,
   type IX402,
   type MppCancelRequest,
+  type MppFetchRequest,
   type MppInspectRequest,
   type MppPayRequest,
   type MppStatusRequest,
   type X402CancelRequest,
+  type X402FetchRequest,
   type X402InspectRequest,
   type X402PayRequest,
   type X402StatusRequest,
@@ -84,8 +86,27 @@ export {
   type StorageOptions,
   storage,
 } from './utils/storage.js';
+export { SecureStorageError, type SecureStorageErrorCode } from './secure-storage/errors.js';
+export { SyncMemorySecretStore, type SecretReference, type SyncSecureSecretStore } from './secure-storage/keychain.js';
 export { sanitizeDeep, sanitizeText } from './utils/sanitize-text.js';
 export { sanitizeResource } from './utils/sanitize-proxy.js';
+export {
+  type AepPersistedInspectResult,
+  type AepOwner,
+  type AepPersistedState,
+  type PublicDocumentStateStorage,
+  AepStorage,
+  createAepPublicDocumentCache,
+  type AepStateStorage,
+} from './aep/storage.js';
+export {
+  AepFetchError,
+  type AepFetchAuthentication,
+  type AepFetchInput,
+  type AepFetchPaymentRequired,
+  type AepFetchResult,
+  runAepFetch,
+} from './flows/aep-fetch.js';
 export { pollAsync, type PollExitReason, type PollOptions, type PollOutcome } from './utils/async-poll.js';
 export { describeUser, previewAccessToken } from './utils/user-display.js';
 
@@ -126,6 +147,7 @@ export { type AuthStatusProbeInput, type AuthStatusProbeResult, probeAuthStatus 
 export {
   buildMppSection,
   buildX402Section,
+  type AepSection,
   type CombinedInspectEvent,
   type CombinedInspectNoPayment,
   type CombinedInspectPhase,
@@ -163,6 +185,28 @@ export {
   reducePay,
   runPayPipeline,
 } from './flows/x402-pay.js';
+export {
+  PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
+  PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+  type PaymentInspectionBlocked,
+  PaymentInspectionBlockedError,
+  type PaymentReplayInput,
+  type PaymentReplayResult,
+  SellerAuthenticationError,
+  type SellerRequestInput,
+  type SellerRequestTransport,
+  defaultSellerRequestTransport,
+  replayPaymentRequest,
+  sellerRequest,
+} from './flows/payment-fetch.js';
+export {
+  type X402FetchEvent,
+  type X402FetchInput,
+  type X402FetchRejected,
+  type X402FetchRun,
+  type X402FetchSuccess,
+  runX402Fetch,
+} from './flows/x402-fetch.js';
 export {
   classifyPayloadResponse,
   reduceX402Status,
@@ -207,6 +251,14 @@ export {
   reduceMppPay,
   runMppPayPipeline,
 } from './flows/mpp-pay.js';
+export {
+  type MppFetchEvent,
+  type MppFetchInput,
+  type MppFetchRejected,
+  type MppFetchRun,
+  type MppFetchSuccess,
+  runMppFetch,
+} from './flows/mpp-fetch.js';
 export {
   classifyTransaction,
   reduceMppStatus,

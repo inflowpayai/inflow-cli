@@ -1,19 +1,14 @@
 #!/usr/bin/env node
 /**
- * Redirect the local SDK buyer packages (`@inflowpayai/x402`,
- * `@inflowpayai/x402-buyer`, `@inflowpayai/mpp`, `@inflowpayai/mpp-buyer`)
- * to a local `inflow-node` checkout via pnpm-workspace.yaml overrides. Use
- * while developing against unpublished SDK changes before the corresponding
- * npm release lands.
+ * Redirect local SDK packages from `inflow-node` and `aep-node` checkouts via pnpm-workspace.yaml overrides. Use while
+ * developing against unpublished SDK changes before the corresponding npm release lands.
  *
- * Reads the target checkout from `$INFLOW_NODE_PATH` (defaults to
- * `../inflow-node` resolved against this repo's root). Bails out if any
- * linked package is missing or unbuilt in the target checkout.
+ * Reads the target checkouts from `$INFLOW_NODE_PATH` and `$AEP_NODE_PATH` (both default to sibling checkouts). Bails
+ * out if any linked package is missing or unbuilt in its target checkout.
  *
- * Writes to `pnpm-workspace.yaml`'s `overrides:` block — the modern home
- * for workspace-level overrides under pnpm 11+ (the legacy
- * `pnpm.overrides` and top-level `overrides` in `package.json` are
- * either ignored or limited to transitive deps).
+ * Writes to `pnpm-workspace.yaml`'s `overrides:` block — the modern home for workspace-level overrides under pnpm 11+
+ * (the legacy `pnpm.overrides` and top-level `overrides` in `package.json` are either ignored or limited to transitive
+ * deps).
  *
  * Companion: `scripts/unlink-local-inflow-node.mjs`.
  */
@@ -24,9 +19,17 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ROOT_PKG_JSON = path.join(REPO_ROOT, 'package.json');
 const WORKSPACE_YAML = path.join(REPO_ROOT, 'pnpm-workspace.yaml');
-const LINKED = ['@inflowpayai/x402', '@inflowpayai/x402-buyer', '@inflowpayai/mpp', '@inflowpayai/mpp-buyer'];
+const INFLOW_LINKED = ['@inflowpayai/x402', '@inflowpayai/x402-buyer', '@inflowpayai/mpp', '@inflowpayai/mpp-buyer'];
+const AEP_LINKED = [
+  '@aep-foundation/agent',
+  '@aep-foundation/core',
+  '@aep-foundation/express',
+  '@aep-foundation/platform',
+  '@aep-foundation/service',
+];
+const LINKED = [...INFLOW_LINKED, ...AEP_LINKED];
+const INFLOW_NODE_AEP_LINKED = ['@aep-foundation/core', '@aep-foundation/express', '@aep-foundation/service'];
 
 const BEGIN_MARK = '# >>> link-local-inflow-node:overrides';
 const END_MARK = '# <<< link-local-inflow-node:overrides';
@@ -39,6 +42,14 @@ function resolveInflowNodePath() {
   return path.resolve(REPO_ROOT, '..', 'inflow-node');
 }
 
+function resolveAepNodePath() {
+  const fromEnv = process.env.AEP_NODE_PATH;
+  if (fromEnv !== undefined && fromEnv.length > 0) {
+    return path.resolve(fromEnv);
+  }
+  return path.resolve(REPO_ROOT, '..', '..', 'AEP', 'aep-node');
+}
+
 async function fileExists(p) {
   try {
     await fs.access(p);
@@ -48,45 +59,61 @@ async function fileExists(p) {
   }
 }
 
-async function assertCheckout(inflowNodePath) {
-  for (const name of LINKED) {
-    const sub = name.split('/')[1];
-    const pkg = path.join(inflowNodePath, 'packages', sub, 'package.json');
+async function assertCheckout(checkoutPath, packages, checkoutName) {
+  for (const name of packages) {
+    const pkg = path.join(checkoutPath, aepPackageDirectory(name), 'package.json');
     if (!(await fileExists(pkg))) {
       process.stderr.write(
-        `link-local-inflow-node: missing ${pkg}. Set INFLOW_NODE_PATH or check out inflow-node alongside this repo.\n`,
+        `link-local-inflow-node: missing ${pkg}. Set ${checkoutName}_PATH or check out ${checkoutName.toLowerCase()} alongside this repo.\n`,
       );
       process.exit(1);
     }
-    const dist = path.join(inflowNodePath, 'packages', sub, 'dist', 'index.d.ts');
+    const dist = path.join(checkoutPath, aepPackageDirectory(name), 'dist', 'index.d.ts');
     if (!(await fileExists(dist))) {
       process.stderr.write(
-        `link-local-inflow-node: ${dist} not found. Run \`pnpm --filter ${name} build\` in inflow-node first.\n`,
+        `link-local-inflow-node: ${dist} not found. Run \`pnpm --filter ${name} build\` in ${checkoutName.toLowerCase()} first.\n`,
       );
       process.exit(1);
     }
   }
 }
 
-function buildOverridesBlock(inflowNodePath) {
+function buildOverridesBlock(workspaceRoot, inflowNodePath, aepNodePath, packages) {
   const lines = [BEGIN_MARK, 'overrides:'];
-  for (const name of LINKED) {
+  for (const name of packages.inflow) {
     const sub = name.split('/')[1];
-    const rel = path.relative(REPO_ROOT, path.join(inflowNodePath, 'packages', sub));
+    const rel = path.relative(workspaceRoot, path.join(inflowNodePath, 'packages', sub));
+    lines.push(`  '${name}': link:${rel}`);
+  }
+  for (const name of packages.aep) {
+    const rel = path.relative(workspaceRoot, path.join(aepNodePath, aepPackageDirectory(name)));
     lines.push(`  '${name}': link:${rel}`);
   }
   lines.push(END_MARK);
   return lines.join('\n');
 }
 
+async function writeOverrides(workspaceRoot, inflowNodePath, aepNodePath, packages) {
+  const workspaceYaml = path.join(workspaceRoot, 'pnpm-workspace.yaml');
+  const existing = await fs.readFile(workspaceYaml, 'utf-8');
+  const stripped = stripExistingBlock(existing);
+  const block = buildOverridesBlock(workspaceRoot, inflowNodePath, aepNodePath, packages);
+  const next = stripped.endsWith('\n') ? `${stripped}${block}\n` : `${stripped}\n${block}\n`;
+
+  if (next !== existing) await fs.writeFile(workspaceYaml, next, 'utf-8');
+  return next !== existing;
+}
+
+function aepPackageDirectory(name) {
+  const sub = name.split('/')[1];
+  return sub === 'express' ? path.join('packages', 'adapters', sub) : path.join('packages', sub);
+}
+
 function stripExistingBlock(yaml) {
   // Removes both our managed block and any pre-existing `overrides:` line
   // owned by a human edit. We rewrite the block on every run; humans who
   // need other overrides should keep them outside our markers.
-  const re = new RegExp(
-    `\\n?${escapeRe(BEGIN_MARK)}[\\s\\S]*?${escapeRe(END_MARK)}\\n?`,
-    'g',
-  );
+  const re = new RegExp(`\\n?${escapeRe(BEGIN_MARK)}[\\s\\S]*?${escapeRe(END_MARK)}\\n?`, 'g');
   return yaml.replace(re, '\n');
 }
 
@@ -94,12 +121,24 @@ function escapeRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function clearLegacyOverridesFromPackageJson() {
-  const raw = await fs.readFile(ROOT_PKG_JSON, 'utf-8');
+async function clearLocalPackageReferences(workspaceRoot, packages) {
+  const packageJson = path.join(workspaceRoot, 'package.json');
+  const raw = await fs.readFile(packageJson, 'utf-8');
   const manifest = JSON.parse(raw);
   let mutated = false;
+  for (const dependencyKind of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+    const dependencies = manifest[dependencyKind];
+    if (dependencies === undefined) continue;
+    for (const name of packages) {
+      if (typeof dependencies[name] === 'string' && dependencies[name].startsWith('link:')) {
+        delete dependencies[name];
+        mutated = true;
+      }
+    }
+    if (Object.keys(dependencies).length === 0) delete manifest[dependencyKind];
+  }
   if (manifest.overrides !== undefined) {
-    for (const name of LINKED) {
+    for (const name of packages) {
       if (manifest.overrides[name] !== undefined) {
         delete manifest.overrides[name];
         mutated = true;
@@ -110,7 +149,7 @@ async function clearLegacyOverridesFromPackageJson() {
     }
   }
   if (manifest.pnpm?.overrides !== undefined) {
-    for (const name of LINKED) {
+    for (const name of packages) {
       if (manifest.pnpm.overrides[name] !== undefined) {
         delete manifest.pnpm.overrides[name];
         mutated = true;
@@ -122,11 +161,7 @@ async function clearLegacyOverridesFromPackageJson() {
     }
   }
   if (mutated) {
-    await fs.writeFile(
-      ROOT_PKG_JSON,
-      `${JSON.stringify(manifest, null, 2)}\n`,
-      'utf-8',
-    );
+    await fs.writeFile(packageJson, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
   }
 }
 
@@ -142,24 +177,35 @@ function run(cmd, args, opts = {}) {
 }
 
 const inflowNodePath = resolveInflowNodePath();
-await assertCheckout(inflowNodePath);
-await clearLegacyOverridesFromPackageJson();
-
-const existing = await fs.readFile(WORKSPACE_YAML, 'utf-8');
-const stripped = stripExistingBlock(existing);
-const block = buildOverridesBlock(inflowNodePath);
-const next = stripped.endsWith('\n')
-  ? `${stripped}${block}\n`
-  : `${stripped}\n${block}\n`;
-
-if (next !== existing) {
-  await fs.writeFile(WORKSPACE_YAML, next, 'utf-8');
-  process.stdout.write(
-    `link-local-inflow-node: wrote pnpm-workspace.yaml overrides → ${LINKED.join(', ')} (target: ${inflowNodePath}).\n`,
-  );
-} else {
-  process.stdout.write('link-local-inflow-node: overrides already current; running install.\n');
-}
+const aepNodePath = resolveAepNodePath();
+await assertCheckout(inflowNodePath, INFLOW_LINKED, 'INFLOW_NODE');
+await assertCheckout(aepNodePath, AEP_LINKED, 'AEP_NODE');
+await clearLocalPackageReferences(REPO_ROOT, LINKED);
+await clearLocalPackageReferences(inflowNodePath, INFLOW_NODE_AEP_LINKED);
+const cliChanged = await writeOverrides(REPO_ROOT, inflowNodePath, aepNodePath, {
+  aep: AEP_LINKED,
+  inflow: INFLOW_LINKED,
+});
+const inflowNodeChanged = await writeOverrides(inflowNodePath, inflowNodePath, aepNodePath, {
+  aep: AEP_LINKED.filter((name) =>
+    ['@aep-foundation/core', '@aep-foundation/express', '@aep-foundation/service'].includes(name),
+  ),
+  inflow: [],
+});
+process.stdout.write(
+  `link-local-inflow-node: ${cliChanged || inflowNodeChanged ? 'wrote' : 'kept'} overrides for the CLI and inflow-node workspaces.\n`,
+);
 
 await run('pnpm', ['install']);
+await run('pnpm', ['install'], { cwd: inflowNodePath });
+await run(
+  'pnpm',
+  [
+    'link',
+    path.join(aepNodePath, aepPackageDirectory('@aep-foundation/core')),
+    path.join(aepNodePath, aepPackageDirectory('@aep-foundation/express')),
+    path.join(aepNodePath, aepPackageDirectory('@aep-foundation/service')),
+  ],
+  { cwd: path.join(inflowNodePath, 'examples', 'mpp-aep-seller-express'), env: { ...process.env, CI: 'true' } },
+);
 process.stdout.write('link-local-inflow-node: done. Run `scripts/unlink-local-inflow-node.mjs` to revert.\n');

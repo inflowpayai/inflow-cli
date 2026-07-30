@@ -1,9 +1,11 @@
-import { mkdtempSync, statSync, existsSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AuthTokens } from '../../../src/types/index.js';
 import { MemoryStorage, Storage } from '../../../src/utils/storage.js';
+import { AepStorage } from '../../../src/aep/storage.js';
+import { SyncMemorySecretStore, type SecretReference } from '../../../src/secure-storage/keychain.js';
 
 const sampleAuth: AuthTokens = {
   access_token: 'a',
@@ -11,6 +13,15 @@ const sampleAuth: AuthTokens = {
   token_type: 'Bearer',
   expires_in: 3600,
 };
+
+class CountingSecretStore extends SyncMemorySecretStore {
+  readonly deleted: SecretReference[] = [];
+
+  override delete(reference: SecretReference): void {
+    super.delete(reference);
+    this.deleted.push(reference);
+  }
+}
 
 describe('Storage (file-backed)', () => {
   let tmpDir: string;
@@ -23,8 +34,12 @@ describe('Storage (file-backed)', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('writes the credential file with 0o600 permissions', () => {
-    const s = new Storage({ cwd: tmpDir });
+  function secureStorage(): Storage {
+    return new Storage({ cwd: tmpDir, secretStore: new SyncMemorySecretStore() });
+  }
+
+  it('writes the SQLite database with 0o600 permissions', () => {
+    const s = secureStorage();
     s.setAuth(sampleAuth);
     const path = s.getPath();
     const mode = statSync(path).mode & 0o777;
@@ -32,7 +47,7 @@ describe('Storage (file-backed)', () => {
   });
 
   it('round-trips auth via setAuth/getAuth with computed expires_at', () => {
-    const s = new Storage({ cwd: tmpDir });
+    const s = secureStorage();
     const before = Date.now();
     s.setAuth(sampleAuth);
     const got = s.getAuth();
@@ -42,7 +57,7 @@ describe('Storage (file-backed)', () => {
   });
 
   it('isAuthenticated reflects setAuth/clearAuth', () => {
-    const s = new Storage({ cwd: tmpDir });
+    const s = secureStorage();
     expect(s.isAuthenticated()).toBe(false);
     s.setAuth(sampleAuth);
     expect(s.isAuthenticated()).toBe(true);
@@ -51,7 +66,7 @@ describe('Storage (file-backed)', () => {
   });
 
   it('pendingDeviceAuth evicts at read time when expired', () => {
-    const s = new Storage({ cwd: tmpDir });
+    const s = secureStorage();
     s.setPendingDeviceAuth({
       device_code: 'd',
       interval: 5,
@@ -63,7 +78,7 @@ describe('Storage (file-backed)', () => {
   });
 
   it('pendingDeviceAuth returns value when unexpired', () => {
-    const s = new Storage({ cwd: tmpDir });
+    const s = secureStorage();
     const value = {
       device_code: 'd',
       interval: 5,
@@ -78,7 +93,7 @@ describe('Storage (file-backed)', () => {
   });
 
   it('clearAll wipes auth, apiKey, pendingDeviceAuth, and connection', () => {
-    const s = new Storage({ cwd: tmpDir });
+    const s = secureStorage();
     s.setAuth(sampleAuth);
     s.setApiKey('inflow_test_abc');
     s.setPendingDeviceAuth({
@@ -98,7 +113,7 @@ describe('Storage (file-backed)', () => {
   });
 
   it('apiKey round-trips via setApiKey/getApiKey/clearApiKey', () => {
-    const s = new Storage({ cwd: tmpDir });
+    const s = secureStorage();
     expect(s.getApiKey()).toBeNull();
     s.setApiKey('inflow_live_abc');
     expect(s.getApiKey()).toBe('inflow_live_abc');
@@ -107,7 +122,7 @@ describe('Storage (file-backed)', () => {
   });
 
   it('isAuthenticated is true with just an apiKey set (no device tokens)', () => {
-    const s = new Storage({ cwd: tmpDir });
+    const s = secureStorage();
     expect(s.isAuthenticated()).toBe(false);
     s.setApiKey('inflow_live_abc');
     expect(s.isAuthenticated()).toBe(true);
@@ -116,12 +131,12 @@ describe('Storage (file-backed)', () => {
   });
 
   it('setApiKey rejects empty strings (defensive against accidental clears)', () => {
-    const s = new Storage({ cwd: tmpDir });
+    const s = secureStorage();
     expect(() => s.setApiKey('')).toThrow();
   });
 
   it('connection round-trips via setConnection/getConnection/clearConnection', () => {
-    const s = new Storage({ cwd: tmpDir });
+    const s = secureStorage();
     expect(s.getConnection()).toBeNull();
     s.setConnection({
       environment: 'sandbox',
@@ -138,9 +153,10 @@ describe('Storage (file-backed)', () => {
   });
 
   it('connection persists across new Storage instances pointing at the same file', () => {
-    const a = new Storage({ cwd: tmpDir });
+    const secretStore = new SyncMemorySecretStore();
+    const a = new Storage({ cwd: tmpDir, secretStore });
     a.setConnection({ environment: 'sandbox', apiBaseUrl: 'https://dev/' });
-    const b = new Storage({ cwd: tmpDir });
+    const b = new Storage({ cwd: tmpDir, secretStore });
     expect(b.getConnection()).toEqual({
       environment: 'sandbox',
       apiBaseUrl: 'https://dev/',
@@ -148,33 +164,170 @@ describe('Storage (file-backed)', () => {
   });
 
   it('apiKey persists across new Storage instances pointing at the same file', () => {
-    const a = new Storage({ cwd: tmpDir });
+    const secretStore = new SyncMemorySecretStore();
+    const a = new Storage({ cwd: tmpDir, secretStore });
     a.setApiKey('inflow_live_persisted');
-    const b = new Storage({ cwd: tmpDir });
+    const b = new Storage({ cwd: tmpDir, secretStore });
     expect(b.getApiKey()).toBe('inflow_live_persisted');
   });
 
-  it('configPath override controls the file location', () => {
-    const explicit = join(tmpDir, 'creds.json');
-    const s = new Storage({ configPath: explicit });
+  it('keeps auth and API key secret values out of the SQLite database bytes', () => {
+    const s = secureStorage();
+    s.setAuth({
+      access_token: 'access-token-secret-value',
+      expires_in: 3600,
+      refresh_token: 'refresh-token-secret-value',
+      scope: 'read',
+      token_type: 'Bearer',
+    });
+    s.setApiKey('api-key-secret-value');
+
+    const databaseBytes = readFileSync(s.getPath(), 'utf8');
+    expect(databaseBytes).not.toContain('access-token-secret-value');
+    expect(databaseBytes).not.toContain('refresh-token-secret-value');
+    expect(databaseBytes).not.toContain('api-key-secret-value');
+    expect(s.getAuth()).toMatchObject({
+      access_token: 'access-token-secret-value',
+      refresh_token: 'refresh-token-secret-value',
+    });
+    expect(s.getApiKey()).toBe('api-key-secret-value');
+  });
+
+  it('configPath override controls the SQLite location', () => {
+    const explicit = join(tmpDir, 'creds.sqlite3');
+    const s = new Storage({ configPath: explicit, secretStore: new SyncMemorySecretStore() });
     s.setAuth(sampleAuth);
     expect(s.getPath()).toBe(explicit);
   });
 
-  it('configPath without .json extension is honored', () => {
-    const explicit = join(tmpDir, 'creds');
-    const s = new Storage({ configPath: explicit });
+  it('configPath with the legacy JSON extension uses a sibling SQLite database', () => {
+    const legacy = join(tmpDir, 'creds.json');
+    const s = new Storage({ configPath: legacy, secretStore: new SyncMemorySecretStore() });
     s.setAuth(sampleAuth);
-    expect(s.getPath()).toBe(`${explicit}.json`);
+    expect(s.getPath()).toBe(join(tmpDir, 'creds.sqlite3'));
   });
 
-  it('deleteConfig is idempotent on a missing file', async () => {
-    const s = new Storage({ cwd: tmpDir });
+  it('deletes an explicitly supplied legacy JSON config during initialization', () => {
+    const legacy = join(tmpDir, 'creds.json');
+    writeFileSync(legacy, '{"auth":{"access_token":"legacy-secret"}}');
+    const s = new Storage({ configPath: legacy, secretStore: new SyncMemorySecretStore() });
+    expect(existsSync(legacy)).toBe(true);
+    s.getAuth();
+    expect(existsSync(legacy)).toBe(false);
+    expect(existsSync(join(tmpDir, 'creds.sqlite3'))).toBe(true);
+  });
+
+  it('deletes the cwd legacy config during initialization', () => {
+    const legacy = join(tmpDir, 'config.json');
+    writeFileSync(legacy, '{"apiKey":"legacy-secret"}');
+    const s = secureStorage();
+    s.getConnection();
+    expect(existsSync(legacy)).toBe(false);
+  });
+
+  it('does not delete a legacy path directory', () => {
+    const legacy = join(tmpDir, 'directory.json');
+    mkdirSync(legacy);
+    const s = new Storage({ configPath: legacy, secretStore: new SyncMemorySecretStore() });
+    s.getAuth();
+    expect(existsSync(legacy)).toBe(true);
+  });
+
+  it('configPath without an extension is honored exactly', () => {
+    const explicit = join(tmpDir, 'creds');
+    const s = new Storage({ configPath: explicit, secretStore: new SyncMemorySecretStore() });
     s.setAuth(sampleAuth);
+    expect(s.getPath()).toBe(explicit);
+  });
+
+  it('deleteConfig clears secure records, deletes legacy config, and leaves the database in place for reuse', async () => {
+    const s = secureStorage();
+    s.setAuth(sampleAuth);
+    s.setApiKey('inflow_live_delete');
+    const legacy = join(tmpDir, 'config.json');
+    writeFileSync(legacy, '{"apiKey":"legacy-secret"}');
     const path = s.getPath();
     await s.deleteConfig();
-    expect(existsSync(path)).toBe(false);
+    expect(existsSync(legacy)).toBe(false);
+    expect(existsSync(path)).toBe(true);
+    expect(s.getAuth()).toBeNull();
+    expect(s.getApiKey()).toBeNull();
     await expect(s.deleteConfig()).resolves.toBeUndefined();
+  });
+
+  it('stores AEP credential payloads as Keychain secrets and reconstructs state', () => {
+    const s = secureStorage();
+    s.setAepState({
+      credentials: {
+        'did:web:service.example': {
+          credential_1: {
+            credential: { credential_id: 'credential_1', value: 'aep-secret-value' },
+            credentialId: 'credential_1',
+            expiresAt: '2999-01-01T00:00:00.000Z',
+            grantType: 'api-key',
+            issuedAt: '2026-01-01T00:00:00.000Z',
+            serviceDid: 'did:web:service.example',
+            serviceUrl: 'https://service.example',
+          },
+        },
+      },
+      identities: {
+        'did:web:service.example': {
+          agentDid: 'did:web:platform.example:agents:one',
+          identityKind: 'platform-hosted',
+          serviceDid: 'did:web:service.example',
+          signingAlgorithms: ['ES256'],
+        },
+      },
+      owner: { platformOrigin: 'https://platform.example', userId: 'user-1' },
+      version: 1,
+    });
+
+    expect(readFileSync(s.getPath(), 'utf8')).not.toContain('aep-secret-value');
+    expect(s.getAepState()?.credentials['did:web:service.example']?.['credential_1']).toMatchObject({
+      credential: { credential_id: 'credential_1', value: 'aep-secret-value' },
+      serviceUrl: 'https://service.example',
+    });
+
+    s.clearAepState();
+    expect(s.getAepState()).toBeNull();
+  });
+
+  it('deletes expired AEP credential secrets during normal credential-store interactions', () => {
+    const secretStore = new CountingSecretStore();
+    const s = new Storage({ cwd: tmpDir, secretStore });
+    s.setAepState({
+      credentials: {
+        'did:web:service.example': {
+          active: {
+            credential: { credential_id: 'active', value: 'active-secret-value' },
+            credentialId: 'active',
+            expiresAt: '2999-01-01T00:00:00.000Z',
+            grantType: 'api-key',
+            issuedAt: '2026-01-01T00:00:00.000Z',
+            serviceDid: 'did:web:service.example',
+          },
+          expired: {
+            credential: { credential_id: 'expired', value: 'expired-secret-value' },
+            credentialId: 'expired',
+            expiresAt: '2000-01-01T00:00:00.000Z',
+            grantType: 'api-key',
+            issuedAt: '2026-01-01T00:00:00.000Z',
+            serviceDid: 'did:web:service.example',
+          },
+        },
+      },
+      identities: {},
+      owner: { platformOrigin: 'https://platform.example', userId: 'user-1' },
+      version: 1,
+    });
+
+    const aep = new AepStorage(s, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+    expect(aep.credentials().listCredentials('did:web:service.example')).toHaveLength(1);
+
+    expect(s.getAepState()?.credentials['did:web:service.example']?.['expired']).toBeUndefined();
+    expect(readFileSync(s.getPath(), 'utf8')).not.toContain('expired-secret-value');
+    expect(secretStore.deleted.length).toBeGreaterThanOrEqual(2);
   });
 });
 
