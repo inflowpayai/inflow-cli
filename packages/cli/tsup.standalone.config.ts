@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'tsup';
 
@@ -12,6 +13,8 @@ interface CliManifest {
 }
 
 const manifest = JSON.parse(readFileSync(resolve(here, 'package.json'), 'utf-8')) as CliManifest;
+const buildId = computeBuildId();
+const vaultPeerNativeSha256 = computeVaultPeerNativeSha256();
 
 const skillsDir = resolve(repoRoot, 'skills');
 
@@ -43,9 +46,10 @@ const reactDevtoolsAlias = resolve(here, 'src/stubs/react-devtools-core.ts');
 const BUNDLE_BANNER = [
   '#!/usr/bin/env node',
   "import { createRequire as __createRequire, Module as __Module } from 'node:module';",
-  "import { dirname as __dirnamePath, resolve as __resolvePath } from 'node:path';",
+  "import { delimiter as __pathDelimiter, dirname as __dirnamePath, resolve as __resolvePath } from 'node:path';",
   'const require = __createRequire(process.execPath);',
-  "process.env.NODE_PATH = [__resolvePath(__dirnamePath(process.execPath), '../Resources/app/node_modules'), process.env.NODE_PATH ?? ''].filter(Boolean).join(':');",
+  "Reflect.set(globalThis, '__inflowRequire', require);",
+  "process.env.NODE_PATH = [__resolvePath(__dirnamePath(process.execPath), 'runtime/node_modules'), __resolvePath(__dirnamePath(process.execPath), '../Resources/app/node_modules'), __resolvePath(__dirnamePath(process.execPath), '../lib/inflow/node_modules'), process.env.NODE_PATH ?? ''].filter(Boolean).join(__pathDelimiter);",
   '__Module._initPaths();',
 ].join('\n');
 
@@ -54,9 +58,11 @@ export default defineConfig({
   clean: false,
   define: {
     __BOOTSTRAP_BODY__: JSON.stringify(bootstrapBody),
+    __CLI_BUILD_ID__: JSON.stringify(buildId),
     __CLI_NAME__: JSON.stringify(manifest.name),
     __CLI_VERSION__: JSON.stringify(manifest.version),
     __SKILL_BODIES__: JSON.stringify(skillBodies),
+    __VAULT_PEER_NATIVE_SHA256__: JSON.stringify(vaultPeerNativeSha256),
   },
   esbuildOptions(options) {
     options.alias = {
@@ -65,8 +71,8 @@ export default defineConfig({
     };
   },
   entry: { 'cli.standalone': 'src/cli.tsx' },
-  external: [],
-  noExternal: [/.*/],
+  external: ['@node-rs/argon2'],
+  noExternal: [/^(?!@node-rs\/argon2$).*/],
   format: ['esm'],
   outExtension() {
     return { js: '.mjs' };
@@ -77,3 +83,59 @@ export default defineConfig({
   sourcemap: false,
   target: 'node24',
 });
+
+function computeBuildId(): string {
+  const hash = createHash('sha256');
+  for (const filePath of buildIdentityFiles()) {
+    hash.update(relative(repoRoot, filePath));
+    hash.update('\0');
+    hash.update(readFileSync(filePath));
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+function computeVaultPeerNativeSha256(): string {
+  if (process.platform !== 'darwin' && process.platform !== 'linux' && process.platform !== 'win32') {
+    throw new Error(`Native vault peer verification is unavailable on ${process.platform}.`);
+  }
+  const platformName = process.platform === 'win32' ? 'windows' : process.platform;
+  const nativePath = resolve(repoRoot, `packages/core/native/build/vault_peer_${platformName}.node`);
+  if (!existsSync(nativePath)) {
+    throw new Error(`Native vault peer verifier is missing at ${nativePath}.`);
+  }
+  return createHash('sha256').update(readFileSync(nativePath)).digest('hex');
+}
+
+function buildIdentityFiles(): string[] {
+  return [
+    resolve(repoRoot, 'package.json'),
+    resolve(repoRoot, 'pnpm-lock.yaml'),
+    resolve(repoRoot, 'packages/core/package.json'),
+    resolve(repoRoot, 'packages/cli/package.json'),
+    resolve(repoRoot, 'packages/cli/tsup.config.ts'),
+    resolve(repoRoot, 'packages/cli/tsup.standalone.config.ts'),
+    resolve(repoRoot, 'patches/incur.patch'),
+    ...existingSourceFiles(resolve(repoRoot, 'packages/core/native')),
+    ...sourceFiles(resolve(repoRoot, 'packages/core/src')),
+    ...sourceFiles(resolve(repoRoot, 'packages/cli/src')),
+    ...sourceFiles(resolve(repoRoot, 'skills')),
+  ].sort();
+}
+
+function existingSourceFiles(root: string): string[] {
+  return existsSync(root) ? sourceFiles(root) : [];
+}
+
+function sourceFiles(root: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const entryPath = resolve(root, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...sourceFiles(entryPath));
+      continue;
+    }
+    if (entry.isFile()) out.push(entryPath);
+  }
+  return out;
+}

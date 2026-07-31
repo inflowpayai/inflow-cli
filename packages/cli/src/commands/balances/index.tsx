@@ -8,6 +8,7 @@ import {
 } from '@inflowpayai/inflow-core';
 import { Cli } from 'incur';
 import React from 'react';
+import { mcpTool } from '../../mcp-metadata.js';
 import { assertSessionGuard } from '../../utils/assert-session.js';
 import { authenticatedApiError } from '../../utils/api-error.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
@@ -63,6 +64,7 @@ export function createBalancesCli(balanceResource: IBalanceResource, authStorage
 
   cli.command('list', {
     description: "List the authenticated user's balances",
+    mcp: mcpTool('balances_list'),
     options: listOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {

@@ -23,7 +23,12 @@ Installing into an agent host? Use the per-surface guide:
 
 ## Install
 
-The signed native `inflow` binary is distributed for Apple Silicon and Intel Macs.
+InFlow is distributed as a signed native application. The npm package is a compatibility notice and does not run
+commands, start MCP, or manage credentials.
+
+Public installation currently targets Apple Silicon and Intel Macs. Windows ARM64 MSI and Linux ARM64/AMD64 package
+workflows are validated, but those channels remain unavailable until their production signing and repository
+infrastructure is published.
 
 ### Homebrew Cask
 
@@ -40,7 +45,7 @@ brew upgrade --cask inflow
 brew uninstall --cask inflow
 ```
 
-### Hosted installer
+### macOS hosted installer
 
 ```bash
 curl -fsSL https://inflowcli.ai/install.sh | bash
@@ -56,7 +61,7 @@ Run the installer again to upgrade to the latest GitHub Release. Uninstall with:
 curl -fsSL https://inflowcli.ai/install.sh | bash -s -- --uninstall
 ```
 
-PowerShell on macOS can use the same hosted installer surface:
+PowerShell on macOS can use the same hosted installer:
 
 ```powershell
 iwr -useb https://inflowcli.ai/install.ps1 | iex
@@ -76,6 +81,19 @@ Download the matching zip from the `inflowpayai/inflow-cli` GitHub Release for t
 - `inflow-<version>-darwin-x64.zip` for Intel Macs
 
 The zip contains `InFlow.app`; the executable is inside the app bundle at `InFlow.app/Contents/MacOS/inflow`.
+
+### Initialize the credential vault
+
+Credential-bearing commands use the encrypted local InFlow vault. Initialize or unlock it in a human-controlled
+terminal:
+
+```bash
+inflow vault unlock
+```
+
+The PIN or passphrase is read only from the terminal. It is not an MCP argument, command-line flag, environment
+variable, or structured agent input. `inflow vault status`, `inflow vault lock`, and `inflow vault policy` do not
+require the unlock factor.
 
 ### Use with agents
 
@@ -102,6 +120,36 @@ The repo also ships as an installable plugin (skill + MCP server bundled) for pl
 
 In every case the plugin bundles the skill and the `inflow` MCP server (`.mcp.json`). The default MCP entry runs
 `inflow --mcp`; install the signed native binary before using the MCP server.
+
+## Security and local data
+
+- OAuth tokens, API keys, and Agent Enrollment Protocol credentials are encrypted in the local SQLite vault.
+- The vault daemon accepts only authenticated local InFlow clients and exposes exact-reference secret operations, not
+  payment, network, signing, or command-execution operations.
+- The daemon authenticates clients, and clients authenticate the daemon before transmitting requests.
+- Vault unlock factors are entered only in a human terminal. Agent and MCP executions fail closed while the vault is
+  locked.
+- macOS uses the signed application identity. Windows uses Authenticode-signed application and Windows service
+  identities. Linux packages install a system service and enforce executable, socket, peer, tenant, and package identity
+  checks.
+- `inflow auth logout` and `inflow vault reset` remove local credentials and vault state. Package uninstall preserves
+  encrypted vault data unless the platform-specific purge operation is requested.
+
+InFlow sends authenticated API requests, seller-resource requests requested by the user, and an advisory GitHub Release
+version check. Set `NO_UPDATE_NOTIFIER=1` to disable the version check. The check has a two-second deadline and does not
+send credentials.
+
+## Upgrade and troubleshooting
+
+Upgrade a Homebrew installation with `brew upgrade --cask inflow`. For a hosted installation, rerun the hosted
+installer. The CLI may report a newer signed release, but continues unless the API returns `VERSION_UNSUPPORTED`.
+
+If an agent or MCP tool reports that the vault is locked, run `inflow vault unlock` yourself in a terminal and retry the
+operation. Never paste the PIN or passphrase into a prompt or MCP tool input.
+
+Use `inflow auth status --format json` to check authentication and environment state, and `inflow vault status` to check
+the local vault and daemon. See the [surface install and testing guide](./docs/development/surfaces-and-testing.md) for
+host-specific MCP troubleshooting.
 
 ## Development
 
@@ -143,6 +191,26 @@ Real release runs also require this repository variable:
 
 The published macOS artifacts are attached to the `inflowpayai/inflow-cli` GitHub Release for the package version, and
 the Homebrew Cask in `inflowpayai/homebrew-tap` points at those release assets for Apple Silicon and Intel Macs.
+
+## Linux release automation
+
+The `linux-release` workflow builds native AMD64 and ARM64 archives, Debian packages, and RPM packages. Pull requests
+use a disposable OpenPGP key to sign a consolidated `SHA256SUMS` release manifest, sign both RPM packages, verify the
+result, reject modified metadata and packages, and install through the rendered Linux installer.
+
+Production runs use the protected `linux-production` GitHub environment. That environment permits approval by the
+initiating sole release operator, is restricted to release tags, and contains only the exportable automation signing
+subkey:
+
+- Environment secret: `LINUX_OPENPGP_SIGNING_SUBKEY_BASE64`
+- Environment variable: `LINUX_OPENPGP_SIGNING_FINGERPRINT`
+
+The primary certification key remains offline. It has no expiration. The automation signing subkey has a two-year
+lifetime, is reviewed annually, and is replaced approximately 90 days before expiration. The production workflow signs
+and verifies the release before uploading versioned assets to the matching GitHub Release.
+
+See [`docs/development/linux-release-signing.md`](./docs/development/linux-release-signing.md) for the offline key
+ceremony, GitHub environment setup, release process, and recovery procedure.
 
 ## Packages
 

@@ -225,12 +225,15 @@ describe('runAuthLogout (tty mode)', () => {
     renderMock.mockResolvedValueOnce(undefined);
     const storage = new MemoryStorage(sampleTokens);
     const ctx = { agent: false, formatExplicit: false };
+    const resetVault = vi.fn(() => Promise.resolve());
     const result = await runAuthLogout(ctx, {
       authResource: authStub(),
       authStorage: storage,
+      resetVault,
     });
     expect(result).toEqual({ authenticated: false });
     expect(renderMock).toHaveBeenCalledOnce();
+    expect(resetVault).toHaveBeenCalledOnce();
   });
 });
 

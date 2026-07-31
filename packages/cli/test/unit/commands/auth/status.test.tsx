@@ -137,6 +137,7 @@ describe('AuthStatus (TTY component)', () => {
     );
     await vi.waitFor(() => {
       expect(lastFrame()).toContain('A newer InFlow CLI is available: 0.2.0.');
+      expect(lastFrame()).toContain('Upgrade with Homebrew or rerun the hosted installer: https://inflowcli.ai/');
     });
     unmount();
   });

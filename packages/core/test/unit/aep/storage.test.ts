@@ -3,8 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { discoverPlatform, fetchAepPublicDocument, type CachedInspectServiceResult } from '@aep-foundation/agent';
-import { AepStorage, createAepPublicDocumentCache, MemoryStorage, runAuthLogout, Storage } from '../../../src/index.js';
-import { SyncMemorySecretStore } from '../../../src/secure-storage/keychain.js';
+import {
+  AepStorage,
+  createAepPublicDocumentCache,
+  MemoryStorage,
+  runAuthLogout,
+  Storage,
+  type AepPersistedState,
+  type AepStateStorage,
+} from '../../../src/index.js';
+import { SyncMemorySecretStore } from '../../../src/secure-storage/secret-store.js';
 
 const OWNER = { platformOrigin: 'https://api.example.test', userId: 'user-1' };
 const IDENTITY = {
@@ -130,7 +138,68 @@ describe('AepStorage', () => {
     expect(await second.identities().findByServiceDid(IDENTITY.serviceDid)).toBeUndefined();
     expect(backing.getAepState()?.owner.userId).toBe('user-2');
   });
+
+  it('delegates identity lookup and credential deletion to secure storage capabilities', async () => {
+    const deleteAepCredentials = vi.fn();
+    const findAepIdentity = vi.fn(() => IDENTITY);
+    const storage: AepStateStorage = {
+      clearAepState: vi.fn(),
+      deleteAepCredentials,
+      findAepIdentity,
+      getAepState: vi.fn(() => null),
+      setAepState: vi.fn(),
+    };
+    const aep = new AepStorage(storage, OWNER);
+
+    expect(await aep.identities().findByServiceDid(IDENTITY.serviceDid)).toEqual(IDENTITY);
+    await aep.credentials().deleteCredential(IDENTITY.serviceDid, 'credential-1');
+    aep.deleteCredentials(IDENTITY.serviceDid, { grantType: 'api-key' });
+
+    expect(findAepIdentity).toHaveBeenCalledWith(OWNER, IDENTITY.serviceDid);
+    expect(deleteAepCredentials).toHaveBeenNthCalledWith(1, OWNER, IDENTITY.serviceDid, {
+      credentialId: 'credential-1',
+    });
+    expect(deleteAepCredentials).toHaveBeenNthCalledWith(2, OWNER, IDENTITY.serviceDid, { grantType: 'api-key' });
+  });
+
+  it('deletes fallback credentials by identifier, grant type, and all grant types', () => {
+    const state: AepPersistedState = {
+      credentials: {
+        [IDENTITY.serviceDid]: {
+          first: credential('first', 'api-key'),
+          second: credential('second', 'oauth-bearer'),
+          third: credential('third', 'api-key'),
+        },
+      },
+      identities: {},
+      owner: OWNER,
+      version: 1,
+    };
+    const backing = new MemoryStorage();
+    backing.setAepState(state);
+    const aep = new AepStorage(backing, OWNER);
+
+    aep.deleteCredentials(IDENTITY.serviceDid, { credentialId: 'first' });
+    expect(Object.keys(backing.getAepState()?.credentials[IDENTITY.serviceDid] ?? {})).toEqual(['second', 'third']);
+
+    aep.deleteCredentials(IDENTITY.serviceDid, { grantType: 'api-key' });
+    expect(Object.keys(backing.getAepState()?.credentials[IDENTITY.serviceDid] ?? {})).toEqual(['second']);
+
+    aep.deleteCredentials(IDENTITY.serviceDid, { allGrantTypes: true });
+    expect(backing.getAepState()?.credentials[IDENTITY.serviceDid]).toBeUndefined();
+    aep.deleteCredentials('did:web:missing.example', { allGrantTypes: true });
+  });
 });
+
+function credential(credentialId: string, grantType: string) {
+  return {
+    credential: { credential_id: credentialId },
+    credentialId,
+    grantType,
+    issuedAt: '2026-01-01T00:00:00.000Z',
+    serviceDid: IDENTITY.serviceDid,
+  };
+}
 
 describe('AEP public document cache', () => {
   let tmpDir: string;

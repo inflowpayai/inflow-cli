@@ -40,12 +40,16 @@ InFlow runs as a **standalone CLI** or an **MCP server**.
 - `inflow --skill` - print this playbook (no frontmatter) to stdout. Use it to paste into the system-prompt field of an MCP host that doesn't natively load skills: `inflow --skill | pbcopy`.
 - Default output is `toon`. Override with `--format <fmt>`; for programmatic parsing prefer `json` (single document) or `jsonl` (line-delimited).
 - Multi-step flows return `_next.command` - run it to continue.
-- `--auth <path>` overrides the credentials file location.
+- `--auth <path>` identifies a legacy plaintext credential file for deletion; it is not a credential backend.
 - `--api-key <key>` or `INFLOW_API_KEY=<key>` is an alternative to device-flow auth.
 
 ## Authenticate
 
 Authentication is shared by both protocols - do it once, before either payment flow. **Don't start a payment until the user is authenticated.**
+
+Credential-bearing commands require the encrypted local vault. If the CLI reports that the vault is uninitialized or
+locked, tell the user to run `inflow vault unlock` themselves in a terminal, then retry. Never ask for or accept the
+vault PIN or passphrase through chat, an MCP tool, a command-line flag, or an environment variable.
 
 Check the current state first - the user may already be logged in:
 
@@ -53,7 +57,7 @@ Check the current state first - the user may already be logged in:
 inflow auth status
 ```
 
-A successful `auth status` returns `authenticated: true` plus `auth_method` (`device_token` or `api_key`), a truncated `access_token` preview (never the full token), `credentials_path`, `connection`, and possibly an `update` field. For the user's identity (email, handle, account id), call `inflow user get` - `auth status` deliberately omits it. Run the command to see the full shape.
+A successful `auth status` returns `authenticated: true` plus `auth_method` (`device_token` or `api_key`), a truncated `access_token` preview (never the full token), `credentials_path`, `connection`, and possibly an `update` field. Run the command to see the full shape.
 
 If the response includes an `update` field, a newer version of `inflow` is published.
 
@@ -315,7 +319,7 @@ These apply to both protocols (in addition to each section's protocol-specific c
 | `INVALID_402` / `DECODE_FAILED` | Seller returned 402 but the protocol's header was missing (`INVALID_402`) or unparseable (`DECODE_FAILED`). Verify the URL is payable; pass the raw header to `inflow <mpp|x402> decode` for the detailed parse error. | - |
 | `POLLING_TIMEOUT` | `--interval` polling reached its max-attempts or timeout. Retryable - resume with `inflow <mpp|x402> fetch <transaction_id> <url> --interval 5 --max-attempts 180`. | "Still waiting on your approval - want me to keep polling, or cancel the request? (`inflow <mpp|x402> cancel <approval_id>` cancels it.)" |
 | `PAYMENT_REPLAY_OUTCOME_UNKNOWN` | A credential-bearing seller request had an indeterminate transport failure. Do not automatically replay. | "The seller request may have received the payment credential, but the connection failed before we got a reliable response. I won't retry automatically because the credential may be consumed." |
-| `api_error` | Non-2xx from the InFlow API on the plain data calls (`user`, `balances`, `deposit-addresses`); discriminate on `httpStatus`. `401` - saved auth rejected, re-run `inflow auth login`. `426` (`VERSION_UNSUPPORTED`) - upgrade and retry. `5xx` - server-side; wait and retry. (Note: `pay`/`status` rejections instead surface the server's own code, e.g. `INSUFFICIENT_FUNDS`, or the protocol's terminal code - not `api_error`.) | - |
+| `api_error` | Non-2xx from the InFlow API on the plain data calls (`balances`, `deposit-addresses`); discriminate on `httpStatus`. `401` - saved auth rejected, re-run `inflow auth login`. `426` (`VERSION_UNSUPPORTED`) - upgrade and retry. `5xx` - server-side; wait and retry. (Note: `pay`/`status` rejections instead surface the server's own code, e.g. `INSUFFICIENT_FUNDS`, or the protocol's terminal code - not `api_error`.) | - |
 | `VERSION_UNSUPPORTED` / HTTP 426 | Installed `inflow` CLI is below the minimum supported version. Install the current release from https://inflowcli.ai/, then retry; don't retry on the old version. | - |
 | `transport_error` | Network failure - check connectivity; retry. | - |
 

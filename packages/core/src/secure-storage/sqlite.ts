@@ -1,12 +1,22 @@
 import { chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, realpathSync } from 'node:fs';
 import { access, chmod, copyFile, mkdir, stat } from 'node:fs/promises';
-import { homedir, userInfo } from 'node:os';
+import { userInfo } from 'node:os';
 import path from 'node:path';
-import { createRequire } from 'node:module';
+import process from 'node:process';
 import { SecureStorageError } from './errors.js';
-import type { SecretReference } from './keychain.js';
+import { runtimeRequire } from './runtime-require.js';
+import type { SecretReference } from './secret-store.js';
+import { defaultVaultRoot } from './vault-files.js';
+import {
+  vaultRecordStatusCode,
+  vaultRecordStatusName,
+  vaultSecretKindCode,
+  vaultSecretKindName,
+  type VaultRecordStatus,
+  type VaultSecretKind,
+} from './vault-types.js';
 
-const require = createRequire(import.meta.url);
+const require = runtimeRequire();
 
 type SQLiteValue = Uint8Array | bigint | number | string | null;
 type SQLiteRow = Record<string, SQLiteValue>;
@@ -57,13 +67,25 @@ export interface StoredPublicDocument {
   url: string;
 }
 
+export interface StoredVaultRecord {
+  ciphertext: Uint8Array;
+  encryptionVersion: number;
+  expiresAt?: string;
+  kind: VaultSecretKind;
+  nonce: Uint8Array;
+  reference: string;
+  status: VaultRecordStatus;
+  tag: Uint8Array;
+  updatedAt: string;
+}
+
 const APPLICATION_DIRECTORY_MODE = 0o700;
 const DATABASE_FILE_MODE = 0o600;
 const SCHEMA_VERSION = 1;
 const STICKY_BIT_MODE = 0o1000;
 
 function defaultDatabasePath(): string {
-  return path.join(homedir(), 'Library', 'Application Support', 'InFlow', 'inflow.sqlite3');
+  return path.join(defaultVaultRoot(), 'inflow.sqlite3');
 }
 
 function loadDefaultSqlite(): SQLiteModule {
@@ -114,6 +136,14 @@ function numberColumn(row: SQLiteRow, name: string): number {
   return value;
 }
 
+function bytesColumn(row: SQLiteRow, name: string): Uint8Array {
+  const value = row[name];
+  if (!(value instanceof Uint8Array)) {
+    throw new SecureStorageError('secure_storage_corrupt', `SQLite column ${name} is malformed.`);
+  }
+  return value;
+}
+
 function ensureDatabasePath(databasePath: string): void {
   const parent = path.dirname(databasePath);
   mkdirSync(parent, { mode: APPLICATION_DIRECTORY_MODE, recursive: true });
@@ -122,15 +152,19 @@ function ensureDatabasePath(databasePath: string): void {
   if (!parentStat.isDirectory()) {
     throw new SecureStorageError('secure_storage_invalid_path', 'The InFlow application data directory is invalid.');
   }
-  const currentUid = userInfo().uid;
-  if (parentStat.uid !== currentUid && (parentStat.mode & STICKY_BIT_MODE) !== STICKY_BIT_MODE) {
-    throw new SecureStorageError(
-      'secure_storage_invalid_path',
-      'The InFlow application data directory is not owned by this user.',
-    );
-  }
-  if (parentStat.uid === currentUid) {
-    chmodSync(realParent, APPLICATION_DIRECTORY_MODE);
+  if (process.platform === 'win32') {
+    assertCanonicalWindowsPath(parent, realParent);
+  } else {
+    const currentUid = userInfo().uid;
+    if (parentStat.uid !== currentUid && (parentStat.mode & STICKY_BIT_MODE) !== STICKY_BIT_MODE) {
+      throw new SecureStorageError(
+        'secure_storage_invalid_path',
+        'The InFlow application data directory is not owned by this user.',
+      );
+    }
+    if (parentStat.uid === currentUid) {
+      chmodSync(realParent, APPLICATION_DIRECTORY_MODE);
+    }
   }
 
   if (!existsSync(databasePath)) {
@@ -140,6 +174,11 @@ function ensureDatabasePath(databasePath: string): void {
   if (dbStat.isSymbolicLink() || !dbStat.isFile()) {
     throw new SecureStorageError('secure_storage_invalid_path', 'The InFlow SQLite database path is invalid.');
   }
+  if (process.platform === 'win32') {
+    assertCanonicalWindowsPath(databasePath, realpathSync(databasePath));
+    return;
+  }
+  const currentUid = userInfo().uid;
   if (dbStat.uid !== currentUid) {
     throw new SecureStorageError(
       'secure_storage_invalid_path',
@@ -147,6 +186,12 @@ function ensureDatabasePath(databasePath: string): void {
     );
   }
   chmodSync(databasePath, DATABASE_FILE_MODE);
+}
+
+function assertCanonicalWindowsPath(requestedPath: string, realPath: string): void {
+  if (path.resolve(requestedPath).toLowerCase() !== path.resolve(realPath).toLowerCase()) {
+    throw new SecureStorageError('secure_storage_invalid_path', 'The InFlow SQLite path is invalid.');
+  }
 }
 
 export class SecureSqliteRepository {
@@ -269,11 +314,24 @@ export class SecureSqliteRepository {
           payload BLOB NOT NULL,
           PRIMARY KEY(secret_purpose, secret_reference)
         );
+        CREATE TABLE IF NOT EXISTS vault_records (
+          reference TEXT PRIMARY KEY,
+          kind INTEGER NOT NULL,
+          status INTEGER NOT NULL,
+          expires_at TEXT,
+          encryption_version INTEGER NOT NULL,
+          nonce BLOB NOT NULL,
+          tag BLOB NOT NULL,
+          ciphertext BLOB NOT NULL,
+          updated_at TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS auth_sessions_principal_idx ON auth_sessions(principal_id);
         CREATE INDEX IF NOT EXISTS aep_credentials_lookup_idx ON aep_credentials(principal_id, service_did, grant_type, expires_at);
         CREATE INDEX IF NOT EXISTS aep_identities_lookup_idx ON aep_identities(principal_id, service_did);
         CREATE INDEX IF NOT EXISTS public_documents_namespace_idx ON public_documents(namespace, cached_at);
         CREATE INDEX IF NOT EXISTS secret_lifecycle_state_idx ON secret_lifecycle(state);
+        CREATE INDEX IF NOT EXISTS vault_records_status_idx ON vault_records(status);
+        CREATE INDEX IF NOT EXISTS vault_records_expiry_idx ON vault_records(expires_at);
       `);
       this.setSchemaMetadata('schema_version', String(SCHEMA_VERSION));
       const check = db.prepare('PRAGMA quick_check').get();
@@ -485,6 +543,79 @@ export class SecureSqliteRepository {
       }));
   }
 
+  putVaultRecord(record: StoredVaultRecord): void {
+    this.transaction(() => {
+      this.db()
+        .prepare(
+          `INSERT INTO vault_records (
+             reference, kind, status, expires_at, encryption_version, nonce, tag, ciphertext, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+        )
+        .run(
+          record.reference,
+          vaultSecretKindCode(record.kind),
+          vaultRecordStatusCode(record.status),
+          record.expiresAt ?? null,
+          record.encryptionVersion,
+          record.nonce,
+          record.tag,
+          record.ciphertext,
+          record.updatedAt,
+        );
+    });
+  }
+
+  hasVaultRecord(reference: string): boolean {
+    return this.db().prepare('SELECT 1 FROM vault_records WHERE reference = ?').get(reference) !== undefined;
+  }
+
+  getVaultRecordByReference(reference: string): StoredVaultRecord | undefined {
+    const row = this.db().prepare('SELECT * FROM vault_records WHERE reference = ?').get(reference);
+    return row === undefined ? undefined : this.vaultRecordFromRow(row);
+  }
+
+  getVaultRecord(reference: string, expectedKind: VaultSecretKind): StoredVaultRecord | undefined {
+    const record = this.getVaultRecordByReference(reference);
+    if (record === undefined) return undefined;
+    if (record.kind !== expectedKind || record.status !== 'active') return undefined;
+    if (record.expiresAt !== undefined && Date.parse(record.expiresAt) <= Date.now()) return undefined;
+    return record;
+  }
+
+  listVaultRecords(status: VaultRecordStatus): StoredVaultRecord[] {
+    return this.db()
+      .prepare('SELECT * FROM vault_records WHERE status = ? ORDER BY reference')
+      .all(vaultRecordStatusCode(status))
+      .map((row) => this.vaultRecordFromRow(row));
+  }
+
+  markVaultRecordStatus(reference: string, status: VaultRecordStatus, updatedAt: string): void {
+    this.transaction(() => {
+      this.db()
+        .prepare('UPDATE vault_records SET status = ?, updated_at = ? WHERE reference = ?')
+        .run(vaultRecordStatusCode(status), updatedAt, reference);
+    });
+  }
+
+  deleteVaultRecord(reference: string): void {
+    this.transaction(() => {
+      this.db().prepare('DELETE FROM vault_records WHERE reference = ?').run(reference);
+    });
+  }
+
+  deleteExpiredVaultRecords(now: string): void {
+    this.transaction(() => {
+      this.db().prepare('DELETE FROM vault_records WHERE expires_at IS NOT NULL AND expires_at <= ?').run(now);
+    });
+  }
+
+  touchVaultRecord(reference: string, updatedAt: string): void {
+    this.transaction(() => {
+      this.db().prepare('UPDATE vault_records SET updated_at = ? WHERE reference = ?').run(updatedAt, reference);
+    });
+  }
+
   async verifyDatabaseFiles(): Promise<void> {
     await access(this.databasePath, constants.R_OK | constants.W_OK);
     const dbStat = await stat(this.databasePath);
@@ -550,5 +681,21 @@ export class SecureSqliteRepository {
         .prepare('UPDATE secret_lifecycle SET state = ? WHERE secret_purpose = ? AND secret_reference = ?')
         .run(state, reference.purpose, reference.reference);
     });
+  }
+
+  private vaultRecordFromRow(row: SQLiteRow): StoredVaultRecord {
+    const record: StoredVaultRecord = {
+      ciphertext: bytesColumn(row, 'ciphertext'),
+      encryptionVersion: numberColumn(row, 'encryption_version'),
+      kind: vaultSecretKindName(numberColumn(row, 'kind')),
+      nonce: bytesColumn(row, 'nonce'),
+      reference: stringColumn(row, 'reference'),
+      status: vaultRecordStatusName(numberColumn(row, 'status')),
+      tag: bytesColumn(row, 'tag'),
+      updatedAt: stringColumn(row, 'updated_at'),
+    };
+    const expiresAt = optionalStringColumn(row, 'expires_at');
+    if (expiresAt !== undefined) record.expiresAt = expiresAt;
+    return record;
   }
 }

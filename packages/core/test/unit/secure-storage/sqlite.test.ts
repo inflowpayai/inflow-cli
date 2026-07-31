@@ -72,6 +72,40 @@ describe('SecureSqliteRepository', () => {
     await expect(repository.ensureBackup()).resolves.toBeUndefined();
   });
 
+  it.runIf(process.platform === 'linux')('uses the Linux vault root for the default database', () => {
+    const originalDataHome = process.env['XDG_DATA_HOME'];
+    const dataHome = join(tmpDir, 'xdg-data');
+    process.env['XDG_DATA_HOME'] = dataHome;
+    let databasePath: string | undefined;
+    const defaultRepository = new SecureSqliteRepository({
+      loadSqlite: () => ({
+        DatabaseSync: class {
+          constructor(filename: string) {
+            databasePath = filename;
+          }
+
+          close(): void {}
+
+          exec(_sql: string): void {}
+
+          prepare(sql: string): EmptySqliteStatement {
+            return sql === 'PRAGMA quick_check'
+              ? new QuickCheckStatement({ quick_check: 'ok' })
+              : new EmptySqliteStatement();
+          }
+        },
+      }),
+    });
+    try {
+      defaultRepository.initialize();
+      expect(databasePath).toBe(join(dataHome, 'inflow', 'inflow.sqlite3'));
+    } finally {
+      defaultRepository.close();
+      if (originalDataHome === undefined) delete process.env['XDG_DATA_HOME'];
+      else process.env['XDG_DATA_HOME'] = originalDataHome;
+    }
+  });
+
   it('stores principal rows with stable owner lookup columns', () => {
     const created = repository.upsertPrincipal('https://platform.example.test', 'user-1', { displayName: 'User One' });
     const loaded = repository.getPrincipal('https://platform.example.test', 'user-1');
@@ -163,6 +197,61 @@ describe('SecureSqliteRepository', () => {
 
     repository.deleteSecretLifecycle(reference);
     expect(repository.listSecretLifecycle('deleting')).toEqual([]);
+  });
+
+  it('stores encrypted vault rows with exact-reference kind and active-status retrieval', () => {
+    const active = {
+      ciphertext: Uint8Array.from([1, 2, 3]),
+      encryptionVersion: 1,
+      kind: 'aep_credential' as const,
+      nonce: Uint8Array.from([4, 5, 6]),
+      reference: 'vlt_11111111111111111111111111111111',
+      status: 'active' as const,
+      tag: Uint8Array.from([7, 8, 9]),
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const pending = {
+      ...active,
+      reference: 'vlt_22222222222222222222222222222222',
+      status: 'pending' as const,
+    };
+    repository.putVaultRecord(active);
+    repository.putVaultRecord(pending);
+
+    expect(repository.getVaultRecord(active.reference, 'aep_credential')).toMatchObject({
+      kind: 'aep_credential',
+      reference: active.reference,
+      status: 'active',
+      updatedAt: active.updatedAt,
+    });
+    expect(repository.getVaultRecord(active.reference, 'inflow_api_key')).toBeUndefined();
+    expect(repository.getVaultRecord(pending.reference, 'aep_credential')).toBeUndefined();
+    expect(repository.listVaultRecords('pending')).toEqual([expect.objectContaining({ reference: pending.reference })]);
+  });
+
+  it('hides expired vault rows and hard-deletes completed records', () => {
+    const record = {
+      ciphertext: Uint8Array.from([1]),
+      encryptionVersion: 1,
+      expiresAt: '2000-01-01T00:00:00.000Z',
+      kind: 'auth_access_token' as const,
+      nonce: Uint8Array.from([2]),
+      reference: 'vlt_33333333333333333333333333333333',
+      status: 'active' as const,
+      tag: Uint8Array.from([3]),
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    repository.putVaultRecord(record);
+
+    expect(repository.getVaultRecord(record.reference, 'auth_access_token')).toBeUndefined();
+
+    repository.markVaultRecordStatus(record.reference, 'deleting', '2026-01-02T00:00:00.000Z');
+    expect(repository.listVaultRecords('deleting')).toEqual([
+      expect.objectContaining({ reference: record.reference, status: 'deleting' }),
+    ]);
+
+    repository.deleteVaultRecord(record.reference);
+    expect(repository.listVaultRecords('deleting')).toEqual([]);
   });
 
   it('stores versioned non-secret settings payloads as JSON bytes', () => {

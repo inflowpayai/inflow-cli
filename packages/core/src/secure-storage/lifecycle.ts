@@ -1,5 +1,10 @@
-import type { KeychainReferenceManifest, SecretReference, SecureSecretStore } from './keychain.js';
-import type { SyncKeychainReferenceManifest, SyncSecureSecretStore } from './keychain.js';
+import type {
+  SecretReference,
+  SecretReferenceManifest,
+  SecureSecretStore,
+  SyncSecretReferenceManifest,
+  SyncSecureSecretStore,
+} from './secret-store.js';
 import type { SecureSqliteRepository } from './sqlite.js';
 
 function errorFromCause(cause: unknown): Error {
@@ -11,7 +16,7 @@ export class SecureSecretLifecycleCoordinator {
   constructor(
     private readonly repository: SecureSqliteRepository,
     private readonly store: SecureSecretStore,
-    private readonly manifest: KeychainReferenceManifest,
+    private readonly manifest: SecretReferenceManifest,
   ) {}
 
   async create(
@@ -20,48 +25,47 @@ export class SecureSecretLifecycleCoordinator {
     principalId: number | null,
     payload: unknown = {},
   ): Promise<void> {
-    let failure: Error | undefined;
-    await this.repository.writeTransaction(async () => {
+    await this.repository.writeTransaction(() => {
       this.repository.beginSecretLifecycle(reference, principalId, payload);
-      try {
-        await this.store.create(reference, value);
-        await this.manifest.add(reference);
-        this.repository.markSecretActive(reference);
-      } catch (cause) {
-        failure = errorFromCause(cause);
-      }
     });
-    if (failure !== undefined) throw failure;
+    try {
+      await this.store.create(reference, value);
+      await this.manifest.add(reference);
+      await this.repository.writeTransaction(() => {
+        this.repository.markSecretActive(reference);
+      });
+    } catch (cause) {
+      throw errorFromCause(cause);
+    }
   }
 
   async delete(reference: SecretReference): Promise<void> {
-    let failure: Error | undefined;
-    await this.repository.writeTransaction(async () => {
+    await this.repository.writeTransaction(() => {
       this.repository.markSecretDeleting(reference);
-      try {
-        await this.store.delete(reference);
-        await this.manifest.remove(reference);
-        this.repository.deleteSecretLifecycle(reference);
-      } catch (cause) {
-        failure = errorFromCause(cause);
-      }
     });
-    if (failure !== undefined) throw failure;
+    try {
+      await this.store.delete(reference);
+      await this.manifest.remove(reference);
+      await this.repository.writeTransaction(() => {
+        this.repository.deleteSecretLifecycle(reference);
+      });
+    } catch (cause) {
+      throw errorFromCause(cause);
+    }
   }
 
   async recoverInterruptedWork(): Promise<void> {
-    await this.repository.writeTransaction(async () => {
-      for (const reference of this.repository.listSecretLifecycle('pending')) {
-        await this.deleteIfPresent(reference);
-        await this.manifest.remove(reference);
+    const references = await this.repository.writeTransaction(() => [
+      ...this.repository.listSecretLifecycle('pending'),
+      ...this.repository.listSecretLifecycle('deleting'),
+    ]);
+    for (const reference of references) {
+      await this.deleteIfPresent(reference);
+      await this.manifest.remove(reference);
+      await this.repository.writeTransaction(() => {
         this.repository.deleteSecretLifecycle(reference);
-      }
-      for (const reference of this.repository.listSecretLifecycle('deleting')) {
-        await this.deleteIfPresent(reference);
-        await this.manifest.remove(reference);
-        this.repository.deleteSecretLifecycle(reference);
-      }
-    });
+      });
+    }
   }
 
   private async deleteIfPresent(reference: SecretReference): Promise<void> {
@@ -77,52 +81,51 @@ export class SyncSecureSecretLifecycleCoordinator {
   constructor(
     private readonly repository: SecureSqliteRepository,
     private readonly store: SyncSecureSecretStore,
-    private readonly manifest: SyncKeychainReferenceManifest,
+    private readonly manifest: SyncSecretReferenceManifest,
   ) {}
 
   create(reference: SecretReference, value: Uint8Array, principalId: number | null, payload: unknown = {}): void {
-    let failure: Error | undefined;
     this.repository.writeTransactionSync(() => {
       this.repository.beginSecretLifecycle(reference, principalId, payload);
-      try {
-        this.store.create(reference, value);
-        this.manifest.add(reference);
-        this.repository.markSecretActive(reference);
-      } catch (cause) {
-        failure = errorFromCause(cause);
-      }
     });
-    if (failure !== undefined) throw failure;
+    try {
+      this.store.create(reference, value);
+      this.manifest.add(reference);
+      this.repository.writeTransactionSync(() => {
+        this.repository.markSecretActive(reference);
+      });
+    } catch (cause) {
+      throw errorFromCause(cause);
+    }
   }
 
   delete(reference: SecretReference): void {
-    let failure: Error | undefined;
     this.repository.writeTransactionSync(() => {
       this.repository.markSecretDeleting(reference);
-      try {
-        this.store.delete(reference);
-        this.manifest.remove(reference);
-        this.repository.deleteSecretLifecycle(reference);
-      } catch (cause) {
-        failure = errorFromCause(cause);
-      }
     });
-    if (failure !== undefined) throw failure;
+    try {
+      this.store.delete(reference);
+      this.manifest.remove(reference);
+      this.repository.writeTransactionSync(() => {
+        this.repository.deleteSecretLifecycle(reference);
+      });
+    } catch (cause) {
+      throw errorFromCause(cause);
+    }
   }
 
   recoverInterruptedWork(): void {
-    this.repository.writeTransactionSync(() => {
-      for (const reference of this.repository.listSecretLifecycle('pending')) {
-        this.deleteIfPresent(reference);
-        this.manifest.remove(reference);
+    const references = this.repository.writeTransactionSync(() => [
+      ...this.repository.listSecretLifecycle('pending'),
+      ...this.repository.listSecretLifecycle('deleting'),
+    ]);
+    for (const reference of references) {
+      this.deleteIfPresent(reference);
+      this.manifest.remove(reference);
+      this.repository.writeTransactionSync(() => {
         this.repository.deleteSecretLifecycle(reference);
-      }
-      for (const reference of this.repository.listSecretLifecycle('deleting')) {
-        this.deleteIfPresent(reference);
-        this.manifest.remove(reference);
-        this.repository.deleteSecretLifecycle(reference);
-      }
-    });
+      });
+    }
   }
 
   private deleteIfPresent(reference: SecretReference): void {

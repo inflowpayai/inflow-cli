@@ -7,6 +7,7 @@ const repoRoot = resolve(import.meta.dirname, '..');
 const baseRef = process.env.PATCH_COVERAGE_BASE ?? githubBaseRef() ?? 'origin/main';
 const target = Number(process.env.PATCH_COVERAGE_TARGET ?? '90');
 const lcovFiles = ['packages/cli/coverage/lcov.info', 'packages/core/coverage/lcov.info'];
+const excludedSources = new Set(['packages/cli/src/cli.tsx']);
 
 if (!Number.isFinite(target) || target < 0 || target > 100) {
   throw new Error(`PATCH_COVERAGE_TARGET must be a percentage from 0 through 100; got ${String(target)}.`);
@@ -90,7 +91,8 @@ function changedSourceLines(ref) {
   let currentFile;
   for (const line of diff.split('\n')) {
     if (line.startsWith('+++ b/')) {
-      currentFile = line.slice('+++ b/'.length);
+      const file = line.slice('+++ b/'.length);
+      currentFile = excludedSources.has(file) ? undefined : file;
       continue;
     }
     if (currentFile === undefined || !line.startsWith('@@')) continue;

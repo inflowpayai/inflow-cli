@@ -1,0 +1,33 @@
+[Unit]
+Description=InFlow multi-tenant vault service
+Requires=inflow-vault.socket
+After=inflow-vault.socket
+
+[Service]
+Type=simple
+ExecStart=/opt/inflow/bin/inflow --daemon vault-broker
+RuntimeDirectory=inflow
+RuntimeDirectoryMode=0755
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_PTRACE CAP_SETUID CAP_SETGID
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/run/inflow /var/lib/inflow /var/lib/inflow-broker
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+Also=inflow-vault.socket

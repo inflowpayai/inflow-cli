@@ -1,11 +1,7 @@
 import type { IUserResource } from '../resources/interfaces.js';
 import type { User } from '../types/index.js';
 
-/**
- * Public-facing user payload — the same shape the CLI's `user get` command emits in agent mode. The audit timestamps
- * (`created` / `updated`) are deliberately stripped: they are server-side state and not part of the user-presentable
- * profile.
- */
+/** User profile projection without server audit timestamps. */
 export type UserAgentPayload = Omit<User, 'created' | 'updated'>;
 
 export function projectUserPayload(user: User): UserAgentPayload {

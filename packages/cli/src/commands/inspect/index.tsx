@@ -13,6 +13,7 @@ import {
   type SellerProbeOptions,
 } from '@inflowpayai/inflow-core';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
+import { mcpTool } from '../../mcp-metadata.js';
 import { persistedAepPublicDocumentCache } from '../../utils/aep-public-document-cache.js';
 import { storedAepCredentialAuthenticationHeaders } from '../aep/runtime.js';
 import { challengeToFrame } from '../mpp/inspect.js';
@@ -34,6 +35,7 @@ interface InspectCommandContext {
 
 interface InspectCommandDefinition {
   description: string;
+  mcp: ReturnType<typeof mcpTool>;
   args: typeof inspectArgs;
   options: typeof inspectOptions;
   outputPolicy: 'agent-only';
@@ -315,6 +317,7 @@ export function createInspectCommand(inflow: Inflow, authStorage?: AuthStorage):
   return {
     description:
       "Detect a URL's AEP authentication and payment requirements. Read-only probe - no authentication and no payment.",
+    mcp: mcpTool('inspect'),
     args: inspectArgs,
     options: inspectOptions,
     outputPolicy: 'agent-only' as const,
