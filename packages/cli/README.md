@@ -17,9 +17,15 @@ For host-specific skill and MCP installation, see the repository's
 | Command                              | Purpose                                                                                                                           |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
 | `inflow auth login`                  | Run the OAuth device flow to authenticate. Saves a refreshable access token.                                                      |
-| `inflow auth logout`                 | Clear the saved access token and API key from local config.                                                                       |
+| `inflow auth logout`                 | Revoke eligible remote credentials and reset local authentication, vault, and cached state.                                       |
 | `inflow auth status`                 | Show which credential the CLI would use, plus the active environment and resolved API URL.                                        |
-| `inflow user get`                    | Fetch the authenticated user's profile.                                                                                           |
+| `inflow vault status`                | Show whether the encrypted local credential vault is initialized, locked, and available.                                          |
+| `inflow vault unlock`                | Initialize or unlock the local vault from a human-controlled terminal.                                                            |
+| `inflow vault lock`                  | Lock the local vault.                                                                                                             |
+| `inflow vault policy`                | Show the vault idle and sleep-lock policy.                                                                                        |
+| `inflow vault set-policy`            | Change the vault idle and sleep-lock policy.                                                                                      |
+| `inflow vault change-passphrase`     | Rewrap the vault data key under a new PIN or passphrase.                                                                          |
+| `inflow vault reset`                 | Remove the local vault database, bootstrap material, policy, and runtime state.                                                   |
 | `inflow balances list`               | List the authenticated user's balances.                                                                                           |
 | `inflow deposit-addresses list`      | List the user's configured deposit addresses, grouped by network.                                                                 |
 | `inflow inspect <url>`               | Detect a URL's payment protocol(s) and show MPP and x402 challenges together. Read-only probe — no auth, no payment.              |
@@ -53,7 +59,7 @@ These flags are pre-extracted from `process.argv` before subcommand dispatch, so
 | Flag                                         | Env var                | Notes                                                                                                                                                                                                                                                                              |
 | -------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--api-key <key>`                            | `INFLOW_API_KEY`       | Use an API key instead of the saved OAuth access token. When both are present, the flag wins for this invocation; `auth login` persists what it saw.                                                                                                                               |
-| `--auth <path>`                              | `INFLOW_AUTH_FILE`     | Path to the credentials file. Defaults to the platform's standard config dir.                                                                                                                                                                                                      |
+| `--auth <path>`                              | `INFLOW_AUTH_FILE`     | Identify a legacy plaintext credentials file for deletion during secure-storage cutover. It is not a credential backend.                                                                                                                                                           |
 | `--auth-base-url <url>`                      | `INFLOW_AUTH_BASE_URL` | Override the OAuth endpoint.                                                                                                                                                                                                                                                       |
 | `--base-url <url>` (alias: `--api-base-url`) | `INFLOW_BASE_URL`      | Override the environment-derived API URL. Takes precedence over `--environment`.                                                                                                                                                                                                   |
 | `--bootstrap`                                | —                      | Print the agent setup guide (install, authenticate, load a playbook) to stdout and exit. The same text is served at `https://inflowcli.ai/skill.md`.                                                                                                                               |
@@ -66,12 +72,16 @@ These flags are pre-extracted from `process.argv` before subcommand dispatch, so
 
 ## `auth`
 
-The CLI authenticates via the OAuth device-authorization flow. After `auth login` completes, the access + refresh tokens
-are stored in the platform's standard config dir (or wherever `--auth` / `INFLOW_AUTH_FILE` points). The `inflow-core`
-access-token provider refreshes automatically when the access token expires.
+The CLI authenticates via the OAuth device-authorization flow. After `auth login` completes, access and refresh tokens
+are encrypted in the local InFlow vault. The `inflow-core` access-token provider refreshes automatically when the access
+token expires.
 
 API keys are an alternative: pass `--api-key` or set `INFLOW_API_KEY` once and the CLI sends `X-API-KEY` on every
 request, bypassing the device flow entirely. Mutually exclusive with the OAuth path on a given invocation.
+
+Before the first credential-bearing command, initialize the vault with `inflow vault unlock`. The unlock factor is
+accepted only from a human-controlled terminal. Agent, structured, and MCP executions return a human-action error when
+the vault is uninitialized or locked; they do not accept the factor as input.
 
 ### `auth login`
 
@@ -97,8 +107,8 @@ URL. Paste it into a browser by hand to continue.
 inflow auth logout
 ```
 
-Clears the saved access token, refresh token, and any saved `--api-key` from local config. Idempotent: safe to call when
-already logged out.
+Attempts eligible remote credential revocation, stops the local vault daemon, and removes local authentication,
+encrypted vault, user metadata, and public cache state. Idempotent: safe to call when already logged out.
 
 ### `auth status`
 
@@ -110,17 +120,6 @@ inflow auth status --probe      # validate the token via GET /v1/users/self
 
 Reports which credential the CLI would use (OAuth access token, API key, or none), the active environment, and the
 resolved API URL — including the SDK's built-in defaults when nothing is overridden.
-
-## `user`
-
-### `user get`
-
-```bash
-inflow user get
-inflow user get --format json
-```
-
-Fetches the authenticated user's profile (`GET /v1/users/self`). Requires authentication.
 
 ## `balances`
 
@@ -160,9 +159,9 @@ inflow aep grant service.example --scope read:resource
 inflow aep revoke service.example
 ```
 
-The CLI stores Service-scoped identities and complete credential material in the existing mode-`0o600` credentials file.
-Stored state belongs to the canonical InFlow Platform origin and authenticated user. Logout clears it. Agent output
-never exposes credential secrets: `grant` reports only credential metadata, and `status` reports only usable local grant
+The CLI stores Service-scoped identities in SQLite and encrypts complete credential material in the local vault. Stored
+state belongs to the canonical InFlow Platform origin and authenticated user. Logout clears it. Agent output never
+exposes credential secrets: `grant` reports only credential metadata, and `status` reports only usable local grant
 summaries.
 
 `aep inspect` probes an exact URL when one is supplied and reports `resource_authentication` as `not-required`,
