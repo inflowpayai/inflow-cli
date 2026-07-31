@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
+import { __testing, SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
 
 type SqliteTestValue = Uint8Array | bigint | number | string | null;
 
@@ -341,5 +341,14 @@ describe('SecureSqliteRepository', () => {
   it('allows close to be repeated safely', () => {
     repository.close();
     repository.close();
+  });
+
+  it('rejects malformed SQLite row values before mapping them into records', () => {
+    expect(() => __testing.parsePayload('json')).toThrow('payload is not a byte array');
+    expect(() => __testing.valueColumn({}, 'missing')).toThrow('column missing is missing');
+    expect(() => __testing.stringColumn({ value: 1 }, 'value')).toThrow('column value is malformed');
+    expect(() => __testing.optionalStringColumn({ value: 1 }, 'value')).toThrow('column value is malformed');
+    expect(() => __testing.numberColumn({ value: '1' }, 'value')).toThrow('column value is malformed');
+    expect(() => __testing.bytesColumn({ value: 'bytes' }, 'value')).toThrow('column value is malformed');
   });
 });

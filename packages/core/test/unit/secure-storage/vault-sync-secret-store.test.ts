@@ -69,6 +69,9 @@ describe('SyncVaultSecretStore', () => {
     expect(() => store.read({ purpose: 'api-key', reference: 'malformed-payload' })).toThrow(
       'Vault IPC secret response is malformed.',
     );
+    expect(() => store.read({ purpose: 'api-key', reference: 'request-envelope' })).toThrow(
+      'Vault IPC response is malformed.',
+    );
   });
 
   it('uses a no-op reference manifest for vault-backed lifecycle rows', () => {
@@ -272,6 +275,10 @@ const server = net.createServer((socket) => {
       values.set(params.reference, params.payload);
       response = { id: request.id, ok: true, result: { reference: params.reference }, version: 1 };
     } else if (request.method === 'secret.get') {
+      if (params.reference === 'vlt_d4085c4a6f3f1e80d9a4294530f6ec20') {
+        socket.end(encodeFrame({ id: request.id, method: 'vault.status', params: {}, version: 1 }));
+        return;
+      }
       if (params.reference === 'vlt_49f4c397821a81dab9433f0f7a56565e') {
         response = { id: request.id, ok: true, result: { payload: 1, reference: params.reference }, version: 1 };
       } else {

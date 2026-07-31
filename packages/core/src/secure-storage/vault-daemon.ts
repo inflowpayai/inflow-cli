@@ -70,6 +70,19 @@ interface LinuxTransferredVaultServiceRuntime {
   send(message: unknown): void;
 }
 
+interface LinuxVaultBrokerDependencies {
+  authenticateClient: typeof authenticateLinuxVaultBrokerClient;
+  closeServer(server: Server): Promise<void>;
+  createBrokerServer(listener: (socket: Socket) => void): Server;
+  createPeerVerifier: typeof createVaultSocketPeerVerifier;
+  ensureBrokerKey: typeof ensureLinuxVaultBrokerKey;
+  listenServer(server: Server, fileDescriptor: number): Promise<void>;
+  runtime: {
+    once(event: 'SIGINT' | 'SIGTERM', listener: () => void): unknown;
+  };
+  spawnService(identity: { gid: number; uid: number }): ChildProcess;
+}
+
 export async function startLocalVaultDaemon(options: LocalVaultDaemonOptions = {}): Promise<LocalVaultDaemon> {
   const paths = vaultFilePaths(options.rootDirectory);
   const repository = new SecureSqliteRepository({ databasePath: paths.database });
@@ -206,30 +219,70 @@ export async function runLinuxVaultService(options: LinuxVaultServiceOptions = {
 }
 
 export async function runLinuxVaultBroker(options: LinuxVaultBrokerOptions = {}): Promise<void> {
-  if (process.platform !== 'linux') {
+  await runLinuxVaultBrokerEntry(options, process.platform, {
+    hardenProcess: hardenVaultDaemonProcess,
+    resolveServiceIdentity: linuxVaultServiceIdentity,
+    runBroker: runLinuxVaultBrokerWithDependencies,
+  });
+}
+
+/** @internal */
+export async function runLinuxVaultBrokerEntry(
+  options: LinuxVaultBrokerOptions,
+  platform: NodeJS.Platform,
+  dependencies: {
+    hardenProcess(): void;
+    resolveServiceIdentity(stateDirectory: string): { gid: number; uid: number };
+    runBroker(
+      activationFileDescriptor: number,
+      serviceIdentity: { gid: number; uid: number },
+      dependencies: LinuxVaultBrokerDependencies,
+    ): Promise<void>;
+  },
+): Promise<void> {
+  if (platform !== 'linux') {
     throw new Error('The Linux vault broker is available only on Linux.');
   }
-  hardenVaultDaemonProcess();
+  dependencies.hardenProcess();
   const activationFileDescriptor = options.listenFd ?? systemdSocketFileDescriptor(process.env, process.pid);
   const serviceIdentity =
     options.serviceUserId === undefined || options.serviceGroupId === undefined
-      ? linuxVaultServiceIdentity('/var/lib/inflow')
+      ? dependencies.resolveServiceIdentity('/var/lib/inflow')
       : { gid: options.serviceGroupId, uid: options.serviceUserId };
-  const child = spawn(process.execPath, ['--daemon', 'vault-service'], {
-    env: process.env,
-    gid: serviceIdentity.gid,
-    stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
-    uid: serviceIdentity.uid,
+  await dependencies.runBroker(activationFileDescriptor, serviceIdentity, {
+    authenticateClient: authenticateLinuxVaultBrokerClient,
+    closeServer: closeBroker,
+    createBrokerServer: (listener) => createServer({ pauseOnConnect: true }, listener),
+    createPeerVerifier: createVaultSocketPeerVerifier,
+    ensureBrokerKey: ensureLinuxVaultBrokerKey,
+    listenServer: listenBroker,
+    runtime: process,
+    spawnService: (identity) =>
+      spawn(process.execPath, ['--daemon', 'vault-service'], {
+        env: process.env,
+        gid: identity.gid,
+        stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+        uid: identity.uid,
+      }),
   });
+}
+
+/** @internal */
+export async function runLinuxVaultBrokerWithDependencies(
+  activationFileDescriptor: number,
+  serviceIdentity: { gid: number; uid: number },
+  dependencies: LinuxVaultBrokerDependencies,
+): Promise<void> {
+  const child = dependencies.spawnService(serviceIdentity);
   await waitForVaultServiceReady(child);
-  const brokerPrivateKey = await ensureLinuxVaultBrokerKey();
-  const verifyPeer = createVaultSocketPeerVerifier({ requireSameUser: false });
-  const server = createServer({ pauseOnConnect: true }, (socket) => {
+  const brokerPrivateKey = await dependencies.ensureBrokerKey();
+  const verifyPeer = dependencies.createPeerVerifier({ requireSameUser: false });
+  const server = dependencies.createBrokerServer((socket) => {
     void Promise.resolve()
       .then(() => verifyPeer(socket))
       .then(async (peer) => {
         socket.resume();
-        await authenticateLinuxVaultBrokerClient(socket, peer, brokerPrivateKey);
+        await dependencies.authenticateClient(socket, peer, brokerPrivateKey);
         socket.pause();
         return peer;
       })
@@ -238,21 +291,21 @@ export async function runLinuxVaultBroker(options: LinuxVaultBrokerOptions = {})
         () => socket.destroy(),
       );
   });
-  await listenBroker(server, activationFileDescriptor);
+  await dependencies.listenServer(server, activationFileDescriptor);
   const close = async (): Promise<void> => {
-    await closeBroker(server);
+    await dependencies.closeServer(server);
     if (child.connected) child.disconnect();
   };
-  process.once('SIGINT', () => {
+  dependencies.runtime.once('SIGINT', () => {
     void close();
   });
-  process.once('SIGTERM', () => {
+  dependencies.runtime.once('SIGTERM', () => {
     void close();
   });
   await new Promise<void>((resolve, reject) => {
     child.once('error', reject);
     child.once('exit', (code, signal) => {
-      void closeBroker(server).finally(() => {
+      void dependencies.closeServer(server).finally(() => {
         if (code === 0 || signal === 'SIGTERM') resolve();
         else reject(new Error('The InFlow vault service exited unexpectedly.'));
       });
@@ -286,6 +339,7 @@ export async function runLinuxTransferredVaultServiceWithRuntime(
   options: LinuxVaultServiceOptions,
   platform: NodeJS.Platform,
   runtime: LinuxTransferredVaultServiceRuntime,
+  verifyPeer: typeof verifyTransferredVaultSocketPeer = verifyTransferredVaultSocketPeer,
 ): Promise<void> {
   if (platform !== 'linux') {
     throw new Error('The Linux vault service requires its authenticated broker.');
@@ -315,7 +369,7 @@ export async function runLinuxTransferredVaultServiceWithRuntime(
     }
     handle.pause();
     try {
-      const peer = verifyTransferredVaultSocketPeer(handle, message.peer);
+      const peer = verifyPeer(handle, message.peer);
       handleConnection(handle, peer);
       handle.resume();
     } catch {
@@ -472,6 +526,8 @@ export const __testing = {
   listenBroker,
   lifetimeOptions,
   parseNonNegativeInteger,
+  runLinuxVaultBrokerEntry,
+  runLinuxVaultBrokerWithDependencies,
   transferSocketToVaultService,
   waitForVaultServiceReady,
 };

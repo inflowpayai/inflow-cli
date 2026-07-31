@@ -86,6 +86,32 @@ describe('ProtectedVaultKey', () => {
     ).toThrow('Vault record could not be decrypted.');
   });
 
+  it('maps other native encryption and decryption failures to unavailable storage', () => {
+    const decrypting = new ProtectedVaultKey(Buffer.alloc(32), {
+      ...nativeModule(),
+      decryptRecord: vi.fn((): Buffer => {
+        throw new Error('native decrypt failed');
+      }),
+    });
+    expect(() =>
+      decrypting.decrypt(recordContext, {
+        ciphertext: Buffer.from('encrypted'),
+        nonce: Buffer.alloc(12),
+        tag: Buffer.alloc(16),
+      }),
+    ).toThrow('Vault protected cryptography is unavailable.');
+
+    const encrypting = new ProtectedVaultKey(Buffer.alloc(32), {
+      ...nativeModule(),
+      encryptRecord: vi.fn((): never => {
+        throw new Error('native encrypt failed');
+      }),
+    });
+    expect(() => encrypting.encrypt(recordContext, Buffer.from('secret'))).toThrow(
+      'Vault protected cryptography is unavailable.',
+    );
+  });
+
   it('fails closed when native process hardening fails', () => {
     const native = {
       ...nativeModule(),

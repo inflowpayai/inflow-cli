@@ -743,4 +743,33 @@ describe('vault command runners', () => {
   it('registers the visible vault command surface', () => {
     expect(createVaultCli()).toBeDefined();
   });
+
+  it('dispatches vault status through the registered command', async () => {
+    const rootDirectory = mkdtempSync(join(tmpdir(), 'inflow-vault-command-'));
+    const output: string[] = [];
+    try {
+      await createVaultCli({ rootDirectory }).serve(['status', '--format', 'json'], {
+        exit: vi.fn(),
+        stdout(chunk) {
+          output.push(chunk);
+        },
+      });
+      expect(output.join('')).toContain('not_initialized');
+    } finally {
+      rmSync(rootDirectory, { force: true, recursive: true });
+    }
+  });
+
+  it('propagates unexpected sidecar access failures during status discovery', async () => {
+    const rootDirectory = mkdtempSync(join(tmpdir(), 'inflow-vault-sidecar-'));
+    const sidecar = join(rootDirectory, 'inflow.vault');
+    try {
+      await symlink(sidecar, sidecar);
+      await expect(__testing.readVaultStatusWithoutStarting({ rootDirectory })).rejects.toMatchObject({
+        code: 'ELOOP',
+      });
+    } finally {
+      rmSync(rootDirectory, { force: true, recursive: true });
+    }
+  });
 });

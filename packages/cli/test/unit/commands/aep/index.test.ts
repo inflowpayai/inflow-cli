@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AepFetchError, AepStorage, MemoryStorage, SecureStorageError } from '@inflowpayai/inflow-core';
-import { AepCommandError, AepInspectError } from '@aep-foundation/agent';
+import { AepCommandError, AepInspectError, AepServiceReferenceError } from '@aep-foundation/agent';
 import type { InspectServiceResult } from '@aep-foundation/agent';
 import type * as InflowCore from '@inflowpayai/inflow-core';
 
@@ -343,6 +343,11 @@ describe('aep commands', () => {
   });
 
   it('maps Inspect and unexpected failures to stable command errors', () => {
+    expect(__testing.commandError(new AepServiceReferenceError('invalid'))).toEqual({
+      code: 'AEP_SERVICE_URL_INVALID',
+      exitCode: 2,
+      message: 'The AEP Service reference is invalid.',
+    });
     expect(__testing.commandError(new AepInspectError('failed', 'response_too_large'))).toEqual({
       code: 'AEP_INSPECT_RESPONSE_TOO_LARGE',
       message: 'AEP Service Inspect failed.',
@@ -364,6 +369,85 @@ describe('aep commands', () => {
       code: 'VAULT_NOT_INITIALIZED',
       message: 'The InFlow vault is not initialized.',
     });
+    expect(__testing.commandError(new SecureStorageError('secure_storage_unavailable', 'Unavailable.'))).toEqual({
+      code: 'secure_storage_unavailable',
+      message: 'Unavailable.',
+    });
+    expect(
+      __testing.commandError(
+        new AepCommandError('requirements', 400, {
+          code: 'requirements_unmet',
+          status: 400,
+          title: 'Requirements unmet',
+          type: 'urn:aep:error:requirements_unmet',
+        }),
+      ),
+    ).toEqual({
+      code: 'AEP_REQUIREMENTS_UNMET',
+      message: 'The Platform cannot satisfy required Service claims.',
+    });
+    expect(
+      __testing.commandError(
+        new AepCommandError('denied', 403, {
+          code: 'authorization_denied',
+          status: 403,
+          title: 'Authorization denied',
+          type: 'urn:aep:error:authorization_denied',
+        }),
+      ),
+    ).toEqual({ code: 'AEP_APPROVAL_DENIED', message: 'The InFlow approval was denied.' });
+    expect(__testing.commandError(new AepCommandError('failed', 500))).toEqual({
+      code: 'AEP_SIGN_FAILED',
+      message: 'The AEP command failed.',
+    });
+  });
+
+  it('validates AEP helper frames, storage, approval responses, and cancellation', async () => {
+    expect(__testing.paymentRequiredFrame(undefined, 'https://service.example/resource')).toBeUndefined();
+    expect(
+      __testing.paymentRequiredFrame({ protocols: ['mpp', 'x402'] }, 'https://service.example/a resource'),
+    ).toEqual({
+      commands: {
+        mpp: "mpp pay 'https://service.example/a resource'",
+        x402: "x402 pay 'https://service.example/a resource'",
+      },
+      protocols: ['mpp', 'x402'],
+    });
+    expect(() => __testing.stateStorage({} as never)).toThrow('AEP storage is unavailable.');
+
+    const clear = vi.fn();
+    const unmount = vi.fn();
+    __testing.closePendingApprovalView(undefined);
+    __testing.closePendingApprovalView({ clear, unmount });
+    expect(clear).toHaveBeenCalledOnce();
+    expect(unmount).toHaveBeenCalledOnce();
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('failed', { status: 500 }))),
+    );
+    await expect(__testing.approvalStatus(inflow(), 'approval-1')).rejects.toThrow('Approval status request failed.');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('{}', { status: 200 }))),
+    );
+    await expect(__testing.approvalStatus(inflow(), 'approval-1')).rejects.toThrow(
+      'Approval status response is invalid.',
+    );
+
+    const cancelFetch = vi.fn(() => Promise.reject(new Error('offline')));
+    vi.stubGlobal('fetch', cancelFetch);
+    await expect(__testing.cancelApproval(inflow(), 'approval-1')).resolves.toBeUndefined();
+    expect(cancelFetch).toHaveBeenCalledOnce();
+
+    const alreadyAborted = new AbortController();
+    alreadyAborted.abort();
+    await expect(__testing.approvalSleep(1, alreadyAborted.signal)).rejects.toThrow('');
+    const controller = new AbortController();
+    const sleeping = __testing.approvalSleep(10_000, controller.signal);
+    controller.abort();
+    await expect(sleeping).rejects.toThrow('');
   });
 
   it('returns the complete anonymous fetch JSON contract without requiring a session', async () => {
@@ -861,6 +945,44 @@ describe('aep commands', () => {
     } finally {
       inspect.document.commands.grant_types = advertised;
     }
+  });
+
+  it('reports Grant as unavailable when the local identity is missing or unrecognized', async () => {
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+
+    await expect(__testing.runGrant(context({ scope: [] }), inflow(), storage)).resolves.toEqual({
+      enrolled: false,
+      granted: false,
+      service_did: identity.serviceDid,
+    });
+
+    const persisted = new AepStorage(storage, {
+      platformOrigin: 'https://platform.example',
+      userId: 'user-1',
+    });
+    await persisted.identities().saveIdentity(identity);
+    platformRecovery.notRecognized = true;
+    await expect(__testing.runGrant(context({ scope: [] }), inflow(), storage)).resolves.toEqual({
+      enrolled: false,
+      granted: false,
+      service_did: identity.serviceDid,
+    });
+  });
+
+  it.each([
+    [{ credentialId: 'credential-1' }, { credential_id: 'credential-1', revoked: true }],
+    [{ grantType: 'oauth-bearer' }, { grant_type: 'oauth-bearer', revoked: true }],
+  ])('revokes the selected local credential set', async (options, expected) => {
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const persisted = new AepStorage(storage, {
+      platformOrigin: 'https://platform.example',
+      userId: 'user-1',
+    });
+    await persisted.identities().saveIdentity(identity);
+
+    await expect(__testing.runRevoke(context(options), inflow(), storage)).resolves.toEqual(expected);
   });
 
   it('checks Status and skips approval when enrolling an existing identity', async () => {

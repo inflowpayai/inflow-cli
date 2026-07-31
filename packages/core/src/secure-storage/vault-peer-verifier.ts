@@ -259,3 +259,6 @@ const defaultPeerVerifierDependencies: VaultPeerVerifierDependencies = {
     }
   },
 };
+
+/** @internal */
+export const __testing = { defaultPeerVerifierDependencies };

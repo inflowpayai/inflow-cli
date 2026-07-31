@@ -699,3 +699,6 @@ export class SecureSqliteRepository {
     return record;
   }
 }
+
+/** @internal */
+export const __testing = { bytesColumn, numberColumn, optionalStringColumn, parsePayload, stringColumn, valueColumn };
