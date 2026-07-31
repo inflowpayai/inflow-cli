@@ -1,0 +1,14 @@
+[Unit]
+Description=InFlow vault service socket
+
+[Socket]
+ListenStream=/run/inflow/vault.sock
+FileDescriptorName=inflow-vault
+SocketUser=root
+SocketGroup=root
+SocketMode=0666
+DirectoryMode=0755
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

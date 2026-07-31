@@ -1,0 +1,13 @@
+PackageIdentifier: InFlowPayAI.InFlow
+PackageVersion: __INFLOW_VERSION__
+InstallerType: wix
+Scope: machine
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/inflowpayai/inflow-cli/releases/download/v__INFLOW_VERSION__/inflow-__INFLOW_VERSION__-windows-x64.msi
+    InstallerSha256: __INFLOW_MSI_SHA256_X64_UPPER__
+  - Architecture: arm64
+    InstallerUrl: https://github.com/inflowpayai/inflow-cli/releases/download/v__INFLOW_VERSION__/inflow-__INFLOW_VERSION__-windows-arm64.msi
+    InstallerSha256: __INFLOW_MSI_SHA256_ARM64_UPPER__
+ManifestType: installer
+ManifestVersion: 1.12.0

@@ -1,0 +1,78 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="InFlow"
+    Manufacturer="Jarwin, Inc."
+    Version="$(Version)"
+    UpgradeCode="1B32DBD2-E3C8-48A5-A018-2A06D97C65A7"
+    Scope="perMachine"
+  >
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of InFlow is already installed."
+      Schedule="afterInstallInitialize"
+    />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="InFlow">
+        <Directory Id="NATIVEFOLDER" Name="native" />
+        <Directory Id="RUNTIMEFOLDER" Name="runtime" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="PROGRAMDATAFOLDER" Name="InFlow">
+        <Directory Id="VAULTSFOLDER" Name="vaults" />
+      </Directory>
+    </StandardDirectory>
+
+    <Component Id="InFlowService" Directory="INSTALLFOLDER" Guid="6B2AEC76-8432-47D7-9B47-B9876C30C550">
+      <File Id="InFlowExecutable" Source="$(Payload)\inflow.exe" KeyPath="yes" />
+      <Environment Id="InFlowPath" Name="PATH" Value="[INSTALLFOLDER]" Action="set" Part="last" System="yes" />
+      <ServiceInstall
+        Id="InFlowVaultService"
+        Name="InFlowVault"
+        DisplayName="InFlow Vault"
+        Description="Provides encrypted, multi-user credential storage for InFlow."
+        Type="ownProcess"
+        Start="demand"
+        ErrorControl="normal"
+        Account="NT SERVICE\InFlowVault"
+        Arguments="--daemon vault-windows-service"
+        Vital="yes"
+      >
+        <PermissionEx
+          Id="InFlowVaultServicePermissions"
+          Sddl="D:(A;;CCLCSWLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPLOCRRC;;;AU)"
+        />
+      </ServiceInstall>
+      <ServiceControl Id="ControlInFlowVaultService" Name="InFlowVault" Stop="both" Remove="uninstall" Wait="yes" />
+    </Component>
+
+    <Component Id="InFlowNativeModule" Directory="NATIVEFOLDER" Guid="B66A8881-C9A8-4C09-B848-E5D62B0D59FD">
+      <File Id="InFlowVaultNativeModule" Source="$(Payload)\native\vault_peer_windows.node" KeyPath="yes" />
+    </Component>
+
+    <Files Include="$(Payload)\runtime\**" Directory="RUNTIMEFOLDER" />
+
+    <Component Id="InFlowVaultStateDirectory" Directory="VAULTSFOLDER" Guid="B14F9FD4-799D-4A14-A15A-2E2528838404">
+      <CreateFolder>
+        <PermissionEx
+          Id="InFlowVaultStatePermissions"
+          Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;S-1-5-80-1098611787-2118564361-3861463042-200152011-2924560963)"
+        />
+      </CreateFolder>
+    </Component>
+
+    <CustomAction
+      Id="ConfigureInFlowVaultServiceSid"
+      Directory="SystemFolder"
+      ExeCommand="sc.exe sidtype InFlowVault unrestricted"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check"
+    />
+    <InstallExecuteSequence>
+      <Custom Action="ConfigureInFlowVaultServiceSid" After="InstallServices" Condition='NOT REMOVE~="ALL"' />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>
