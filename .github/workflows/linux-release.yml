@@ -1,0 +1,530 @@
+name: linux-release
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload artifacts to the matching GitHub release
+        required: true
+        type: boolean
+        default: false
+      verify_production_signing:
+        description: Verify the protected production signing subkey without publishing
+        required: true
+        type: boolean
+        default: false
+      tag:
+        description: Existing GitHub release tag
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate-inputs:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate workflow inputs
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          VERIFY_PRODUCTION_SIGNING: ${{ inputs.verify_production_signing }}
+        run: |
+          if [ "$PUBLISH" = 'true' ] && [ "$VERIFY_PRODUCTION_SIGNING" = 'true' ]; then
+            echo "::error::publish and verify_production_signing cannot both be enabled"
+            exit 1
+          fi
+          if [ "$VERIFY_PRODUCTION_SIGNING" = 'true' ] && [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "::error::Production signing verification must run from a v* tag"
+            exit 1
+          fi
+
+  package:
+    needs: validate-inputs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: x64
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Linux packaging tools
+        run: sudo apt-get update && sudo apt-get install --yes cpio rpm
+
+      - name: Prepare pinned Argon2 source
+        run: |
+          node scripts/prepare-argon2-source.mjs "$RUNNER_TEMP/argon2-20190702"
+          echo "INFLOW_ARGON2_SOURCE_DIR=$RUNNER_TEMP/argon2-20190702" >> "$GITHUB_ENV"
+
+      - name: Build Linux package
+        run: sudo env "PATH=$PATH" "INFLOW_ARGON2_SOURCE_DIR=$INFLOW_ARGON2_SOURCE_DIR" pnpm build:linux-package
+
+      - name: Test packaged vault
+        run: |
+          sudo rm -rf /opt/inflow-package-smoke
+          sudo mkdir /opt/inflow-package-smoke
+          sudo tar -xzf dist/linux/inflow-*-linux-*.tar.gz -C /opt/inflow-package-smoke --strip-components=1
+          sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/opt/inflow-package-smoke/bin/inflow \
+            pnpm smoke:linux-packaged-vault
+
+      - name: Test Debian system vault
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes "$PWD"/dist/linux/inflow_*.deb
+          sudo swapoff -a
+          sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/usr/bin/inflow pnpm smoke:linux-system-vault
+
+      - name: Attest archive
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz
+            dist/linux/*.deb
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-linux-${{ matrix.architecture }}
+          path: |
+            dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz
+            dist/linux/inflow-*-linux-${{ matrix.architecture }}.tar.gz.sha256
+            dist/linux/*.deb
+            dist/linux/*.deb.sha256
+            dist/linux/*.rpm
+            dist/linux/*.rpm.sha256
+          if-no-files-found: error
+
+  apt-repository:
+    name: signed APT repository
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install APT repository tools
+        run: sudo apt-get update && sudo apt-get install --yes apt-utils dpkg-dev
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: inflow-linux-*
+          path: dist/linux/packages
+          merge-multiple: true
+
+      - name: Create disposable repository signing key
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/inflow-apt-gpg"
+          mkdir --mode=0700 "$GNUPGHOME"
+          gpg --batch --passphrase '' --quick-gen-key \
+            'InFlow Linux CI Signing <support@inflowpay.ai>' rsa3072 sign 1d
+          key_id="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "sec" { print $5; exit }')"
+          test -n "$key_id"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "INFLOW_LINUX_SIGNING_KEY_ID=$key_id" >> "$GITHUB_ENV"
+
+      - name: Build signed APT repository
+        run: pnpm build:linux-apt-repository
+
+      - name: Verify APT repository signature
+        run: |
+          gpgv --keyring dist/linux/apt/inflow-archive-keyring.gpg \
+            dist/linux/apt/dists/stable/InRelease
+          cp dist/linux/apt/inflow-archive-keyring.gpg "$RUNNER_TEMP/inflow-archive-keyring.gpg"
+          mkdir "$RUNNER_TEMP/inflow-apt-state" "$RUNNER_TEMP/inflow-apt-cache"
+          printf 'deb [arch=amd64 signed-by=%s] file:%s stable main\n' \
+            "$RUNNER_TEMP/inflow-archive-keyring.gpg" "$PWD/dist/linux/apt" \
+            > "$RUNNER_TEMP/inflow.list"
+          sudo apt-get \
+            -o "Dir::Etc::sourcelist=$RUNNER_TEMP/inflow.list" \
+            -o "Dir::Etc::sourceparts=-" \
+            -o "Dir::State=$RUNNER_TEMP/inflow-apt-state" \
+            -o "Dir::Cache=$RUNNER_TEMP/inflow-apt-cache" \
+            update
+
+      - name: Reject a modified APT repository
+        run: |
+          printf '\n' >> dist/linux/apt/dists/stable/Release
+          if gpgv --keyring dist/linux/apt/inflow-archive-keyring.gpg \
+            dist/linux/apt/dists/stable/Release.gpg \
+            dist/linux/apt/dists/stable/Release; then
+            echo "::error::The modified APT repository passed signature verification"
+            exit 1
+          fi
+
+      - name: Upload APT repository
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-linux-apt-repository
+          path: dist/linux/apt
+          if-no-files-found: error
+
+  rpm-repository:
+    name: signed RPM repository
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install RPM repository tools
+        run: sudo apt-get update && sudo apt-get install --yes createrepo-c gnupg rpm
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: inflow-linux-*
+          path: dist/linux/packages
+          merge-multiple: true
+
+      - name: Create disposable repository signing key
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/inflow-rpm-gpg"
+          mkdir --mode=0700 "$GNUPGHOME"
+          gpg --batch --passphrase '' --quick-gen-key \
+            'InFlow Linux CI Signing <support@inflowpay.ai>' rsa3072 sign 1d
+          key_id="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "sec" { print $5; exit }')"
+          test -n "$key_id"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "INFLOW_LINUX_SIGNING_KEY_ID=$key_id" >> "$GITHUB_ENV"
+
+      - name: Build signed RPM repository
+        run: pnpm build:linux-rpm-repository
+
+      - name: Verify RPM package and repository signatures
+        run: |
+          sudo rpmkeys --import dist/linux/rpm/inflow-signing-key.asc
+          sudo rpmkeys --checksig dist/linux/rpm/packages/*.rpm
+          gpgv --keyring dist/linux/rpm/inflow-signing-key.gpg \
+            dist/linux/rpm/repodata/repomd.xml.asc \
+            dist/linux/rpm/repodata/repomd.xml
+
+      - name: Reject modified RPM package and repository metadata
+        run: |
+          cp dist/linux/rpm/packages/*."$(uname -m)".rpm "$RUNNER_TEMP/tampered.rpm"
+          package_size="$(stat --format=%s "$RUNNER_TEMP/tampered.rpm")"
+          printf 'X' | dd of="$RUNNER_TEMP/tampered.rpm" bs=1 \
+            seek="$((package_size - 4096))" conv=notrunc status=none
+          if sudo rpmkeys --checksig "$RUNNER_TEMP/tampered.rpm"; then
+            echo "::error::The modified RPM package passed signature verification"
+            exit 1
+          fi
+          cp dist/linux/rpm/repodata/repomd.xml "$RUNNER_TEMP/repomd.xml"
+          printf '\n' >> "$RUNNER_TEMP/repomd.xml"
+          if gpgv --keyring dist/linux/rpm/inflow-signing-key.gpg \
+            dist/linux/rpm/repodata/repomd.xml.asc \
+            "$RUNNER_TEMP/repomd.xml"; then
+            echo "::error::The modified RPM repository passed signature verification"
+            exit 1
+          fi
+
+      - name: Install from signed RPM repository
+        run: |
+          docker run --rm \
+            --volume "$PWD/dist/linux/rpm:/repository:ro" \
+            fedora:42 \
+            sh -c '
+              printf "%s\n" \
+                "[inflow]" \
+                "name=InFlow" \
+                "baseurl=file:///repository" \
+                "enabled=1" \
+                "gpgcheck=1" \
+                "repo_gpgcheck=1" \
+                "gpgkey=file:///repository/inflow-signing-key.asc" \
+                > /etc/yum.repos.d/inflow.repo
+              dnf --assumeyes --disablerepo="*" --enablerepo=inflow install inflow
+              inflow --version
+              dnf --assumeyes remove inflow
+            '
+
+      - name: Upload RPM repository
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-linux-rpm-repository
+          path: dist/linux/rpm
+          if-no-files-found: error
+
+  release-dry-run:
+    name: signed GitHub Release dry run
+    if: github.event_name == 'pull_request' || (!inputs.publish && !inputs.verify_production_signing)
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install signing tools
+        run: sudo apt-get update && sudo apt-get install --yes gnupg rpm
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: inflow-linux-*
+          path: dist/linux/release
+          merge-multiple: true
+
+      - name: Create disposable release signing key
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/inflow-release-gpg"
+          mkdir --mode=0700 "$GNUPGHOME"
+          gpg --batch --passphrase '' --quick-gen-key \
+            'InFlow Linux CI Signing <support@inflowpay.ai>' rsa3072 sign 1d
+          fingerprint="$(gpg --batch --with-colons --fingerprint | awk -F: '$1 == "fpr" { print $10; exit }')"
+          test -n "$fingerprint"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "INFLOW_LINUX_SIGNING_FINGERPRINT=$fingerprint" >> "$GITHUB_ENV"
+          echo "INFLOW_LINUX_SIGNING_KEY_ID=$fingerprint" >> "$GITHUB_ENV"
+
+      - name: Sign release and render installer
+        run: |
+          pnpm build:linux-release-signatures
+          pnpm build:linux-installer dist/linux/release/install.sh
+
+      - name: Verify signed release
+        run: |
+          gpg --batch --yes --dearmor \
+            --output "$RUNNER_TEMP/inflow-linux-signing-key.gpg" \
+            dist/linux/release/inflow-linux-signing-key.asc
+          gpgv --keyring "$RUNNER_TEMP/inflow-linux-signing-key.gpg" \
+            dist/linux/release/SHA256SUMS.asc \
+            dist/linux/release/SHA256SUMS
+          sudo rpmkeys --import dist/linux/release/inflow-linux-signing-key.asc
+          sudo rpmkeys --checksig dist/linux/release/*.rpm
+
+      - name: Reject modified release metadata and package
+        run: |
+          cp -R dist/linux/release "$RUNNER_TEMP/tampered-metadata"
+          printf '\n' >> "$RUNNER_TEMP/tampered-metadata/SHA256SUMS"
+          if INFLOW_RELEASE_BASE_URL="file://$RUNNER_TEMP/tampered-metadata" \
+            sh "$RUNNER_TEMP/tampered-metadata/install.sh"; then
+            echo "::error::The Linux installer accepted modified release metadata"
+            exit 1
+          fi
+          cp -R dist/linux/release "$RUNNER_TEMP/tampered-package"
+          package="$(find "$RUNNER_TEMP/tampered-package" -maxdepth 1 -name 'inflow_*_amd64.deb' -print -quit)"
+          test -n "$package"
+          printf '\n' >> "$package"
+          if INFLOW_RELEASE_BASE_URL="file://$RUNNER_TEMP/tampered-package" \
+            sh "$RUNNER_TEMP/tampered-package/install.sh"; then
+            echo "::error::The Linux installer accepted a modified package"
+            exit 1
+          fi
+
+      - name: Install from signed release
+        run: INFLOW_RELEASE_BASE_URL="file://$PWD/dist/linux/release" sh dist/linux/release/install.sh
+
+      - name: Upload signed release dry run
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-linux-signed-release-dry-run
+          path: dist/linux/release
+          if-no-files-found: error
+
+  release-production-verification:
+    name: protected production signing verification
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_production_signing && !inputs.publish
+    needs: package
+    runs-on: ubuntu-24.04
+    environment: linux-production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+
+      - name: Install signing tools
+        run: sudo apt-get update && sudo apt-get install --yes gnupg rpm
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: inflow-linux-*
+          path: dist/linux/release
+          merge-multiple: true
+
+      - name: Import and verify production signing subkey
+        env:
+          EXPECTED_FINGERPRINT: ${{ vars.LINUX_OPENPGP_SIGNING_FINGERPRINT }}
+          SIGNING_SUBKEY_BASE64: ${{ secrets.LINUX_OPENPGP_SIGNING_SUBKEY_BASE64 }}
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/inflow-release-gpg"
+          mkdir --mode=0700 "$GNUPGHOME"
+          test -n "$EXPECTED_FINGERPRINT"
+          test -n "$SIGNING_SUBKEY_BASE64"
+          printf '%s' "$SIGNING_SUBKEY_BASE64" | base64 --decode | gpg --batch --import
+          node scripts/verify-linux-automation-key.mjs "$EXPECTED_FINGERPRINT"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "INFLOW_LINUX_SIGNING_FINGERPRINT=$EXPECTED_FINGERPRINT" >> "$GITHUB_ENV"
+          echo "INFLOW_LINUX_SIGNING_KEY_ID=$EXPECTED_FINGERPRINT" >> "$GITHUB_ENV"
+
+      - name: Sign release and render installer
+        run: |
+          node scripts/sign-linux-release.mjs
+          node scripts/render-linux-installer.mjs dist/linux/release/install.sh
+
+      - name: Verify signed release
+        run: |
+          gpg --batch --yes --dearmor \
+            --output "$RUNNER_TEMP/inflow-linux-signing-key.gpg" \
+            dist/linux/release/inflow-linux-signing-key.asc
+          gpgv --keyring "$RUNNER_TEMP/inflow-linux-signing-key.gpg" \
+            dist/linux/release/SHA256SUMS.asc \
+            dist/linux/release/SHA256SUMS
+          sudo rpmkeys --import dist/linux/release/inflow-linux-signing-key.asc
+          sudo rpmkeys --checksig dist/linux/release/*.rpm
+          INFLOW_RELEASE_BASE_URL="file://$PWD/dist/linux/release" \
+            sh dist/linux/release/install.sh
+
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/inflow-release-gpg"
+          rm -f "$RUNNER_TEMP/inflow-linux-signing-key.gpg"
+
+  release-production:
+    name: signed GitHub Release
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && !inputs.verify_production_signing
+    needs:
+      - apt-repository
+      - package
+      - rpm-repository
+    runs-on: ubuntu-24.04
+    environment: linux-production
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install signing tools
+        run: sudo apt-get update && sudo apt-get install --yes gnupg rpm
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: inflow-linux-*
+          path: dist/linux/release
+          merge-multiple: true
+
+      - name: Import production signing subkey
+        env:
+          SIGNING_SUBKEY_BASE64: ${{ secrets.LINUX_OPENPGP_SIGNING_SUBKEY_BASE64 }}
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/inflow-release-gpg"
+          mkdir --mode=0700 "$GNUPGHOME"
+          printf '%s' "$SIGNING_SUBKEY_BASE64" | base64 --decode | gpg --batch --import
+          fingerprint="${{ vars.LINUX_OPENPGP_SIGNING_FINGERPRINT }}"
+          test -n "$fingerprint"
+          node scripts/verify-linux-automation-key.mjs "$fingerprint"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "INFLOW_LINUX_SIGNING_FINGERPRINT=$fingerprint" >> "$GITHUB_ENV"
+          echo "INFLOW_LINUX_SIGNING_KEY_ID=$fingerprint" >> "$GITHUB_ENV"
+
+      - name: Sign release and render installer
+        run: |
+          pnpm build:linux-release-signatures
+          pnpm build:linux-installer dist/linux/release/install.sh
+
+      - name: Verify production release
+        run: |
+          expected_tag="v$(node -p "require('./packages/cli/package.json').version")"
+          test "${{ inputs.tag }}" = "$expected_tag"
+          gh release view "${{ inputs.tag }}"
+          gpg --batch --yes --dearmor \
+            --output "$RUNNER_TEMP/inflow-linux-signing-key.gpg" \
+            dist/linux/release/inflow-linux-signing-key.asc
+          gpgv --keyring "$RUNNER_TEMP/inflow-linux-signing-key.gpg" \
+            dist/linux/release/SHA256SUMS.asc \
+            dist/linux/release/SHA256SUMS
+          sudo rpmkeys --import dist/linux/release/inflow-linux-signing-key.asc
+          sudo rpmkeys --checksig dist/linux/release/*.rpm
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Attest release assets
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/linux/release/*.deb
+            dist/linux/release/*.rpm
+            dist/linux/release/*.tar.gz
+            dist/linux/release/SHA256SUMS
+
+      - name: Upload production release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ inputs.tag }}" \
+            dist/linux/release/*.deb \
+            dist/linux/release/*.deb.sha256 \
+            dist/linux/release/*.rpm \
+            dist/linux/release/*.rpm.sha256 \
+            dist/linux/release/*.tar.gz \
+            dist/linux/release/*.tar.gz.sha256 \
+            dist/linux/release/SHA256SUMS \
+            dist/linux/release/SHA256SUMS.asc \
+            dist/linux/release/inflow-linux-signing-key.asc \
+            dist/linux/release/install.sh \
+            --clobber
