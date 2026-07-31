@@ -1,97 +1,97 @@
 # InFlow Surfaces And Testing
 
-This guide is the per-surface install, smoke-test, and update playbook for every place the `inflow` CLI bundle runs.
-
-It covers the published `@inflowpayai/inflow` npm package, the `agentic-payments` skill, and the CLI-backed MCP server
-started with `inflow --mcp` or `npx -y @inflowpayai/inflow --mcp`.
+This guide covers installation and smoke testing for the signed native `inflow` command-line application, its bundled
+skills, and its local MCP server. The npm package is a compatibility notice and cannot run commands, start MCP, or
+manage credentials.
 
 This guide does not cover the separate direct InFlow API MCP server used for account management, policies, approvals,
-withdrawals, sellers, and users. That server exposes a different tool set and should be tested from its own API
-contract.
+withdrawals, sellers, and users.
 
-## What To Verify
+## Install the native application
 
-Each skill-aware surface has two artifacts:
-
-- The `agentic-payments` skill, which teaches the agent the payment flow.
-- The `inflow` MCP server, which exposes the CLI commands as tools.
-
-MCP-only surfaces have only the MCP server unless you paste the skill body into the host's instructions surface.
-
-Use the CLI as the source of truth for exact commands, flags, schemas, and MCP tools:
+Install InFlow before configuring an agent host. Public installation currently supports Apple Silicon and Intel macOS:
 
 ```bash
-inflow --llms --format json
-inflow --llms-full --format json
-inflow <command> --schema --format json
+brew tap inflowpayai/tap
+brew install --cask inflow
 ```
 
-The current CLI command inventory is:
+The hosted macOS installer is:
 
-- `auth login`
-- `auth logout`
-- `auth status`
-- `balances list`
-- `deposit-addresses list`
-- `inspect`
-- `user get`
-- `x402 inspect`
-- `x402 pay`
-- `x402 status`
-- `x402 cancel`
-- `x402 decode`
-- `x402 supported`
-- `mpp inspect`
-- `mpp pay`
-- `mpp status`
-- `mpp cancel`
-- `mpp decode`
-- `mpp supported`
-
-The MCP tool names are derived from those command names by replacing spaces with underscores; hyphens inside command
-words are preserved. The current tool inventory is:
-
-- `auth_login`
-- `auth_logout`
-- `auth_status`
-- `balances_list`
-- `deposit-addresses_list`
-- `inspect`
-- `user_get`
-- `x402_inspect`
-- `x402_pay`
-- `x402_status`
-- `x402_cancel`
-- `x402_decode`
-- `x402_supported`
-- `mpp_inspect`
-- `mpp_pay`
-- `mpp_status`
-- `mpp_cancel`
-- `mpp_decode`
-- `mpp_supported`
-
-Call `tools/list` on the MCP server for the authoritative live inventory.
-
-## Shared MCP Config
-
-Use this npx-backed entry when the host accepts JSON MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "inflow": {
-      "command": "npx",
-      "args": ["-y", "@inflowpayai/inflow", "--mcp"]
-    }
-  }
-}
+```bash
+curl -fsSL https://inflowcli.ai/install.sh | bash
 ```
 
-Keep `-y`. Without it, `npx` can wait for install confirmation and the MCP host can report that the server failed to
-start.
+Windows ARM64 MSI and Linux ARM64/AMD64 packages have passed their platform workflows. They are not public install
+channels until production Windows signing and Linux repository trust roots are published.
 
-If the CLI is installed globally and available on the host's `PATH`, this equivalent entry also works:
+### Windows release signing
+
+The `windows release` GitHub Actions workflow builds native x64 and ARM64 executable payloads. Pull requests and manual
+runs with signing disabled build unsigned MSI files and release metadata without publishing them.
+
+Production runs use Azure Artifact Signing in this order:
+
+1. Build the unsigned executable on its native architecture.
+2. Sign `inflow.exe` on the supported x64 signing runner.
+3. Build the architecture-specific MSI around the signed executable.
+4. Sign the MSI.
+5. Verify both Authenticode chains, publishers, and timestamps.
+6. Render the checksum, hosted installer, and WinGet manifests from the signed MSI.
+
+Create a protected GitHub environment named `windows-production`, require deployment approval, and configure these
+environment variables:
+
+- `AZURE_ARTIFACT_SIGNING_CLIENT_ID`
+- `AZURE_ARTIFACT_SIGNING_TENANT_ID`
+- `AZURE_ARTIFACT_SIGNING_SUBSCRIPTION_ID`
+- `AZURE_ARTIFACT_SIGNING_ENDPOINT`
+- `AZURE_ARTIFACT_SIGNING_ACCOUNT`
+- `AZURE_ARTIFACT_SIGNING_PROFILE`
+- `AZURE_ARTIFACT_SIGNING_SUBJECT`
+
+The Azure application must have an OpenID Connect federated credential scoped to the `windows-production` GitHub
+environment and the `Artifact Signing Certificate Profile Signer` role on the certificate profile. Do not create or
+store an Azure client secret or certificate private key in GitHub.
+
+Verify the installed executable:
+
+```bash
+inflow --version
+inflow auth status --format json
+inflow vault status
+```
+
+## Credential vault boundary
+
+OAuth tokens, API keys, and Agent Enrollment Protocol credentials are encrypted in the local InFlow vault. Initialize or
+unlock it from a human-controlled terminal:
+
+```bash
+inflow vault unlock
+```
+
+Do not put the PIN or passphrase in an agent prompt, MCP input, command-line flag, environment variable, or redirected
+standard input. The structured CLI and MCP server deliberately expose no unlock-factor field. When the vault is locked,
+the agent receives a human-action error; unlock it manually and retry the original request.
+
+Useful lifecycle commands:
+
+```bash
+inflow vault status
+inflow vault policy
+inflow vault lock
+inflow vault change-passphrase
+inflow vault reset
+```
+
+`inflow auth logout` removes local authentication and vault state after attempting eligible remote cleanup. Application
+uninstall preserves encrypted vault data. Use the platform-specific purge operation only when the data must also be
+removed.
+
+## Shared MCP configuration
+
+The signed binary contains the CLI, MCP, and daemon entry points. Configure every host to execute that installed binary:
 
 ```json
 {
@@ -104,14 +104,20 @@ If the CLI is installed globally and available on the host's `PATH`, this equiva
 }
 ```
 
-To run against sandbox, add the environment variable if the host supports per-server environment configuration:
+If a graphical host does not inherit the shell `PATH`, use the absolute path returned by:
+
+```bash
+command -v inflow
+```
+
+To use the sandbox environment in a host that supports per-server environment variables:
 
 ```json
 {
   "mcpServers": {
     "inflow": {
-      "command": "npx",
-      "args": ["-y", "@inflowpayai/inflow", "--mcp"],
+      "command": "inflow",
+      "args": ["--mcp"],
       "env": {
         "INFLOW_ENVIRONMENT": "sandbox"
       }
@@ -120,533 +126,190 @@ To run against sandbox, add the environment variable if the host supports per-se
 }
 ```
 
-Not every MCP host honors an `env` block. Check the host after installation with `inflow auth status` or the
-`auth_status` MCP tool.
+Do not replace `inflow` with `npx`, Node, a repository checkout, or a copied JavaScript bundle. Those paths do not carry
+the installed application identity required by the vault boundary.
+
+## Skills and plugins
+
+The repository contains the `agentic-enrollment` and `agentic-payments` skills. A skills-aware host can install them
+with:
+
+```bash
+npx skills add inflowpayai/inflow-cli
+```
+
+The repository also contains Claude Code, Cursor, Codex, and generic agent plugin manifests. Each plugin points its MCP
+entry at `inflow --mcp`; the signed native application must already be installed on the host.
+
+For an MCP-only host, print a bundled skill body and paste it into that host's instructions:
+
+```bash
+inflow --skill
+inflow --skill agentic-enrollment
+```
+
+On macOS, `inflow --skill | pbcopy` copies the default payment playbook. Use `wl-copy` or `xclip` on Linux and `clip` on
+Windows.
 
 ## Claude Desktop
 
-Plain Claude Desktop does not run the Claude Code plugin manager, so the skill and MCP are wired separately.
-
-### Install
-
-Install the CLI so the skill body is available:
-
-```bash
-npm install -g @inflowpayai/inflow
-```
-
-Copy the skill body:
-
-```bash
-inflow --skill | pbcopy
-```
-
-On Linux, use `wl-copy` or `xclip`; on Windows, use `clip`.
-
-In Claude Desktop, create a project named `InFlow`, open the project instructions, paste the skill body, and save.
-
-Then edit Claude Desktop's MCP config:
+Plain Claude Desktop does not use the Claude Code plugin manager. Paste the desired skill into project instructions,
+then add the shared MCP configuration to:
 
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 - Linux: `~/.config/Claude/claude_desktop_config.json`
 
-Add or merge the shared `inflow` MCP entry, then fully quit and reopen Claude Desktop.
+Fully quit and reopen Claude Desktop. Confirm the MCP server starts, then ask it to call `auth_status`.
 
-### Test
+## Claude Code and local Cowork
 
-Use the `InFlow` project so the pasted skill is in context.
-
-Ask:
-
-```text
-Use InFlow to authenticate me.
-```
-
-Expected: the agent starts the device flow, shows the verification URL, and polls until authentication completes.
-
-Ask:
-
-```text
-Use InFlow to list my balances.
-```
-
-Expected: the agent calls `balances_list`. If balances are empty, the skill should lead it to surface deposit addresses.
-
-Ask against a known 402-protected URL:
-
-```text
-Use InFlow to inspect and pay https://demo.x402.io/widgets.
-```
-
-Expected: the agent detects the protocol, runs the matching read-only inspect step first, then starts the payment flow.
-
-### Update
-
-Refresh the skill body and MCP binary separately:
-
-```bash
-npm install -g @inflowpayai/inflow@latest
-inflow --skill | pbcopy
-```
-
-Paste the refreshed skill body into the Claude project instructions. Restart Claude Desktop so the `npx` MCP entry
-resolves the current npm `latest`.
-
-To pin a version, replace `@inflowpayai/inflow` in the MCP args with `@inflowpayai/inflow@<version>`.
-
-## Claude Code And Cowork
-
-Claude Code and Cowork consume the Claude Code plugin bundle. The plugin installs the skill and MCP together.
-
-### Install
-
-From a Claude Code session:
+Install the plugin from a Claude Code session:
 
 ```text
 /plugin marketplace add inflowpayai/inflow-cli
-/plugin install inflow@inflow-cli
+/plugin install inflow@inflow
 ```
 
-If your installed Claude Code CLI supports direct repository installation, this form is equivalent:
+The plugin installs the skill and MCP manifest together. Local Cowork launches the MCP server on the host; do not copy
+the binary, vault database, or credentials into its Linux guest. Remote Cowork cannot use a local MCP server unless the
+product provides an explicit host bridge.
 
-```bash
-claude plugin install inflowpayai/inflow-cli
-```
+After plugin installation, trigger `/agentic-payments` and ask the host to list InFlow MCP tools. Unlock the vault in a
+separate host terminal before testing a credential-bearing tool.
 
-The marketplace entry points at `plugins/inflow`, whose plugin manifest references `./skills/` and `./.mcp.json`.
+## Codex and Cursor
 
-### Test
+Install the repository plugin through the host's plugin browser. Codex discovers `.codex-plugin/plugin.json`; Cursor
+discovers `.cursor-plugin/marketplace.json`. Both ultimately execute the shared `inflow --mcp` entry.
 
-Trigger the skill:
+For a manual Cursor setup, place the shared MCP configuration in `~/.cursor/mcp.json` or `.cursor/mcp.json`, restart
+Cursor, and confirm the tools panel shows InFlow.
 
-```text
-/agentic-payments
-```
+## Hermes, Cline, Continue.dev, and raw MCP
 
-Expected: the skill loads and the agent responds with the InFlow payment playbook, not generic payment advice.
+These hosts can use the shared MCP configuration if they accept a standard-input/output MCP server. Use the exact
+configuration shape required by the host, with `command` set to the installed `inflow` path and arguments set to
+`["--mcp"]`.
 
-Ask:
-
-```text
-Use InFlow to list the available InFlow MCP tools.
-```
-
-Expected: the agent lists the live MCP tools or calls `tools/list` through the host.
-
-Run the skill-driven flow:
-
-```text
-Authenticate me with InFlow, then inspect and pay https://demo.x402.io/widgets.
-```
-
-Expected: `auth_login` returns a verification URL, polling completes after approval, then the agent runs the matching
-inspect and pay tools.
-
-### Update
-
-Reinstall the plugin to refresh the skill body and manifests:
-
-```bash
-claude plugin install inflowpayai/inflow-cli --force
-```
-
-Restart Claude Code or Cowork so the unpinned `npx` MCP entry resolves npm `latest`.
-
-For pinned MCP installs, edit the local plugin `.mcp.json` and pin `@inflowpayai/inflow@<version>`.
-
-## Codex
-
-Codex consumes the Codex plugin manifest. The plugin installs the skill and MCP together.
-
-### Install
-
-Use Codex's plugin browser and install `inflowpayai/inflow-cli`, or use the CLI when available:
-
-```bash
-codex plugin install inflowpayai/inflow-cli
-```
-
-The Codex manifest is `.codex-plugin/plugin.json`; it points to `./skills/` and `./.mcp.json`. The per-plugin mirror at
-`plugins/inflow/.codex-plugin/plugin.json` has the same shape for hosts that prefer per-plugin discovery.
-
-### Test
-
-Trigger the skill:
-
-```text
-/agentic-payments
-```
-
-Ask:
-
-```text
-Use InFlow to authenticate me, then list my balances.
-```
-
-Expected: the skill drives `auth_login` first when needed, then calls `balances_list`.
-
-### Update
-
-Reinstall the plugin:
-
-```bash
-codex plugin install inflowpayai/inflow-cli --force
-```
-
-Restart Codex so the MCP server resolves npm `latest`. Pin by editing the local `.mcp.json` to
-`@inflowpayai/inflow@<version>`.
-
-## OpenClaw
-
-OpenClaw is skill-first. The `agentic-payments` skill frontmatter declares `metadata.openclaw.requires.bins: ["inflow"]`
-and an npm install recipe for `@inflowpayai/inflow`.
-
-### Install
-
-From ClawHub, once published:
-
-```bash
-openclaw skills install agentic-payments
-```
-
-If `inflow` is not on `PATH`, OpenClaw should offer to install the binary with npm.
-
-Before ClawHub publication, install from git if your OpenClaw build supports plugin installs:
-
-```bash
-openclaw plugins install git:github.com/inflowpayai/inflow-cli@<tag>
-```
-
-### Test
-
-Trigger the skill:
-
-```text
-/agentic-payments
-```
-
-Ask:
-
-```text
-Pay https://demo.x402.io/widgets with InFlow.
-```
-
-Expected: the skill drives a read-only protocol check before payment, authenticates if needed, then runs the matching
-MCP tools.
-
-### Update
-
-For ClawHub installs:
-
-```bash
-openclaw skills update agentic-payments
-npm install -g @inflowpayai/inflow@latest
-```
-
-For git plugin installs:
-
-```bash
-openclaw plugins install git:github.com/inflowpayai/inflow-cli@<new-tag> --force
-```
-
-## Hermes
-
-Hermes is MCP-only. It has no native InFlow skill manager, so the MCP server can run without the agent knowing the
-payment playbook.
-
-### Install
-
-```bash
-hermes mcp add inflow --command npx --args "-y,@inflowpayai/inflow,--mcp"
-```
-
-Optionally paste the skill body into Hermes instructions:
-
-```bash
-npm install -g @inflowpayai/inflow
-inflow --skill | pbcopy
-```
-
-### Test
-
-```bash
-hermes mcp list
-hermes mcp test inflow
-```
-
-Expected: Hermes shows the `inflow` server and a live tool list matching `tools/list`.
-
-In a Hermes agent session, ask for an explicit tool call if the skill body was not pasted:
-
-```text
-Call the InFlow x402_inspect tool for https://demo.x402.io/widgets.
-```
-
-### Update
-
-The npx entry resolves npm `latest` each time the server starts. Pin by editing the args to:
-
-```text
--y,@inflowpayai/inflow@<version>,--mcp
-```
-
-## Cursor
-
-Cursor is MCP-only unless you add the skill body to project rules.
-
-### Install
-
-Edit `~/.cursor/mcp.json` or a project-local `.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "inflow": {
-      "command": "npx",
-      "args": ["-y", "@inflowpayai/inflow", "--mcp"]
-    }
-  }
-}
-```
-
-Restart Cursor.
-
-Optional skill paste:
-
-```bash
-npm install -g @inflowpayai/inflow
-mkdir -p .cursor/rules
-inflow --skill > .cursor/rules/inflow.md
-```
-
-### Test
-
-Open Cursor's MCP tools panel and confirm the `inflow` tools appear. Ask Cursor to call `auth_status` or `x402_inspect`
-against a known test URL.
-
-Without the skill body, prompt the agent with explicit tool names and expected ordering. With the skill body, a normal
-request such as "authenticate me with InFlow" should follow the playbook.
-
-### Update
-
-Restart Cursor for the npx entry to resolve npm `latest`. Pin by changing the package arg to
-`@inflowpayai/inflow@<version>`.
-
-## Cline
-
-Cline is MCP-only unless you paste the skill body into custom instructions.
-
-### Install
-
-Edit Cline's MCP settings file, commonly `~/.cline/cline_mcp_settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "inflow": {
-      "command": "npx",
-      "args": ["-y", "@inflowpayai/inflow", "--mcp"]
-    }
-  }
-}
-```
-
-Restart the editor or Cline extension.
-
-Optional skill paste:
-
-```bash
-npm install -g @inflowpayai/inflow
-inflow --skill | pbcopy
-```
-
-Paste into Cline custom instructions.
-
-### Test
-
-Confirm Cline lists the `inflow` MCP server and tools. Ask Cline to call `auth_status`, then `x402_inspect` or
-`mpp_inspect` for a known 402-protected URL.
-
-### Update
-
-Restart Cline for npx to resolve npm `latest`. Pin by changing the package arg to `@inflowpayai/inflow@<version>`.
-
-## Continue.dev
-
-Continue.dev is MCP-only unless you paste the skill body into the configured system message.
-
-### Install
-
-Edit `~/.continue/config.json`:
-
-```json
-{
-  "experimental": {
-    "modelContextProtocolServers": [
-      {
-        "transport": {
-          "type": "stdio",
-          "command": "npx",
-          "args": ["-y", "@inflowpayai/inflow", "--mcp"]
-        }
-      }
-    ]
-  }
-}
-```
-
-Restart the editor or Continue.dev extension.
-
-Optional skill paste:
-
-```bash
-npm install -g @inflowpayai/inflow
-inflow --skill | pbcopy
-```
-
-Paste into Continue.dev's system message.
-
-### Test
-
-Ask Continue.dev to call an `inflow` tool and verify the response. If the skill body is not loaded, ask for explicit
-tools such as `auth_status`, `x402_inspect`, or `mpp_inspect`.
-
-### Update
-
-Restart Continue.dev for npx to resolve npm `latest`. Pin by changing the package arg to
-`@inflowpayai/inflow@<version>`.
-
-## Raw Stdio MCP
-
-Use this for any MCP-spec-compliant client.
-
-### Install
-
-Use the shared MCP config, or run directly:
-
-```bash
-npx -y @inflowpayai/inflow --mcp
-```
-
-If the host has a system-prompt or custom-instructions field, paste the skill body:
-
-```bash
-npm install -g @inflowpayai/inflow
-inflow --skill | pbcopy
-```
-
-### Test
-
-Use a full initialize handshake for portable MCP smoke tests:
+For a raw protocol smoke test:
 
 ```bash
 {
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-} | npx -y @inflowpayai/inflow --mcp
+} | inflow --mcp
 ```
 
-Expected: `initialize` returns `serverInfo.name: "inflow"` and `tools/list` returns the tool array.
+Expected: initialization reports `serverInfo.name` as `inflow`, and `tools/list` returns the installed tool inventory.
 
-The current binary also answers a direct `tools/list` request in the test suite, but the initialize handshake is the
-portable check to use across MCP hosts.
+## What to test
 
-### Update
-
-Restart the MCP server to resolve npm `latest`, or pin the package arg to `@inflowpayai/inflow@<version>`.
-
-## Shared Troubleshooting
-
-### npx stalls the MCP host
-
-The MCP host logs show `npx` waiting for package install confirmation.
-
-Fix: keep `-y` in every npx args array:
-
-```json
-"args": ["-y", "@inflowpayai/inflow", "--mcp"]
-```
-
-### Node version mismatch
-
-The CLI requires Node.js 22 or newer.
-
-Fix:
+The live CLI is the source of truth for commands, schemas, and MCP tools:
 
 ```bash
-nvm install 22 && nvm use 22
+inflow --llms --format json
+inflow --llms-full --format json
+inflow <command> --schema --format json
 ```
 
-or use the equivalent command for your Node version manager.
+For each agent host:
 
-### inflow is not on PATH after global install
+1. Confirm the installed executable reports the expected version.
+2. Confirm the skill loads when the host supports skills.
+3. Confirm MCP `tools/list` returns the current inventory.
+4. Confirm `auth_status` reports locked state without exposing secrets when the vault is locked.
+5. Unlock the vault manually and confirm `auth_login` reaches a verification URL.
+6. Confirm `balances_list` or `deposit-addresses_list` returns structured data after authentication.
+7. Confirm a read-only `x402_inspect` or `mpp_inspect` call.
+8. Run a payment only against an approved test endpoint and funded test account.
 
-Check npm's global bin directory:
+Do not use direct InFlow API MCP results as evidence for this local CLI-backed MCP surface.
+
+## Upgrade
+
+For Homebrew:
 
 ```bash
-echo "$(npm config get prefix)/bin"
+brew upgrade --cask inflow
 ```
 
-Add that directory to `PATH` in the shell config used by the MCP host.
+For a hosted installation, rerun the hosted installer. Reinstall or refresh the plugin separately when its skill or
+manifest changes, then restart the host.
 
-### MCP starts but tools do not appear
+The CLI checks the latest GitHub Release with a two-second deadline. Human executions may print an advisory update
+notice. `auth status` structured output may include `current_version` and `latest_version`. An advisory does not block
+the current command; `VERSION_UNSUPPORTED` means the upgrade is mandatory. Set `NO_UPDATE_NOTIFIER=1` to disable the
+advisory check.
 
-Upgrade to the current npm release:
+Upgrades preserve the encrypted vault but leave it locked after daemon replacement. Unlock it manually before the next
+credential-bearing request.
+
+## Uninstall and purge
+
+Homebrew uninstall:
 
 ```bash
-npm install -g @inflowpayai/inflow@latest
+brew uninstall --cask inflow
 ```
 
-Then restart the MCP host and confirm with `tools/list`.
-
-### MCP works but the agent guesses the payment flow
-
-The skill is not loaded. On skill-aware surfaces, reinstall or refresh the plugin. On MCP-only surfaces, paste the skill
-body into the host's instruction surface:
+Hosted macOS uninstall:
 
 ```bash
-inflow --skill | pbcopy
+curl -fsSL https://inflowcli.ai/install.sh | bash -s -- --uninstall
 ```
 
-### Skill body drifts from the binary
+Windows Installer and Linux package uninstall preserve encrypted vault data. Linux `install.sh --purge` removes the
+package and system vault data. `inflow vault reset` is the cross-platform command for intentionally removing local vault
+state before uninstall.
 
-The CLI-bundled skill is the source of truth for the released binary:
+## Troubleshooting
+
+### MCP process does not start
+
+Run `command -v inflow` in the same environment as the host. If the graphical host has a different `PATH`, configure the
+absolute path. Run `inflow --mcp` in a terminal and inspect the host's MCP logs.
+
+### MCP tools are present but credential operations fail
+
+Run:
 
 ```bash
-inflow --skill | head -20
-```
-
-Maintainers should sync external skill channels from `skills/agentic-payments/SKILL.md` in this repo and republish the
-binary from the same commit.
-
-### Sandbox and production are confused
-
-Check the resolved environment:
-
-```bash
+inflow vault status
 inflow auth status --format json
 ```
 
-Use `--sandbox`, `--environment sandbox`, or `INFLOW_ENVIRONMENT=sandbox`. For MCP hosts, add an `env` block when the
-host supports it.
+If the vault is locked, run `inflow vault unlock` in a human terminal. Do not add the factor to MCP configuration.
 
-## Release Verification
+### The agent guesses the payment flow
 
-Before a release that changes the install footprint, manifests, MCP behavior, or skill content, verify:
+The skill is missing. Refresh the plugin on skill-aware hosts, or paste the output of `inflow --skill` into the host's
+instructions.
 
-- One skill-aware surface: Claude Code, Cowork, Codex, or OpenClaw.
-- One MCP-only surface: Cursor, Hermes, or raw stdio MCP.
+### Environment is wrong
 
-For each tested surface:
+Check `inflow auth status --format json`. Use `--sandbox`, `--environment sandbox`, or `INFLOW_ENVIRONMENT=sandbox`. Add
+an `env` block only when the MCP host supports it.
 
-- Confirm the skill loads when the surface supports skills.
-- Confirm `tools/list` returns the current MCP tool inventory.
-- Confirm `auth_login` reaches a verification URL and polling can complete after approval.
-- Confirm `balances_list` or `deposit-addresses_list` returns structured data after authentication.
-- Confirm a read-only protocol check with `x402_inspect` or `mpp_inspect`.
-- Confirm a full payment flow only against a safe test endpoint and funded test account.
+### A custom legacy credential file remains
 
-Do not substitute the direct InFlow API MCP test results for this CLI-backed MCP surface. They are different products
-with different tool contracts.
+The signed application deletes the standard legacy plaintext configuration and any path explicitly supplied through
+`--auth` or `INFLOW_AUTH_FILE`. It cannot discover arbitrary paths that are no longer supplied. If an older installation
+used a custom path, remove that file manually after confirming the signed application is using the encrypted vault. Do
+not pass the legacy file to another application or attempt to import it into the vault.
+
+### Installed binary appears modified or mismatched
+
+Reinstall through the signed platform channel. Do not copy an executable between installations or invoke a development
+bundle as a substitute. On macOS, verify with `codesign --verify --deep --strict`; on Windows, inspect the Authenticode
+signature; on Linux, reinstall through the signed package or repository once the production repository is published.
+
+## Privacy and security checks
+
+- Confirm command and MCP output never contains access tokens, refresh tokens, API keys, credentials, or unlock factors.
+- Confirm agent and MCP schemas have no PIN, passphrase, password, secret, or raw authorization input.
+- Confirm locked and unavailable vault states fail closed.
+- Confirm the MCP host launches the installed signed binary, not npm or a development checkout.
+- Confirm update checks contain no credentials and can be disabled with `NO_UPDATE_NOTIFIER=1`.
+- Confirm reset, logout, uninstall, and purge behavior matches the user's intended data-retention choice.
