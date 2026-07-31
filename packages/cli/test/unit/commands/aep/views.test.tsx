@@ -99,7 +99,7 @@ describe('AEP views', () => {
   it('explains JWT authentication when no session credentials are stored', () => {
     const view = render(
       <StatusView
-        availableGrantTypes={[]}
+        availableGrantTypes={['oauth-bearer']}
         grants={[]}
         onComplete={() => undefined}
         service={{ status: 'active' }}
@@ -109,6 +109,10 @@ describe('AEP views', () => {
     expect(view.lastFrame()).toContain('Authentication');
     expect(view.lastFrame()).toContain('AEP JWT');
     expect(view.lastFrame()).toContain('None');
+    expect(view.lastFrame()).toContain('oauth-bearer');
+    expect(view.lastFrame()).not.toContain('Stored Session Credentials');
+    expect(view.lastFrame()).not.toContain('Credential ID');
+    expect(view.lastFrame()).not.toContain('Enrollment');
     expect(view.lastFrame()).not.toContain('Local grants');
     view.unmount();
   });
@@ -147,7 +151,7 @@ describe('AEP views', () => {
     const status = render(
       <StatusView
         availableGrantTypes={['oauth-bearer']}
-        grants={[{ credential_id: 'credential-1', grant_type: 'oauth-bearer', scopes: ['read'] }]}
+        grants={[{ credential_id: 'credential-1', grant_type: 'oauth-bearer', scopes: ['read'], status: 'active' }]}
         onComplete={complete}
         service={{ owner_action_required: 'true', status: 'active' }}
         serviceDid="did:web:service.example"
@@ -156,6 +160,16 @@ describe('AEP views', () => {
     expect(status.lastFrame()).toContain('Authentication');
     expect(status.lastFrame()).toContain('Available credential types');
     expect(status.lastFrame()).toContain('oauth-bearer');
+    expect(status.lastFrame()).toContain('Stored Session Credentials');
+    expect(status.lastFrame()).toMatch(/\n\nStored Session Credentials/);
+    expect(status.lastFrame()).toContain('Grant Type');
+    expect(status.lastFrame()).toContain('Credential ID');
+    expect(status.lastFrame()).toContain('Status');
+    expect(status.lastFrame()).toContain('Scopes');
+    expect(status.lastFrame()).toContain('Expires');
+    expect(status.lastFrame()).toContain('credential-1');
+    expect(status.lastFrame()).toContain('active');
+    expect(status.lastFrame()).not.toContain('Enrollment');
     status.unmount();
     const granted = render(
       <GrantView

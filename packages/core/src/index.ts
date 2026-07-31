@@ -87,10 +87,95 @@ export {
   storage,
 } from './utils/storage.js';
 export { SecureStorageError, type SecureStorageErrorCode } from './secure-storage/errors.js';
-export { SyncMemorySecretStore, type SecretReference, type SyncSecureSecretStore } from './secure-storage/keychain.js';
+export {
+  MemorySecretStore,
+  SecretReferenceManifest,
+  SyncMemorySecretStore,
+  SyncSecretReferenceManifestStore,
+  type SecretReference,
+  type SecureSecretStore,
+  type SyncSecretReferenceManifest,
+  type SyncSecureSecretStore,
+} from './secure-storage/secret-store.js';
+export {
+  DEFAULT_VAULT_POLICY,
+  type Awaitable,
+  type DeleteExpiredVaultSecretsInput,
+  type DeleteVaultSecretInput,
+  type GetVaultSecretInput,
+  type PutVaultSecretInput,
+  type TouchVaultSecretInput,
+  type VaultBackend,
+  type VaultLockState,
+  type VaultPolicy,
+  type VaultSecretPayload,
+  type VaultStatus,
+} from './secure-storage/vault-backend.js';
+export {
+  type LocalVaultDaemon,
+  type LocalVaultDaemonOptions,
+  type LinuxVaultBrokerOptions,
+  type LinuxVaultServiceOptions,
+  runLinuxTransferredVaultService,
+  runLinuxVaultBroker,
+  runLinuxVaultService,
+  runLocalVaultDaemon,
+  startLinuxVaultService,
+  startLocalVaultDaemon,
+  systemdSocketFileDescriptor,
+} from './secure-storage/vault-daemon.js';
+export {
+  isWindowsVaultWorkerData,
+  runWindowsVaultService,
+  runWindowsVaultWorker,
+  type WindowsVaultWorkerData,
+  type WindowsVaultServiceOptions,
+} from './secure-storage/vault-windows-service.js';
+export {
+  LocalVaultClient,
+  type LocalVaultClientOptions,
+  type LocalVaultDaemonInfo,
+} from './secure-storage/vault-client.js';
+export { type VaultDaemonInfo } from './secure-storage/vault-daemon-handler.js';
+export {
+  linuxVaultServiceUserId,
+  removeVaultLocalState,
+  usesLinuxVaultService,
+  vaultFilePaths,
+  type VaultFilePaths,
+} from './secure-storage/vault-files.js';
+export {
+  NoopSyncSecretReferenceManifest,
+  SyncVaultSecretStore,
+  type SyncVaultSecretStoreOptions,
+} from './secure-storage/vault-sync-secret-store.js';
+export {
+  sendVaultIpcRequest,
+  startVaultSocketServer,
+  type StartMultiTenantVaultSocketServerOptions,
+  type StartSingleTenantVaultSocketServerOptions,
+  type StartVaultSocketServerOptions,
+  type VaultSocketServer,
+} from './secure-storage/vault-socket.js';
+export { type VaultSocketPeer, type VaultSocketPeerVerifier } from './secure-storage/vault-peer-verifier.js';
+export {
+  type VaultIpcError,
+  type VaultIpcMessage,
+  type VaultIpcMethod,
+  type VaultIpcRequest,
+  type VaultIpcResponse,
+} from './secure-storage/vault-ipc.js';
+export {
+  createVaultSecretReference,
+  parseVaultSecretReference,
+  type VaultRecordStatus,
+  type VaultSecretKind,
+  type VaultSecretReference,
+} from './secure-storage/vault-types.js';
 export { sanitizeDeep, sanitizeText } from './utils/sanitize-text.js';
 export { sanitizeResource } from './utils/sanitize-proxy.js';
 export {
+  type AepCredentialDeleteSelector,
   type AepPersistedInspectResult,
   type AepOwner,
   type AepPersistedState,

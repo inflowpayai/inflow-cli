@@ -30,6 +30,7 @@ export const inspectOptions = z.object({
 });
 
 export const enrollOptions = z.object({
+  approvalId: z.string().optional().describe('Continue an enrollment approval returned by a previous enroll call.'),
   interval: z.coerce
     .number()
     .optional()
@@ -39,6 +40,7 @@ export const enrollOptions = z.object({
 });
 
 export const grantOptions = z.object({
+  approvalId: z.string().optional().describe('Continue a grant approval returned by a previous grant call.'),
   grantType: z
     .string()
     .optional()

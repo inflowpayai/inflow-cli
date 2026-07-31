@@ -29,6 +29,7 @@ import {
   approvalUrlFor,
   parseHeaderFlags,
   runAepFetch,
+  SecureStorageError,
   type AepStateStorage,
   type AuthStorage,
   type Inflow,
@@ -39,6 +40,7 @@ import { render } from 'ink';
 import React from 'react';
 import { assertSessionGuard } from '../../utils/assert-session.js';
 import { persistedAepPublicDocumentCache } from '../../utils/aep-public-document-cache.js';
+import { mcpTool } from '../../mcp-metadata.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { shellArg } from '../../utils/payment-fetch-command.js';
 import {
@@ -162,6 +164,18 @@ function commandError(error: unknown): ErrorOptions {
       return { code: 'AEP_APPROVAL_DENIED', message: 'The InFlow approval was denied.' };
     return { code: typeof code === 'string' ? code : 'AEP_SIGN_FAILED', message: 'The AEP command failed.' };
   }
+  if (error instanceof SecureStorageError) {
+    const vaultCode =
+      error.secureStorageCode === 'vault_locked' || error.secureStorageCode === 'secure_storage_secret_missing'
+        ? 'VAULT_LOCKED'
+        : error.secureStorageCode === 'vault_not_initialized'
+          ? 'VAULT_NOT_INITIALIZED'
+          : error.secureStorageCode;
+    return {
+      code: vaultCode,
+      message: error.message,
+    };
+  }
   return { code: 'AEP_INTERNAL_ERROR', message: 'The AEP command failed unexpectedly.' };
 }
 
@@ -190,6 +204,14 @@ async function existingIdentity(storage: AepStorage, inspect: InspectServiceResu
 class MissingIdentityError extends Error {}
 class ApprovalCancelledError extends Error {}
 class ApprovalDeniedError extends Error {}
+class PendingAepApproval extends Error {
+  constructor(
+    readonly approvalId: string,
+    readonly retryAfterSeconds: number,
+  ) {
+    super('AEP approval is pending.');
+  }
+}
 class CliInputError extends Error {
   constructor(
     readonly code: string,
@@ -239,34 +261,47 @@ async function approvedAssertion(
   inspect: InspectServiceResult,
   command: 'enroll' | 'grant',
   platformContext: Record<string, unknown>,
-  options: { interval?: number; maxAttempts: number; signal?: AbortSignal; timeout: number },
+  options: {
+    approvalId?: string;
+    deferPending?: boolean;
+    interval?: number;
+    maxAttempts: number;
+    signal?: AbortSignal;
+    timeout: number;
+  },
   publicDocumentCache?: AepPublicDocumentCache,
   onPending?: (approvalId: string) => void,
 ): Promise<{ assertion: string; context: Record<string, unknown> }> {
   const signer = await provider(inflow, publicDocumentCache).signerFor(identity);
-  const initial = buildClientAssertionClaims({
-    agentDid: identity.agentDid,
-    command,
-    jti: randomUUID,
-    serviceDid: inspect.document.service.did,
-  });
-  const result = await signer(initial, {
-    command,
-    idempotencyKey: randomUUID(),
-    platformContext,
-    serviceDid: inspect.document.service.did,
-    signingAlgorithms: identity.signingAlgorithms,
-  });
-  if (typeof result === 'string' || result.status === 'completed') {
-    return {
-      assertion: typeof result === 'string' ? result : result.clientAssertion,
-      context: typeof result === 'string' ? {} : (result.platformContext ?? {}),
-    };
+  let approvalId = options.approvalId;
+  let interval = options.interval ?? 5;
+  if (approvalId === undefined) {
+    const initial = buildClientAssertionClaims({
+      agentDid: identity.agentDid,
+      command,
+      jti: randomUUID,
+      serviceDid: inspect.document.service.did,
+    });
+    const result = await signer(initial, {
+      command,
+      idempotencyKey: randomUUID(),
+      platformContext,
+      serviceDid: inspect.document.service.did,
+      signingAlgorithms: identity.signingAlgorithms,
+    });
+    if (typeof result === 'string' || result.status === 'completed') {
+      return {
+        assertion: typeof result === 'string' ? result : result.clientAssertion,
+        context: typeof result === 'string' ? {} : (result.platformContext ?? {}),
+      };
+    }
+    const pendingApprovalId = result.platformContext?.['approval_id'];
+    if (typeof pendingApprovalId !== 'string') throw new Error('Platform Sign did not return an approval identifier.');
+    if (options.deferPending === true) throw new PendingAepApproval(pendingApprovalId, result.retryAfterSeconds);
+    approvalId = pendingApprovalId;
+    interval = options.interval ?? result.retryAfterSeconds;
   }
-  const approvalId = result.platformContext?.['approval_id'];
-  if (typeof approvalId !== 'string') throw new Error('Platform Sign did not return an approval identifier.');
   onPending?.(approvalId);
-  const interval = options.interval ?? result.retryAfterSeconds;
   if (!Number.isFinite(interval) || interval <= 0) throw new RangeError('Approval interval must be positive.');
   const deadline = Date.now() + options.timeout * 1000;
   let attempts = 0;
@@ -319,6 +354,50 @@ function openApiPolicyFrame(policy: OpenApiPolicy): Record<string, unknown> {
     ...(policy.strictSlashSuggestion === undefined ? {} : { strict_slash_suggestion: policy.strictSlashSuggestion }),
     state: policy.state,
   };
+}
+
+function pendingEnrollFrame(
+  approval: { approvalId: string; retryAfterSeconds: number },
+  inflow: Inflow,
+  serviceDid: string,
+): Record<string, unknown> {
+  const interval = approval.retryAfterSeconds;
+  return sanitizeDeep({
+    approval_id: approval.approvalId,
+    approval_url: approvalUrlFor(inflow.resolvedApiBaseUrl, approval.approvalId),
+    instruction:
+      'Present the approval_url to the user and ask them to approve in the InFlow mobile app or dashboard. Then call AEP enroll again with the approval id.',
+    service_did: serviceDid,
+    state: 'pending',
+    retry_after_seconds: interval,
+    _next: {
+      poll_interval_seconds: interval,
+      until: 'enrollment completes',
+    },
+  });
+}
+
+function pendingGrantFrame(
+  approval: { approvalId: string; retryAfterSeconds: number },
+  inflow: Inflow,
+  serviceDid: string,
+  grantType: string,
+): Record<string, unknown> {
+  const interval = approval.retryAfterSeconds;
+  return sanitizeDeep({
+    approval_id: approval.approvalId,
+    approval_url: approvalUrlFor(inflow.resolvedApiBaseUrl, approval.approvalId),
+    grant_type: grantType,
+    instruction:
+      'Present the approval_url to the user and ask them to approve in the InFlow mobile app or dashboard. Then call AEP grant again with the approval id.',
+    service_did: serviceDid,
+    state: 'pending',
+    retry_after_seconds: interval,
+    _next: {
+      poll_interval_seconds: interval,
+      until: 'credential grant completes',
+    },
+  });
 }
 
 interface FetchContext extends Omit<Context, 'args'> {
@@ -693,7 +772,7 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
   let waitingView: PendingApprovalRenderer | undefined;
   const approvalController = new AbortController();
   try {
-    const options = c.options as { interval?: number; maxAttempts: number; timeout: number };
+    const options = c.options as { approvalId?: string; interval?: number; maxAttempts: number; timeout: number };
     if (options.interval !== undefined && options.interval <= 0)
       throw new CliInputError('AEP_INTERNAL_ERROR', 'Approval interval must be positive.');
     if (options.timeout <= 0 || options.timeout > 900)
@@ -750,30 +829,55 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       preferred: inspect.document.claims?.preferred ?? [],
       required: inspect.document.claims?.required ?? [],
     };
-    const signed = await approvedAssertion(
-      inflow,
-      identity,
-      inspect,
-      'enroll',
-      { claims },
-      { ...options, signal: approvalController.signal },
-      publicDocumentCache,
-      (approvalId) => {
-        if (!c.agent && !c.formatExplicit) {
-          waitingView = render(
-            <PendingApprovalView
-              approvalId={approvalId}
-              approvalUrl={approvalUrlFor(inflow.resolvedApiBaseUrl, approvalId)}
-              onCancel={() => {
-                approvalController.abort();
-                return cancelApproval(inflow, approvalId);
-              }}
-            />,
-            { exitOnCtrlC: false },
-          );
-        }
-      },
-    );
+    let signed: { assertion: string; context: Record<string, unknown> };
+    try {
+      signed = await approvedAssertion(
+        inflow,
+        identity,
+        inspect,
+        'enroll',
+        { claims },
+        {
+          ...options,
+          deferPending:
+            (c.agent || c.formatExplicit) && options.approvalId === undefined && options.interval === undefined,
+          signal: approvalController.signal,
+        },
+        publicDocumentCache,
+        (approvalId) => {
+          if (!c.agent && !c.formatExplicit) {
+            waitingView = render(
+              <PendingApprovalView
+                approvalId={approvalId}
+                approvalUrl={approvalUrlFor(inflow.resolvedApiBaseUrl, approvalId)}
+                onCancel={() => {
+                  approvalController.abort();
+                  return cancelApproval(inflow, approvalId);
+                }}
+              />,
+              { exitOnCtrlC: false },
+            );
+          }
+        },
+      );
+    } catch (error) {
+      if (error instanceof PendingAepApproval) {
+        return present(
+          c,
+          <PendingApprovalView
+            approvalId={error.approvalId}
+            approvalUrl={approvalUrlFor(inflow.resolvedApiBaseUrl, error.approvalId)}
+            onCancel={() => cancelApproval(inflow, error.approvalId)}
+          />,
+          pendingEnrollFrame(
+            { approvalId: error.approvalId, retryAfterSeconds: error.retryAfterSeconds },
+            inflow,
+            inspect.document.service.did,
+          ),
+        );
+      }
+      throw error;
+    }
     closePendingApprovalView(waitingView);
     waitingView = undefined;
     const approvedClaims = signed.context['approved_claims'];
@@ -838,6 +942,7 @@ async function runStatus(c: Context, inflow: Inflow, authStorage: AuthStorage): 
         ...(grant.expiresAt === undefined ? {} : { expires_at: grant.expiresAt }),
         grant_type: grant.grantType,
         scopes: Array.isArray(grant.credential['scopes']) ? grant.credential['scopes'] : [],
+        status: 'active' as const,
         usable: true,
       }))
       .sort((left, right) =>
@@ -860,6 +965,15 @@ async function runStatus(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       frame,
     );
   } catch (error) {
+    if (
+      error instanceof AepCommandError &&
+      (error.problem?.code === 'agent_identity_not_found' || error.problem?.code === 'not_recognized')
+    )
+      return c.error({
+        code: 'AEP_NOT_ENROLLED',
+        message:
+          'The Service does not recognize the locally stored Agent identity. Use `inflow aep enroll <service>` to enroll again.',
+      });
     return c.error(commandError(error));
   }
 }
@@ -869,7 +983,13 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
   let waitingView: PendingApprovalRenderer | undefined;
   const approvalController = new AbortController();
   try {
-    const options = c.options as { grantType?: string; interval?: number; scope: string[]; timeout?: number };
+    const options = c.options as {
+      approvalId?: string;
+      grantType?: string;
+      interval?: number;
+      scope: string[];
+      timeout?: number;
+    };
     const timeout = options.timeout ?? 900;
     if (options.interval !== undefined && options.interval <= 0)
       throw new CliInputError('AEP_INTERNAL_ERROR', 'Approval interval must be positive.');
@@ -915,35 +1035,59 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
       });
     }
     const scopes = [...new Set(options.scope)];
-    const signed = await approvedAssertion(
-      inflow,
-      identity,
-      inspect,
-      'grant',
-      { grant_type: grantType, ...(scopes.length === 0 ? {} : { requested_scopes: scopes }) },
-      {
-        ...(options.interval === undefined ? {} : { interval: options.interval }),
-        maxAttempts: 0,
-        signal: approvalController.signal,
-        timeout,
-      },
-      publicDocumentCache,
-      (approvalId) => {
-        if (!c.agent && !c.formatExplicit) {
-          waitingView = render(
-            <PendingApprovalView
-              approvalId={approvalId}
-              approvalUrl={approvalUrlFor(inflow.resolvedApiBaseUrl, approvalId)}
-              onCancel={() => {
-                approvalController.abort();
-                return cancelApproval(inflow, approvalId);
-              }}
-            />,
-            { exitOnCtrlC: false },
-          );
-        }
-      },
-    );
+    let signed: { assertion: string; context: Record<string, unknown> };
+    try {
+      signed = await approvedAssertion(
+        inflow,
+        identity,
+        inspect,
+        'grant',
+        { grant_type: grantType, ...(scopes.length === 0 ? {} : { requested_scopes: scopes }) },
+        {
+          ...(options.interval === undefined ? {} : { interval: options.interval }),
+          ...(options.approvalId === undefined ? {} : { approvalId: options.approvalId }),
+          deferPending:
+            (c.agent || c.formatExplicit) && options.approvalId === undefined && options.interval === undefined,
+          maxAttempts: 0,
+          signal: approvalController.signal,
+          timeout,
+        },
+        publicDocumentCache,
+        (approvalId) => {
+          if (!c.agent && !c.formatExplicit) {
+            waitingView = render(
+              <PendingApprovalView
+                approvalId={approvalId}
+                approvalUrl={approvalUrlFor(inflow.resolvedApiBaseUrl, approvalId)}
+                onCancel={() => {
+                  approvalController.abort();
+                  return cancelApproval(inflow, approvalId);
+                }}
+              />,
+              { exitOnCtrlC: false },
+            );
+          }
+        },
+      );
+    } catch (error) {
+      if (error instanceof PendingAepApproval) {
+        return present(
+          c,
+          <PendingApprovalView
+            approvalId={error.approvalId}
+            approvalUrl={approvalUrlFor(inflow.resolvedApiBaseUrl, error.approvalId)}
+            onCancel={() => cancelApproval(inflow, error.approvalId)}
+          />,
+          pendingGrantFrame(
+            { approvalId: error.approvalId, retryAfterSeconds: error.retryAfterSeconds },
+            inflow,
+            inspect.document.service.did,
+            grantType,
+          ),
+        );
+      }
+      throw error;
+    }
     closePendingApprovalView(waitingView);
     waitingView = undefined;
     const response = await grantService({
@@ -1020,15 +1164,7 @@ async function runRevoke(c: Context, inflow: Inflow, authStorage: AuthStorage): 
     if ('allGrantTypes' in selector) await revokeService({ ...base, allGrantTypes: true });
     else if ('credentialId' in selector) await revokeService({ ...base, credentialId: selector.credentialId });
     else await revokeService({ ...base, grantType: selector.grantType });
-    const credentials = aepStorage.credentials();
-    for (const credential of await credentials.listCredentials(inspect.document.service.did)) {
-      if (
-        'allGrantTypes' in selector ||
-        ('credentialId' in selector && credential.credentialId === selector.credentialId) ||
-        ('grantType' in selector && credential.grantType === selector.grantType)
-      )
-        await credentials.deleteCredential(inspect.document.service.did, credential.credentialId);
-    }
+    aepStorage.deleteCredentials(inspect.document.service.did, selector);
     const frame = sanitizeDeep({
       revoked: true,
       ...('allGrantTypes' in selector
@@ -1056,6 +1192,7 @@ export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
   cli.command('inspect', {
     args: serviceReferenceArgs,
     description: 'Inspect an AEP Service without authentication.',
+    mcp: mcpTool('aep_inspect'),
     options: inspectOptions,
     outputPolicy: 'agent-only' as const,
     run: (c) => runInspect(c, inflow, authStorage),
@@ -1063,6 +1200,7 @@ export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
   cli.command('enroll', {
     args: serviceReferenceArgs,
     description: 'Enroll with an AEP Service.',
+    mcp: mcpTool('aep_enroll'),
     options: enrollOptions,
     outputPolicy: 'agent-only' as const,
     run: (c) => runEnroll(c, inflow, authStorage),
@@ -1070,6 +1208,7 @@ export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
   cli.command('fetch', {
     args: fetchArgs,
     description: 'Fetch a resource with AEP authentication when challenged.',
+    mcp: mcpTool('aep_fetch'),
     options: fetchOptions,
     outputPolicy: 'agent-only' as const,
     run: (c) => runFetch(c, inflow, authStorage),
@@ -1077,12 +1216,14 @@ export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
   cli.command('status', {
     args: serviceReferenceArgs,
     description: 'Get AEP Service lifecycle status.',
+    mcp: mcpTool('aep_status'),
     outputPolicy: 'agent-only' as const,
     run: (c) => runStatus(c, inflow, authStorage),
   });
   cli.command('grant', {
     args: serviceReferenceArgs,
     description: 'Request and store a Service credential.',
+    mcp: mcpTool('aep_grant'),
     options: grantOptions,
     outputPolicy: 'agent-only' as const,
     run: (c) => runGrant(c, inflow, authStorage),
@@ -1090,6 +1231,7 @@ export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
   cli.command('revoke', {
     args: serviceReferenceArgs,
     description: 'Revoke Service credentials.',
+    mcp: mcpTool('aep_revoke'),
     options: revokeOptions,
     outputPolicy: 'agent-only' as const,
     run: (c) => runRevoke(c, inflow, authStorage),

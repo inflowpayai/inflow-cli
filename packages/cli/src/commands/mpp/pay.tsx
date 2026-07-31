@@ -25,6 +25,7 @@ import type React from 'react';
 import { useEffect, useReducer, useState } from 'react';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { openUrl } from '../../utils/open-url.js';
+import { AuthenticationApprovalView, type AuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
 
 export {
   buildBodyAttachment,
@@ -54,9 +55,17 @@ export interface PayViewProps {
   onComplete: (final: MppPayPhase) => void;
   /** Best-effort cancel of the pending approval when the user presses Escape. */
   onCancel?: (approvalId: string) => Promise<unknown> | void;
+  authenticationApproval?: AuthenticationApprovalDisplay | undefined;
 }
 
-export const PayView: React.FC<PayViewProps> = ({ url, method, deps, onComplete, onCancel }) => {
+export const PayView: React.FC<PayViewProps> = ({
+  url,
+  method,
+  deps,
+  onComplete,
+  onCancel,
+  authenticationApproval,
+}) => {
   const initial: MppPayPhase = { kind: 'probing' };
   const [phase, dispatch] = useReducer(reduceMppPay, initial);
   const [cancelling, setCancelling] = useState(false);
@@ -81,7 +90,7 @@ export const PayView: React.FC<PayViewProps> = ({ url, method, deps, onComplete,
         });
       }
     },
-    { isActive: approvalUrl !== undefined && !cancelling },
+    { isActive: authenticationApproval === undefined && approvalUrl !== undefined && !cancelling },
   );
 
   useEffect(() => {
@@ -118,6 +127,10 @@ export const PayView: React.FC<PayViewProps> = ({ url, method, deps, onComplete,
         </Text>
       </Box>
     );
+  }
+
+  if (authenticationApproval !== undefined) {
+    return <AuthenticationApprovalView approval={authenticationApproval} />;
   }
 
   if (phase.kind === 'probing') {

@@ -165,4 +165,45 @@ describe('PayView', () => {
     expect(vi.mocked(openUrl)).toHaveBeenCalledWith(expect.stringContaining('ap-9'));
     unmount();
   });
+
+  it('renders an authentication approval before payment approval phases', async () => {
+    const delayedProbe = new Promise<{
+      bytes: Uint8Array;
+      contentType: string | undefined;
+      headers: Headers;
+      status: number;
+    }>((resolve) => {
+      setTimeout(
+        () => resolve({ bytes: new Uint8Array(), contentType: undefined, headers: new Headers(), status: 200 }),
+        100,
+      );
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <PayView
+        url={SELLER}
+        method="GET"
+        deps={{
+          ...deps(),
+          sellerTransport: {
+            request: () => delayedProbe,
+          },
+        }}
+        authenticationApproval={{
+          approvalId: 'auth-1',
+          approvalUrl: 'https://mpp.test/approvals/auth-1/view/',
+          cancel: vi.fn(),
+        }}
+        onComplete={vi.fn()}
+      />,
+    );
+
+    await new Promise((r) => setTimeout(r, 20));
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Authentication approval required');
+    expect(frame).toContain('auth-1');
+    stdin.write('\r');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(vi.mocked(openUrl)).toHaveBeenCalledWith('https://mpp.test/approvals/auth-1/view/');
+    unmount();
+  });
 });

@@ -1,3 +1,5 @@
+import { INSTALL_INSTRUCTIONS_URL } from './user-display.js';
+
 export interface UpdateInfo {
   current: string;
   latest: string;
@@ -10,6 +12,7 @@ export interface UpdateProbeRequest {
 export type UpdateProbe = (request: UpdateProbeRequest) => Promise<UpdateInfo | undefined>;
 
 const RELEASES_LATEST_URL = 'https://api.github.com/repos/inflowpayai/inflow-cli/releases/latest';
+const REQUEST_TIMEOUT_MS = 2_000;
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 const STALE_TTL_MS = 60 * 1000;
 
@@ -73,6 +76,7 @@ export function makeBackgroundUpdateProbe(
           Accept: 'application/vnd.github+json',
           'User-Agent': `inflow/${cliVersion}`,
         },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       if (!response.ok) {
         writeCache(undefined, STALE_TTL_MS);
@@ -113,5 +117,9 @@ export function makeFrozenUpdateProbe(snapshot?: UpdateInfo): UpdateProbe {
 }
 
 export function formatUpdateNotice(info: UpdateInfo): string {
-  return `A newer InFlow CLI is available: ${info.latest}.\n`;
+  return [
+    `A newer InFlow CLI is available: ${info.latest}.`,
+    `Upgrade with Homebrew or rerun the hosted installer: ${INSTALL_INSTRUCTIONS_URL}`,
+    '',
+  ].join('\n');
 }

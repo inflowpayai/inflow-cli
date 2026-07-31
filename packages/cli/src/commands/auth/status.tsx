@@ -12,6 +12,7 @@ import Spinner from 'ink-spinner';
 import type React from 'react';
 import { useEffect, useReducer } from 'react';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
+import { INSTALL_INSTRUCTIONS_URL } from '../../utils/user-display.js';
 
 type View =
   | { kind: 'loading' }
@@ -135,6 +136,7 @@ export const AuthStatus: React.FC<AuthStatusProps> = ({
   const updateFooter = updateNotice ? (
     <Box flexDirection="column" marginTop={1}>
       <Text dimColor>{`A newer InFlow CLI is available: ${updateNotice.latest}.`}</Text>
+      <Text dimColor>{`Upgrade with Homebrew or rerun the hosted installer: ${INSTALL_INSTRUCTIONS_URL}`}</Text>
     </Box>
   ) : null;
 

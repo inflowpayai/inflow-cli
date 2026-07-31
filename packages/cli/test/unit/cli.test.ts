@@ -1,5 +1,5 @@
 import { spawn, type SpawnOptionsWithoutStdio } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
@@ -22,6 +22,86 @@ const PKG_VERSION: string = (
 const AEP_COMMANDS = ['aep enroll', 'aep fetch', 'aep grant', 'aep inspect', 'aep revoke', 'aep status'] as const;
 const AEP_MCP_TOOLS = AEP_COMMANDS.map((command) => command.replace(' ', '_'));
 const PAYMENT_FETCH_MCP_TOOLS = ['mpp_fetch', 'x402_fetch'];
+const VAULT_COMMANDS = [
+  'vault change-passphrase',
+  'vault lock',
+  'vault policy',
+  'vault reset',
+  'vault set-policy',
+  'vault status',
+  'vault unlock',
+] as const;
+const VAULT_MCP_TOOLS = VAULT_COMMANDS.map((command) => command.replace(' ', '_'));
+const MCP_TOOL_EXPECTATIONS = [
+  ['aep_enroll', 'AEP: Enroll Service', false, false],
+  ['aep_fetch', 'AEP: Fetch Resource', false, false],
+  ['aep_grant', 'AEP: Grant Credential', false, false],
+  ['aep_inspect', 'AEP: Inspect Service', true, false],
+  ['aep_revoke', 'AEP: Revoke Credentials', false, true],
+  ['aep_status', 'AEP: Check Status', true, false],
+  ['auth_login', 'InFlow Account: Log In', false, false],
+  ['auth_logout', 'InFlow Account: Log Out', false, true],
+  ['auth_status', 'InFlow Account: Check Login', true, false],
+  ['balances_list', 'Balances: List Balances', true, false],
+  ['deposit-addresses_list', 'Deposit Addresses: List Deposit Addresses', true, false],
+  ['inspect', 'Inspect: Inspect Resource', true, false],
+  ['mpp_cancel', 'MPP: Cancel Approval', false, true],
+  ['mpp_decode', 'MPP: Decode Header', true, false],
+  ['mpp_fetch', 'MPP: Fetch Resource', false, false],
+  ['mpp_inspect', 'MPP: Inspect Resource', true, false],
+  ['mpp_pay', 'MPP: Pay Resource', false, true],
+  ['mpp_status', 'MPP: Check Payment', true, false],
+  ['mpp_supported', 'MPP: List Payment Methods', true, false],
+  ['vault_change-passphrase', 'Vault: Change Passphrase', false, true],
+  ['vault_lock', 'Vault: Lock Vault', false, false],
+  ['vault_policy', 'Vault: Show Policy', true, false],
+  ['vault_reset', 'Vault: Reset Vault', false, true],
+  ['vault_set-policy', 'Vault: Set Policy', false, false],
+  ['vault_status', 'Vault: Check Status', true, false],
+  ['vault_unlock', 'Vault: Unlock Vault', false, false],
+  ['x402_cancel', 'x402: Cancel Approval', false, true],
+  ['x402_decode', 'x402: Decode Header', true, false],
+  ['x402_fetch', 'x402: Fetch Resource', false, false],
+  ['x402_inspect', 'x402: Inspect Resource', true, false],
+  ['x402_pay', 'x402: Pay Resource', false, true],
+  ['x402_status', 'x402: Check Payment', true, false],
+  ['x402_supported', 'x402: List Payment Methods', true, false],
+] as const;
+const CLI_SCHEMA_COMMANDS = [
+  'aep enroll',
+  'aep fetch',
+  'aep grant',
+  'aep inspect',
+  'aep revoke',
+  'aep status',
+  'auth login',
+  'auth logout',
+  'auth status',
+  'balances list',
+  'deposit-addresses list',
+  'inspect',
+  'mpp cancel',
+  'mpp decode',
+  'mpp fetch',
+  'mpp inspect',
+  'mpp pay',
+  'mpp status',
+  'mpp supported',
+  'vault change-passphrase',
+  'vault lock',
+  'vault policy',
+  'vault reset',
+  'vault set-policy',
+  'vault status',
+  'vault unlock',
+  'x402 cancel',
+  'x402 decode',
+  'x402 fetch',
+  'x402 inspect',
+  'x402 pay',
+  'x402 status',
+  'x402 supported',
+] as const;
 const RAW_SECRET_SCHEMA_FIELDS = new Set([
   'apiKey',
   'api_key',
@@ -229,6 +309,24 @@ describe.skipIf(!existsSync(DIST_CLI))(
       const combined = stdout;
       expect(combined).toContain('inflow');
       expect(combined).toContain('agent enrollment and agentic payments');
+      expect(combined).not.toContain('--daemon');
+      expect(combined).not.toMatch(/^\s+user\b/m);
+    });
+
+    it('does not dispatch the internal user command', async () => {
+      const { exitCode, stdout, stderr } = await run(['user', 'get', '--format', 'json'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).not.toBe(0);
+      expect(`${stdout}${stderr}`).not.toContain('"userId"');
+    });
+
+    it('rejects invalid hidden daemon modes before command registration', async () => {
+      const { exitCode, stderr } = await run(['--daemon', 'nope'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(2);
+      expect(stderr).toContain('Unknown daemon mode: nope');
     });
 
     it('--version prints the package.json version', async () => {
@@ -303,6 +401,20 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(`${stdout}\n${stderr}`).not.toContain(secret);
       const frames = JSON.parse(stdout) as { auth_method?: string }[];
       expect(frames[0]?.auth_method).toBe('api_key');
+    });
+
+    it('auth status uses platform-local vault storage on cold start', async () => {
+      const root = mkdtempSync('/tmp/inflow-home-');
+      try {
+        const { exitCode, stdout } = await run(['auth', 'status', '--format', 'json'], {
+          env: { ...process.env, HOME: root, NO_UPDATE_NOTIFIER: '1' },
+        });
+        expect(exitCode).toBe(0);
+        const frames = JSON.parse(stdout) as { authenticated?: boolean }[];
+        expect(frames[0]?.authenticated).toBe(false);
+      } finally {
+        rmSync(root, { force: true, recursive: true });
+      }
     });
 
     it('strips --verbose before incur sees it in prefix and suffix position', async () => {
@@ -436,18 +548,14 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(stdout.endsWith('\n')).toBe(true);
     });
 
-    it('--llms manifest lists the user get command', async () => {
-      const { exitCode, stdout } = await run(['--llms', '--format', 'json'], {
+    it.each(['--llms', '--llms-full'] as const)('%s omits the user command', async (flag) => {
+      const { exitCode, stdout } = await run([flag, '--format', 'json'], {
         env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
-      const manifest = JSON.parse(stdout) as {
-        commands: { name: string; description?: string }[];
-      };
+      const manifest = JSON.parse(stdout) as { commands: { name: string }[] };
       const names = manifest.commands.map((c) => c.name);
-      expect(names).toContain('user get');
-      const userGet = manifest.commands.find((c) => c.name === 'user get');
-      expect(userGet?.description).toBe('Retrieve the current authenticated user');
+      expect(names).not.toContain('user get');
     });
 
     it('--llms manifest lists the balances list command', async () => {
@@ -486,16 +594,14 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(names).toEqual(expect.arrayContaining([...AEP_COMMANDS]));
     });
 
-    it('user get --schema returns an empty-properties JSON Schema', async () => {
-      const { exitCode, stdout } = await run(['user', 'get', '--schema', '--format', 'json'], {
+    it.each(['--llms', '--llms-full'] as const)('%s lists every vault command', async (flag) => {
+      const { exitCode, stdout } = await run([flag, '--format', 'json'], {
         env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
-      const parsed = JSON.parse(stdout) as {
-        options?: { type?: string; properties?: Record<string, unknown> };
-      };
-      expect(parsed.options?.type).toBe('object');
-      expect(parsed.options?.properties ?? {}).toEqual({});
+      const manifest = JSON.parse(stdout) as { commands: { name: string }[] };
+      const names = manifest.commands.map((command) => command.name);
+      expect(names).toEqual(expect.arrayContaining([...VAULT_COMMANDS]));
     });
 
     it('balances list --schema returns an empty-properties JSON Schema', async () => {
@@ -522,7 +628,26 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(parsed.options?.properties ?? {}).toEqual({});
     });
 
-    it('--mcp tools/list exposes user_get with an empty input schema', async () => {
+    it.each(CLI_SCHEMA_COMMANDS)('%s exposes a JSON Schema without starting runtime work', async (command) => {
+      const { exitCode, stdout, stderr } = await run([...command.split(' '), '--schema', '--format', 'json'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(stderr).toBe('');
+      expect(exitCode).toBe(0);
+      const parsed = JSON.parse(stdout) as {
+        args?: { type?: string; properties?: Record<string, unknown> };
+        options?: { type?: string; properties?: Record<string, unknown> };
+      };
+      const schema = parsed.options ?? parsed.args;
+      if (schema === undefined) {
+        expect(parsed).toEqual({});
+      } else {
+        expect(schema.type).toBe('object');
+        expect(schema.properties ?? {}).toBeTypeOf('object');
+      }
+    });
+
+    it('--mcp tools/list exposes the expected public tools and omits user_get', async () => {
       const request =
         JSON.stringify({
           jsonrpc: '2.0',
@@ -541,17 +666,52 @@ describe.skipIf(!existsSync(DIST_CLI))(
         result?: {
           tools?: {
             name: string;
+            title?: string;
+            annotations?: {
+              destructiveHint?: boolean;
+              idempotentHint?: boolean;
+              openWorldHint?: boolean;
+              readOnlyHint?: boolean;
+              title?: string;
+            };
             inputSchema?: { type?: string; properties?: Record<string, unknown> };
           }[];
         };
       };
       const tools = response.result?.tools ?? [];
-      const tool = tools.find((t) => t.name === 'user_get');
-      expect(tool).toBeDefined();
-      expect(tool?.inputSchema?.type).toBe('object');
-      expect(tool?.inputSchema?.properties ?? {}).toEqual({});
+      expect(tools.map((entry) => entry.name).sort()).toEqual(MCP_TOOL_EXPECTATIONS.map(([name]) => name).sort());
+      for (const [name, title, readOnlyHint, destructiveHint] of MCP_TOOL_EXPECTATIONS) {
+        expect(
+          tools.find((entry) => entry.name === name),
+          name,
+        ).toMatchObject({
+          title,
+          annotations: { destructiveHint, readOnlyHint, title },
+          inputSchema: { type: 'object' },
+        });
+      }
+      expect(tools.map((entry) => entry.name)).not.toContain('user_get');
+      expect(tools.find((entry) => entry.name === 'auth_status')).toMatchObject({
+        title: 'InFlow Account: Check Login',
+        annotations: { readOnlyHint: true, title: 'InFlow Account: Check Login' },
+      });
+      expect(tools.find((entry) => entry.name === 'mpp_pay')).toMatchObject({
+        title: 'MPP: Pay Resource',
+        annotations: { destructiveHint: true, readOnlyHint: false, title: 'MPP: Pay Resource' },
+      });
+      expect(tools.find((entry) => entry.name === 'vault_unlock')).toMatchObject({
+        title: 'Vault: Unlock Vault',
+        annotations: { openWorldHint: false, readOnlyHint: false, title: 'Vault: Unlock Vault' },
+      });
+      const titles = tools.map((entry) => entry.title ?? entry.name);
+      expect(titles).toEqual([...titles].sort((a, b) => a.localeCompare(b)));
+      expect(titles.filter((title) => /^\d+:/.test(title))).toEqual([]);
       expect(tools.map((entry) => entry.name)).toEqual(expect.arrayContaining(AEP_MCP_TOOLS));
       for (const name of AEP_MCP_TOOLS) {
+        expect(tools.find((entry) => entry.name === name)?.inputSchema?.type, name).toBe('object');
+      }
+      expect(tools.map((entry) => entry.name)).toEqual(expect.arrayContaining(VAULT_MCP_TOOLS));
+      for (const name of VAULT_MCP_TOOLS) {
         expect(tools.find((entry) => entry.name === name)?.inputSchema?.type, name).toBe('object');
       }
       expect(tools.map((entry) => entry.name)).toEqual(expect.arrayContaining(PAYMENT_FETCH_MCP_TOOLS));
@@ -582,27 +742,37 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(rawSecretFields).toEqual([]);
     });
 
-    it('user get --format json without auth emits NOT_AUTHENTICATED and exits 1', async () => {
-      const cleanEnv: Record<string, string | undefined> = {
-        ...process.env,
-        NO_UPDATE_NOTIFIER: '1',
-        INFLOW_API_KEY: undefined,
-        INFLOW_AUTH_FILE: undefined,
-      };
-      for (const key of Object.keys(cleanEnv)) {
-        if (cleanEnv[key] === undefined) delete cleanEnv[key];
+    it('--mcp vault tools hide daemon details and do not prompt for unlock input', async () => {
+      const root = mkdtempSync('/tmp/inflow-mcp-home-');
+      const request = [
+        { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'vault_status', arguments: {} } },
+        { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'vault_unlock', arguments: {} } },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join('\n');
+      try {
+        const { exitCode, stdout } = await run(['--mcp'], {
+          env: { ...process.env, HOME: root, NO_UPDATE_NOTIFIER: '1' },
+          stdin: `${request}\n`,
+        });
+        expect(exitCode).toBe(0);
+        const responses = stdout
+          .split('\n')
+          .filter((line) => line.trim().length > 0)
+          .map(
+            (line) =>
+              JSON.parse(line) as { id?: number; result?: { content?: { text?: string }[]; isError?: boolean } },
+          );
+        const status = responses.find((entry) => entry.id === 1);
+        const unlock = responses.find((entry) => entry.id === 2);
+        const statusText = status?.result?.content?.[0]?.text ?? '';
+        expect(JSON.parse(statusText)).toEqual({ lock_state: 'not_initialized' });
+        expect(statusText).not.toContain('daemon');
+        expect(unlock?.result?.isError).toBe(true);
+        expect(unlock?.result?.content?.[0]?.text).toContain('A human must run `inflow vault unlock`');
+      } finally {
+        rmSync(root, { force: true, recursive: true });
       }
-      const { exitCode, stdout } = await run(
-        ['--auth', '/tmp/inflow-test-no-auth.json', 'user', 'get', '--format', 'json'],
-        { env: cleanEnv },
-      );
-      expect(exitCode).toBe(1);
-      const payload = JSON.parse(stdout) as {
-        code?: string;
-        message?: string;
-      };
-      expect(payload.code).toBe('NOT_AUTHENTICATED');
-      expect(payload.message).toContain('Not authenticated.');
     });
   },
 );

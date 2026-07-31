@@ -34,9 +34,13 @@ export interface AepPersistedState {
 
 export interface AepStateStorage {
   clearAepState(): void;
+  deleteAepCredentials?(owner: AepOwner, serviceDid: string, selector: AepCredentialDeleteSelector): void;
+  findAepIdentity?(owner: AepOwner, serviceDid: string): AgentServiceIdentity | undefined;
   getAepState(): AepPersistedState | null;
   setAepState(state: AepPersistedState): void;
 }
+
+export type AepCredentialDeleteSelector = { allGrantTypes: true } | { credentialId: string } | { grantType: string };
 
 export interface PublicDocumentStateStorage {
   getDiscoveryDocuments(): AepPublicDocumentCacheRecord[];
@@ -104,6 +108,10 @@ export class AepStorage {
   credentials(): AgentCredentialStore {
     return {
       deleteCredential: (serviceDid, credentialId) => {
+        if (this.storage.deleteAepCredentials !== undefined) {
+          this.storage.deleteAepCredentials(this.owner, serviceDid, { credentialId });
+          return;
+        }
         const state = this.state();
         this.purge(state);
         delete state.credentials[serviceDid]?.[credentialId];
@@ -147,6 +155,10 @@ export class AepStorage {
   identities(): AgentIdentityStore {
     return {
       findByServiceDid: (serviceDid) => {
+        if (this.storage.findAepIdentity !== undefined) {
+          const identity = this.storage.findAepIdentity(this.owner, serviceDid);
+          return identity === undefined ? undefined : structuredClone(identity);
+        }
         const identity = this.state().identities[serviceDid];
         return identity === undefined ? undefined : structuredClone(identity);
       },
@@ -160,6 +172,25 @@ export class AepStorage {
         return structuredClone(identity);
       },
     };
+  }
+
+  deleteCredentials(serviceDid: string, selector: AepCredentialDeleteSelector): void {
+    if (this.storage.deleteAepCredentials !== undefined) {
+      this.storage.deleteAepCredentials(this.owner, serviceDid, selector);
+      return;
+    }
+    const state = this.state();
+    const records = state.credentials[serviceDid];
+    if (records === undefined) return;
+    for (const [credentialId, record] of Object.entries(records)) {
+      if (matchesCredentialDeleteSelector(record, selector)) {
+        delete records[credentialId];
+      }
+    }
+    if (Object.keys(records).length === 0) {
+      delete state.credentials[serviceDid];
+    }
+    this.save(state);
   }
 
   inspectCache(): AgentInspectCache {
@@ -258,6 +289,17 @@ export class AepStorage {
     }
     return structuredClone(state);
   }
+}
+
+function matchesCredentialDeleteSelector(
+  record: Pick<AgentCredentialRecord, 'credentialId' | 'grantType'>,
+  selector: AepCredentialDeleteSelector,
+): boolean {
+  return (
+    'allGrantTypes' in selector ||
+    ('credentialId' in selector && record.credentialId === selector.credentialId) ||
+    ('grantType' in selector && record.grantType === selector.grantType)
+  );
 }
 
 function expired(record: AgentCredentialRecord, now: Date): boolean {

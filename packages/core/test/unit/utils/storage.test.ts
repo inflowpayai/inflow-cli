@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthTokens } from '../../../src/types/index.js';
 import { MemoryStorage, Storage } from '../../../src/utils/storage.js';
 import { AepStorage } from '../../../src/aep/storage.js';
-import { SyncMemorySecretStore, type SecretReference } from '../../../src/secure-storage/keychain.js';
+import { SyncMemorySecretStore, type SecretReference } from '../../../src/secure-storage/secret-store.js';
+import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
 
 const sampleAuth: AuthTokens = {
   access_token: 'a',
@@ -16,10 +17,16 @@ const sampleAuth: AuthTokens = {
 
 class CountingSecretStore extends SyncMemorySecretStore {
   readonly deleted: SecretReference[] = [];
+  readonly readReferences: SecretReference[] = [];
 
   override delete(reference: SecretReference): void {
     super.delete(reference);
     this.deleted.push(reference);
+  }
+
+  override read(reference: SecretReference): Uint8Array {
+    this.readReferences.push(reference);
+    return super.read(reference);
   }
 }
 
@@ -31,6 +38,7 @@ describe('Storage (file-backed)', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -63,6 +71,16 @@ describe('Storage (file-backed)', () => {
     expect(s.isAuthenticated()).toBe(true);
     s.clearAuth();
     expect(s.isAuthenticated()).toBe(false);
+  });
+
+  it('isAuthenticated checks stored auth metadata without reading secrets', () => {
+    const secretStore = new CountingSecretStore();
+    const s = new Storage({ cwd: tmpDir, secretStore });
+    s.setAuth(sampleAuth);
+    secretStore.readReferences.length = 0;
+
+    expect(s.isAuthenticated()).toBe(true);
+    expect(secretStore.readReferences).toEqual([]);
   });
 
   it('pendingDeviceAuth evicts at read time when expired', () => {
@@ -119,6 +137,40 @@ describe('Storage (file-backed)', () => {
     expect(s.getApiKey()).toBe('inflow_live_abc');
     s.clearApiKey();
     expect(s.getApiKey()).toBeNull();
+  });
+
+  it.each([
+    {
+      expectedDeletes: 2,
+      label: 'authentication',
+      write: (storage: Storage) => storage.setAuth(sampleAuth),
+    },
+    {
+      expectedDeletes: 1,
+      label: 'API key',
+      write: (storage: Storage) => storage.setApiKey('inflow_live_rollback'),
+    },
+    {
+      expectedDeletes: 1,
+      label: 'pending device authentication',
+      write: (storage: Storage) =>
+        storage.setPendingDeviceAuth({
+          device_code: 'device-code',
+          expires_at: Date.now() + 60_000,
+          interval: 5,
+          phrase: 'P-1',
+          verification_url: 'https://example.test/verify',
+        }),
+    },
+  ])('deletes newly created $label secrets when metadata persistence fails', ({ expectedDeletes, write }) => {
+    const secretStore = new CountingSecretStore();
+    const storage = new Storage({ cwd: tmpDir, secretStore });
+    vi.spyOn(SecureSqliteRepository.prototype, 'upsertSetting').mockImplementation(() => {
+      throw new Error('metadata write failed');
+    });
+
+    expect(() => write(storage)).toThrow('metadata write failed');
+    expect(secretStore.deleted).toHaveLength(expectedDeletes);
   });
 
   it('isAuthenticated is true with just an apiKey set (no device tokens)', () => {
@@ -255,7 +307,7 @@ describe('Storage (file-backed)', () => {
     await expect(s.deleteConfig()).resolves.toBeUndefined();
   });
 
-  it('stores AEP credential payloads as Keychain secrets and reconstructs state', () => {
+  it('stores AEP credential payloads as vault secrets and reconstructs state', () => {
     const s = secureStorage();
     s.setAepState({
       credentials: {
@@ -328,6 +380,115 @@ describe('Storage (file-backed)', () => {
     expect(s.getAepState()?.credentials['did:web:service.example']?.['expired']).toBeUndefined();
     expect(readFileSync(s.getPath(), 'utf8')).not.toContain('expired-secret-value');
     expect(secretStore.deleted.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('finds AEP identities and deletes matching credentials without reading credential payloads', () => {
+    const secretStore = new CountingSecretStore();
+    const s = new Storage({ cwd: tmpDir, secretStore });
+    const owner = { platformOrigin: 'https://platform.example', userId: 'user-1' };
+    s.setAepState({
+      credentials: {
+        'did:web:service.example': {
+          keep: {
+            credential: { credential_id: 'keep', value: 'keep-secret-value' },
+            credentialId: 'keep',
+            expiresAt: '2999-01-01T00:00:00.000Z',
+            grantType: 'oauth-bearer',
+            issuedAt: '2026-01-01T00:00:00.000Z',
+            serviceDid: 'did:web:service.example',
+          },
+          remove: {
+            credential: { credential_id: 'remove', value: 'remove-secret-value' },
+            credentialId: 'remove',
+            expiresAt: '2999-01-01T00:00:00.000Z',
+            grantType: 'api-key',
+            issuedAt: '2026-01-01T00:00:00.000Z',
+            serviceDid: 'did:web:service.example',
+          },
+        },
+      },
+      identities: {
+        'did:web:service.example': {
+          agentDid: 'did:web:platform.example:agents:one',
+          identityKind: 'platform-hosted',
+          serviceDid: 'did:web:service.example',
+          signingAlgorithms: ['ES256'],
+        },
+      },
+      owner,
+      version: 1,
+    });
+    secretStore.readReferences.length = 0;
+
+    expect(s.findAepIdentity(owner, 'did:web:service.example')).toMatchObject({
+      agentDid: 'did:web:platform.example:agents:one',
+    });
+    s.deleteAepCredentials(owner, 'did:web:service.example', { grantType: 'api-key' });
+
+    expect(secretStore.readReferences.filter((reference) => reference.purpose === 'aep-credential')).toEqual([]);
+    expect(secretStore.deleted.filter((reference) => reference.purpose === 'aep-credential')).toHaveLength(1);
+    const state = s.getAepState();
+    expect(state?.credentials['did:web:service.example']?.['remove']).toBeUndefined();
+    expect(state?.credentials['did:web:service.example']?.['keep']).toMatchObject({
+      credential: { credential_id: 'keep', value: 'keep-secret-value' },
+    });
+
+    s.deleteAepCredentials(owner, 'did:web:service.example', { allGrantTypes: true });
+    expect(s.getAepState()?.credentials['did:web:service.example']).toBeUndefined();
+  });
+
+  it('deletes newly created AEP secrets when metadata persistence fails', () => {
+    const secretStore = new CountingSecretStore();
+    const storage = new Storage({ cwd: tmpDir, secretStore });
+    vi.spyOn(SecureSqliteRepository.prototype, 'upsertSetting').mockImplementation(() => {
+      throw new Error('metadata write failed');
+    });
+
+    expect(() =>
+      storage.setAepState({
+        credentials: {
+          'did:web:service.example': {
+            'credential-1': {
+              credential: { credential_id: 'credential-1', value: 'secret-value' },
+              credentialId: 'credential-1',
+              grantType: 'api-key',
+              issuedAt: '2026-01-01T00:00:00.000Z',
+              serviceDid: 'did:web:service.example',
+            },
+          },
+        },
+        identities: {},
+        owner: { platformOrigin: 'https://platform.example', userId: 'user-1' },
+        version: 1,
+      }),
+    ).toThrow('metadata write failed');
+    expect(secretStore.deleted).toHaveLength(1);
+  });
+
+  it('clears secure AEP state when direct operations use a different owner', () => {
+    const owner = { platformOrigin: 'https://platform.example', userId: 'user-1' };
+    const otherOwner = { ...owner, userId: 'user-2' };
+    const first = secureStorage();
+    first.setAepState({
+      credentials: {},
+      identities: {
+        'did:web:service.example': {
+          agentDid: 'did:web:platform.example:agents:one',
+          identityKind: 'platform-hosted',
+          serviceDid: 'did:web:service.example',
+          signingAlgorithms: ['ES256'],
+        },
+      },
+      owner,
+      version: 1,
+    });
+    expect(first.findAepIdentity(otherOwner, 'did:web:service.example')).toBeUndefined();
+    expect(first.getAepState()).toBeNull();
+
+    const second = secureStorage();
+    second.setAepState({ credentials: {}, identities: {}, owner, version: 1 });
+    second.deleteAepCredentials(otherOwner, 'did:web:service.example', { allGrantTypes: true });
+    expect(second.getAepState()).toBeNull();
   });
 });
 

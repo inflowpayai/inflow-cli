@@ -2,12 +2,15 @@ import {
   augmentAuth,
   type AuthStorage,
   type AuthTokens,
+  type ConnectionSettings,
   type DeviceAuthRequest,
   type IAuth,
   type IAuthResource,
   InflowApiError,
   type IUserResource,
   MemoryStorage,
+  type PendingDeviceAuth,
+  SecureStorageError,
   type User,
 } from '@inflowpayai/inflow-core';
 import { describe, expect, it, vi } from 'vitest';
@@ -115,6 +118,24 @@ async function drainGenerator<T>(gen: AsyncGenerator<T>): Promise<T[]> {
   return out;
 }
 
+class LockedStorage extends MemoryStorage {
+  override getAuth(): AuthTokens | null {
+    throw new SecureStorageError('vault_locked', 'The InFlow vault is locked.');
+  }
+
+  override getApiKey(): string | null {
+    throw new SecureStorageError('vault_locked', 'The InFlow vault is locked.');
+  }
+
+  override getConnection(): ConnectionSettings | null {
+    throw new SecureStorageError('vault_locked', 'The InFlow vault is locked.');
+  }
+
+  override getPendingDeviceAuth(): PendingDeviceAuth | null {
+    throw new SecureStorageError('vault_locked', 'The InFlow vault is locked.');
+  }
+}
+
 describe('runAuthLogin (agent mode)', () => {
   it('rejects empty client-name with INVALID_INPUT', async () => {
     const ctx = makeContext({
@@ -171,6 +192,37 @@ describe('runAuthLogin (agent mode)', () => {
       command: 'auth status --interval 5 --max-attempts 60',
     });
     expect(storage.getPendingDeviceAuth()?.device_code).toBe(baseRequest.device_code);
+  });
+
+  it('unlocks the local vault before initiating device auth', async () => {
+    const ctx = makeContext({
+      clientName: 'Test',
+      interval: 0,
+      maxAttempts: 0,
+      timeout: 300,
+    });
+    const storage = new MemoryStorage();
+    const auth = makeAuthResource(storage);
+    const user = makeUserResource();
+    const ensureVaultUnlocked = vi.fn(() => Promise.resolve());
+
+    await drainGenerator(
+      runAuthLogin(
+        ctx,
+        {
+          authResource: auth.resource,
+          userResource: user.resource,
+          authStorage: storage,
+          ensureVaultUnlocked,
+        },
+        defaultAuthCtx,
+      ),
+    );
+
+    expect(ensureVaultUnlocked).toHaveBeenCalledWith('agent');
+    expect(ensureVaultUnlocked.mock.invocationCallOrder[0]).toBeLessThan(
+      auth.initiateDeviceAuth.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it('initiateDeviceAuth failure surfaces DEVICE_AUTH_INITIATE_FAILED', async () => {
@@ -282,13 +334,16 @@ describe('runAuthLogout (agent mode)', () => {
       expires_in: 3600,
     });
     const auth = makeAuthResource(storage);
+    const resetVault = vi.fn(() => Promise.resolve());
     const result = await runAuthLogout(ctx, {
       authResource: auth.resource,
       authStorage: storage,
+      resetVault,
     });
     expect(result).toEqual({ authenticated: false });
     expect(auth.revokeToken).toHaveBeenCalledWith('r');
     expect(storage.getAuth()).toBeNull();
+    expect(resetVault).toHaveBeenCalledOnce();
   });
 
   it('still succeeds when revokeToken rejects', async () => {
@@ -302,12 +357,59 @@ describe('runAuthLogout (agent mode)', () => {
     const auth = makeAuthResource(storage, {
       revokeToken: vi.fn(() => Promise.reject(new Error('network'))),
     });
+    const resetVault = vi.fn(() => Promise.resolve());
     const result = await runAuthLogout(ctx, {
       authResource: auth.resource,
       authStorage: storage,
+      resetVault,
     });
     expect(result).toEqual({ authenticated: false });
     expect(storage.getAuth()).toBeNull();
+    expect(resetVault).toHaveBeenCalledOnce();
+  });
+
+  it('still resets the vault when stored secure material is unreadable', async () => {
+    const ctx = makeContext({});
+    const storage = new MemoryStorage();
+    const authResource = {
+      logout: vi.fn(() =>
+        Promise.reject(new SecureStorageError('secure_storage_secret_missing', 'The InFlow vault is locked.')),
+      ),
+    } as unknown as IAuth;
+    const resetVault = vi.fn(() => Promise.resolve());
+
+    const result = await runAuthLogout(ctx, {
+      authResource,
+      authStorage: storage,
+      resetVault,
+    });
+
+    expect(result).toEqual({ authenticated: false });
+    expect(resetVault).toHaveBeenCalledOnce();
+  });
+
+  it('reports logout failure when vault cleanup cannot reach the daemon', async () => {
+    const ctx = makeContext({});
+    const storage = new MemoryStorage({
+      access_token: 'a',
+      refresh_token: 'r',
+      token_type: 'Bearer',
+      expires_in: 3600,
+    });
+    const auth = makeAuthResource(storage);
+    const resetVault = vi.fn(() =>
+      Promise.reject(new SecureStorageError('secure_storage_unavailable', 'The InFlow vault daemon did not start.')),
+    );
+
+    await expect(
+      runAuthLogout(ctx, {
+        authResource: auth.resource,
+        authStorage: storage,
+        resetVault,
+      }),
+    ).rejects.toMatchObject({ secureStorageCode: 'secure_storage_unavailable' });
+    expect(storage.getAuth()).toBeNull();
+    expect(resetVault).toHaveBeenCalledOnce();
   });
 
   it('clears api key and connection in addition to tokens (full reset)', async () => {
@@ -324,13 +426,16 @@ describe('runAuthLogout (agent mode)', () => {
       apiBaseUrl: 'https://dev.inflowpay.ai',
     });
     const auth = makeAuthResource(storage);
+    const resetVault = vi.fn(() => Promise.resolve());
     await runAuthLogout(ctx, {
       authResource: auth.resource,
       authStorage: storage,
+      resetVault,
     });
     expect(storage.getAuth()).toBeNull();
     expect(storage.getApiKey()).toBeNull();
     expect(storage.getConnection()).toBeNull();
+    expect(resetVault).toHaveBeenCalledOnce();
   });
 });
 
@@ -485,6 +590,32 @@ describe('runAuthStatus (agent mode)', () => {
       authenticated: false,
     });
     expect(yields[0]).not.toHaveProperty('credentials_path');
+  });
+
+  it('reports the locked vault instead of claiming the user is unauthenticated', async () => {
+    const ctx = makeContext({
+      interval: 0,
+      maxAttempts: 0,
+      timeout: 60,
+      probe: false,
+    });
+    const storage = new LockedStorage();
+    const auth = makeAuthResource(storage);
+    const user = makeUserResource();
+    await expect(
+      drainGenerator(
+        runAuthStatus(
+          ctx,
+          {
+            authResource: auth.resource,
+            userResource: user.resource,
+            authStorage: storage,
+            updateProbe: undefined,
+          },
+          defaultAuthCtx,
+        ),
+      ),
+    ).rejects.toMatchObject({ secureStorageCode: 'vault_locked' });
   });
 
   it('includes credentials_path in the agent payload when ctx.verbose=true', async () => {

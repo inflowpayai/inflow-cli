@@ -4,6 +4,7 @@ import {
   type AuthStorage,
   type DecodedChallenge,
   type Inflow,
+  type MppFetchEvent,
   type MppFetchRejected,
   type MppFetchSuccess,
   type MppPayCreated,
@@ -18,12 +19,16 @@ import {
 } from '@inflowpayai/inflow-core';
 import type { MppSupportedResponse, MppTransactionResponse } from '@inflowpayai/mpp';
 import { Cli } from 'incur';
+import type React from 'react';
+import { useMemo } from 'react';
 import { assertSessionGuard } from '../../utils/assert-session.js';
 import { authenticatedApiError } from '../../utils/api-error.js';
+import { mcpTool } from '../../mcp-metadata.js';
 import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
-import { createAepAwareInspectProbe, createAepAwareSellerTransport } from '../aep/runtime.js';
+import { type AepApprovalDisplay, createAepAwareInspectProbe, createAepAwareSellerTransport } from '../aep/runtime.js';
 import { PaymentFetchView, type PaymentFetchPhase } from '../payment-fetch.js';
+import { useAuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
 import { CancelView } from './cancel.js';
 import { DecodeView, decodeMppValue } from './decode.js';
 import {
@@ -192,8 +197,14 @@ function fetchProbeOptionsFrom(c: FetchCommandContext): SellerProbeOptions {
   };
 }
 
-function createSellerTransport(c: PayContext | FetchCommandContext, inflow: Inflow, authStorage: AuthStorage) {
+function createSellerTransport(
+  c: PayContext | FetchCommandContext,
+  inflow: Inflow,
+  authStorage: AuthStorage,
+  approvalDisplay?: AepApprovalDisplay,
+) {
   return createAepAwareSellerTransport({
+    ...(approvalDisplay === undefined ? {} : { approvalDisplay }),
     authStorage,
     context: c,
     inflow,
@@ -201,6 +212,93 @@ function createSellerTransport(c: PayContext | FetchCommandContext, inflow: Infl
     ...(c.options.interval > 0 ? { interval: c.options.interval } : {}),
   });
 }
+
+interface PayViewWithAuthenticationProps {
+  apiBaseUrl: string;
+  authStorage: AuthStorage;
+  c: PayContext;
+  client: MppPayPipelineDeps['client'];
+  inflow: Inflow;
+  onCancel: (approvalId: string) => Promise<unknown> | void;
+  onComplete: (phase: MppPayPhase) => void;
+  probeOptions: SellerProbeOptions;
+}
+
+const PayViewWithAuthentication: React.FC<PayViewWithAuthenticationProps> = ({
+  apiBaseUrl,
+  authStorage,
+  c,
+  client,
+  inflow,
+  onCancel,
+  onComplete,
+  probeOptions,
+}) => {
+  const { approvalDisplay, authenticationApproval } = useAuthenticationApprovalDisplay();
+  const sellerTransport = useMemo(
+    () => createSellerTransport(c, inflow, authStorage, approvalDisplay),
+    [approvalDisplay, authStorage, c, inflow],
+  );
+  const deps = useMemo<MppPayPipelineDeps>(
+    () => ({
+      ...buildPayPipelineInput(c, probeOptions),
+      client,
+      apiBaseUrl,
+      awaitPayment: true,
+      sellerTransport,
+    }),
+    [apiBaseUrl, c, client, probeOptions, sellerTransport],
+  );
+  return (
+    <PayView
+      url={c.args.url}
+      method={c.options.method}
+      deps={deps}
+      authenticationApproval={authenticationApproval}
+      onComplete={onComplete}
+      onCancel={onCancel}
+    />
+  );
+};
+
+interface FetchViewWithAuthenticationProps {
+  authStorage: AuthStorage;
+  c: FetchCommandContext;
+  events: (sellerTransport: ReturnType<typeof createSellerTransport>) => AsyncIterable<MppFetchEvent>;
+  inflow: Inflow;
+  onComplete: (phase: PaymentFetchPhase) => void;
+  paymentHeader: string;
+  protocol: 'MPP';
+}
+
+const FetchViewWithAuthentication: React.FC<FetchViewWithAuthenticationProps> = ({
+  authStorage,
+  c,
+  events,
+  inflow,
+  onComplete,
+  paymentHeader,
+  protocol,
+}) => {
+  const { approvalDisplay, authenticationApproval } = useAuthenticationApprovalDisplay();
+  const sellerTransport = useMemo(
+    () => createSellerTransport(c, inflow, authStorage, approvalDisplay),
+    [approvalDisplay, authStorage, c, inflow],
+  );
+  const iterable = useMemo(() => () => events(sellerTransport), [events, sellerTransport]);
+  return (
+    <PaymentFetchView
+      protocol={protocol}
+      transactionId={c.args.transactionId}
+      url={c.args.resourceUrl}
+      method={c.options.method}
+      paymentHeader={paymentHeader}
+      events={iterable}
+      authenticationApproval={authenticationApproval}
+      onComplete={onComplete}
+    />
+  );
+};
 
 function buildPayPipelineInput(
   c: PayContext,
@@ -370,21 +468,17 @@ async function* runPayCommand(
     return c.error(invalidHeaderError(err));
   }
 
-  const sellerTransport = createSellerTransport(c, inflow, authStorage);
   if (!c.agent && !c.formatExplicit) {
     const client = await inflow.mpp.client();
     const captured: { finalPhase: MppPayPhase | null } = { finalPhase: null };
     await renderInkUntilExit(
-      <PayView
-        url={c.args.url}
-        method={c.options.method}
-        deps={{
-          ...buildPayPipelineInput(c, probeOptions),
-          client,
-          apiBaseUrl,
-          awaitPayment: true,
-          sellerTransport,
-        }}
+      <PayViewWithAuthentication
+        apiBaseUrl={apiBaseUrl}
+        authStorage={authStorage}
+        c={c}
+        client={client}
+        inflow={inflow}
+        probeOptions={probeOptions}
         onComplete={(phase) => {
           captured.finalPhase = phase;
         }}
@@ -406,6 +500,7 @@ async function* runPayCommand(
     return;
   }
 
+  const sellerTransport = createSellerTransport(c, inflow, authStorage);
   const run = inflow.mpp.pay({
     ...buildPayPipelineInput(c, probeOptions),
     awaitPayment: c.options.interval > 0,
@@ -453,17 +548,16 @@ async function* runFetchCommand(
     return c.error(invalidHeaderError(err));
   }
 
-  const sellerTransport = createSellerTransport(c, inflow, authStorage);
   if (!c.agent && !c.formatExplicit) {
     const captured: { finalPhase: PaymentFetchPhase | null } = { finalPhase: null };
     await renderInkUntilExit(
-      <PaymentFetchView
+      <FetchViewWithAuthentication
+        authStorage={authStorage}
+        c={c}
+        inflow={inflow}
         protocol="MPP"
-        transactionId={c.args.transactionId}
-        url={c.args.resourceUrl}
-        method={c.options.method}
         paymentHeader="Authorization: Payment"
-        events={() =>
+        events={(sellerTransport) =>
           inflow.mpp.fetch({
             transactionId: c.args.transactionId,
             url: c.args.resourceUrl,
@@ -500,6 +594,7 @@ async function* runFetchCommand(
     return;
   }
 
+  const sellerTransport = createSellerTransport(c, inflow, authStorage);
   const run = inflow.mpp.fetch({
     transactionId: c.args.transactionId,
     url: c.args.resourceUrl,
@@ -763,6 +858,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
 
   cli.command('pay', {
     description: 'Pay an MPP-protected resource and return the seller response.',
+    mcp: mcpTool('mpp_pay'),
     args: payArgs,
     options: payOptions,
     outputPolicy: 'agent-only' as const,
@@ -773,6 +869,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
 
   cli.command('status', {
     description: 'Poll the buyer-side state of an in-flight MPP transaction.',
+    mcp: mcpTool('mpp_status'),
     args: statusArgs,
     options: statusOptions,
     outputPolicy: 'agent-only' as const,
@@ -783,6 +880,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
 
   cli.command('fetch', {
     description: 'Fetch an MPP-protected resource for a ready or pending payment transaction.',
+    mcp: mcpTool('mpp_fetch'),
     args: fetchArgs,
     options: fetchOptions,
     outputPolicy: 'agent-only' as const,
@@ -793,6 +891,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
 
   cli.command('cancel', {
     description: 'Best-effort cancel of an MPP approval.',
+    mcp: mcpTool('mpp_cancel'),
     args: cancelArgs,
     outputPolicy: 'agent-only' as const,
     async run(c) {
@@ -802,6 +901,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
 
   cli.command('decode', {
     description: 'Decode a raw WWW-Authenticate: Payment header, or a base64url credential / receipt.',
+    mcp: mcpTool('mpp_decode'),
     args: decodeArgs,
     outputPolicy: 'agent-only' as const,
     async run(c) {
@@ -811,6 +911,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
 
   cli.command('supported', {
     description: 'List the methods the buyer can pay with - by intent, settlement rail, and currency.',
+    mcp: mcpTool('mpp_supported'),
     outputPolicy: 'agent-only' as const,
     async run(c) {
       return runSupportedCommand(c, inflow, authStorage);
@@ -819,6 +920,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
 
   cli.command('inspect', {
     description: "Show the seller's MPP challenge(s) for a URL. Read-only probe - no auth, no payment.",
+    mcp: mcpTool('mpp_inspect'),
     args: inspectArgs,
     options: inspectOptions,
     outputPolicy: 'agent-only' as const,

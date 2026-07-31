@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'tsup';
 
@@ -12,6 +13,7 @@ interface CliManifest {
 }
 
 const manifest = JSON.parse(readFileSync(resolve(here, 'package.json'), 'utf-8')) as CliManifest;
+const buildId = computeBuildId();
 
 const skillsDir = resolve(repoRoot, 'skills');
 
@@ -51,6 +53,7 @@ export default defineConfig({
   clean: true,
   define: {
     __BOOTSTRAP_BODY__: JSON.stringify(bootstrapBody),
+    __CLI_BUILD_ID__: JSON.stringify(buildId),
     __CLI_NAME__: JSON.stringify(manifest.name),
     __CLI_VERSION__: JSON.stringify(manifest.version),
     __SKILL_BODIES__: JSON.stringify(skillBodies),
@@ -61,6 +64,7 @@ export default defineConfig({
       'react-devtools-core': reactDevtoolsAlias,
     };
   },
+  external: ['@node-rs/argon2'],
   entry: { cli: 'src/cli.tsx', 'npm-shim': 'src/npm-shim.ts' },
   format: ['esm'],
   outDir: 'dist',
@@ -69,3 +73,47 @@ export default defineConfig({
   sourcemap: false,
   target: 'node24',
 });
+
+function computeBuildId(): string {
+  const hash = createHash('sha256');
+  for (const filePath of buildIdentityFiles()) {
+    hash.update(relative(repoRoot, filePath));
+    hash.update('\0');
+    hash.update(readFileSync(filePath));
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+function buildIdentityFiles(): string[] {
+  return [
+    resolve(repoRoot, 'package.json'),
+    resolve(repoRoot, 'pnpm-lock.yaml'),
+    resolve(repoRoot, 'packages/core/package.json'),
+    resolve(repoRoot, 'packages/cli/package.json'),
+    resolve(repoRoot, 'packages/cli/tsup.config.ts'),
+    resolve(repoRoot, 'packages/cli/tsup.standalone.config.ts'),
+    resolve(repoRoot, 'patches/incur.patch'),
+    ...existingSourceFiles(resolve(repoRoot, 'packages/core/native')),
+    ...sourceFiles(resolve(repoRoot, 'packages/core/src')),
+    ...sourceFiles(resolve(repoRoot, 'packages/cli/src')),
+    ...sourceFiles(resolve(repoRoot, 'skills')),
+  ].sort();
+}
+
+function existingSourceFiles(root: string): string[] {
+  return existsSync(root) ? sourceFiles(root) : [];
+}
+
+function sourceFiles(root: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const entryPath = resolve(root, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...sourceFiles(entryPath));
+      continue;
+    }
+    if (entry.isFile()) out.push(entryPath);
+  }
+  return out;
+}

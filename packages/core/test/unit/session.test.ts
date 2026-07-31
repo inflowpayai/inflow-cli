@@ -47,6 +47,21 @@ describe('createAccessTokenProvider', () => {
     expect(refreshSpy).not.toHaveBeenCalled();
   });
 
+  it('observes credential changes during one provider lifetime', async () => {
+    const storage = new MemoryStorage({
+      ...initialTokens,
+      expires_at: Date.now() + 5 * 60_000,
+    });
+    const { resource } = makeAuthResource(() => Promise.resolve({ ...initialTokens, access_token: 'rotated' }));
+    const provide = createAccessTokenProvider(resource, storage);
+
+    expect(await provide()).toBe('access-1');
+    storage.setAuth({ ...initialTokens, access_token: 'access-2', expires_at: Date.now() + 5 * 60_000 });
+    expect(await provide()).toBe('access-2');
+    storage.clearAuth();
+    await expect(provide()).rejects.toBeInstanceOf(InflowAuthenticationError);
+  });
+
   it('refreshes when expiry within the 60s buffer', async () => {
     const storage = new MemoryStorage({
       ...initialTokens,

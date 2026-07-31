@@ -30,6 +30,7 @@ import type { SellerProbeOptions, SellerProbeResult } from '@inflowpayai/x402-bu
 import { render } from 'ink';
 import React from 'react';
 import { persistedAepPublicDocumentCache } from '../../utils/aep-public-document-cache.js';
+import type { AuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
 import { PendingApprovalView } from './views.js';
 
 type PendingApprovalRenderer = Pick<ReturnType<typeof render>, 'clear' | 'unmount'>;
@@ -41,6 +42,7 @@ export type AepRuntimeContext = {
 };
 
 export interface AepRuntimeOptions {
+  approvalDisplay?: AepApprovalDisplay;
   authStorage: AuthStorage;
   context: AepRuntimeContext;
   inflow: Inflow;
@@ -52,6 +54,11 @@ export interface AepRuntimeOptions {
 
 interface AepRuntimeTrace {
   markAuthenticated(): void;
+}
+
+export interface AepApprovalDisplay {
+  clearPendingApproval(): void;
+  showPendingApproval(approval: AuthenticationApprovalDisplay): boolean;
 }
 
 class MissingIdentityError extends Error {}
@@ -160,18 +167,23 @@ async function cancelApproval(inflow: Inflow, approvalId: string): Promise<void>
   }).catch(() => undefined);
 }
 
-async function approvalSleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted === true) throw new ApprovalCancelledError();
+async function approvalSleep(milliseconds: number, signals: readonly (AbortSignal | undefined)[]): Promise<void> {
+  if (signals.some((signal) => signal?.aborted === true)) throw new ApprovalCancelledError();
   await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(resolve, milliseconds);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timeout);
-        reject(new ApprovalCancelledError());
-      },
-      { once: true },
-    );
+    const cleanup = (): void => {
+      for (const signal of signals) signal?.removeEventListener('abort', onAbort);
+    };
+    const onAbort = (): void => {
+      clearTimeout(timeout);
+      cleanup();
+      reject(new ApprovalCancelledError());
+    };
+    const timeout: ReturnType<typeof setTimeout> = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, milliseconds);
+    timeout.unref();
+    for (const signal of signals) signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -214,7 +226,6 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
   const publicDocumentCache = persistedAepPublicDocumentCache(options.authStorage);
   const platform = platformProvider(options.inflow, publicDocumentCache);
   const storage = lazyStores(options.inflow, options.authStorage, options.trace);
-  const controller = new AbortController();
   let waitingView: PendingApprovalRenderer | undefined;
   return {
     credentialStore: storage.credentials,
@@ -252,49 +263,58 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
       if (typeof approvalId !== 'string') {
         throw new AepPendingSignResolverError('Platform Sign omitted the approval identifier.', 'server_error');
       }
+      const controller = new AbortController();
+      const approvalUrl = approvalUrlFor(options.inflow.resolvedApiBaseUrl, approvalId);
+      let displayHandled = false;
       /* v8 ignore start -- Ink rendering is exercised through command TTY tests; resolver unit tests run agent-mode. */
       if (!options.context.agent && !options.context.formatExplicit) {
-        waitingView = render(
-          <PendingApprovalView
-            approvalId={approvalId}
-            approvalUrl={approvalUrlFor(options.inflow.resolvedApiBaseUrl, approvalId)}
-            onCancel={() => {
-              controller.abort();
-              return cancelApproval(options.inflow, approvalId);
-            }}
-          />,
-          { exitOnCtrlC: false },
-        );
+        const approval = {
+          approvalId,
+          approvalUrl,
+          cancel: () => {
+            controller.abort();
+            return cancelApproval(options.inflow, approvalId);
+          },
+        };
+        displayHandled = options.approvalDisplay?.showPendingApproval(approval) === true;
+        if (!displayHandled) {
+          waitingView = render(
+            <PendingApprovalView approvalId={approvalId} approvalUrl={approvalUrl} onCancel={approval.cancel} />,
+            { exitOnCtrlC: false },
+          );
+        }
       }
       /* v8 ignore stop */
-      const interval = options.interval ?? input.pending.retryAfterSeconds;
-      if (!Number.isFinite(interval) || interval <= 0) {
-        throw new AepPendingSignResolverError('Approval interval must be positive.', 'server_error');
-      }
-      const deadline = Date.now() + options.timeout * 1000;
-      while (Date.now() < deadline) {
-        if (input.signal?.aborted === true || controller.signal.aborted) throw new ApprovalCancelledError();
-        let status: string;
-        try {
-          status = await approvalStatus(options.inflow, approvalId);
-        } catch (error) {
-          throw new ApprovalServerError(error instanceof Error ? error.message : String(error));
+      try {
+        const interval = options.interval ?? input.pending.retryAfterSeconds;
+        if (!Number.isFinite(interval) || interval <= 0) {
+          throw new AepPendingSignResolverError('Approval interval must be positive.', 'server_error');
         }
-        if (status === 'APPROVED') {
-          const completed = await input.continueSign();
-          if (completed.status === 'completed') {
-            closePendingApprovalView(waitingView);
-            return completed;
+        const deadline = Date.now() + options.timeout * 1000;
+        while (Date.now() < deadline) {
+          if (input.signal?.aborted === true || controller.signal.aborted) throw new ApprovalCancelledError();
+          let status: string;
+          try {
+            status = await approvalStatus(options.inflow, approvalId);
+          } catch (error) {
+            throw new ApprovalServerError(error instanceof Error ? error.message : String(error));
           }
-        } else if (status === 'DECLINED') {
-          throw new ApprovalDeniedError();
-        } else if (status === 'CANCELLED') {
-          controller.abort();
-          throw new ApprovalCancelledError();
+          if (status === 'APPROVED') {
+            const completed = await input.continueSign();
+            if (completed.status === 'completed') return completed;
+          } else if (status === 'DECLINED') {
+            throw new ApprovalDeniedError();
+          } else if (status === 'CANCELLED') {
+            controller.abort();
+            throw new ApprovalCancelledError();
+          }
+          await approvalSleep(interval * 1000, [input.signal, controller.signal]);
         }
-        await approvalSleep(interval * 1000, input.signal);
+        throw new ApprovalTimeoutError();
+      } finally {
+        if (displayHandled) options.approvalDisplay?.clearPendingApproval();
+        closePendingApprovalView(waitingView);
       }
-      throw new ApprovalTimeoutError();
     },
   };
 }

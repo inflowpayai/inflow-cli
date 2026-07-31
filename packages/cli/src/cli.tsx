@@ -1,5 +1,17 @@
 import process from 'node:process';
-import { type AuthStorage, Inflow, Storage, storage } from '@inflowpayai/inflow-core';
+import { isMainThread, workerData } from 'node:worker_threads';
+import {
+  type AuthStorage,
+  Inflow,
+  runLinuxTransferredVaultService,
+  runLinuxVaultBroker,
+  runLocalVaultDaemon,
+  isWindowsVaultWorkerData,
+  runWindowsVaultService,
+  runWindowsVaultWorker,
+  Storage,
+  SyncVaultSecretStore,
+} from '@inflowpayai/inflow-core';
 import { Cli, Help } from 'incur';
 import { createAuthCli } from './commands/auth/index.js';
 import { createAepCli } from './commands/aep/index.js';
@@ -7,7 +19,13 @@ import { createBalancesCli } from './commands/balances/index.js';
 import { createDepositAddressesCli } from './commands/deposit-addresses/index.js';
 import { createInspectCommand } from './commands/inspect/index.js';
 import { createMppCli } from './commands/mpp/index.js';
-import { createUserCli } from './commands/user/index.js';
+import {
+  createVaultCli,
+  ensureLocalVaultDaemon,
+  ensureLocalVaultUnlocked,
+  readVaultStatusWithoutStarting,
+  type LocalVaultDaemonClientOptions,
+} from './commands/vault/index.js';
 import { createX402Cli } from './commands/x402/index.js';
 import {
   formatUpdateNotice,
@@ -15,13 +33,16 @@ import {
   makeFrozenUpdateProbe,
   type UpdateProbe,
 } from './utils/update-probe.js';
+import { shouldReconcileVaultDaemon, shouldStartVaultDaemon, shouldUnlockVault } from './startup-vault.js';
 
 declare const __CLI_VERSION__: string;
+declare const __CLI_BUILD_ID__: string;
 declare const __CLI_NAME__: string;
 declare const __BOOTSTRAP_BODY__: string;
 declare const __SKILL_BODIES__: Record<string, string>;
 
 const cliVersion = __CLI_VERSION__;
+const cliBuildId = __CLI_BUILD_ID__;
 const cliName = __CLI_NAME__;
 const bootstrapBody = __BOOTSTRAP_BODY__;
 const skillBodies = __SKILL_BODIES__;
@@ -44,6 +65,33 @@ async function printBody(body: string): Promise<never> {
 }
 
 async function main(): Promise<void> {
+  if (!isMainThread && isWindowsVaultWorkerData(workerData)) {
+    await runWindowsVaultWorker(workerData, new URL(import.meta.url));
+    return;
+  }
+  const daemonMode = extractHiddenDaemonMode();
+  if (daemonMode !== undefined) {
+    if (
+      daemonMode !== 'vault' &&
+      daemonMode !== 'vault-broker' &&
+      daemonMode !== 'vault-service' &&
+      daemonMode !== 'vault-windows-service'
+    ) {
+      process.stderr.write(`Unknown daemon mode: ${daemonMode}\n`);
+      process.exit(2);
+    }
+    const daemonOptions = {
+      cliVersion,
+      buildId: cliBuildId,
+    };
+    if (daemonMode === 'vault-broker') await runLinuxVaultBroker(daemonOptions);
+    else if (daemonMode === 'vault-service') await runLinuxTransferredVaultService(daemonOptions);
+    else if (daemonMode === 'vault-windows-service') {
+      await runWindowsVaultService(new URL(import.meta.url), daemonOptions);
+    } else await runLocalVaultDaemon(daemonOptions);
+    return;
+  }
+
   if (process.argv.includes('--bootstrap')) {
     await printBody(bootstrapBody);
   }
@@ -110,8 +158,25 @@ async function main(): Promise<void> {
   const sandboxFlag = extractBooleanFlag('--sandbox');
   const apiKeyFromFlag = extractFlag('--api-key');
   const verbose = extractBooleanFlag('--verbose');
+  const isAgent = process.argv.includes('--format') || process.argv.includes('--mcp') || !process.stdout.isTTY;
+  const vaultOptions: LocalVaultDaemonClientOptions = { buildId: cliBuildId, cliVersion };
+  const hasDirectApiKey = apiKeyFromFlag !== undefined || process.env['INFLOW_API_KEY'] !== undefined;
+  if (shouldReconcileVaultDaemon(process.argv, hasDirectApiKey)) {
+    const status = await readVaultStatusWithoutStarting(vaultOptions);
+    if (status.daemonRunning) await ensureLocalVaultDaemon(vaultOptions);
+  }
+  if (shouldStartVaultDaemon(process.argv, hasDirectApiKey)) {
+    await ensureLocalVaultDaemon(vaultOptions);
+  }
+  if (shouldUnlockVault(process.argv, { hasDirectApiKey, isAgent })) {
+    await ensureLocalVaultUnlocked({ mode: isAgent ? 'agent' : 'human', vaultOptions });
+  }
 
-  const authStorage: AuthStorage = credentialFilePath ? new Storage({ configPath: credentialFilePath }) : storage;
+  const secretStore = new SyncVaultSecretStore(vaultOptions);
+  const authStorage: AuthStorage = new Storage({
+    ...(credentialFilePath === undefined ? {} : { configPath: credentialFilePath }),
+    secretStore,
+  });
 
   const apiKeyFromEnv = process.env['INFLOW_API_KEY'];
   function readSavedApiKey(): string | undefined {
@@ -132,7 +197,7 @@ async function main(): Promise<void> {
       return {};
     }
   }
-  const apiKeyFromSaved = readSavedApiKey();
+  const apiKeyFromSaved = apiKeyFromFlag !== undefined || apiKeyFromEnv !== undefined ? undefined : readSavedApiKey();
   const apiKey = apiKeyFromFlag ?? apiKeyFromEnv ?? apiKeyFromSaved;
   const apiKeySource: 'flag' | 'env' | 'saved' | undefined =
     apiKeyFromFlag !== undefined && apiKeyFromFlag.length > 0
@@ -144,8 +209,6 @@ async function main(): Promise<void> {
           : undefined;
 
   const savedConnection = readSavedConnection();
-
-  const isAgent = process.argv.includes('--format') || process.argv.includes('--mcp') || !process.stdout.isTTY;
 
   const rawEnvironment =
     environmentFromFlag ??
@@ -231,17 +294,32 @@ async function main(): Promise<void> {
       ...(authBaseUrl !== undefined ? { authBaseUrl } : {}),
       resolvedApiBaseUrl,
       verbose,
+      vaultOptions,
     }),
   );
-  cli.command(createUserCli(inflow.user, authStorage, inflow));
   cli.command(createBalancesCli(inflow.balances, authStorage, inflow));
   cli.command(createDepositAddressesCli(inflow.depositAddresses, authStorage, inflow));
+  cli.command(createVaultCli(vaultOptions));
   cli.command(createX402Cli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createMppCli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createAepCli(inflow, authStorage));
   cli.command('inspect', createInspectCommand(inflow, authStorage));
 
   await cli.serve();
+}
+
+function extractHiddenDaemonMode(): string | undefined {
+  const assignmentIndex = process.argv.findIndex((arg) => arg.startsWith('--daemon='));
+  if (assignmentIndex !== -1) {
+    const [arg] = process.argv.splice(assignmentIndex, 1);
+    return arg?.slice('--daemon='.length);
+  }
+
+  const index = process.argv.indexOf('--daemon');
+  if (index === -1) return undefined;
+  const value = process.argv[index + 1];
+  process.argv.splice(index, value === undefined ? 1 : 2);
+  return value ?? '';
 }
 
 main().catch((cause: unknown) => {
