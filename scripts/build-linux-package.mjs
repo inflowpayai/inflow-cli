@@ -253,7 +253,7 @@ Name: inflow
 Version: ${version}
 Release: 1%{?dist}
 Summary: InFlow agent-native payment command line
-License: Proprietary
+License: MIT
 Source0: %{name}-%{version}.tar.gz
 BuildArch: ${rpmArchitecture()}
 Requires: systemd
