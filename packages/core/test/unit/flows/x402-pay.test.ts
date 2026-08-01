@@ -80,13 +80,13 @@ describe('mapSdkError', () => {
     // composes as `[<requestId>] <endpoint>: <httpStatus> <code> — <serverMessage>`.
     const apiError = Object.assign(
       new Error(
-        '[req_abc] /v1/transactions/x402: 400 INSUFFICIENT_FUNDS — Insufficient funds for x402 payment requirements.',
+        '[req_abc] /v1/transactions/x402: 400 INSUFFICIENT_FUNDS — Insufficient USDC balance. Required 1 USDC, available 0.5 USDC.',
       ),
       { code: 'INSUFFICIENT_FUNDS', endpoint: '/v1/transactions/x402', httpStatus: 400 },
     );
     const out = mapSdkError(apiError);
     expect(out.code).toBe('INSUFFICIENT_FUNDS');
-    expect(out.message).toBe('Insufficient funds for x402 payment requirements.');
+    expect(out.message).toBe('Insufficient USDC balance. Required 1 USDC, available 0.5 USDC.');
     expect(out.message).not.toContain('/v1/transactions/x402');
     expect(out.message).not.toContain('400');
     expect(out.message).not.toContain('req_abc');

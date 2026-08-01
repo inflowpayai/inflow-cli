@@ -1,7 +1,9 @@
 import { Buffer } from 'node:buffer';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { generateKeyPairSync } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { chmodSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { createServer, Socket } from 'node:net';
+import { createServer, Socket, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -158,27 +160,77 @@ describe('local vault daemon lifecycle', () => {
     }
   });
 
+  it('prepares explicit and filesystem-backed Linux broker identities', async () => {
+    const hardenProcess = vi.fn();
+    const resolveServiceIdentity = vi.fn(() => ({ gid: 991, uid: 992 }));
+    const runBroker = vi.fn(
+      (
+        _fileDescriptor: number,
+        _identity: { gid: number; uid: number },
+        _brokerDependencies: Parameters<typeof __testing.runLinuxVaultBrokerWithDependencies>[2],
+      ) => Promise.resolve(),
+    );
+    const dependencies = { hardenProcess, resolveServiceIdentity, runBroker };
+
+    await __testing.runLinuxVaultBrokerEntry(
+      { listenFd: 4, serviceGroupId: 1000, serviceUserId: 1001 },
+      'linux',
+      dependencies,
+    );
+    expect(runBroker).toHaveBeenLastCalledWith(4, { gid: 1000, uid: 1001 }, expect.anything());
+    expect(resolveServiceIdentity).not.toHaveBeenCalled();
+
+    await __testing.runLinuxVaultBrokerEntry({ listenFd: 5 }, 'linux', dependencies);
+    expect(resolveServiceIdentity).toHaveBeenCalledWith('/var/lib/inflow');
+    expect(runBroker).toHaveBeenLastCalledWith(5, { gid: 991, uid: 992 }, expect.anything());
+    expect(hardenProcess).toHaveBeenCalledTimes(2);
+
+    const brokerDependencies = runBroker.mock.calls[0]?.[2];
+    if (brokerDependencies === undefined) throw new Error('expected broker dependencies');
+    const child = brokerDependencies.spawnService({ gid: process.getgid?.() ?? 0, uid: process.getuid?.() ?? 0 });
+    await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  });
+
   it('runs the transferred Linux service on its broker IPC channel', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-transferred-service-'));
     const handlers = new Map<string, () => void>();
     const exits: number[] = [];
     const messages: unknown[] = [];
+    let transfers = 0;
     let messageHandler: ((message: unknown, handle: unknown) => void) | undefined;
-    const service = runLinuxTransferredVaultServiceWithRuntime({ rootDirectory: tmpDir }, 'linux', {
-      exit(code) {
-        exits.push(code);
+    const service = runLinuxTransferredVaultServiceWithRuntime(
+      { rootDirectory: tmpDir },
+      'linux',
+      {
+        exit(code) {
+          exits.push(code);
+        },
+        on(_event, handler) {
+          messageHandler = handler;
+        },
+        once(event, handler) {
+          handlers.set(event, handler);
+        },
+        send(message) {
+          messages.push(message);
+          const transferredSocket = new Socket();
+          messageHandler?.(
+            { peer: { path: process.execPath, pid: process.pid, uid: process.getuid?.() ?? 0 }, type: 'vault-client' },
+            transferredSocket,
+          );
+          messageHandler?.(
+            { peer: { path: process.execPath, pid: process.pid, uid: process.getuid?.() ?? 0 }, type: 'vault-client' },
+            new Socket(),
+          );
+          handlers.get('disconnect')?.();
+        },
       },
-      on(_event, handler) {
-        messageHandler = handler;
+      (_socket, peer) => {
+        transfers += 1;
+        if (transfers === 2) throw new Error('invalid transferred peer');
+        return peer;
       },
-      once(event, handler) {
-        handlers.set(event, handler);
-      },
-      send(message) {
-        messages.push(message);
-        handlers.get('disconnect')?.();
-      },
-    });
+    );
 
     await service;
     messageHandler?.({ type: 'invalid' }, undefined);
@@ -254,6 +306,113 @@ describe('local vault daemon lifecycle', () => {
 
     const failed = spawn('/definitely/missing/inflow');
     await expect(__testing.waitForVaultServiceReady(failed)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('authenticates and transfers broker sockets until the service exits cleanly', async () => {
+    const child = new EventEmitter() as ChildProcess;
+    Object.assign(child, {
+      connected: true,
+      disconnect: vi.fn(() => {
+        Object.assign(child, { connected: false });
+      }),
+      send: vi.fn(
+        (
+          _message: unknown,
+          _socket: Socket,
+          _options: { keepOpen: boolean },
+          callback: (error: Error | null) => void,
+        ) => callback(null),
+      ),
+    });
+    const signalHandlers = new Map<'SIGINT' | 'SIGTERM', () => void>();
+    const authenticateClient = vi.fn(() => Promise.resolve());
+    let connection: ((socket: Socket) => void) | undefined;
+    const run = __testing.runLinuxVaultBrokerWithDependencies(
+      3,
+      { gid: 1000, uid: 1000 },
+      {
+        authenticateClient,
+        closeServer: () => Promise.resolve(),
+        createBrokerServer(listener) {
+          connection = listener;
+          return createServer();
+        },
+        createPeerVerifier: () => (socket) => {
+          if (socket.destroyed) throw new Error('rejected peer');
+          return { path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 };
+        },
+        ensureBrokerKey: () => Promise.resolve(generateKeyPairSync('ed25519').privateKey),
+        listenServer: () => {
+          const socket = new Socket();
+          vi.spyOn(socket, 'destroy');
+          connection?.(socket);
+          const rejected = new Socket();
+          rejected.destroy();
+          connection?.(rejected);
+          return Promise.resolve();
+        },
+        runtime: {
+          once(event, handler) {
+            signalHandlers.set(event, handler);
+          },
+        },
+        spawnService: () => child,
+      },
+    );
+    child.emit('message', { type: 'vault-service-ready' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    signalHandlers.get('SIGINT')?.();
+    signalHandlers.get('SIGTERM')?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    child.emit('exit', 0, null);
+
+    await expect(run).resolves.toBeUndefined();
+    expect(authenticateClient).toHaveBeenCalledOnce();
+  });
+
+  it('closes the tenant manager when Linux service socket startup fails', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-service-failure-'));
+    await expect(
+      startLinuxVaultService({
+        rootDirectory: join(tmpDir, 'vaults'),
+        socketPath: join(tmpDir, 'run', 'x'.repeat(180)),
+      }),
+    ).rejects.toBeDefined();
+  });
+
+  it('propagates broker close failures', async () => {
+    const server = {
+      close(callback: (cause?: Error) => void) {
+        callback(new Error('close failed'));
+      },
+      listening: true,
+    } as Server;
+
+    await expect(__testing.closeBroker(server)).rejects.toThrow('close failed');
+  });
+
+  it('rejects an unexpected vault service exit after broker startup', async () => {
+    const child = new EventEmitter() as ChildProcess;
+    Object.assign(child, { connected: false, disconnect: vi.fn(), send: vi.fn() });
+    const run = __testing.runLinuxVaultBrokerWithDependencies(
+      3,
+      { gid: 1000, uid: 1000 },
+      {
+        authenticateClient: vi.fn(() => Promise.resolve()),
+        closeServer: () => Promise.resolve(),
+        createBrokerServer: () => createServer(),
+        createPeerVerifier: () => () => ({ path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 }),
+        ensureBrokerKey: () => Promise.resolve(generateKeyPairSync('ed25519').privateKey),
+        listenServer: () => Promise.resolve(),
+        runtime: { once: vi.fn() },
+        spawnService: () => child,
+      },
+    );
+    child.emit('message', { type: 'vault-service-ready' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    child.emit('exit', 1, null);
+
+    await expect(run).rejects.toThrow('exited unexpectedly');
   });
 
   it('validates the dedicated Linux service identity directory', () => {

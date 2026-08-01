@@ -7,6 +7,7 @@ import process from 'node:process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import {
+  __testing,
   createVaultSocketPeerVerifier,
   shouldRequireVaultPeerVerification,
   socketFileDescriptor,
@@ -378,6 +379,18 @@ describe('vault peer verifier', () => {
     } finally {
       rmSync(tmpDir, { force: true, recursive: true });
     }
+  });
+
+  it('uses operating-system defaults for user, path, native loading, and signature checks', () => {
+    const executable = process.execPath;
+    expect(__testing.defaultPeerVerifierDependencies.currentUserId()).toBe(process.getuid?.());
+    expect(__testing.defaultPeerVerifierDependencies.realpath(executable)).toBe(executable);
+    expect(() =>
+      __testing.defaultPeerVerifierDependencies.loadNativeModule('/missing/inflow-vault-peer.node'),
+    ).toThrow();
+    expect(() => __testing.defaultPeerVerifierDependencies.verifySignature('/missing/inflow', 'TEAM123456')).toThrow(
+      SecureStorageError,
+    );
   });
 });
 

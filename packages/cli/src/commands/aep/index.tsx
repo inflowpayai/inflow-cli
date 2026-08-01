@@ -1239,4 +1239,19 @@ export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
   return cli;
 }
 
-export const __testing = { commandError, inspected, runEnroll, runFetch, runGrant, runInspect, runRevoke, runStatus };
+export const __testing = {
+  approvalSleep,
+  approvalStatus,
+  cancelApproval,
+  closePendingApprovalView,
+  commandError,
+  inspected,
+  paymentRequiredFrame,
+  runEnroll,
+  runFetch,
+  runGrant,
+  runInspect,
+  runRevoke,
+  runStatus,
+  stateStorage,
+};

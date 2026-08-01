@@ -220,6 +220,25 @@ describe('LocalVaultClient', () => {
     });
   });
 
+  it('propagates unexpected rejection of the previous passphrase during rotation', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
+    await listenWithResponder(tmpDir, (request) => ({
+      ...(request.method === 'vault.unlock'
+        ? { error: { code: 'secure_storage_unavailable' as const, message: 'daemon unavailable' }, ok: false as const }
+        : {
+            ok: true as const,
+            result: request.method === 'vault.unlockSalt' ? { salt: Buffer.alloc(16) } : {},
+          }),
+      id: request.id,
+      version: 1,
+    }));
+    const client = new LocalVaultClient({ rootDirectory: tmpDir });
+
+    await expect(client.changePassphrase(Buffer.from('current'), Buffer.from('next123'))).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_unavailable',
+    });
+  }, 15_000);
+
   it('validates every daemon response field and preserves recognized error codes', () => {
     expect(__testing.parseInfo({ buildId: null, cliVersion: null, executablePath: '/inflow', pid: 0 })).toEqual({
       buildId: null,
