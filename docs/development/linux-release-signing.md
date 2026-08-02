@@ -160,16 +160,18 @@ Release. Then dispatch `linux-release.yml` from that tag with:
 - `tag`: the exact `v<package-version>` tag
 
 ```sh
+VERSION="$(node -p "require('./packages/cli/package.json').version")"
+TAG="v$VERSION"
 gh workflow run native-release.yml \
   --repo inflowpayai/inflow-cli \
   --ref main \
-  -f version=0.10.1
+  -f version="$VERSION"
 gh workflow run linux-release.yml \
   --repo inflowpayai/inflow-cli \
-  --ref v0.10.1 \
+  --ref "$TAG" \
   -f publish=true \
   -f verify_production_signing=false \
-  -f tag=v0.10.1
+  -f tag="$TAG"
 ```
 
 The protected job imports the automation subkey, compares the complete expected fingerprint, signs both RPM packages,

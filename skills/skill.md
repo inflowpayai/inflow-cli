@@ -7,7 +7,7 @@ You are an AI agent whose user asked to get set up with InFlow. Follow these ste
 
 ## 1. Install
 
-macOS:
+macOS or Linux:
 
 ```bash
 curl -fsSL https://inflowcli.ai/install.sh | bash

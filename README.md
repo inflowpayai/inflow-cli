@@ -26,10 +26,10 @@ Installing into an agent host? Use the per-surface guide:
 InFlow is distributed as a signed native application. The npm package is a compatibility notice and does not run
 commands, start MCP, or manage credentials.
 
-Public installation currently targets Apple Silicon and Intel Macs. Windows x64 and ARM64 packages do not build from
+Public installation currently targets Apple Silicon and Intel Macs through Homebrew, macOS and Linux through the hosted
+installer, and macOS and Linux through direct GitHub Release downloads. Windows x64 and ARM64 packages do not build from
 pull requests, merges, or package releases; the manual workflow remains available for unsigned validation while
-production signing and publication await Microsoft identity approval. Linux ARM64/AMD64 package workflows are validated,
-but hosted Linux installation remains unavailable until its signed release assets are published.
+production signing and publication await Microsoft identity approval.
 
 ### Homebrew Cask
 
@@ -46,15 +46,17 @@ brew upgrade --cask inflow
 brew uninstall --cask inflow
 ```
 
-### macOS hosted installer
+### Hosted installer
+
+The same command installs the native application on macOS, Debian/Ubuntu, and Fedora/RHEL:
 
 ```bash
 curl -fsSL https://inflowcli.ai/install.sh | bash
 ```
 
-The installer selects the current Mac architecture, downloads the matching GitHub Release asset and checksum, verifies
-the checksum plus macOS code-signing and Gatekeeper checks, installs `InFlow.app` into `~/.local/share/inflow`, and
-links `inflow` into `~/.local/bin`.
+On macOS, the installer selects the current architecture, verifies the checksum plus code-signing and Gatekeeper checks,
+installs `InFlow.app` into `~/.local/share/inflow`, and links `inflow` into `~/.local/bin`. On Linux, it verifies the
+OpenPGP-signed release manifest and package checksum before installing the matching Debian or RPM system package.
 
 Run the installer again to upgrade to the latest GitHub Release. Uninstall with:
 
@@ -70,6 +72,9 @@ Download the matching zip from the `inflowpayai/inflow-cli` GitHub Release for t
 - `inflow-<version>-darwin-x64.zip` for Intel Macs
 
 The zip contains `InFlow.app`; the executable is inside the app bundle at `InFlow.app/Contents/MacOS/inflow`.
+
+Linux releases include ARM64 and AMD64 Debian packages, RPM packages, and standalone archives. Debian and RPM packages
+install the system vault service required by the Linux security model.
 
 ### Initialize the credential vault
 
