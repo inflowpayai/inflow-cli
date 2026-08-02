@@ -1,5 +1,157 @@
 # @inflowpayai/inflow
 
+## 0.10.0
+
+### Minor Changes
+
+- [#39](https://github.com/inflowpayai/inflow-cli/pull/39)
+  [`fda6120`](https://github.com/inflowpayai/inflow-cli/commit/fda6120e450644fd7461815b52d8f13cc25eb7e7) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add Agent Enrollment Protocol Service inspection, enrollment with Platform
+  identity recovery and duplicate prevention, status, credential issuance, and revocation commands. Detect AEP
+  authentication in the top-level inspect command and present AEP inspection and status details in tables. Store
+  authentication secrets and AEP credential payloads in the encrypted local vault, with non-secret metadata in SQLite.
+  On first use, delete the legacy plaintext `config.json` without migrating its credentials, requiring users to
+  authenticate and enroll again. Add resource-aware AEP inspection and `aep fetch`, including anonymous success, caller
+  request preservation, identity recovery, stored credential selection, pending Sign approval continuation, bounded
+  redirects and responses, and structured resource body output. Persist fresh AEP Inspect documents per authenticated
+  Platform user so separate CLI invocations reuse discovery safely. Ship a dedicated `agentic-enrollment` skill through
+  the CLI, plugin, and web publication surfaces, and include every AEP command in language-model and MCP inventory
+  regression coverage.
+
+- [#46](https://github.com/inflowpayai/inflow-cli/pull/46)
+  [`89b5464`](https://github.com/inflowpayai/inflow-cli/commit/89b54648a0fdb9ec3f5e3efc5396a3996bb42f3e) Thanks
+  [@nkavian](https://github.com/nkavian)! - Publish macOS release artifacts for Apple Silicon and Intel Macs, render a
+  multi-architecture Homebrew Cask, and point update/install messaging at the hosted install instructions.
+
+- [#47](https://github.com/inflowpayai/inflow-cli/pull/47)
+  [`f3e82c5`](https://github.com/inflowpayai/inflow-cli/commit/f3e82c566d31a06937b6d500558848341d6e7d1d) Thanks
+  [@nkavian](https://github.com/nkavian)! - Publish the npm package as a compatibility notice that points users and
+  agents to the signed native InFlow CLI instead of running commands or managing credentials.
+
+  Check GitHub Releases for advisory signed-binary updates, surface a one-line human notice, return structured
+  current/latest version metadata to agents, bound release checks to a short deadline, provide Homebrew and hosted
+  installer upgrade guidance, and send the installed CLI version on InFlow API requests.
+
+  Prepare native x64 and ARM64 Windows release payloads for Azure Artifact Signing, sign the executable before building
+  the MSI, sign the MSI before generating checksums and WinGet manifests, and keep unsigned nonpublishing workflow
+  validation available without production credentials.
+
+- [#38](https://github.com/inflowpayai/inflow-cli/pull/38)
+  [`ce2191a`](https://github.com/inflowpayai/inflow-cli/commit/ce2191a1a98095cb5bd05f2a38da451a545d94cb) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add MPP and x402 Fetch commands for completing deferred payment
+  transactions, including structured continuation tool input from Pay, credential-safe seller replay, and
+  replay-outcome-unknown error handling.
+
+- [#39](https://github.com/inflowpayai/inflow-cli/pull/39)
+  [`fda6120`](https://github.com/inflowpayai/inflow-cli/commit/fda6120e450644fd7461815b52d8f13cc25eb7e7) Thanks
+  [@nkavian](https://github.com/nkavian)! - Make MPP and x402 pay/fetch AEP-aware. Seller requests complete AEP
+  authentication before payment creation, compose non-colliding AEP and payment credentials on the final replay, and
+  preserve the payment fetch continuation contract. AEP fetch reports payment-required handoffs, and combined inspect
+  reports blocked AEP payment inspection without creating grants, approvals, or payments.
+
+- [#35](https://github.com/inflowpayai/inflow-cli/pull/35)
+  [`e4d4b0f`](https://github.com/inflowpayai/inflow-cli/commit/e4d4b0f712016f4de8240d1c7789b7d6571916c3) Thanks
+  [@nkavian](https://github.com/nkavian)! - Require Node.js 24.15.0 or newer for the command-line package, development
+  builds, and continuous integration.
+
+- [#59](https://github.com/inflowpayai/inflow-cli/pull/59)
+  [`6d3191c`](https://github.com/inflowpayai/inflow-cli/commit/6d3191cafd62461dce611a9f1adcea70a1b4c9e1) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add self-contained Linux archives, Debian and RPM system-service packages,
+  and a checksummed hosted installer with encrypted local vault storage, same-executable Unix socket peer verification,
+  and signed APT and RPM repository metadata.
+
+### Patch Changes
+
+- [#53](https://github.com/inflowpayai/inflow-cli/pull/53)
+  [`552157e`](https://github.com/inflowpayai/inflow-cli/commit/552157e70766c9bc711c50d2ad21122873e2730f) Thanks
+  [@nkavian](https://github.com/nkavian)! - Harden signed credential storage recovery for SQLite corruption, interrupted
+  secret lifecycle work, and expired AEP credential cleanup.
+
+- [#59](https://github.com/inflowpayai/inflow-cli/pull/59)
+  [`51d6035`](https://github.com/inflowpayai/inflow-cli/commit/51d6035372c75d3bc0e7a15e126ef59837a3b420) Thanks
+  [@nkavian](https://github.com/nkavian)! - Use the latest AEP libraries and keep the internal user profile command out
+  of the CLI, MCP, and agent documentation surfaces.
+
+- [#36](https://github.com/inflowpayai/inflow-cli/pull/36)
+  [`647cec4`](https://github.com/inflowpayai/inflow-cli/commit/647cec443fa2a4ae970c4d91d84813955e6e3350) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add the SQLite metadata repository and transactional secret-lifecycle
+  foundation used by the signed command-line application.
+
+- [#50](https://github.com/inflowpayai/inflow-cli/pull/50)
+  [`5fc1f7b`](https://github.com/inflowpayai/inflow-cli/commit/5fc1f7b9ce317b7ee0d0e24d40fa07e453b6a1d4) Thanks
+  [@nkavian](https://github.com/nkavian)! - Display unsupported CLI version responses from InFlow as actionable upgrade
+  errors.
+
+- [#59](https://github.com/inflowpayai/inflow-cli/pull/59)
+  [`51d6035`](https://github.com/inflowpayai/inflow-cli/commit/51d6035372c75d3bc0e7a15e126ef59837a3b420) Thanks
+  [@nkavian](https://github.com/nkavian)! - Report locally stored active session credentials in AEP Status output and
+  return an actionable not-enrolled error when the Service no longer recognizes the locally stored Agent identity.
+
+- [#54](https://github.com/inflowpayai/inflow-cli/pull/54)
+  [`9b9af54`](https://github.com/inflowpayai/inflow-cli/commit/9b9af54cb28e4b52cef250c64b70a7533b86cc02) Thanks
+  [@nkavian](https://github.com/nkavian)! - Decode MPP receipts by their standard base fields and project nested
+  settlement details in payment output.
+
+- [#61](https://github.com/inflowpayai/inflow-cli/pull/61)
+  [`f0e0f8a`](https://github.com/inflowpayai/inflow-cli/commit/f0e0f8a1a8f609d1dd30fe38e57dc60a78d5cde7) Thanks
+  [@nkavian](https://github.com/nkavian)! - Declare the Linux RPM package under the repository's MIT license.
+
+- [#51](https://github.com/inflowpayai/inflow-cli/pull/51)
+  [`eed570b`](https://github.com/inflowpayai/inflow-cli/commit/eed570b39c3f5795fac3e00e24d4036a75c26588) Thanks
+  [@nkavian](https://github.com/nkavian)! - Report rejected authenticated account requests as actionable authentication
+  errors instead of generic failures.
+
+- [#59](https://github.com/inflowpayai/inflow-cli/pull/59)
+  [`51d6035`](https://github.com/inflowpayai/inflow-cli/commit/51d6035372c75d3bc0e7a15e126ef59837a3b420) Thanks
+  [@nkavian](https://github.com/nkavian)! - Recognize the packaged command-line symlink as the same executable as its
+  signed local vault daemon.
+
+- [#59](https://github.com/inflowpayai/inflow-cli/pull/59)
+  [`51d6035`](https://github.com/inflowpayai/inflow-cli/commit/51d6035372c75d3bc0e7a15e126ef59837a3b420) Thanks
+  [@nkavian](https://github.com/nkavian)! - Make vault unlock idempotent when the vault is already unlocked and report
+  rejected PINs or passphrases as unlock failures.
+
+- [#54](https://github.com/inflowpayai/inflow-cli/pull/54)
+  [`c84e078`](https://github.com/inflowpayai/inflow-cli/commit/c84e078ff9b657e9e2e195a803f810561aa8a019) Thanks
+  [@nkavian](https://github.com/nkavian)! - Run MPP challenge, credential, and receipt handling against the pinned
+  upstream conformance suite.
+
+- [#60](https://github.com/inflowpayai/inflow-cli/pull/60)
+  [`93dc1a1`](https://github.com/inflowpayai/inflow-cli/commit/93dc1a12960450144ae125e4cae55902ad09ddca) Thanks
+  [@nkavian](https://github.com/nkavian)! - Exercise secure vault daemon, storage, client, peer-verification, and Agent
+  Enrollment Protocol failure paths.
+
+- [#59](https://github.com/inflowpayai/inflow-cli/pull/59)
+  [`51d6035`](https://github.com/inflowpayai/inflow-cli/commit/51d6035372c75d3bc0e7a15e126ef59837a3b420) Thanks
+  [@nkavian](https://github.com/nkavian)! - Replace incompatible running macOS vault daemons before commands access
+  vault-backed state after an in-place application update.
+
+- [#59](https://github.com/inflowpayai/inflow-cli/pull/59)
+  [`51d6035`](https://github.com/inflowpayai/inflow-cli/commit/51d6035372c75d3bc0e7a15e126ef59837a3b420) Thanks
+  [@nkavian](https://github.com/nkavian)! - Harden local vault transport limits, secret-reference integrity,
+  locked-state reporting, terminal passphrase handling, credential cleanup, and signed-build compatibility checks.
+
+- [#59](https://github.com/inflowpayai/inflow-cli/pull/59)
+  [`51d6035`](https://github.com/inflowpayai/inflow-cli/commit/51d6035372c75d3bc0e7a15e126ef59837a3b420) Thanks
+  [@nkavian](https://github.com/nkavian)! - Prepare the signed native CLI for local encrypted vault storage by packaging
+  the vault daemon runtime, exposing vault lifecycle commands, enforcing daemon sleep-lock policy, adding macOS
+  peer-verification plumbing, and wiring native dependencies.
+
+- [#41](https://github.com/inflowpayai/inflow-cli/pull/41)
+  [`d216e08`](https://github.com/inflowpayai/inflow-cli/commit/d216e08778c06f6cd856a3254b13c752df7a3ea8) Thanks
+  [@nkavian](https://github.com/nkavian)! - Expand regression coverage for secure storage, payment completion failures,
+  and AEP-aware payment inspection.
+
+- [#59](https://github.com/inflowpayai/inflow-cli/pull/59)
+  [`6d3191c`](https://github.com/inflowpayai/inflow-cli/commit/6d3191cafd62461dce611a9f1adcea70a1b4c9e1) Thanks
+  [@nkavian](https://github.com/nkavian)! - Verify the Developer-ID-signed macOS package across vault initialization,
+  credential persistence, process reuse, locking, peer rejection, logout, and daemon shutdown.
+
+- [#40](https://github.com/inflowpayai/inflow-cli/pull/40)
+  [`9a236ad`](https://github.com/inflowpayai/inflow-cli/commit/9a236adb636d4000fe75f7659e3b7f5a4f21225a) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add the macOS signed application packaging and Homebrew Cask rendering
+  pipeline used for the InFlow command-line executable.
+
 ## 0.9.1
 
 ### Patch Changes
