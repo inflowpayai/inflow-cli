@@ -1,22 +1,18 @@
 name: linux release
 
 on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
-      publish:
-        description: Upload artifacts to the matching GitHub release
-        required: true
-        type: boolean
-        default: false
       verify_production_signing:
         description: Verify the protected production signing subkey without publishing
         required: true
         type: boolean
         default: false
-      tag:
-        description: Existing GitHub release tag
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -27,21 +23,19 @@ jobs:
     steps:
       - name: Validate workflow inputs
         env:
-          PUBLISH: ${{ inputs.publish }}
-          TAG: ${{ inputs.tag }}
+          VERSION: ${{ inputs.version }}
           VERIFY_PRODUCTION_SIGNING: ${{ inputs.verify_production_signing }}
         run: |
-          if [ "$PUBLISH" = 'true' ] && [ "$VERIFY_PRODUCTION_SIGNING" = 'true' ]; then
-            echo "::error::publish and verify_production_signing cannot both be enabled"
-            exit 1
-          fi
-          if [ "$PUBLISH" = 'true' ] && [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
-            echo "::error::Production publishing must run from the requested tag refs/tags/$TAG"
-            exit 1
-          fi
           if [ "$VERIFY_PRODUCTION_SIGNING" = 'true' ] && [[ "$GITHUB_REF" != refs/tags/v* ]]; then
             echo "::error::Production signing verification must run from a v* tag"
             exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = 'workflow_call' ]; then
+            package_version="$(node -p "require('./packages/cli/package.json').version")"
+            if [ "$VERSION" != "$package_version" ] || [ "$GITHUB_REF" != "refs/tags/v$VERSION" ]; then
+              echo "::error::Production staging requires version $package_version from refs/tags/v$package_version"
+              exit 1
+            fi
           fi
 
   package:
@@ -57,7 +51,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       attestations: write
-      contents: write
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v5
@@ -305,7 +299,9 @@ jobs:
 
   release-dry-run:
     name: signed GitHub Release dry run
-    if: github.event_name == 'pull_request' || (!inputs.publish && !inputs.verify_production_signing)
+    if:
+      github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' &&
+      !inputs.verify_production_signing)
     needs: package
     runs-on: ubuntu-24.04
     steps:
@@ -427,7 +423,7 @@ jobs:
 
   release-production-verification:
     name: protected production signing verification
-    if: github.event_name == 'workflow_dispatch' && inputs.verify_production_signing && !inputs.publish
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_production_signing
     needs: package
     runs-on: ubuntu-24.04
     environment: linux-production
@@ -489,9 +485,9 @@ jobs:
           rm -rf "$RUNNER_TEMP/inflow-release-gpg"
           rm -f "$RUNNER_TEMP/inflow-linux-signing-key.gpg"
 
-  release-production:
-    name: signed GitHub Release
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && !inputs.verify_production_signing
+  stage-production:
+    name: stage signed release
+    if: github.event_name == 'workflow_call'
     needs:
       - apt-repository
       - package
@@ -500,7 +496,7 @@ jobs:
     environment: linux-production
     permissions:
       attestations: write
-      contents: write
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v5
@@ -547,8 +543,7 @@ jobs:
       - name: Verify production release
         run: |
           expected_tag="v$(node -p "require('./packages/cli/package.json').version")"
-          test "${{ inputs.tag }}" = "$expected_tag"
-          gh release view "${{ inputs.tag }}"
+          test "$GITHUB_REF" = "refs/tags/$expected_tag"
           gpg --batch --yes --dearmor \
             --output "$RUNNER_TEMP/inflow-linux-signing-key.gpg" \
             dist/linux/release/inflow-linux-signing-key.asc
@@ -557,8 +552,6 @@ jobs:
             dist/linux/release/SHA256SUMS
           sudo rpmkeys --import dist/linux/release/inflow-linux-signing-key.asc
           sudo rpmkeys --checksig dist/linux/release/*.rpm
-        env:
-          GH_TOKEN: ${{ github.token }}
 
       - name: Attest release assets
         uses: actions/attest@v4
@@ -569,19 +562,20 @@ jobs:
             dist/linux/release/*.tar.gz
             dist/linux/release/SHA256SUMS
 
-      - name: Upload production release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload "${{ inputs.tag }}" \
-            dist/linux/release/*.deb \
-            dist/linux/release/*.deb.sha256 \
-            dist/linux/release/*.rpm \
-            dist/linux/release/*.rpm.sha256 \
-            dist/linux/release/*.tar.gz \
-            dist/linux/release/*.tar.gz.sha256 \
-            dist/linux/release/SHA256SUMS \
-            dist/linux/release/SHA256SUMS.asc \
-            dist/linux/release/inflow-linux-signing-key.asc \
-            dist/linux/release/install.sh \
-            --clobber
+      - name: Stage production release assets
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-native-linux-${{ inputs.version }}
+          path: |
+            dist/linux/release/*.deb
+            dist/linux/release/*.deb.sha256
+            dist/linux/release/*.rpm
+            dist/linux/release/*.rpm.sha256
+            dist/linux/release/*.tar.gz
+            dist/linux/release/*.tar.gz.sha256
+            dist/linux/release/SHA256SUMS
+            dist/linux/release/SHA256SUMS.asc
+            dist/linux/release/inflow-linux-signing-key.asc
+            dist/linux/release/install.sh
+          if-no-files-found: error
+          retention-days: 7

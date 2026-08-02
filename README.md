@@ -164,10 +164,18 @@ pnpm typedoc
 pnpm changeset
 ```
 
-## macOS release automation
+## Native release automation
 
-The `native release` workflow creates the version tag and a platform-neutral GitHub Release. Production platform
-workflows run from that immutable tag and attach their artifacts independently.
+Production native releases use one `native release` workflow. Create `v<version>` from the reviewed release commit, then
+dispatch the workflow from that tag with the matching package version. The workflow requires immutable releases to be
+enabled, builds and verifies macOS and Linux concurrently, verifies the exact combined asset inventory, creates and
+re-verifies a draft GitHub Release, and publishes it only after every required platform succeeds. Windows remains
+excluded until Microsoft Artifact Signing is available.
+
+The standalone platform workflows cannot publish a GitHub Release. They provide dry runs and protected signing checks;
+production artifacts are staged only when called by `native release`.
+
+## macOS release automation
 
 The `macos release` workflow is manually dispatched from GitHub Actions. Its default dry run builds the Apple Silicon
 and Intel macOS artifacts, renders the Homebrew Cask, audits the Cask, and uploads workflow artifacts without
@@ -186,8 +194,7 @@ Real release runs also require this repository variable:
 
 - `HOMEBREW_TAP_APP_CLIENT_ID`
 
-The published macOS artifacts are attached to the `inflowpayai/inflow-cli` GitHub Release for the package version, and
-the Homebrew Cask in `inflowpayai/homebrew-tap` points at those release assets for Apple Silicon and Intel Macs.
+After the complete native release is public, its generated Homebrew Cask is pushed to `inflowpayai/homebrew-tap`.
 
 ## Linux release automation
 
@@ -203,8 +210,8 @@ subkey:
 - Environment variable: `LINUX_OPENPGP_SIGNING_FINGERPRINT`
 
 The primary certification key remains offline. It has no expiration. The automation signing subkey has a two-year
-lifetime, is reviewed annually, and is replaced approximately 90 days before expiration. The production workflow signs
-and verifies the release before uploading versioned assets to the matching GitHub Release.
+lifetime, is reviewed annually, and is replaced approximately 90 days before expiration. The native release workflow
+signs and verifies the Linux assets before they enter the combined draft release.
 
 See [`docs/development/linux-release-signing.md`](./docs/development/linux-release-signing.md) for the offline key
 ceremony, GitHub environment setup, release process, and recovery procedure.
