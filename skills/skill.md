@@ -13,12 +13,6 @@ macOS:
 curl -fsSL https://inflowcli.ai/install.sh | bash
 ```
 
-Windows:
-
-```powershell
-iwr -useb https://inflowcli.ai/install.ps1 | iex
-```
-
 Running as an MCP server? Add an `inflow` server to your MCP client config that runs `inflow --mcp`.
 
 ## 2. Authenticate

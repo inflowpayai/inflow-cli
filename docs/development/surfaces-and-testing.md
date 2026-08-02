@@ -23,7 +23,7 @@ curl -fsSL https://inflowcli.ai/install.sh | bash
 ```
 
 Windows x64 and ARM64 MSI and Linux ARM64/AMD64 packages have passed their platform workflows. They are not public
-install channels until production Windows signing and Linux repository trust roots are published.
+install channels until production Windows signing and signed Linux release assets are published.
 
 ### Windows release signing
 
