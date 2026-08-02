@@ -4,56 +4,184 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Package version to release. Defaults to packages/cli/package.json.
-        required: false
+        description: Package version to release.
+        required: true
         type: string
 
 concurrency:
-  group: native-release
+  group: native-release-${{ inputs.version }}
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  create-release:
+  validate:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
           node-version: 24.15.0
 
-      - name: Create version tag and GitHub Release
-        shell: bash
+      - name: Validate release source
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUESTED_VERSION: ${{ inputs.version }}
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          package_version="$(node -p "JSON.parse(require('node:fs').readFileSync('packages/cli/package.json', 'utf8')).version")"
-          if [[ -n "$REQUESTED_VERSION" && "$REQUESTED_VERSION" != "$package_version" ]]; then
-            echo "::error::Requested version $REQUESTED_VERSION does not match packages/cli/package.json version $package_version"
+          package_version="$(node -p "require('./packages/cli/package.json').version")"
+          test "$VERSION" = "$package_version"
+          test "$GITHUB_REF" = "refs/tags/v$VERSION"
+          tag_commit="$(git rev-list -n 1 "v$VERSION")"
+          test "$tag_commit" = "$GITHUB_SHA"
+          test "$(gh api repos/$GITHUB_REPOSITORY/immutable-releases --jq '.enabled')" = 'true'
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::v$VERSION already has a GitHub Release"
             exit 1
           fi
 
-          tag="v$package_version"
-          if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
-            tag_commit="$(git rev-list -n 1 "$tag")"
-            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
-              echo "::error::$tag identifies $tag_commit instead of the selected commit $GITHUB_SHA"
-              exit 1
-            fi
+  macos:
+    needs: validate
+    uses: ./.github/workflows/macos-release.yml
+    with:
+      version: ${{ inputs.version }}
+    secrets: inherit
+
+  linux:
+    needs: validate
+    uses: ./.github/workflows/linux-release.yml
+    with:
+      version: ${{ inputs.version }}
+    secrets: inherit
+
+  publish:
+    needs:
+      - macos
+      - linux
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+
+      - name: Download macOS release stage
+        uses: actions/download-artifact@v7
+        with:
+          name: inflow-native-macos-${{ inputs.version }}
+          path: dist/native/macos
+
+      - name: Download Linux release stage
+        uses: actions/download-artifact@v7
+        with:
+          name: inflow-native-linux-${{ inputs.version }}
+          path: dist/native/linux
+
+      - name: Assemble and verify release assets
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/native/assets
+          duplicates="$(find dist/native/macos dist/native/linux -type f ! -name inflow.rb -exec basename {} \; | sort | uniq -d)"
+          test -z "$duplicates"
+          find dist/native/macos dist/native/linux -type f ! -name inflow.rb -exec cp {} dist/native/assets/ \;
+          node scripts/verify-native-release-assets.mjs dist/native/assets "$VERSION"
+
+      - name: Create draft release with complete asset set
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if published="$(gh release view "v$VERSION" --json isDraft --jq 'select(.isDraft == false) | true' 2>/dev/null)" && [ "$published" = 'true' ]; then
+            echo 'published=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release create "v$VERSION" dist/native/assets/* \
+            --draft \
+            --generate-notes \
+            --title "InFlow $VERSION" \
+            --verify-tag
+          echo 'published=false' >> "$GITHUB_OUTPUT"
+
+      - name: Verify draft release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v$VERSION" > dist/native/release.json
+          node scripts/verify-native-release-assets.mjs dist/native/assets "$VERSION" dist/native/release.json
+
+      - name: Publish release
+        if: steps.release.outputs.published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: gh release edit "v$VERSION" --draft=false --latest
+
+      - name: Remove unpublished draft after failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if state="$(gh release view "v$VERSION" --json isDraft --jq '.isDraft' 2>/dev/null)" && [ "$state" = 'true' ]; then
+            gh release delete "v$VERSION" --yes
           fi
 
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "$tag already has a GitHub Release"
-          else
-            gh release create "$tag" \
-              --target "$GITHUB_SHA" \
-              --title "InFlow $package_version" \
-              --notes "Release artifacts for InFlow $package_version."
+  homebrew:
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Download macOS release stage
+        uses: actions/download-artifact@v7
+        with:
+          name: inflow-native-macos-${{ inputs.version }}
+          path: dist/native/macos
+
+      - name: Resolve Homebrew Cask
+        id: cask
+        run: |
+          set -euo pipefail
+          cask="$(find dist/native/macos -type f -name inflow.rb -print -quit)"
+          test -n "$cask"
+          echo "path=$cask" >> "$GITHUB_OUTPUT"
+
+      - name: Create Homebrew tap token
+        id: homebrew-tap-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: inflowpayai
+          repositories: homebrew-tap
+          permission-contents: write
+
+      - name: Update Homebrew tap
+        env:
+          CASK: ${{ steps.cask.outputs.path }}
+          HOMEBREW_TAP_TOKEN: ${{ steps.homebrew-tap-token.outputs.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tap="$RUNNER_TEMP/homebrew-tap"
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/inflowpayai/homebrew-tap.git" "$tap"
+          cp "$CASK" "$tap/Casks/inflow.rb"
+          git -C "$tap" config user.name github-actions
+          git -C "$tap" config user.email github-actions@github.com
+          git -C "$tap" add Casks/inflow.rb
+          if git -C "$tap" diff --cached --quiet; then
+            exit 0
           fi
+          git -C "$tap" commit -m "Update inflow to $VERSION"
+          git -C "$tap" push origin HEAD:main

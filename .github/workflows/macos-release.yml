@@ -1,6 +1,22 @@
 name: macos release
 
 on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+    secrets:
+      APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64:
+        required: true
+      APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD:
+        required: true
+      APPLE_NOTARY_APPLE_ID:
+        required: true
+      APPLE_NOTARY_APP_SPECIFIC_PASSWORD:
+        required: true
+      APPLE_NOTARY_TEAM_ID:
+        required: true
   workflow_dispatch:
     inputs:
       version:
@@ -18,7 +34,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-macos:
@@ -66,7 +82,11 @@ jobs:
             echo "::error::Requested version $requested_version does not match packages/cli/package.json version $package_version"
             exit 1
           fi
-          if [[ '${{ inputs.dry_run }}' == 'false' && "$GITHUB_REF" != "refs/tags/v$package_version" ]]; then
+          if [[ '${{ github.event_name }}' == 'workflow_dispatch' && '${{ inputs.dry_run }}' != 'true' ]]; then
+            echo "::error::Production macOS artifacts must be staged by the native release workflow"
+            exit 1
+          fi
+          if [[ '${{ github.event_name }}' == 'workflow_call' && "$GITHUB_REF" != "refs/tags/v$package_version" ]]; then
             echo "::error::Production macOS releases must run from refs/tags/v$package_version"
             exit 1
           fi
@@ -75,7 +95,7 @@ jobs:
           echo "artifact_name=inflow-macos-${{ matrix.arch }}-$package_version" >> "$GITHUB_OUTPUT"
 
       - name: Configure Apple signing
-        if: inputs.dry_run == false
+        if: github.event_name == 'workflow_call'
         shell: bash
         env:
           CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
@@ -122,7 +142,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ '${{ inputs.dry_run }}' == 'true' ]]; then
+          if [[ '${{ github.event_name }}' == 'workflow_dispatch' ]]; then
             INFLOW_CODESIGN_IDENTITY=- pnpm build:macos-app
           else
             INFLOW_CODESIGN_IDENTITY="$INFLOW_RELEASE_CODESIGN_IDENTITY" pnpm build:macos-release
@@ -135,7 +155,7 @@ jobs:
           test -f '${{ steps.metadata.outputs.artifact }}'
           dist/macos/bin/inflow --version
           codesign --verify --deep --strict --verbose=2 dist/macos/InFlow.app
-          if [[ '${{ inputs.dry_run }}' == 'false' ]]; then
+          if [[ '${{ github.event_name }}' == 'workflow_call' ]]; then
             xcrun stapler validate dist/macos/InFlow.app
             spctl --assess --type execute --verbose=2 dist/macos/InFlow.app
           fi
@@ -159,8 +179,8 @@ jobs:
             dist/macos/manifest.json
           if-no-files-found: error
 
-  publish-macos:
-    name: publish macOS artifacts
+  stage-macos:
+    name: stage macOS artifacts
     runs-on: macos-15
     needs: build-macos
     steps:
@@ -244,7 +264,7 @@ jobs:
           brew untap inflowpayai/tap-audit
 
       - name: Upload dry-run artifacts
-        if: inputs.dry_run == true
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v6
         with:
           name: inflow-macos-release-dry-run-${{ steps.metadata.outputs.version }}
@@ -255,54 +275,14 @@ jobs:
             dist/homebrew/Casks/inflow.rb
           if-no-files-found: error
 
-      - name: Publish GitHub Release artifacts
-        if: inputs.dry_run == false
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag='${{ steps.metadata.outputs.tag }}'
-          arm64='${{ steps.artifacts.outputs.arm64 }}'
-          x64='${{ steps.artifacts.outputs.x64 }}'
-          arm64_checksum='${{ steps.artifacts.outputs.arm64_checksum }}'
-          x64_checksum='${{ steps.artifacts.outputs.x64_checksum }}'
-          gh release view "$tag" >/dev/null
-          gh release upload "$tag" "$arm64" "$x64" "$arm64_checksum" "$x64_checksum" --clobber
-
-      - name: Create Homebrew tap token
-        if: inputs.dry_run == false
-        id: homebrew-tap-token
-        uses: actions/create-github-app-token@v3
+      - name: Stage production artifacts
+        if: github.event_name == 'workflow_call'
+        uses: actions/upload-artifact@v6
         with:
-          client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
-          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
-          owner: inflowpayai
-          repositories: homebrew-tap
-          permission-contents: write
-
-      - name: Update Homebrew tap
-        if: inputs.dry_run == false
-        shell: bash
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ steps.homebrew-tap-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$HOMEBREW_TAP_TOKEN" ]]; then
-            echo "::error::HOMEBREW_TAP_TOKEN was not created"
-            exit 1
-          fi
-
-          tap="$RUNNER_TEMP/homebrew-tap"
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/inflowpayai/homebrew-tap.git" "$tap"
-          mkdir -p "$tap/Casks"
-          cp dist/homebrew/Casks/inflow.rb "$tap/Casks/inflow.rb"
-          git -C "$tap" config user.name github-actions
-          git -C "$tap" config user.email github-actions@github.com
-          if [[ -z "$(git -C "$tap" status --porcelain -- Casks/inflow.rb)" ]]; then
-            echo "Homebrew tap already matches ${{ steps.metadata.outputs.version }}"
-            exit 0
-          fi
-          git -C "$tap" add Casks/inflow.rb
-          git -C "$tap" commit -m "Update inflow to ${{ steps.metadata.outputs.version }}"
-          git -C "$tap" push origin HEAD:main
+          name: inflow-native-macos-${{ steps.metadata.outputs.version }}
+          path: |
+            dist/release-artifacts/**/*.zip
+            dist/release-artifacts/**/*.zip.sha256
+            dist/homebrew/Casks/inflow.rb
+          if-no-files-found: error
+          retention-days: 7

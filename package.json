@@ -44,6 +44,7 @@
     "test": "turbo run test",
     "posttest": "node scripts/clean-bundle-artifacts.mjs",
     "coverage:changed": "node scripts/check-changed-coverage.mjs",
+    "test:native-release-assets": "node scripts/test-native-release-assets.mjs",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",

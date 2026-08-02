@@ -47,6 +47,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Test native release asset contract
+        run: pnpm test:native-release-assets
+
       - name: Changed-line coverage
         if: github.event_name == 'pull_request'
         run: pnpm coverage:changed

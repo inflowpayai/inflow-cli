@@ -153,30 +153,25 @@ files, release assets, password managers synchronized to daily-use machines, or 
 
 ## Production release
 
-Dispatch `native-release.yml` from the reviewed version commit to create the version tag and platform-neutral GitHub
-Release. Then dispatch `linux-release.yml` from that tag with:
-
-- `publish`: `true`
-- `tag`: the exact `v<package-version>` tag
+Create the version tag from the reviewed release commit, then dispatch `native-release.yml` from that tag. Immutable
+releases must be enabled in the repository before the workflow runs.
 
 ```sh
 VERSION="$(node -p "require('./packages/cli/package.json').version")"
 TAG="v$VERSION"
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+git tag "$TAG"
+git push origin "$TAG"
 gh workflow run native-release.yml \
   --repo inflowpayai/inflow-cli \
-  --ref main \
-  -f version="$VERSION"
-gh workflow run linux-release.yml \
-  --repo inflowpayai/inflow-cli \
   --ref "$TAG" \
-  -f publish=true \
-  -f verify_production_signing=false \
-  -f tag="$TAG"
+  -f version="$VERSION"
 ```
 
 The protected job imports the automation subkey, compares the complete expected fingerprint, signs both RPM packages,
 creates and signs `SHA256SUMS`, verifies every signature, attests the final package bytes, renders an installer pinned
-to the fingerprint, and uploads the versioned assets.
+to the fingerprint, and stages the versioned assets. The native release workflow publishes only after the macOS and
+Linux stages pass and the combined asset inventory and GitHub digests match.
 
 Before the first production release, create a temporary `v*` tag for the reviewed commit and dispatch the verification
 mode. This mode uses read-only repository permissions, requires approval through `linux-production`, rejects an export
@@ -189,7 +184,6 @@ git push origin v0.9.0-signing-test.1
 gh workflow run linux-release.yml \
   --repo inflowpayai/inflow-cli \
   --ref v0.9.0-signing-test.1 \
-  -f publish=false \
   -f verify_production_signing=true
 ```
 
