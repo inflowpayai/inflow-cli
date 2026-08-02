@@ -26,8 +26,8 @@ const nodeInclude = resolve(dirname(process.execPath), '../include/node');
 const platformArguments =
   process.platform === 'darwin' ? ['-dynamiclib', '-undefined', 'dynamic_lookup'] : ['-shared', '-fPIC'];
 const argon2Arguments =
-  process.platform === 'linux' && process.env.INFLOW_ARGON2_SOURCE_DIR !== undefined
-    ? linuxArgon2Arguments(requiredDirectory('INFLOW_ARGON2_SOURCE_DIR'))
+  process.env.INFLOW_ARGON2_SOURCE_DIR !== undefined
+    ? pinnedArgon2Arguments(requiredDirectory('INFLOW_ARGON2_SOURCE_DIR'))
     : [
         ...execFileSync('pkg-config', ['--cflags', 'libargon2'], {
           cwd: repoRoot,
@@ -116,7 +116,7 @@ function buildWindowsNativeModule() {
   );
 }
 
-function buildLinuxArgon2Objects(argon2Root) {
+function buildPinnedArgon2Objects(argon2Root) {
   const sources = [
     join(argon2Root, 'src/argon2.c'),
     join(argon2Root, 'src/core.c'),
@@ -152,8 +152,8 @@ function buildLinuxArgon2Objects(argon2Root) {
   });
 }
 
-function linuxArgon2Arguments(argon2Root) {
-  return ['-I', join(argon2Root, 'include'), '-I', join(argon2Root, 'src'), ...buildLinuxArgon2Objects(argon2Root)];
+function pinnedArgon2Arguments(argon2Root) {
+  return ['-I', join(argon2Root, 'include'), '-I', join(argon2Root, 'src'), ...buildPinnedArgon2Objects(argon2Root)];
 }
 
 function requiredDirectory(name) {
@@ -167,7 +167,7 @@ function requiredPath(name) {
 function requiredEnvironment(name) {
   const value = process.env[name];
   if (value === undefined || value.length === 0) {
-    throw new Error(`${name} must identify the pinned Windows native-build dependency.`);
+    throw new Error(`${name} must identify the pinned native-build dependency.`);
   }
   return resolve(value);
 }
@@ -175,7 +175,7 @@ function requiredEnvironment(name) {
 function requiredPathValue(path) {
   const resolvedPath = resolve(path);
   if (!existsSync(resolvedPath)) {
-    throw new Error(`Windows native-build dependency is unavailable: ${path}`);
+    throw new Error(`Native-build dependency is unavailable: ${path}`);
   }
   return resolvedPath;
 }
