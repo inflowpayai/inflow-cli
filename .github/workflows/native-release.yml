@@ -51,6 +51,10 @@ jobs:
 
   linux:
     needs: validate
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     uses: ./.github/workflows/linux-release.yml
     with:
       version: ${{ inputs.version }}
