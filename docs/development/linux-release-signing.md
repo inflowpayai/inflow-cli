@@ -169,8 +169,12 @@ git push origin "$TAG"
 gh workflow run native-release.yml \
   --repo inflowpayai/inflow-cli \
   --ref "$TAG" \
+  -f publish=true \
   -f version="$VERSION"
 ```
+
+Use `-f publish=false` to run production signing, notarization, staging, and complete asset verification without
+creating a GitHub Release or updating Homebrew.
 
 The protected job imports the automation subkey, compares the complete expected fingerprint, signs both RPM packages,
 creates and signs `SHA256SUMS`, verifies every signature, attests the final package bytes, renders an installer pinned

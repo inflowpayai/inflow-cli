@@ -3,6 +3,11 @@ name: native release
 on:
   workflow_dispatch:
     inputs:
+      publish:
+        description: Publish the verified release and update Homebrew.
+        required: true
+        type: boolean
+        default: false
       version:
         description: Package version to release.
         required: true
@@ -47,6 +52,7 @@ jobs:
     needs: validate
     uses: ./.github/workflows/macos-release.yml
     with:
+      production: true
       version: ${{ inputs.version }}
     secrets: inherit
 
@@ -58,16 +64,15 @@ jobs:
       id-token: write
     uses: ./.github/workflows/linux-release.yml
     with:
+      production: true
       version: ${{ inputs.version }}
     secrets: inherit
 
-  publish:
+  stage:
     needs:
       - macos
       - linux
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v5
 
@@ -97,6 +102,38 @@ jobs:
             dist/native/macos \
             dist/native/linux
           node scripts/verify-native-release-assets.mjs dist/native/assets "$VERSION"
+
+      - name: Upload verified release stage
+        uses: actions/upload-artifact@v6
+        with:
+          name: inflow-native-release-${{ inputs.version }}
+          path: dist/native/assets
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: inputs.publish
+    needs: stage
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+
+      - name: Download verified release stage
+        uses: actions/download-artifact@v7
+        with:
+          name: inflow-native-release-${{ inputs.version }}
+          path: dist/native/assets
+
+      - name: Verify release assets
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node scripts/verify-native-release-assets.mjs dist/native/assets "$VERSION"
 
       - name: Create draft release with complete asset set
         id: release

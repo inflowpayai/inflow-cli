@@ -3,6 +3,9 @@ name: linux release
 on:
   workflow_call:
     inputs:
+      production:
+        required: true
+        type: boolean
       version:
         required: true
         type: string
@@ -21,16 +24,19 @@ jobs:
   validate-inputs:
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v5
+
       - name: Validate workflow inputs
         env:
           VERSION: ${{ inputs.version }}
+          PRODUCTION: ${{ inputs.production }}
           VERIFY_PRODUCTION_SIGNING: ${{ inputs.verify_production_signing }}
         run: |
           if [ "$VERIFY_PRODUCTION_SIGNING" = 'true' ] && [[ "$GITHUB_REF" != refs/tags/v* ]]; then
             echo "::error::Production signing verification must run from a v* tag"
             exit 1
           fi
-          if [ "$GITHUB_EVENT_NAME" = 'workflow_call' ]; then
+          if [ "$PRODUCTION" = 'true' ]; then
             package_version="$(node -p "require('./packages/cli/package.json').version")"
             if [ "$VERSION" != "$package_version" ] || [ "$GITHUB_REF" != "refs/tags/v$VERSION" ]; then
               echo "::error::Production staging requires version $package_version from refs/tags/v$package_version"
@@ -299,9 +305,9 @@ jobs:
 
   release-dry-run:
     name: signed GitHub Release dry run
-    if:
-      github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' &&
-      !inputs.verify_production_signing)
+    if: >-
+      ${{ !inputs.production && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' &&
+      !inputs.verify_production_signing)) }}
     needs: package
     runs-on: ubuntu-24.04
     steps:
@@ -487,7 +493,7 @@ jobs:
 
   stage-production:
     name: stage signed release
-    if: github.event_name == 'workflow_call'
+    if: inputs.production
     needs:
       - apt-repository
       - package
