@@ -87,10 +87,10 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          mkdir -p dist/native/assets
-          duplicates="$(find dist/native/macos dist/native/linux -type f ! -name inflow.rb -exec basename {} \; | sort | uniq -d)"
-          test -z "$duplicates"
-          find dist/native/macos dist/native/linux -type f ! -name inflow.rb -exec cp {} dist/native/assets/ \;
+          node scripts/assemble-native-release-assets.mjs \
+            dist/native/assets \
+            dist/native/macos \
+            dist/native/linux
           node scripts/verify-native-release-assets.mjs dist/native/assets "$VERSION"
 
       - name: Create draft release with complete asset set
