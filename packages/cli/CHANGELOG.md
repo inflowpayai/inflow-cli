@@ -1,5 +1,15 @@
 # @inflowpayai/inflow
 
+## 0.10.1
+
+### Patch Changes
+
+- [#63](https://github.com/inflowpayai/inflow-cli/pull/63)
+  [`db171ab`](https://github.com/inflowpayai/inflow-cli/commit/db171ab824eaded6cbfd92be12a392adc13a5544) Thanks
+  [@nkavian](https://github.com/nkavian)! - Hide the hosted Windows installer from public setup instructions while
+  production Artifact Signing approval is pending, and distinguish signed Linux release assets from future
+  package-repository publication.
+
 ## 0.10.0
 
 ### Minor Changes
