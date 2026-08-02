@@ -3,6 +3,9 @@ name: macos release
 on:
   workflow_call:
     inputs:
+      production:
+        required: true
+        type: boolean
       version:
         required: true
         type: string
@@ -82,11 +85,11 @@ jobs:
             echo "::error::Requested version $requested_version does not match packages/cli/package.json version $package_version"
             exit 1
           fi
-          if [[ '${{ github.event_name }}' == 'workflow_dispatch' && '${{ inputs.dry_run }}' != 'true' ]]; then
+          if [[ '${{ inputs.production }}' != 'true' && '${{ inputs.dry_run }}' != 'true' ]]; then
             echo "::error::Production macOS artifacts must be staged by the native release workflow"
             exit 1
           fi
-          if [[ '${{ github.event_name }}' == 'workflow_call' && "$GITHUB_REF" != "refs/tags/v$package_version" ]]; then
+          if [[ '${{ inputs.production }}' == 'true' && "$GITHUB_REF" != "refs/tags/v$package_version" ]]; then
             echo "::error::Production macOS releases must run from refs/tags/v$package_version"
             exit 1
           fi
@@ -95,7 +98,7 @@ jobs:
           echo "artifact_name=inflow-macos-${{ matrix.arch }}-$package_version" >> "$GITHUB_OUTPUT"
 
       - name: Configure Apple signing
-        if: github.event_name == 'workflow_call'
+        if: inputs.production
         shell: bash
         env:
           CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
@@ -142,10 +145,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ '${{ github.event_name }}' == 'workflow_dispatch' ]]; then
-            INFLOW_CODESIGN_IDENTITY=- pnpm build:macos-app
-          else
+          if [[ '${{ inputs.production }}' == 'true' ]]; then
             INFLOW_CODESIGN_IDENTITY="$INFLOW_RELEASE_CODESIGN_IDENTITY" pnpm build:macos-release
+          else
+            INFLOW_CODESIGN_IDENTITY=- pnpm build:macos-app
           fi
 
       - name: Verify macOS artifact
@@ -155,7 +158,7 @@ jobs:
           test -f '${{ steps.metadata.outputs.artifact }}'
           dist/macos/bin/inflow --version
           codesign --verify --deep --strict --verbose=2 dist/macos/InFlow.app
-          if [[ '${{ github.event_name }}' == 'workflow_call' ]]; then
+          if [[ '${{ inputs.production }}' == 'true' ]]; then
             xcrun stapler validate dist/macos/InFlow.app
             spctl --assess --type execute --verbose=2 dist/macos/InFlow.app
           fi
@@ -264,7 +267,7 @@ jobs:
           brew untap inflowpayai/tap-audit
 
       - name: Upload dry-run artifacts
-        if: github.event_name == 'workflow_dispatch'
+        if: ${{ !inputs.production }}
         uses: actions/upload-artifact@v6
         with:
           name: inflow-macos-release-dry-run-${{ steps.metadata.outputs.version }}
@@ -276,7 +279,7 @@ jobs:
           if-no-files-found: error
 
       - name: Stage production artifacts
-        if: github.event_name == 'workflow_call'
+        if: inputs.production
         uses: actions/upload-artifact@v6
         with:
           name: inflow-native-macos-${{ steps.metadata.outputs.version }}

@@ -167,10 +167,12 @@ pnpm changeset
 ## Native release automation
 
 Production native releases use one `native release` workflow. Create `v<version>` from the reviewed release commit, then
-dispatch the workflow from that tag with the matching package version. The workflow requires immutable releases to be
-enabled, builds and verifies macOS and Linux concurrently, verifies the exact combined asset inventory, creates and
-re-verifies a draft GitHub Release, and publishes it only after every required platform succeeds. Windows remains
-excluded until Microsoft Artifact Signing is available.
+dispatch the workflow from that tag with the matching package version and an explicit `publish` input. With publication
+disabled, the workflow performs production signing, notarization, staging, and complete asset verification without
+creating a GitHub Release or updating Homebrew. The workflow requires immutable releases to be enabled, builds and
+verifies macOS and Linux concurrently, verifies the exact combined asset inventory, creates and re-verifies a draft
+GitHub Release, and publishes it only after every required platform succeeds. Windows remains excluded until Microsoft
+Artifact Signing is available.
 
 The standalone platform workflows cannot publish a GitHub Release. They provide dry runs and protected signing checks;
 production artifacts are staged only when called by `native release`.
