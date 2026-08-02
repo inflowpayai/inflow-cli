@@ -29,7 +29,7 @@ commands, start MCP, or manage credentials.
 Public installation currently targets Apple Silicon and Intel Macs. Windows x64 and ARM64 packages do not build from
 pull requests, merges, or package releases; the manual workflow remains available for unsigned validation while
 production signing and publication await Microsoft identity approval. Linux ARM64/AMD64 package workflows are validated,
-but that channel remains unavailable until its repository infrastructure is published.
+but hosted Linux installation remains unavailable until its signed release assets are published.
 
 ### Homebrew Cask
 
@@ -60,18 +60,6 @@ Run the installer again to upgrade to the latest GitHub Release. Uninstall with:
 
 ```bash
 curl -fsSL https://inflowcli.ai/install.sh | bash -s -- --uninstall
-```
-
-PowerShell on macOS can use the same hosted installer:
-
-```powershell
-iwr -useb https://inflowcli.ai/install.ps1 | iex
-```
-
-PowerShell uninstall:
-
-```powershell
-$env:INFLOW_UNINSTALL = "1"; iwr -useb https://inflowcli.ai/install.ps1 | iex
 ```
 
 ### Direct download
