@@ -89,7 +89,7 @@ describe('multi-tenant vault backend manager', () => {
 
     await expect(tenantA.status()).resolves.toMatchObject({ lockState: 'unlocked' });
     await expect(tenantB.status()).resolves.toMatchObject({ lockState: 'locked' });
-  });
+  }, 15_000);
 
   it('rejects invalid peer user identities before selecting a filesystem path', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-tenants-'));

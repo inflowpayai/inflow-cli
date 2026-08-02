@@ -84,10 +84,10 @@ case "$action" in
       privileged env DEBIAN_FRONTEND=noninteractive apt-get purge --yes inflow
     elif command -v dnf >/dev/null 2>&1; then
       privileged dnf remove --assumeyes inflow
-      privileged rm -rf /var/lib/inflow
     else
       fail "Purge requires apt-get or dnf."
     fi
+    privileged rm -rf /var/lib/inflow /var/lib/inflow-broker /run/inflow
     say "InFlow and its system vault data were removed."
     exit 0
     ;;

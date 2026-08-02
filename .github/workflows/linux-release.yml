@@ -97,6 +97,22 @@ jobs:
           sudo swapoff -a
           sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/usr/bin/inflow pnpm smoke:linux-system-vault
 
+      - name: Test Debian package lifecycle
+        run: |
+          sudo test -d /var/lib/inflow
+          sudo test -f /var/lib/inflow-broker/private.der
+          sudo cp /var/lib/inflow-broker/public.der "$RUNNER_TEMP/inflow-broker-public.der"
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get remove --yes inflow
+          sudo test -d /var/lib/inflow
+          sudo test -f /var/lib/inflow-broker/private.der
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes "$PWD"/dist/linux/inflow_*.deb
+          sudo inflow vault status --format json | grep '"lock_state": "locked"'
+          sudo cmp /var/lib/inflow-broker/public.der "$RUNNER_TEMP/inflow-broker-public.der"
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get purge --yes inflow
+          sudo test ! -e /var/lib/inflow
+          sudo test ! -e /var/lib/inflow-broker
+          sudo test ! -e /run/inflow
+
       - name: Attest archive
         if: github.event_name != 'pull_request'
         uses: actions/attest@v4
@@ -364,6 +380,43 @@ jobs:
 
       - name: Install from signed release
         run: INFLOW_RELEASE_BASE_URL="file://$PWD/dist/linux/release" sh dist/linux/release/install.sh
+
+      - name: Test signed installer lifecycle
+        run: |
+          sudo inflow vault status --format json | grep '"lock_state": "not_initialized"'
+          for attempt in {1..60}; do
+            sudo test -f /var/lib/inflow-broker/private.der && break
+            sleep 1
+          done
+          sudo test -f /var/lib/inflow-broker/private.der
+          sh dist/linux/release/install.sh --uninstall
+          sudo test -d /var/lib/inflow
+          sudo test -f /var/lib/inflow-broker/private.der
+          INFLOW_RELEASE_BASE_URL="file://$PWD/dist/linux/release" sh dist/linux/release/install.sh
+          sh dist/linux/release/install.sh --purge
+          sudo test ! -e /var/lib/inflow
+          sudo test ! -e /var/lib/inflow-broker
+          sudo test ! -e /run/inflow
+
+      - name: Test Fedora signed installer lifecycle
+        run: |
+          docker run --rm \
+            --volume "$PWD/dist/linux/release:/release:ro" \
+            fedora:42 \
+            sh -c '
+              dnf --assumeyes install curl gnupg2
+              INFLOW_RELEASE_BASE_URL=file:///release sh /release/install.sh
+              mkdir -p /var/lib/inflow /var/lib/inflow-broker /run/inflow
+              touch /var/lib/inflow-broker/private.der
+              sh /release/install.sh --uninstall
+              test -d /var/lib/inflow
+              test -f /var/lib/inflow-broker/private.der
+              INFLOW_RELEASE_BASE_URL=file:///release sh /release/install.sh
+              sh /release/install.sh --purge
+              test ! -e /var/lib/inflow
+              test ! -e /var/lib/inflow-broker
+              test ! -e /run/inflow
+            '
 
       - name: Upload signed release dry run
         uses: actions/upload-artifact@v6
