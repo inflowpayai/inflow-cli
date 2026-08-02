@@ -26,9 +26,10 @@ Installing into an agent host? Use the per-surface guide:
 InFlow is distributed as a signed native application. The npm package is a compatibility notice and does not run
 commands, start MCP, or manage credentials.
 
-Public installation currently targets Apple Silicon and Intel Macs. Windows ARM64 MSI and Linux ARM64/AMD64 package
-workflows are validated, but those channels remain unavailable until their production signing and repository
-infrastructure is published.
+Public installation currently targets Apple Silicon and Intel Macs. Windows x64 and ARM64 packages do not build from
+pull requests, merges, or package releases; the manual workflow remains available for unsigned validation while
+production signing and publication await Microsoft identity approval. Linux ARM64/AMD64 package workflows are validated,
+but that channel remains unavailable until its repository infrastructure is published.
 
 ### Homebrew Cask
 
