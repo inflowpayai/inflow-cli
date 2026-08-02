@@ -9,21 +9,23 @@ withdrawals, sellers, and users.
 
 ## Install the native application
 
-Install InFlow before configuring an agent host. Public installation currently supports Apple Silicon and Intel macOS:
+Install InFlow before configuring an agent host. Public installation currently supports Apple Silicon and Intel macOS
+through Homebrew:
 
 ```bash
 brew tap inflowpayai/tap
 brew install --cask inflow
 ```
 
-The hosted macOS installer is:
+The hosted installer supports macOS, Debian/Ubuntu, and Fedora/RHEL:
 
 ```bash
 curl -fsSL https://inflowcli.ai/install.sh | bash
 ```
 
-Windows x64 and ARM64 MSI and Linux ARM64/AMD64 packages have passed their platform workflows. They are not public
-install channels until production Windows signing and signed Linux release assets are published.
+Signed Linux ARM64 and AMD64 Debian packages, RPM packages, and standalone archives are published through GitHub
+Releases. Windows x64 and ARM64 MSI packages have passed their unsigned platform workflow, but production signing and
+publication await Microsoft identity approval.
 
 ### Windows release signing
 
