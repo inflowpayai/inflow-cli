@@ -80,6 +80,22 @@ jobs:
           sudo swapoff -a
           sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/usr/bin/inflow pnpm smoke:linux-system-vault
 
+      - name: Test Debian package lifecycle
+        run: |
+          sudo test -d /var/lib/inflow
+          sudo test -f /var/lib/inflow-broker/private.der
+          sudo cp /var/lib/inflow-broker/public.der "$RUNNER_TEMP/inflow-broker-public.der"
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get remove --yes inflow
+          sudo test -d /var/lib/inflow
+          sudo test -f /var/lib/inflow-broker/private.der
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes "$PWD"/dist/linux/inflow_*.deb
+          sudo inflow vault status --format json | grep '"lock_state": "locked"'
+          sudo cmp /var/lib/inflow-broker/public.der "$RUNNER_TEMP/inflow-broker-public.der"
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get purge --yes inflow
+          sudo test ! -e /var/lib/inflow
+          sudo test ! -e /var/lib/inflow-broker
+          sudo test ! -e /run/inflow
+
       - name: Publish dry-run
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: pnpm --filter @inflowpayai/inflow publish --dry-run --no-git-checks
