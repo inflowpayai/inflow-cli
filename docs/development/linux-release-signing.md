@@ -154,12 +154,16 @@ files, release assets, password managers synchronized to daily-use machines, or 
 ## Production release
 
 Create the version tag from the reviewed release commit, then dispatch `native-release.yml` from that tag. Immutable
-releases must be enabled in the repository before the workflow runs.
+releases must be enabled in the repository before the workflow runs. The repository variable records the release
+operator's authenticated check because GitHub requires repository administration permission to read this setting and
+does not grant that permission to a workflow token.
 
 ```sh
 VERSION="$(node -p "require('./packages/cli/package.json').version")"
 TAG="v$VERSION"
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+test "$(gh api repos/inflowpayai/inflow-cli/immutable-releases --jq '.enabled')" = 'true'
+gh variable set IMMUTABLE_RELEASES_ENABLED --repo inflowpayai/inflow-cli --body true
 git tag "$TAG"
 git push origin "$TAG"
 gh workflow run native-release.yml \

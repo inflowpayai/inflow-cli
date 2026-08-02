@@ -28,6 +28,7 @@ jobs:
       - name: Validate release source
         env:
           GH_TOKEN: ${{ github.token }}
+          IMMUTABLE_RELEASES_ENABLED: ${{ vars.IMMUTABLE_RELEASES_ENABLED }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
@@ -36,7 +37,7 @@ jobs:
           test "$GITHUB_REF" = "refs/tags/v$VERSION"
           tag_commit="$(git rev-list -n 1 "v$VERSION")"
           test "$tag_commit" = "$GITHUB_SHA"
-          test "$(gh api repos/$GITHUB_REPOSITORY/immutable-releases --jq '.enabled')" = 'true'
+          test "$IMMUTABLE_RELEASES_ENABLED" = 'true'
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             echo "::error::v$VERSION already has a GitHub Release"
             exit 1
