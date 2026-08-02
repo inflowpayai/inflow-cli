@@ -22,13 +22,14 @@ The hosted macOS installer is:
 curl -fsSL https://inflowcli.ai/install.sh | bash
 ```
 
-Windows ARM64 MSI and Linux ARM64/AMD64 packages have passed their platform workflows. They are not public install
-channels until production Windows signing and Linux repository trust roots are published.
+Windows x64 and ARM64 MSI and Linux ARM64/AMD64 packages have passed their platform workflows. They are not public
+install channels until production Windows signing and Linux repository trust roots are published.
 
 ### Windows release signing
 
-The `windows release` GitHub Actions workflow builds native x64 and ARM64 executable payloads. Pull requests and manual
-runs with signing disabled build unsigned MSI files and release metadata without publishing them.
+The `windows release` GitHub Actions workflow is manual. Windows binaries do not build from pull requests, merges, or
+package releases. Manual runs with signing disabled build unsigned x64 and ARM64 MSI files and release metadata without
+publishing them. Production signing and publication await Microsoft identity approval.
 
 Production runs use Azure Artifact Signing in this order:
 
