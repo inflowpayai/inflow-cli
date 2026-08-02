@@ -66,6 +66,10 @@ jobs:
             echo "::error::Requested version $requested_version does not match packages/cli/package.json version $package_version"
             exit 1
           fi
+          if [[ '${{ inputs.dry_run }}' == 'false' && "$GITHUB_REF" != "refs/tags/v$package_version" ]]; then
+            echo "::error::Production macOS releases must run from refs/tags/v$package_version"
+            exit 1
+          fi
           echo "version=$package_version" >> "$GITHUB_OUTPUT"
           echo "artifact=dist/macos/inflow-$package_version-darwin-${{ matrix.arch }}.zip" >> "$GITHUB_OUTPUT"
           echo "artifact_name=inflow-macos-${{ matrix.arch }}-$package_version" >> "$GITHUB_OUTPUT"
@@ -263,13 +267,8 @@ jobs:
           x64='${{ steps.artifacts.outputs.x64 }}'
           arm64_checksum='${{ steps.artifacts.outputs.arm64_checksum }}'
           x64_checksum='${{ steps.artifacts.outputs.x64_checksum }}'
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "$arm64" "$x64" "$arm64_checksum" "$x64_checksum" --clobber
-          else
-            gh release create "$tag" "$arm64" "$x64" "$arm64_checksum" "$x64_checksum" \
-              --title "InFlow ${{ steps.metadata.outputs.version }}" \
-              --notes "Signed and notarized macOS artifacts for InFlow ${{ steps.metadata.outputs.version }}."
-          fi
+          gh release view "$tag" >/dev/null
+          gh release upload "$tag" "$arm64" "$x64" "$arm64_checksum" "$x64_checksum" --clobber
 
       - name: Create Homebrew tap token
         if: inputs.dry_run == false

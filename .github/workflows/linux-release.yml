@@ -1,4 +1,4 @@
-name: linux-release
+name: linux release
 
 on:
   workflow_dispatch:
@@ -28,10 +28,15 @@ jobs:
       - name: Validate workflow inputs
         env:
           PUBLISH: ${{ inputs.publish }}
+          TAG: ${{ inputs.tag }}
           VERIFY_PRODUCTION_SIGNING: ${{ inputs.verify_production_signing }}
         run: |
           if [ "$PUBLISH" = 'true' ] && [ "$VERIFY_PRODUCTION_SIGNING" = 'true' ]; then
             echo "::error::publish and verify_production_signing cannot both be enabled"
+            exit 1
+          fi
+          if [ "$PUBLISH" = 'true' ] && [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+            echo "::error::Production publishing must run from the requested tag refs/tags/$TAG"
             exit 1
           fi
           if [ "$VERIFY_PRODUCTION_SIGNING" = 'true' ] && [[ "$GITHUB_REF" != refs/tags/v* ]]; then

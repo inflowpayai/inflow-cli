@@ -161,6 +161,9 @@ pnpm changeset
 
 ## macOS release automation
 
+The `native release` workflow creates the version tag and a platform-neutral GitHub Release. Production platform
+workflows run from that immutable tag and attach their artifacts independently.
+
 The `macos release` workflow is manually dispatched from GitHub Actions. Its default dry run builds the Apple Silicon
 and Intel macOS artifacts, renders the Homebrew Cask, audits the Cask, and uploads workflow artifacts without
 notarizing, creating a GitHub Release, or pushing `inflowpayai/homebrew-tap`.
@@ -183,7 +186,7 @@ the Homebrew Cask in `inflowpayai/homebrew-tap` points at those release assets f
 
 ## Linux release automation
 
-The `linux-release` workflow builds native AMD64 and ARM64 archives, Debian packages, and RPM packages. Pull requests
+The `linux release` workflow builds native AMD64 and ARM64 archives, Debian packages, and RPM packages. Pull requests
 use a disposable OpenPGP key to sign a consolidated `SHA256SUMS` release manifest, sign both RPM packages, verify the
 result, reject modified metadata and packages, and install through the rendered Linux installer.
 

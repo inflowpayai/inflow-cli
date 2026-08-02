@@ -153,10 +153,24 @@ files, release assets, password managers synchronized to daily-use machines, or 
 
 ## Production release
 
-Create the version tag and matching GitHub Release before dispatching `linux-release`. Run the workflow with:
+Dispatch `native-release.yml` from the reviewed version commit to create the version tag and platform-neutral GitHub
+Release. Then dispatch `linux-release.yml` from that tag with:
 
 - `publish`: `true`
 - `tag`: the exact `v<package-version>` tag
+
+```sh
+gh workflow run native-release.yml \
+  --repo inflowpayai/inflow-cli \
+  --ref main \
+  -f version=0.10.1
+gh workflow run linux-release.yml \
+  --repo inflowpayai/inflow-cli \
+  --ref v0.10.1 \
+  -f publish=true \
+  -f verify_production_signing=false \
+  -f tag=v0.10.1
+```
 
 The protected job imports the automation subkey, compares the complete expected fingerprint, signs both RPM packages,
 creates and signs `SHA256SUMS`, verifies every signature, attests the final package bytes, renders an installer pinned

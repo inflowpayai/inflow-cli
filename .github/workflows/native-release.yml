@@ -1,0 +1,59 @@
+name: native release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version to release. Defaults to packages/cli/package.json.
+        required: false
+        type: string
+
+concurrency:
+  group: native-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+
+      - name: Create version tag and GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "JSON.parse(require('node:fs').readFileSync('packages/cli/package.json', 'utf8')).version")"
+          if [[ -n "$REQUESTED_VERSION" && "$REQUESTED_VERSION" != "$package_version" ]]; then
+            echo "::error::Requested version $REQUESTED_VERSION does not match packages/cli/package.json version $package_version"
+            exit 1
+          fi
+
+          tag="v$package_version"
+          if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+            tag_commit="$(git rev-list -n 1 "$tag")"
+            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "::error::$tag identifies $tag_commit instead of the selected commit $GITHUB_SHA"
+              exit 1
+            fi
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag already has a GitHub Release"
+          else
+            gh release create "$tag" \
+              --target "$GITHUB_SHA" \
+              --title "InFlow $package_version" \
+              --notes "Release artifacts for InFlow $package_version."
+          fi
