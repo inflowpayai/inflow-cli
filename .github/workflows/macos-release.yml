@@ -50,6 +50,11 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare pinned Argon2 source
+        run: |
+          node scripts/prepare-argon2-source.mjs "$RUNNER_TEMP/argon2-20190702"
+          echo "INFLOW_ARGON2_SOURCE_DIR=$RUNNER_TEMP/argon2-20190702" >> "$GITHUB_ENV"
+
       - name: Resolve release metadata
         id: metadata
         shell: bash
