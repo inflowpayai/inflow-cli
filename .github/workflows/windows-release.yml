@@ -14,7 +14,7 @@ on:
         type: boolean
         default: false
       tag:
-        description: Existing GitHub release tag. Required when publishing.
+        description: Existing GitHub release tag. Required when signing.
         required: false
         type: string
 
@@ -41,6 +41,12 @@ jobs:
           }
           if ($env:PUBLISH -eq 'true' -and [string]::IsNullOrWhiteSpace($env:TAG)) {
             throw 'Publishing requires an existing GitHub release tag.'
+          }
+          if ($env:SIGN -eq 'true' -and [string]::IsNullOrWhiteSpace($env:TAG)) {
+            throw 'Production signing requires an existing GitHub release tag.'
+          }
+          if ($env:SIGN -eq 'true' -and $env:GITHUB_REF -ne "refs/tags/$($env:TAG)") {
+            throw "Production signing must run from refs/tags/$($env:TAG)."
           }
 
   build-payload:
