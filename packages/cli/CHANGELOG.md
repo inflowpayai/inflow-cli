@@ -1,5 +1,28 @@
 # @inflowpayai/inflow
 
+## 0.10.2
+
+### Patch Changes
+
+- [#71](https://github.com/inflowpayai/inflow-cli/pull/71)
+  [`b4b4c97`](https://github.com/inflowpayai/inflow-cli/commit/b4b4c975363294a94ce49d4e2ceffb2f34ed7f4b) Thanks
+  [@nkavian](https://github.com/nkavian)! - Publish verified macOS and Linux artifacts together through one immutable
+  native release workflow.
+
+- [#70](https://github.com/inflowpayai/inflow-cli/pull/70)
+  [`177bad3`](https://github.com/inflowpayai/inflow-cli/commit/177bad36d0cedf10c638b02019beadd0fe53db98) Thanks
+  [@nkavian](https://github.com/nkavian)! - Document the hosted signed-native installer as supporting macOS and Linux.
+
+- [#68](https://github.com/inflowpayai/inflow-cli/pull/68)
+  [`ec73126`](https://github.com/inflowpayai/inflow-cli/commit/ec73126903712f28163bf42772058034ea74334c) Thanks
+  [@nkavian](https://github.com/nkavian)! - Remove encrypted vault data and broker identity keys when purging a Linux
+  installation.
+
+- [#72](https://github.com/inflowpayai/inflow-cli/pull/72)
+  [`634136e`](https://github.com/inflowpayai/inflow-cli/commit/634136eb3959f5fffd27373e2a9b4e147fd148f8) Thanks
+  [@nkavian](https://github.com/nkavian)! - Reject duplicate, missing, unexpected, corrupt, and digest-mismatched native
+  release assets before publication.
+
 ## 0.10.1
 
 ### Patch Changes
