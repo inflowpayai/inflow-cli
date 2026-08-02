@@ -3,11 +3,15 @@ name: native release
 on:
   workflow_dispatch:
     inputs:
-      publish:
-        description: Publish the verified release and update Homebrew.
+      mode:
+        description: Stage assets, verify an unpublished draft, or publish and update Homebrew.
         required: true
-        type: boolean
-        default: false
+        type: choice
+        options:
+          - preflight
+          - draft
+          - publish
+        default: preflight
       version:
         description: Package version to release.
         required: true
@@ -112,7 +116,7 @@ jobs:
           retention-days: 7
 
   publish:
-    if: inputs.publish
+    if: inputs.mode != 'preflight'
     needs: stage
     runs-on: ubuntu-24.04
     permissions:
@@ -142,16 +146,22 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if published="$(gh release view "v$VERSION" --json isDraft --jq 'select(.isDraft == false) | true' 2>/dev/null)" && [ "$published" = 'true' ]; then
-            echo 'published=true' >> "$GITHUB_OUTPUT"
-            exit 0
+          existing_release_ids="$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            --jq ".[] | select(.tag_name == \"v$VERSION\") | .id")"
+          if [ -n "$existing_release_ids" ]; then
+            echo "::error::v$VERSION already has a GitHub Release"
+            exit 1
           fi
           gh release create "v$VERSION" dist/native/assets/* \
             --draft \
             --generate-notes \
             --title "InFlow $VERSION" \
             --verify-tag
-          echo 'published=false' >> "$GITHUB_OUTPUT"
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            --jq ".[] | select(.draft and .tag_name == \"v$VERSION\") | .id")"
+          test -n "$release_id"
+          test "$(printf '%s\n' "$release_id" | wc -l | tr -d ' ')" = '1'
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
       - name: Verify draft release assets
         env:
@@ -159,27 +169,42 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v$VERSION" > dist/native/release.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/${{ steps.release.outputs.release_id }}" > dist/native/release.json
           node scripts/verify-native-release-assets.mjs dist/native/assets "$VERSION" dist/native/release.json
 
       - name: Publish release
-        if: steps.release.outputs.published != 'true'
+        if: inputs.mode == 'publish'
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
-        run: gh release edit "v$VERSION" --draft=false --latest
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f make_latest=true
 
-      - name: Remove unpublished draft after failure
-        if: failure()
+      - name: Verify published immutable release
+        if: inputs.mode == 'publish'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
           VERSION: ${{ inputs.version }}
         run: |
-          if state="$(gh release view "v$VERSION" --json isDraft --jq '.isDraft' 2>/dev/null)" && [ "$state" = 'true' ]; then
-            gh release delete "v$VERSION" --yes
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > dist/native/release.json
+          test "$(jq -r '.draft' dist/native/release.json)" = 'false'
+          test "$(jq -r '.immutable' dist/native/release.json)" = 'true'
+          test "$(jq -r '.tag_name' dist/native/release.json)" = "v$VERSION"
+          node scripts/verify-native-release-assets.mjs dist/native/assets "$VERSION" dist/native/release.json
+
+      - name: Remove unpublished draft
+        if: failure() || inputs.mode == 'draft'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          if [ -n "$RELEASE_ID" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.draft' 2>/dev/null)" = 'true' ]; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
           fi
 
   homebrew:
+    if: inputs.mode == 'publish'
     needs: publish
     runs-on: ubuntu-24.04
     permissions:
