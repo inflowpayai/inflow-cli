@@ -26,10 +26,9 @@ Installing into an agent host? Use the per-surface guide:
 InFlow is distributed as a signed native application. The npm package is a compatibility notice and does not run
 commands, start MCP, or manage credentials.
 
-Public installation currently targets Apple Silicon and Intel Macs through Homebrew, macOS and Linux through the hosted
-installer, and macOS and Linux through direct GitHub Release downloads. Windows x64 and ARM64 packages do not build from
-pull requests, merges, or package releases; the manual workflow remains available for unsigned validation while
-production signing and publication await Microsoft identity approval.
+Public installation supports Apple Silicon and Intel Macs, Windows x64 and ARM64, and Linux ARM64 and AMD64. Homebrew,
+the hosted installers, WinGet, and direct GitHub Release downloads install the signed native application for each
+platform.
 
 ### Homebrew Cask
 
@@ -46,9 +45,9 @@ brew upgrade --cask inflow
 brew uninstall --cask inflow
 ```
 
-### Hosted installer
+### Hosted installers
 
-The same command installs the native application on macOS, Debian/Ubuntu, and Fedora/RHEL:
+On macOS, Debian/Ubuntu, and Fedora/RHEL:
 
 ```bash
 curl -fsSL https://inflowcli.ai/install.sh | bash
@@ -64,17 +63,57 @@ Run the installer again to upgrade to the latest GitHub Release. Uninstall with:
 curl -fsSL https://inflowcli.ai/install.sh | bash -s -- --uninstall
 ```
 
+On Windows, run PowerShell as a user who can approve the Windows Installer elevation prompt:
+
+```powershell
+irm https://inflowcli.ai/install.ps1 | iex
+```
+
+The PowerShell installer selects x64 or ARM64, verifies the MSI checksum, Authenticode status, and publisher, and then
+installs the package through Windows Installer. Run it again to upgrade. To uninstall while preserving encrypted vault
+data:
+
+```powershell
+$env:INFLOW_UNINSTALL = '1'
+try { irm https://inflowcli.ai/install.ps1 | iex } finally { Remove-Item Env:INFLOW_UNINSTALL }
+```
+
+The compatibility shell endpoint delegates to the platform installer on macOS, Linux, and Git Bash-like Windows
+environments:
+
+```bash
+curl -fsSL https://inflowcli.ai/cli | bash
+```
+
+### WinGet
+
+```powershell
+winget install --id InFlowPayAI.InFlow --exact
+```
+
+Upgrade or uninstall through WinGet:
+
+```powershell
+winget upgrade --id InFlowPayAI.InFlow --exact
+winget uninstall --id InFlowPayAI.InFlow --exact
+```
+
 ### Direct download
 
-Download the matching zip from the `inflowpayai/inflow-cli` GitHub Release for the package version:
+Download the matching artifact from the `inflowpayai/inflow-cli` GitHub Release for the package version:
 
 - `inflow-<version>-darwin-arm64.zip` for Apple Silicon Macs
 - `inflow-<version>-darwin-x64.zip` for Intel Macs
+- `inflow-<version>-windows-arm64.msi` for Windows ARM64
+- `inflow-<version>-windows-x64.msi` for Windows x64
 
 The zip contains `InFlow.app`; the executable is inside the app bundle at `InFlow.app/Contents/MacOS/inflow`.
 
 Linux releases include ARM64 and AMD64 Debian packages, RPM packages, and standalone archives. Debian and RPM packages
 install the system vault service required by the Linux security model.
+
+Windows MSI packages install the command-line application and its on-demand vault service. Windows verifies the
+Authenticode signature and publisher before installation.
 
 ### Initialize the credential vault
 
@@ -135,8 +174,9 @@ send credentials.
 
 ## Upgrade and troubleshooting
 
-Upgrade a Homebrew installation with `brew upgrade --cask inflow`. For a hosted installation, rerun the hosted
-installer. The CLI may report a newer signed release, but continues unless the API returns `VERSION_UNSUPPORTED`.
+Upgrade a Homebrew installation with `brew upgrade --cask inflow`, a WinGet installation with
+`winget upgrade --id InFlowPayAI.InFlow --exact`, or a hosted installation by rerunning its platform installer. The CLI
+may report a newer signed release, but continues unless the API returns `VERSION_UNSUPPORTED`.
 
 If an agent or MCP tool reports that the vault is locked, run `inflow vault unlock` yourself in a terminal and retry the
 operation. Never paste the PIN or passphrase into a prompt or MCP tool input.
@@ -164,58 +204,12 @@ pnpm typedoc
 pnpm changeset
 ```
 
-## Native release automation
+## Release automation
 
-Production native releases use one `native release` workflow. Create `v<version>` from the reviewed release commit, then
-dispatch the workflow from that tag with the matching package version and an explicit `mode` input. Preflight mode
-performs production signing, notarization, staging, and complete asset verification. Draft mode also uploads and
-verifies an unpublished draft before deleting it. Publish mode creates and re-verifies the draft, publishes it, and
-updates Homebrew. The workflow requires immutable releases to be enabled and publishes only after every required
-platform succeeds. Windows remains excluded until Microsoft Artifact Signing is available.
-
-The standalone platform workflows cannot publish a GitHub Release. They provide dry runs and protected signing checks;
-production artifacts are staged only when called by `native release`.
-
-## macOS release automation
-
-The `macos release` workflow is manually dispatched from GitHub Actions. Its default dry run builds the Apple Silicon
-and Intel macOS artifacts, renders the Homebrew Cask, audits the Cask, and uploads workflow artifacts without
-notarizing, creating a GitHub Release, or pushing `inflowpayai/homebrew-tap`.
-
-Real release runs require these repository secrets:
-
-- `APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64`
-- `APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD`
-- `APPLE_NOTARY_APPLE_ID`
-- `APPLE_NOTARY_APP_SPECIFIC_PASSWORD`
-- `APPLE_NOTARY_TEAM_ID`
-- `HOMEBREW_TAP_APP_PRIVATE_KEY`
-
-Real release runs also require this repository variable:
-
-- `HOMEBREW_TAP_APP_CLIENT_ID`
-
-After the complete native release is public, its generated Homebrew Cask is pushed to `inflowpayai/homebrew-tap`.
-
-## Linux release automation
-
-The `linux release` workflow builds native AMD64 and ARM64 archives, Debian packages, and RPM packages. Pull requests
-use a disposable OpenPGP key to sign a consolidated `SHA256SUMS` release manifest, sign both RPM packages, verify the
-result, reject modified metadata and packages, and install through the rendered Linux installer.
-
-Production runs use the protected `linux-production` GitHub environment. That environment permits approval by the
-initiating sole release operator, is restricted to release tags, and contains only the exportable automation signing
-subkey:
-
-- Environment secret: `LINUX_OPENPGP_SIGNING_SUBKEY_BASE64`
-- Environment variable: `LINUX_OPENPGP_SIGNING_FINGERPRINT`
-
-The primary certification key remains offline. It has no expiration. The automation signing subkey has a two-year
-lifetime, is reviewed annually, and is replaced approximately 90 days before expiration. The native release workflow
-signs and verifies the Linux assets before they enter the combined draft release.
-
-See [`docs/development/linux-release-signing.md`](./docs/development/linux-release-signing.md) for the offline key
-ceremony, GitHub environment setup, release process, and recovery procedure.
+Production releases use one atomic native workflow that signs and verifies the macOS, Windows, and Linux artifacts
+before publishing an immutable GitHub Release and updating the platform distribution channels. See the
+[native release guide](./docs/development/native-release.md) for workflow modes, platform credentials, signing order,
+and recovery procedures.
 
 ## Packages
 
