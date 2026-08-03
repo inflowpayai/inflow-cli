@@ -54,6 +54,12 @@ describe('sanitizeDeep', () => {
     expect(sanitizeDeep(url)).toBe(url);
   });
 
+  it('walks maps recursively', () => {
+    const out = sanitizeDeep(new Map([['\x1b[31mkey\x1b[0m', { title: '\x01value' }]]));
+
+    expect([...out]).toEqual([['key', { title: 'value' }]]);
+  });
+
   it('walks nested objects', () => {
     const out = sanitizeDeep({
       name: '\x1b[31mhi\x1b[0m',

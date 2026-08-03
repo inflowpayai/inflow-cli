@@ -1,7 +1,7 @@
 # @inflowpayai/inflow
 
-The InFlow binary — Agent Enrollment Protocol access and agentic [MPP](https://mpp.dev) / [x402](https://x402.org)
-payments from your machine. See the [repository README](../../README.md) for project-level context.
+The InFlow binary for agentic discovery, onboarding, and [MPP](https://mpp.dev) / [x402](https://x402.org) payments. See
+the [repository README](../../README.md) for project-level context.
 
 Install InFlow from [inflowcli.ai](https://inflowcli.ai/) to run commands, start MCP, or manage credentials. The hosted
 installers support macOS and Linux through `install.sh`, Windows through `install.ps1`, and cross-platform shell
@@ -16,41 +16,53 @@ For host-specific skill and MCP installation, see the repository's
 
 ## Command index
 
-| Command                              | Purpose                                                                                                                           |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| `inflow auth login`                  | Run the OAuth device flow to authenticate. Saves a refreshable access token.                                                      |
-| `inflow auth logout`                 | Revoke eligible remote credentials and reset local authentication, vault, and cached state.                                       |
-| `inflow auth status`                 | Show which credential the CLI would use, plus the active environment and resolved API URL.                                        |
-| `inflow vault status`                | Show whether the encrypted local credential vault is initialized, locked, and available.                                          |
-| `inflow vault unlock`                | Initialize or unlock the local vault from a human-controlled terminal.                                                            |
-| `inflow vault lock`                  | Lock the local vault.                                                                                                             |
-| `inflow vault policy`                | Show the vault idle and sleep-lock policy.                                                                                        |
-| `inflow vault set-policy`            | Change the vault idle and sleep-lock policy.                                                                                      |
-| `inflow vault change-passphrase`     | Rewrap the vault data key under a new PIN or passphrase.                                                                          |
-| `inflow vault reset`                 | Remove the local vault database, bootstrap material, policy, and runtime state.                                                   |
-| `inflow balances list`               | List the authenticated user's balances.                                                                                           |
-| `inflow deposit-addresses list`      | List the user's configured deposit addresses, grouped by network.                                                                 |
-| `inflow inspect <url>`               | Detect a URL's payment protocol(s) and show MPP and x402 challenges together. Read-only probe — no auth, no payment.              |
-| `inflow aep inspect <service>`       | Inspect an Agent Enrollment Protocol Service. No InFlow login is required.                                                        |
-| `inflow aep fetch <resource-url>`    | Fetch a resource anonymously or complete AEP authentication, approval, credential storage, and replay in one invocation.          |
-| `inflow aep enroll <service>`        | Provision or reuse a Service-scoped Agent identity and enroll after InFlow approval.                                              |
-| `inflow aep status <service>`        | Fetch Service lifecycle status and list non-secret local credential summaries.                                                    |
-| `inflow aep grant <service>`         | Request a fresh Service credential and store it locally without exposing its secret.                                              |
-| `inflow aep revoke <service>`        | Revoke all Service credentials, or one credential or grant type.                                                                  |
-| `inflow x402 pay <url>`              | Create an x402 payment transaction and optionally poll/replay inline.                                                             |
-| `inflow x402 fetch <tx> <url>`       | Resume an x402 transaction, wait for a signed payload when configured, and fetch the seller resource.                             |
-| `inflow x402 inspect <url>`          | Read-only probe. Show the seller's `PAYMENT-REQUIRED` accepts for a URL — no auth, no payment.                                    |
-| `inflow x402 status <transactionId>` | Poll the signing state of an in-flight transaction without contacting the seller.                                                 |
-| `inflow x402 cancel <approvalId>`    | Best-effort cancel of an in-flight approval. Requires authentication; success does not verify the server-side approval state.     |
-| `inflow x402 decode <header>`        | Decode a raw `PAYMENT-REQUIRED` header value. No auth required.                                                                   |
-| `inflow x402 supported`              | List the buyer-side `(scheme, network)` capability cache.                                                                         |
-| `inflow mpp pay <url>`               | Create an MPP payment transaction and optionally poll/replay inline.                                                              |
-| `inflow mpp fetch <tx> <url>`        | Resume an MPP transaction, wait for a ready credential when configured, and fetch the seller resource.                            |
-| `inflow mpp inspect <url>`           | Read-only probe. Parse the seller's MPP `Payment` challenge(s) for a URL — no auth, no payment.                                   |
-| `inflow mpp status <transactionId>`  | Poll the buyer-side state of an in-flight MPP transaction without contacting the seller.                                          |
-| `inflow mpp cancel <approvalId>`     | Best-effort cancel of an in-flight MPP approval. Requires authentication; success does not verify the server-side approval state. |
-| `inflow mpp decode <value>`          | Decode a `WWW-Authenticate: Payment` header, or a base64url credential / receipt. No auth required.                               |
-| `inflow mpp supported`               | List the methods the buyer can pay with — by intent, settlement rail, and currency.                                               |
+| Command                                                          | Purpose                                                                                                                           |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `inflow auth login`                                              | Run the OAuth device flow to authenticate. Saves a refreshable access token.                                                      |
+| `inflow auth logout`                                             | Revoke eligible remote credentials and reset local authentication, vault, and cached state.                                       |
+| `inflow auth status`                                             | Show which credential the CLI would use, plus the active environment and resolved API URL.                                        |
+| `inflow vault status`                                            | Show whether the encrypted local credential vault is initialized, locked, and available.                                          |
+| `inflow vault unlock`                                            | Initialize or unlock the local vault from a human-controlled terminal.                                                            |
+| `inflow vault lock`                                              | Lock the local vault.                                                                                                             |
+| `inflow vault policy`                                            | Show the vault idle and sleep-lock policy.                                                                                        |
+| `inflow vault set-policy`                                        | Change the vault idle and sleep-lock policy.                                                                                      |
+| `inflow vault change-passphrase`                                 | Rewrap the vault data key under a new PIN or passphrase.                                                                          |
+| `inflow vault reset`                                             | Remove the local vault database, bootstrap material, policy, and runtime state.                                                   |
+| `inflow balances list`                                           | List the authenticated user's balances.                                                                                           |
+| `inflow deposit-addresses list`                                  | List the user's configured deposit addresses, grouped by network.                                                                 |
+| `inflow inspect <url>`                                           | Inspect a URL for discovery, enrollment, and payment protocols without taking an action.                                          |
+| `inflow odp directory search`                                    | Search the directory for services.                                                                                                |
+| `inflow odp directory suggest <prefix>`                          | Suggest directory keywords from a prefix.                                                                                         |
+| `inflow odp inspect <service>`                                   | Inspect a service's capabilities.                                                                                                 |
+| `inflow odp collections list <service>`                          | List collections from a service in terse form.                                                                                    |
+| `inflow odp collections search <service>`                        | Search collections from a service in terse form.                                                                                  |
+| `inflow odp collections get <service> <id>`                      | Get full collection details.                                                                                                      |
+| `inflow odp offerings list <service>`                            | List offerings from a service in terse form.                                                                                      |
+| `inflow odp offerings capabilities <service>`                    | Resolve the filters and sorts available for offering search.                                                                      |
+| `inflow odp offerings search <service>`                          | Search offerings from a service with structured filters.                                                                          |
+| `inflow odp offerings get <service> <id>`                        | Get full offering details, including resolved schemas, actions, and issues.                                                       |
+| `inflow odp offerings discover`                                  | Find offerings across services selected from the directory.                                                                       |
+| `inflow odp actions resolve <service> <offering-id> <action-id>` | Resolve an offering's action into an executable request without invoking it.                                                      |
+| `inflow aep inspect <service>`                                   | Inspect an Agent Enrollment Protocol Service. No InFlow login is required.                                                        |
+| `inflow aep fetch <resource-url>`                                | Fetch a resource anonymously or complete AEP authentication, approval, credential storage, and replay in one invocation.          |
+| `inflow aep enroll <service>`                                    | Provision or reuse a Service-scoped Agent identity and enroll after InFlow approval.                                              |
+| `inflow aep status <service>`                                    | Fetch Service lifecycle status and list non-secret local credential summaries.                                                    |
+| `inflow aep grant <service>`                                     | Request a fresh Service credential and store it locally without exposing its secret.                                              |
+| `inflow aep revoke <service>`                                    | Revoke all Service credentials, or one credential or grant type.                                                                  |
+| `inflow x402 pay <url>`                                          | Create an x402 payment transaction and optionally poll/replay inline.                                                             |
+| `inflow x402 fetch <tx> <url>`                                   | Resume an x402 transaction, wait for a signed payload when configured, and fetch the seller resource.                             |
+| `inflow x402 inspect <url>`                                      | Read-only probe. Show the seller's `PAYMENT-REQUIRED` accepts for a URL — no auth, no payment.                                    |
+| `inflow x402 status <transactionId>`                             | Poll the signing state of an in-flight transaction without contacting the seller.                                                 |
+| `inflow x402 cancel <approvalId>`                                | Best-effort cancel of an in-flight approval. Requires authentication; success does not verify the server-side approval state.     |
+| `inflow x402 decode <header>`                                    | Decode a raw `PAYMENT-REQUIRED` header value. No auth required.                                                                   |
+| `inflow x402 supported`                                          | List the buyer-side `(scheme, network)` capability cache.                                                                         |
+| `inflow mpp pay <url>`                                           | Create an MPP payment transaction and optionally poll/replay inline.                                                              |
+| `inflow mpp fetch <tx> <url>`                                    | Resume an MPP transaction, wait for a ready credential when configured, and fetch the seller resource.                            |
+| `inflow mpp inspect <url>`                                       | Read-only probe. Parse the seller's MPP `Payment` challenge(s) for a URL — no auth, no payment.                                   |
+| `inflow mpp status <transactionId>`                              | Poll the buyer-side state of an in-flight MPP transaction without contacting the seller.                                          |
+| `inflow mpp cancel <approvalId>`                                 | Best-effort cancel of an in-flight MPP approval. Requires authentication; success does not verify the server-side approval state. |
+| `inflow mpp decode <value>`                                      | Decode a `WWW-Authenticate: Payment` header, or a base64url credential / receipt. No auth required.                               |
+| `inflow mpp supported`                                           | List the methods the buyer can pay with — by intent, settlement rail, and currency.                                               |
 
 ## Global flags
 
@@ -123,8 +135,8 @@ inflow auth status --probe      # validate the token via GET /v1/users/self
 Reports which credential the CLI would use (OAuth access token, API key, or none), the active environment, and the
 resolved API URL — including the SDK's built-in defaults when nothing is overridden.
 
-A runtime `--api-key` or `INFLOW_API_KEY` can be reported without opening the local vault. Without a runtime API key,
-a locked vault returns a non-zero `{ code: "VAULT_LOCKED", message }` error because the stored authentication state is
+A runtime `--api-key` or `INFLOW_API_KEY` can be reported without opening the local vault. Without a runtime API key, a
+locked vault returns a non-zero `{ code: "VAULT_LOCKED", message }` error because the stored authentication state is
 unavailable. Unlock the vault in a human-controlled terminal and retry.
 
 ## `balances`
@@ -149,38 +161,200 @@ inflow deposit-addresses list --format json
 
 Lists the configured deposit addresses for the authenticated user. TTY groups by network with a deposit address per row.
 
+## `odp`
+
+ODP discovery has two stages. The canonical directory finds Services from their advertised metadata; Collection and
+Offering commands then query a selected Service's catalog directly. The directory does not store or search a global
+Offering catalog. Directory search and `odp inspect` are public operations. Catalog and Action commands use the existing
+AEP runtime when Service authentication is required.
+
+The following agent workflow is directly runnable when the canonical directory contains a matching Service. It uses `jq`
+to pass identifiers from one structured response to the next:
+
+```bash
+set -eu
+
+directory_json=$(inflow odp directory search gpu \
+  --operation search-offerings \
+  --format json)
+service_origin=$(printf '%s' "$directory_json" | jq -er '.items[0].service_origin')
+
+inflow odp inspect "$service_origin" --format json
+
+offerings_json=$(inflow odp offerings search "$service_origin" gpu --format json)
+offering_id=$(printf '%s' "$offerings_json" | jq -er '.items[0].id')
+offering_json=$(inflow odp offerings get "$service_origin" "$offering_id" --format json)
+printf '%s\n' "$offering_json" | jq .
+
+action_id=$(printf '%s' "$offering_json" | jq -r '.offering.actions[0].id // empty')
+if [ -n "$action_id" ]; then
+  inflow odp actions resolve "$service_origin" "$offering_id" "$action_id" --format json
+fi
+```
+
+An opaque continuation can be resumed without interpreting it:
+
+```bash
+page=$(inflow odp directory search gpu --format json)
+next=$(printf '%s' "$page" | jq -r '.next // empty')
+if [ -n "$next" ]; then
+  inflow odp directory search --next "$next" --format json
+fi
+```
+
+### Access, caching, and privacy
+
+- A directory query is sent only to `https://directory.offeringprotocol.org`, or to the fixed sandbox directory when
+  `--sandbox` is selected. The directory sees the Service query and Service-level filters.
+- Per-Service Collection, Offering, and Action requests are sent directly to that Service. `offerings discover` sends
+  the Offering query and catalog filters to every selected Service within the configured bounds.
+- The CLI does not send ODP analytics or command telemetry. Shell history, redirected output, and the selected remote
+  Services remain outside the CLI's control, so queries and returned catalog data should be handled accordingly.
+- AEP credentials are attached after a live Service challenge, or when existing AEP policy metadata establishes that
+  authentication is required, and are not included in command output. Internal cache partitions are derived only for a
+  verified current InFlow identity, are not credentials, and are not emitted. When the identity cannot be verified,
+  catalog caching is disabled instead of sharing a response across principals.
+- Service-controlled output is recursively stripped of ANSI escape sequences before TTY or structured rendering.
+  `--verbose` does not print ODP AEP credentials, protected response bodies, or cache-partition identifiers.
+
+### `odp directory`
+
+```bash
+inflow odp directory search gpu --keyword compute --payment mpp --format json
+inflow odp directory suggest gp --limit 10 --format json
+```
+
+Directory search returns one page as `{ items, next?, facets? }`. Pass the opaque `next` value back through
+`--next <value>` to continue; a continuation cannot be combined with a new query or filters. The SDK validates and
+requests the continuation, so callers do not interpret or reconstruct it. `--sandbox` selects the canonical ODP sandbox
+directory.
+
+Suggestions return `{ items }`, where each item is a directory keyword matching the supplied prefix.
+
+### `odp inspect`
+
+```bash
+inflow odp inspect https://compute.example --format json
+```
+
+Inspection fetches the Service's ODP well-known document and returns the validated document, effective capabilities,
+canonical Service origin, resolved URLs, and freshness state.
+
+Direct Collection, Offering, and Action commands verify the required operation against these capabilities before calling
+an initial catalog endpoint. An unsupported operation returns `ODP_OPERATION_NOT_SUPPORTED`, includes the advertised
+operations, and identifies the corresponding list command when listing is a valid alternative to search. Opaque
+continuations remain bound to the operation that produced them and resume without a new capability decision.
+
+### `odp collections`
+
+```bash
+inflow odp collections list https://compute.example --format json
+inflow odp collections search https://compute.example gpu --parent-id hardware --format json
+inflow odp collections get https://compute.example hardware --format json
+```
+
+Collection list and search return one terse page as `{ service_origin, odp_version, items, next? }`; Collection get
+returns `{ service_origin, collection }` containing the full representation. Use `--language` to send `Accept-Language`.
+List and search continuations are opaque and can be resumed with `--next`.
+
+### `odp offerings`
+
+```bash
+inflow odp offerings capabilities https://compute.example --collection-id gpu --format json
+inflow odp offerings list https://compute.example --collection-id gpu --format json
+inflow odp offerings search https://compute.example a100 \
+  --filter '{"id":"memory","operator":"gte","value":80}' \
+  --refinement memory \
+  --sort price-lowest \
+  --format json
+inflow odp offerings get https://compute.example gpu-a100 --format json
+inflow odp offerings discover a100 \
+  --service-query compute \
+  --keyword gpu \
+  --payment mpp \
+  --max-services 10 \
+  --max-offerings-per-service 5 \
+  --format json
+```
+
+List and search return one terse page as `{ service_origin, odp_version, items, next?, refinements? }`; get returns
+`{ service_origin, offering }`, where `offering` is the SDK's enriched full Offering including resolved Attribute Schema
+and normalized Actions when available. Each repeatable `--filter` contains one JSON-encoded ODP filter expression. Use
+`capabilities` to resolve Service and Collection filter and sort definitions before constructing those expressions.
+Continuations are passed back to the Service SDK unchanged through `--next` and cannot be combined with a new search.
+
+`offerings discover` first selects Services through the canonical directory and then queries each Service's own ODP
+catalog. The directory does not hold a global Offering catalog. Without an explicit directory operation filter, the
+command derives the required Offering operation from the requested search, Collection, or list behavior. Its structured
+result is `{ items }`, with each item containing the matched `service` and `offering`. Service failures are omitted from
+this aggregate result; direct per-Service commands remain available when the caller needs a specific failure.
+
+### `odp actions`
+
+```bash
+inflow odp actions resolve https://compute.example gpu-a100 purchase --format json
+```
+
+`actions resolve` retrieves the full Offering and resolves the selected Action. Direct HTTP Actions return the exact
+method and URL plus any resolved request schema. OpenAPI Actions return the identified OpenAPI operation and document.
+Resolution is read-only: inspect the returned contract, construct its request body when required, and pass the target to
+the existing payment command selected by the live endpoint:
+
+```bash
+inflow mpp pay https://compute.example/actions/purchase --method POST --data '{"quantity":1}' --format json
+inflow x402 pay https://compute.example/actions/purchase --method POST --data '{"quantity":1}' --format json
+```
+
+Those payment commands perform AEP authentication when challenged before continuing through MPP or x402. ODP does not
+infer a payment rail from the Offering preview and does not invoke an Action during resolution.
+
 ## `aep`
 
 The `aep` group implements six Agent Enrollment Protocol Service commands. `inspect` is stateless and works logged out.
 The other commands use the existing InFlow authentication session to authenticate to the InFlow Platform; the
 Platform-issued AEP assertion separately authenticates the Agent to the Service.
 
-```bash
-inflow aep inspect service.example
-inflow aep inspect https://service.example/private --method GET
-inflow aep fetch https://service.example/private --format json
-inflow aep enroll service.example --interval 5
-inflow aep status service.example --format json
-inflow aep grant service.example --scope read:resource
-inflow aep revoke service.example
-```
+### Access and credential storage
 
 The CLI stores Service-scoped identities in SQLite and encrypts complete credential material in the local vault. Stored
 state belongs to the canonical InFlow Platform origin and authenticated user. Logout clears it. Agent output never
 exposes credential secrets: `grant` reports only credential metadata, and `status` reports only usable local grant
 summaries.
 
-`aep inspect` probes an exact URL when one is supplied and reports `resource_authentication` as `not-required`,
-`aep-authenticatable`, or `other-authentication-required`. DID input reports `not-checked`. Service discovery remains
-origin-based. `enroll` returns the complete validated Service response. `status` returns
-`{ service, local: { grants } }`; when the Agent is not enrolled, it returns
-`{ enrolled: false, service: null, local: { grants: [] } }`. `grant` returns `granted`, credential metadata, and scopes;
-`revoke` returns `revoked` and its single selector field.
+### `aep inspect`
 
-`aep fetch` preserves the original method, headers, replayable body, redirect and response bounds, and output controls.
-When authenticated AEP access reaches a legitimate payment `402`, the command exits successfully with
+```bash
+inflow aep inspect service.example
+inflow aep inspect https://service.example/private --method GET
+```
+
+Inspection probes an exact URL when one is supplied and reports `resource_authentication` as `not-required`,
+`aep-authenticatable`, or `other-authentication-required`. DID input reports `not-checked`. Service discovery remains
+origin-based.
+
+### `aep fetch`
+
+```bash
+inflow aep fetch https://service.example/private --format json
+```
+
+Fetch preserves the original method, headers, replayable body, redirect and response bounds, and output controls. When
+authenticated AEP access reaches a legitimate payment `402`, the command exits successfully with
 `payment_required.protocols` and copyable `payment_required.commands` so callers can continue with `mpp pay` or
 `x402 pay`; it never creates a payment transaction itself.
+
+### `aep enroll`, `aep status`, `aep grant`, and `aep revoke`
+
+```bash
+inflow aep enroll service.example --interval 5
+inflow aep status service.example --format json
+inflow aep grant service.example --scope read:resource
+inflow aep revoke service.example
+```
+
+Enroll returns the complete validated Service response. Status returns `{ service, local: { grants } }`; when the Agent
+is not enrolled, it returns `{ enrolled: false, service: null, local: { grants: [] } }`. Grant returns `granted`,
+credential metadata, and scopes; revoke returns `revoked` and its single selector field.
 
 ## `inspect`
 
@@ -188,18 +362,18 @@ When authenticated AEP access reaches a legitimate payment `402`, the command ex
 inflow inspect https://seller.example.com/api/widgets
 ```
 
-Protocol-agnostic, read-only pre-flight. It decodes AEP, MPP, and x402 requirements without creating AEP Grant, AEP Sign
-approval, or payment. When a fresh OpenAPI policy proves AEP authentication is required, `inspect` stops at the AEP gate
+Protocol-agnostic, read-only pre-flight. It inspects ODP discovery and decodes AEP, MPP, and x402 requirements without
+creating AEP Grant, AEP Sign approval, invoking an ODP Action, or making a payment. The command does not initiate
+authentication. When a fresh OpenAPI policy proves AEP authentication is required, `inspect` stops at the AEP gate
 unless a compatible stored AEP session credential can reveal the downstream payment layer. Otherwise it probes the URL
 once and decodes both MPP and x402 challenges from the same 402 response — so you don't have to know the protocol before
-inspecting. **No authentication required.** This is the recommended first step: read `detected` to decide which rail
-owns the next action.
+inspecting. This is the recommended first step: read `detected` to decide which rail owns the next action.
 
 Unlike the per-protocol probes it carries only the probe-shape flags (`--method`, `--data`, `--header`) — it is
 deliberately unfiltered. For filtered probes or full per-protocol detail (pay-to, timeout, extras, challenge ids /
 digests), use [`inflow mpp inspect`](#mpp-inspect) / [`inflow x402 inspect`](#x402-inspect).
 
-TTY renders a `detected:` summary line, then one section per protocol. Each section shows a triage table or a dim "none
+TTY renders a `detected:` summary line, then ODP, AEP, MPP, and x402 sections. Each section shows details or a dim "none
 advertised" line; a protocol whose header is present but undecodable shows a one-line warning rather than failing the
 command. The x402 `Amount` is the seller's raw atomic units (decimals are not carried on the wire), and `Asset` is the
 full on-chain contract address / mint rendered verbatim — it is not a token symbol.
@@ -221,8 +395,10 @@ exact   solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1  10000   4zMMC9srt5Ri5X14GAgXhaH
 Full detail (pay-to, timeout, extras, ids/digests): `inflow mpp inspect` / `inflow x402 inspect`, or --format json.
 ```
 
-Agent shape — fixed-shape arrays (`mpp` / `x402` are `[]` when a protocol is absent), with `detected` listing the
-protocols that have at least one entry:
+Agent shape — fixed-shape arrays (`mpp` / `x402` are `[]` when a protocol is absent). `odp` is `{ available: false }`,
+adds `{ error: { code, message } }` for an ODP-scoped failure, or is
+`{ available: true, inspect: { document, service_origin } }` when advertised. `detected` lists the protocols that have
+at least one entry:
 
 ```jsonc
 {
@@ -230,6 +406,7 @@ protocols that have at least one entry:
   "url": "https://seller.example.com/api/widgets",
   "method": "GET",
   "detected": ["x402"],
+  "odp": { "available": false },
   "aep": { "required": false, "source": "anonymous_probe" },
   "mpp": [],
   "x402": [

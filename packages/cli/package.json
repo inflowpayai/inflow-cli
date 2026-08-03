@@ -3,7 +3,7 @@
   "version": "0.10.3",
   "type": "module",
   "license": "MIT",
-  "description": "InFlow - agentic MPP / x402 payments from your machine.",
+  "description": "InFlow - agentic discovery, onboarding, and payments from your machine.",
   "homepage": "https://inflowcli.ai",
   "bin": {
     "inflow": "./dist/npm-shim.js"
@@ -43,7 +43,7 @@
     "url": "https://github.com/inflowpayai/inflow-cli/issues"
   },
   "dependencies": {
-    "@aep-foundation/agent": "^0.3.0",
+    "@aep-foundation/agent": "^0.3.2",
     "@inflowpayai/mpp": "^0.7.0",
     "@inflowpayai/mpp-buyer": "^0.6.1",
     "@inflowpayai/x402": "^0.8.0",

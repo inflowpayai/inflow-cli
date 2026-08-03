@@ -21,6 +21,9 @@ The package exposes three things:
    - `inflow.mpp` (`IMpp`) — `client()` (lazy `MppClient` for MPP, the Machine Payments Protocol, from
      `@inflowpayai/mpp`) plus `pay` / `status` / `cancel` / `inspect` / `supported`; the pure-codec `decodeMppValue`
      decodes a `WWW-Authenticate: Payment` header or a base64url credential / receipt.
+   - `inflow.odp` (`IOdpResource`) — canonical directory search and suggestions, Service inspection and catalog clients,
+     plus bounded multi-Service Offering discovery. The InFlow environment selects ODP production or sandbox; the
+     directory endpoint cannot be overridden.
 
    Every handle is sanitized through an ANSI-stripping Proxy so server-controlled strings can never carry terminal
    escape codes into the consumer. Stateful operations (`pay`, `inspect`, `auth.login`) return a `FlowRun<E>` whose
@@ -50,6 +53,10 @@ const balances = await inflow.balances.list();
 const user = await inflow.user.retrieve();
 const userAgent = await inflow.user.get();
 
+for await (const service of inflow.odp.searchServices({ query: 'gpu' }).items) {
+  console.log(service.service_origin, service.name);
+}
+
 const storage = new MemoryStorage();
 const sessionInflow = new Inflow({ authStorage: storage, environment: 'sandbox' });
 const login = sessionInflow.auth.login({
@@ -63,6 +70,22 @@ for await (const event of login.events) {
 
 console.log('Hitting', inflow.resolvedApiBaseUrl);
 ```
+
+ODP directory operations and Service-document inspection use the `Inflow` instance's base transport. Applications that
+support authenticated catalogs can derive a Service-scoped resource with a separate transport:
+
+```ts
+const authenticatedOdp = inflow.odp.withServiceTransport({
+  transport: authenticatedFetch,
+  cachePartition: 'current-principal',
+});
+
+const offering = await authenticatedOdp.service({ serviceUrl: 'https://service.example' }).getOffering('offering-id');
+```
+
+The application owns authentication and the partition value; the partition must be stable for one access context and
+must not contain credential material. A custom Service transport without a partition disables catalog caching. Public
+directory and inspection traffic remains on the base transport in either case.
 
 For a deeper walk-through see `examples/` (programmatic login + balances; programmatic x402 pay).
 

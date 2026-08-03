@@ -19,6 +19,7 @@ import {
   AepStorage,
   approvalUrlFor,
   PaymentInspectionBlockedError,
+  SecureStorageError,
   SellerAuthenticationError,
   type AepStateStorage,
   type AuthStorage,
@@ -192,6 +193,11 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
   return Object.keys(headers).some((key) => key.toLowerCase() === lower);
 }
 
+function requestHeaders(headers: Record<string, string>, body: string | undefined): Record<string, string> {
+  if (body === undefined || hasHeader(headers, 'Content-Type')) return headers;
+  return { ...headers, 'Content-Type': 'application/json' };
+}
+
 function assertAepHeaderAvailable(input: SellerRequestInput): void {
   if (hasHeader(input.headers, 'AEP-Authorization')) throw new AuthenticationHeaderCollisionError('AEP-Authorization');
   if (
@@ -319,6 +325,50 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
   };
 }
 
+export function createAepAwareFetch(options: AepRuntimeOptions): typeof globalThis.fetch {
+  const agent = createAepAgent(createCliAepAgentOptions(options));
+  return async (input, init) => {
+    const request = new Request(input, init);
+    if (request.headers.has('AEP-Authorization')) {
+      throw new AuthenticationHeaderCollisionError('AEP-Authorization');
+    }
+    if (input instanceof Request && input.body !== null && init?.body === undefined) {
+      throw new TypeError('AEP-aware ODP requests require a replayable body in RequestInit.');
+    }
+    return fetchProtectedResource({
+      agent,
+      ...(init?.body === undefined ? {} : { body: init.body }),
+      carrier: 'dedicated',
+      headers: request.headers,
+      maxRedirects: options.maxRedirects ?? 5,
+      method: request.method,
+      signal: request.signal,
+      timeoutMs: options.timeout * 1000,
+      url: request.url,
+    });
+  };
+}
+
+export async function aepCachePartition(authStorage: AuthStorage, inflow: Inflow): Promise<string | undefined> {
+  let state: ReturnType<AepStateStorage['getAepState']>;
+  try {
+    state = stateStorage(authStorage).getAepState();
+  } catch {
+    return undefined;
+  }
+  if (state === null) return undefined;
+  let user: Awaited<ReturnType<Inflow['user']['retrieve']>>;
+  try {
+    user = await inflow.user.retrieve();
+  } catch {
+    return undefined;
+  }
+  if (state.owner.platformOrigin !== new URL(inflow.resolvedApiBaseUrl).origin || state.owner.userId !== user.userId) {
+    return undefined;
+  }
+  return `aep:${JSON.stringify([state.owner.platformOrigin, state.owner.userId])}`;
+}
+
 export function createAepAwareSellerTransport(options: AepRuntimeOptions): SellerRequestTransport {
   const trace = {
     authenticated: false,
@@ -337,9 +387,10 @@ export function createAepAwareSellerTransport(options: AepRuntimeOptions): Selle
         throw error;
       }
       trace.authenticated = false;
+      const headers = requestHeaders(input.headers, input.data);
       const probe = await probeProtectedResource({
         ...(input.data === undefined ? {} : { body: input.data }),
-        headers: input.headers,
+        headers,
         method: input.method,
         url: input.url,
       });
@@ -347,7 +398,7 @@ export function createAepAwareSellerTransport(options: AepRuntimeOptions): Selle
         if (input.additionalAuthenticationHeaders !== undefined && probe.response.status === 402) {
           const retry = await fetch(input.url, {
             ...(input.data === undefined ? {} : { body: input.data }),
-            headers: { ...input.headers, ...input.additionalAuthenticationHeaders },
+            headers: { ...headers, ...input.additionalAuthenticationHeaders },
             method: input.method,
           });
           return responseToSellerResult(retry);
@@ -363,7 +414,7 @@ export function createAepAwareSellerTransport(options: AepRuntimeOptions): Selle
             ? {}
             : { additionalAuthenticationHeaders: input.additionalAuthenticationHeaders }),
           ...(input.data === undefined ? {} : { body: input.data }),
-          headers: input.headers,
+          headers,
           ...(options.maxRedirects === undefined ? {} : { maxRedirects: options.maxRedirects }),
           method: input.method,
           timeoutMs: options.timeout * 1000,
@@ -385,6 +436,7 @@ export function createAepAwareInspectProbe(
   const publicDocumentCache = persistedAepPublicDocumentCache(options.authStorage);
   return async (url, probeOptions) => {
     assertProbeAepHeaderAvailable(probeOptions);
+    const headers = requestHeaders(probeOptions.headers, probeOptions.data);
     const blockedMessage =
       'AEP authentication is required before payment terms can be inspected. Run the matching pay command to complete AEP first.';
     const authenticatedProbe = async (
@@ -411,7 +463,7 @@ export function createAepAwareInspectProbe(
       }
       const response = await fetch(url, {
         ...(probeOptions.data === undefined ? {} : { body: probeOptions.data }),
-        headers: { ...probeOptions.headers, ...authenticationHeaders },
+        headers: { ...headers, ...authenticationHeaders },
         method: probeOptions.method,
       });
       if (response.status === 401) {
@@ -446,7 +498,7 @@ export function createAepAwareInspectProbe(
 
     const probe = await probeProtectedResource({
       ...(probeOptions.data === undefined ? {} : { body: probeOptions.data }),
-      headers: probeOptions.headers,
+      headers,
       method: probeOptions.method,
       url,
     });
@@ -496,6 +548,15 @@ export async function storedAepCredentialAuthenticationHeaders(
 }
 
 export function mapAepRuntimeError(error: unknown): { code: string; message: string; retryable?: boolean } | undefined {
+  if (error instanceof SecureStorageError) {
+    const code =
+      error.secureStorageCode === 'vault_locked' || error.secureStorageCode === 'secure_storage_secret_missing'
+        ? 'VAULT_LOCKED'
+        : error.secureStorageCode === 'vault_not_initialized'
+          ? 'VAULT_NOT_INITIALIZED'
+          : error.secureStorageCode;
+    return { code, message: error.message };
+  }
   if (error instanceof MissingIdentityError) {
     return {
       code: 'AEP_NOT_ENROLLED',

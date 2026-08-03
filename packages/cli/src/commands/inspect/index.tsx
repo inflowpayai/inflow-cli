@@ -5,6 +5,7 @@ import {
   type CombinedInspectPhase,
   type CombinedInspectPipelineDeps,
   type CombinedInspectResult,
+  type AepSection,
   type AuthStorage,
   type Inflow,
   parseHeaderFlags,
@@ -56,7 +57,7 @@ function parseHeaderFlagsOrFail(c: InspectCommandContext, flags: string[]): Reco
 }
 
 interface FrameWarning {
-  protocol: 'aep' | 'mpp' | 'x402' | 'none';
+  protocol: 'odp' | 'aep' | 'mpp' | 'x402' | 'none';
   code: string;
   message: string;
   /** For `NO_INFLOW_MATCH`: the unsupported MPP methods the seller advertised. */
@@ -78,6 +79,75 @@ function openApiPolicyFrame(policy: OpenApiPolicy): Record<string, unknown> {
   };
 }
 
+function aepFrame(section: AepSection, warnings: FrameWarning[]): Record<string, unknown> {
+  if (section.kind === 'service') {
+    const inspect = section.inspect;
+    return {
+      required: true,
+      source: 'challenge',
+      ...(section.reason === undefined ? {} : { challenge: { reason: section.reason } }),
+      ...(section.openApiPolicy === undefined ? {} : { openapi: openApiPolicyFrame(section.openApiPolicy) }),
+      inspect: {
+        document: inspect.document,
+        service_url: String(inspect.finalUrl ?? inspect.inspectUrl).replace('/.well-known/aep', ''),
+      },
+    };
+  }
+  if (section.kind === 'discovered') {
+    const inspect = section.inspect;
+    return {
+      required: false,
+      source: section.source,
+      inspect: {
+        document: inspect.document,
+        service_url: String(inspect.finalUrl ?? inspect.inspectUrl).replace('/.well-known/aep', ''),
+      },
+    };
+  }
+  if (section.kind === 'openapi') {
+    const inspect = section.inspect;
+    return {
+      required: section.policy.state === 'required',
+      source: 'openapi',
+      openapi: openApiPolicyFrame(section.policy),
+      inspect: {
+        document: inspect.document,
+        service_url: String(inspect.finalUrl ?? inspect.inspectUrl).replace('/.well-known/aep', ''),
+      },
+    };
+  }
+  if (section.kind === 'blocked') {
+    const inspect = section.inspect;
+    warnings.push({ protocol: 'aep', code: 'AEP_PAYMENT_INSPECT_BLOCKED', message: section.message });
+    return {
+      required: true,
+      source: 'openapi',
+      blocked: true,
+      message: section.message,
+      openapi: openApiPolicyFrame(section.policy),
+      inspect: {
+        document: inspect.document,
+        service_url: String(inspect.finalUrl ?? inspect.inspectUrl).replace('/.well-known/aep', ''),
+      },
+    };
+  }
+  if (section.kind === 'absent') {
+    return {
+      required: false,
+      source: section.source,
+      ...(section.openApiPolicy === undefined ? {} : { openapi: openApiPolicyFrame(section.openApiPolicy) }),
+    };
+  }
+  warnings.push({ protocol: 'aep', code: section.code, message: section.message });
+  return {
+    required: true,
+    source: section.source,
+    ...(section.reason === undefined ? {} : { challenge: { reason: section.reason } }),
+    ...(section.openApiPolicy === undefined ? {} : { openapi: openApiPolicyFrame(section.openApiPolicy) }),
+    error: { code: section.code, message: section.message },
+  };
+}
+
 /**
  * Project the combined result into the agent frame: `{ url, detected, mpp[], x402[] }` with fixed-shape arrays (empty
  * when a protocol is absent). Section-level problems (a present-but-undecodable header, or an MPP header with no
@@ -86,64 +156,21 @@ function openApiPolicyFrame(policy: OpenApiPolicy): Record<string, unknown> {
 export function buildCombinedFrame(result: CombinedInspectResult): Record<string, unknown> {
   const warnings: FrameWarning[] = [];
 
-  let aep: Record<string, unknown> = { required: false, source: 'not_checked' };
-  if (result.aep.kind === 'service') {
-    const inspect = result.aep.inspect;
-    aep = {
-      required: true,
-      source: 'challenge',
-      ...(result.aep.reason === undefined ? {} : { challenge: { reason: result.aep.reason } }),
-      ...(result.aep.openApiPolicy === undefined ? {} : { openapi: openApiPolicyFrame(result.aep.openApiPolicy) }),
+  let odp: Record<string, unknown> = { available: false };
+  if (result.odp.kind === 'service') {
+    odp = {
+      available: true,
       inspect: {
-        document: inspect.document,
-        service_url: String(inspect.finalUrl ?? inspect.inspectUrl).replace('/.well-known/aep', ''),
+        document: result.odp.inspect.document,
+        service_origin: result.odp.inspect.serviceOrigin,
       },
     };
-  } else if (result.aep.kind === 'openapi') {
-    const inspect = result.aep.inspect;
-    aep = {
-      required: result.aep.policy.state === 'required',
-      source: 'openapi',
-      openapi: openApiPolicyFrame(result.aep.policy),
-      inspect: {
-        document: inspect.document,
-        service_url: String(inspect.finalUrl ?? inspect.inspectUrl).replace('/.well-known/aep', ''),
-      },
-    };
-  } else if (result.aep.kind === 'blocked') {
-    const inspect = result.aep.inspect;
-    aep = {
-      required: true,
-      source: 'openapi',
-      blocked: true,
-      message: result.aep.message,
-      openapi: openApiPolicyFrame(result.aep.policy),
-      inspect: {
-        document: inspect.document,
-        service_url: String(inspect.finalUrl ?? inspect.inspectUrl).replace('/.well-known/aep', ''),
-      },
-    };
-    warnings.push({
-      protocol: 'aep',
-      code: 'AEP_PAYMENT_INSPECT_BLOCKED',
-      message: result.aep.message,
-    });
-  } else if (result.aep.kind === 'absent') {
-    aep = {
-      required: false,
-      source: result.aep.source,
-      ...(result.aep.openApiPolicy === undefined ? {} : { openapi: openApiPolicyFrame(result.aep.openApiPolicy) }),
-    };
-  } else {
-    aep = {
-      required: true,
-      source: result.aep.source,
-      ...(result.aep.reason === undefined ? {} : { challenge: { reason: result.aep.reason } }),
-      ...(result.aep.openApiPolicy === undefined ? {} : { openapi: openApiPolicyFrame(result.aep.openApiPolicy) }),
-      error: { code: result.aep.code, message: result.aep.message },
-    };
-    warnings.push({ protocol: 'aep', code: result.aep.code, message: result.aep.message });
+  } else if (result.odp.kind === 'error') {
+    odp = { available: false, error: { code: result.odp.code, message: result.odp.message } };
+    warnings.push({ protocol: 'odp', code: result.odp.code, message: result.odp.message });
   }
+
+  const aep = aepFrame(result.aep, warnings);
 
   const mppRows = result.mpp.kind === 'challenges' ? result.mpp.challenges.map(challengeToFrame) : [];
   if (result.mpp.kind === 'none-inflow') {
@@ -175,7 +202,8 @@ export function buildCombinedFrame(result: CombinedInspectResult): Record<string
     outcome: 'inspected',
     url: result.url,
     method: result.method,
-    detected: detectedProtocols(result.aep, result.mpp, result.x402),
+    detected: detectedProtocols(result.odp, result.aep, result.mpp, result.x402),
+    odp,
     aep,
     mpp: mppRows,
     x402: x402Rows,
@@ -191,15 +219,27 @@ export function buildCombinedFrame(result: CombinedInspectResult): Record<string
 }
 
 export function buildNoPaymentFrame(result: CombinedInspectNoPayment): Record<string, unknown> {
+  const warnings: FrameWarning[] = [];
   const frame: Record<string, unknown> = {
     outcome: 'no-payment-required',
     url: result.url,
     method: result.method,
     status: result.status,
     body_size_bytes: result.bodySizeBytes,
-    aep: { required: false, source: 'anonymous_probe' },
+    detected: detectedProtocols(result.odp, result.aep, { kind: 'absent' }, { kind: 'absent' }),
+    odp:
+      result.odp.kind === 'service'
+        ? {
+            available: true,
+            inspect: { document: result.odp.inspect.document, service_origin: result.odp.inspect.serviceOrigin },
+          }
+        : result.odp.kind === 'error'
+          ? { available: false, error: { code: result.odp.code, message: result.odp.message } }
+          : { available: false },
+    aep: aepFrame(result.aep, warnings),
   };
   if (result.contentType !== undefined) frame['content_type'] = result.contentType;
+  if (warnings.length > 0) frame['warnings'] = warnings;
   return frame;
 }
 
@@ -215,6 +255,11 @@ export async function runCombinedInspectCommand(
     ...(c.options.data !== undefined ? { data: c.options.data } : {}),
   };
   const deps: CombinedInspectPipelineDeps = {
+    ...(inflow === undefined
+      ? {}
+      : {
+          inspectOdp: (serviceUrl: string) => inflow.odp.inspect({ serviceUrl, signal: AbortSignal.timeout(30_000) }),
+        }),
     probeOptions,
     url: c.args.url,
     ...(inflow === undefined
@@ -315,7 +360,7 @@ export async function runCombinedInspectCommand(
 
 export function createInspectCommand(inflow: Inflow, authStorage?: AuthStorage): InspectCommandDefinition {
   return {
-    description: 'Inspect a URL for agent enrollment and payment requirements',
+    description: 'Inspect a URL for agent discovery, enrollment, and payment capabilities',
     mcp: mcpTool('inspect'),
     args: inspectArgs,
     options: inspectOptions,
@@ -323,7 +368,7 @@ export function createInspectCommand(inflow: Inflow, authStorage?: AuthStorage):
     examples: [
       {
         args: { url: 'https://api.foo.dev/dataset.csv' },
-        description: 'Probe a URL and show its AEP, MPP, and x402 requirements.',
+        description: 'Probe a URL and show its ODP, AEP, MPP, and x402 capabilities and requirements.',
       },
       {
         args: { url: 'https://api.foo.dev/widgets' },

@@ -20,6 +20,18 @@ type ToolName =
   | 'mpp_pay'
   | 'mpp_status'
   | 'mpp_supported'
+  | 'odp_collections_get'
+  | 'odp_collections_list'
+  | 'odp_collections_search'
+  | 'odp_directory_search'
+  | 'odp_directory_suggest'
+  | 'odp_inspect'
+  | 'odp_offerings_capabilities'
+  | 'odp_offerings_discover'
+  | 'odp_offerings_get'
+  | 'odp_offerings_list'
+  | 'odp_offerings_search'
+  | 'odp_actions_resolve'
   | 'vault_change-passphrase'
   | 'vault_lock'
   | 'vault_policy'
@@ -85,7 +97,10 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
     'Deposit Addresses: List Deposit Addresses',
     "List the authenticated user's configured deposit addresses.",
   ),
-  inspect: read('Inspect: Inspect Resource', 'Inspect a resource for AEP, MPP, and x402 requirements.'),
+  inspect: read(
+    'Inspect: Inspect Resource',
+    'Inspect a resource for ODP, AEP, MPP, and x402 capabilities and requirements.',
+  ),
   mpp_cancel: write('MPP: Cancel Approval', 'Cancel an MPP approval.', { destructive: true, idempotent: true }),
   mpp_decode: read('MPP: Decode Header', 'Decode an MPP Payment header, credential, or receipt.', false),
   mpp_fetch: write('MPP: Fetch Resource', 'Fetch an MPP resource using an existing or pending payment transaction.'),
@@ -95,6 +110,24 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
   }),
   mpp_status: read('MPP: Check Payment', 'Poll the status of an MPP payment transaction.'),
   mpp_supported: read('MPP: List Payment Methods', 'List MPP payment methods available to the buyer.'),
+  odp_collections_get: read('ODP: Get Collection', 'Get full collection details.'),
+  odp_collections_list: read('ODP: List Collections', 'List collections from a service.'),
+  odp_collections_search: read('ODP: Search Collections', 'Search collections from a service.'),
+  odp_directory_search: read('ODP: Search Directory', 'Search the directory for services.'),
+  odp_directory_suggest: read('ODP: Suggest Keywords', 'Suggest directory keywords.'),
+  odp_inspect: read('ODP: Inspect Service', "Inspect a service's capabilities."),
+  odp_offerings_capabilities: read('ODP: Offering Search Capabilities', 'Resolve offering search filters and sorts.'),
+  odp_offerings_discover: read(
+    'ODP: Discover Offerings',
+    'Find offerings across services selected from the directory.',
+  ),
+  odp_offerings_get: read('ODP: Get Offering', 'Get full offering details.'),
+  odp_offerings_list: read('ODP: List Offerings', 'List offerings from a service.'),
+  odp_offerings_search: read('ODP: Search Offerings', 'Search offerings from a service.'),
+  odp_actions_resolve: read(
+    'ODP: Resolve Action',
+    "Resolve an offering's action into an executable request without invoking it.",
+  ),
   'vault_change-passphrase': write('Vault: Change Passphrase', 'Change the local vault PIN or passphrase.', {
     destructive: true,
   }),

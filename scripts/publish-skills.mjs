@@ -6,8 +6,9 @@
  * 1. Skills/skill.md → <dest>/skill.md (entry point)
  * 2. Skills/<name>/SKILL.md → <dest>/skills/<name>.md (full playbooks; `allowed-tools` frontmatter stripped —
  *    host-execution directive, meaningless in web copies; all other frontmatter including `version:` preserved) Source
- *    of truth: skills/ for content, packages/cli/package.json for versions. Idempotent. Wired into the root `build` and
- *    `release` scripts after align-skill-version.js.
+ *    of truth: skills/ for content, packages/cli/package.json for versions. Idempotent. Wired into the root `build`
+ *    script after align-skill-version.js.
+ * 3. The inflowcli.ai sitemap skill entries are derived from the same skill directories.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -19,13 +20,26 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const skillsDir = resolve(repoRoot, 'skills');
 const cliDist = resolve(repoRoot, 'packages/cli/dist/cli.js');
 const dest = resolve(repoRoot, '../inflow-server/src/main/resources/static/cli');
+const playbooks = readdirSync(skillsDir, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && existsSync(resolve(skillsDir, entry.name, 'SKILL.md')))
+  .map((entry) => entry.name)
+  .sort();
+const playbookLinks = playbooks
+  .map((name) => {
+    const subject = name
+      .replace(/^agentic-/, '')
+      .split('-')
+      .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+      .join(' ');
+    return `> ${subject} playbook: https://inflowcli.ai/skills/${name}.md`;
+  })
+  .join('\n');
 
 const LLMS_HEADER = `# InFlow CLI
 
-> Agent Enrollment Protocol access and MPP / x402 payments from your machine.
+> Offering discovery, Agent Enrollment Protocol access, and MPP / x402 payments from your machine.
 > Agent setup: https://inflowcli.ai/skill.md
-> Enrollment playbook: https://inflowcli.ai/skills/agentic-enrollment.md
-> Payments playbook: https://inflowcli.ai/skills/agentic-payments.md
+${playbookLinks}
 > Source: https://github.com/inflowpayai/inflow-cli
 
 `;
@@ -57,15 +71,28 @@ function stripAllowedTools(markdown) {
 }
 
 // 1: full playbooks, from source files (web copies keep `version:` frontmatter; --skill strips it)
-const playbooks = readdirSync(skillsDir, { withFileTypes: true })
-  .filter((e) => e.isDirectory() && existsSync(resolve(skillsDir, e.name, 'SKILL.md')))
-  .map((e) => e.name);
 mkdirSync(resolve(dest, 'skills'), { recursive: true });
 for (const name of playbooks) {
   const body = readFileSync(resolve(skillsDir, name, 'SKILL.md'), 'utf8');
   writeFileSync(resolve(dest, 'skills', `${name}.md`), stripAllowedTools(body));
 }
 process.stdout.write(`publish-skills: [${playbooks.join(', ')}] → ${dest}/skills\n`);
+
+const sitemapFile = resolve(dest, 'sitemap.xml');
+if (existsSync(sitemapFile)) {
+  const original = readFileSync(sitemapFile, 'utf8');
+  const entryPoint = '  <url><loc>https://inflowcli.ai/skill.md</loc></url>\n';
+  const skillUrls = playbooks
+    .map((name) => `  <url><loc>https://inflowcli.ai/skills/${name}.md</loc></url>`)
+    .join('\n');
+  const withoutSkillUrls = original.replace(
+    /^  <url><loc>https:\/\/inflowcli\.ai\/skills\/[^<]+<\/loc><\/url>\r?\n/gm,
+    '',
+  );
+  const rewritten = withoutSkillUrls.replace(entryPoint, `${entryPoint}${skillUrls}\n`);
+  if (rewritten === withoutSkillUrls) throw new Error('publish-skills: sitemap is missing the skill.md entry');
+  writeFileSync(sitemapFile, rewritten);
+}
 
 // 1b: plugin payload — plugins/inflow/skills/ holds one symlink per installable skill (the loose
 // skills/skill.md web entry is deliberately NOT exposed to plugin hosts). Ensure new skills propagate.

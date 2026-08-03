@@ -1,3 +1,5 @@
+import { beforeEach, vi } from 'vitest';
+
 /**
  * Vitest global setup for the CLI package.
  *
@@ -45,6 +47,10 @@ const CI_ENV_VARS = [
 for (const name of CI_ENV_VARS) {
   delete process.env[name];
 }
+
+beforeEach(() => {
+  vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+});
 
 if (!process.stdout.columns) {
   Object.defineProperty(process.stdout, 'columns', {

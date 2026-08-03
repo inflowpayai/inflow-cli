@@ -9,6 +9,7 @@
  *   inflow.balances          IBalanceResource   — list()
  *   inflow.depositAddresses  IDepositAddressResource — list()
  *   inflow.x402              IX402              — client() (raw buyer) + pay/fetch/status/cancel/inspect/supported
+ *   inflow.odp               IOdpResource        — directory search, Service inspection/navigation, federated discovery
  *
  * Plus:
  *
@@ -24,6 +25,44 @@
 
 /* Client + augmented interfaces ------------------------------------------- */
 export { Inflow, type IAepResource, type IMppResource, type IX402Resource } from './client.js';
+export {
+  OdpResource,
+  DirectoryRequestError,
+  OdpInspectionError,
+  OdpRequestError,
+  type Collection,
+  type CollectionGetOptions,
+  type CollectionListOptions,
+  type CollectionSearchOptions,
+  type CollectionSequence,
+  type ContinuationOptions,
+  type DirectorySearchPage,
+  type DirectorySearchRequest,
+  type DirectoryService,
+  type DirectoryServiceFilters,
+  type DirectorySuggestionRequest,
+  type FederatedDiscoveryEvent,
+  type FederatedOfferingSearchRequest,
+  type FilterDefinition,
+  type IOdpResource,
+  type OdpServiceClient,
+  type OdpInspectOptions,
+  type OdpServiceOptions,
+  type OdpServiceTransportOptions,
+  type Offering,
+  type OfferingDetails,
+  type OfferingGetOptions,
+  type OfferingListOptions,
+  type OfferingPage,
+  type OfferingSearchOptions,
+  type PageEnvelope,
+  type ResolvedAction,
+  type ResolvedSortDefinition,
+  type SearchCapabilityCatalog,
+  type ServiceInspection,
+  type TerseCollection,
+  type TerseOffering,
+} from './odp.js';
 export {
   augmentAuth,
   augmentMpp,
@@ -239,6 +278,7 @@ export {
   type CombinedInspectPipelineDeps,
   type CombinedInspectResult,
   type MppSection,
+  type OdpSection,
   reduceCombinedInspect,
   runCombinedInspectPipeline,
   type X402Section,

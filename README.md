@@ -9,14 +9,13 @@
 [![Discord](https://img.shields.io/discord/1488618872461332562?logo=discord&logoColor=white&label=Discord)](https://discord.gg/Z9nmMAgaR4)
 [![skills.sh](https://skills.sh/b/inflowpayai/inflow-cli)](https://skills.sh/inflowpayai/inflow-cli)
 
-InFlow — Agent Enrollment Protocol access and agentic MPP (Machine Payments Protocol) / x402 payments from your machine.
+InFlow is the command-line client for agentic discovery, onboarding, and payments.
 
-The agent-native and human-accessible command-line entry point to InFlow. Agentic buyers perform agent-native payments
-via MPP and x402, manage Agent Enrollment Protocol Service enrollment, and fetch resources that require AEP
-authentication before payment; humans hit the same functionality from MCP-integrated assistants or the raw CLI.
+Agents discover Services and Offerings through ODP, establish Service access through AEP, and pay protected endpoints
+through MPP or x402. Humans can use the same workflows from MCP-integrated assistants or the InFlow CLI.
 
 New here? Start with the command reference in [`packages/cli/README.md`](./packages/cli/README.md) — it covers `auth`,
-the `x402` and `mpp` command groups, the global flags, and the agent (`--format`) renderings.
+ODP discovery, the `x402` and `mpp` command groups, the global flags, and the agent (`--format`) renderings.
 
 Installing into an agent host? Use the per-surface guide:
 [`docs/development/surfaces-and-testing.md`](./docs/development/surfaces-and-testing.md).

@@ -129,7 +129,7 @@ describe('InspectView', () => {
     unmount();
   });
 
-  it('renders the no-payment branch with the pay hint', async () => {
+  it('renders the no-payment branch as a table with the fetch hint', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response('hello world', {
         status: 200,
@@ -149,11 +149,12 @@ describe('InspectView', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('Seller accepted without payment');
-    // status / content-type / size are developer-centric and intentionally omitted from the human view.
-    expect(frame).not.toContain('status:');
-    expect(frame).not.toContain('content-type:');
-    expect(frame).toContain('x402 pay');
+    expect(frame).toContain('Payment required');
+    expect(frame).toContain('Status');
+    expect(frame).toContain('Content type');
+    expect(frame).toContain('Response size');
+    expect(frame).toContain('x402 fetch');
+    expect(frame).not.toContain('x402 pay');
     unmount();
   });
 

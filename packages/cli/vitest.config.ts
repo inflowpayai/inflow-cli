@@ -6,6 +6,8 @@ export default defineConfig({
     include: ['test/**/*.test.{ts,tsx}'],
     setupFiles: ['./test/setup.ts'],
     passWithNoTests: true,
+    reporters: ['basic'],
+    silent: true,
     coverage: {
       provider: 'v8',
       include: ['src/**/*.{ts,tsx}'],

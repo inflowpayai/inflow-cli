@@ -53,6 +53,7 @@ describe('Inflow client', () => {
     expect(client.depositAddresses).toBeDefined();
     expect(client.user).toBeDefined();
     expect(client.x402).toBeDefined();
+    expect(client.odp).toBeDefined();
     expect(typeof client.x402.client).toBe('function');
   });
 

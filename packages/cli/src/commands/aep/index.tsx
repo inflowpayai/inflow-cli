@@ -127,24 +127,27 @@ function provider(inflow: Inflow, publicDocumentCache?: AepPublicDocumentCache) 
   });
 }
 
+const NON_RETRYABLE_INSPECT_ERRORS = new Set<string>(['service_identity_mismatch', 'validation_failed']);
+
 function inspectError(error: unknown): ErrorOptions | undefined {
   if (error instanceof AepServiceReferenceError) {
     return { code: 'AEP_SERVICE_URL_INVALID', exitCode: 2, message: 'The AEP Service reference is invalid.' };
   }
   if (error instanceof AepInspectError) {
-    const codes: Record<AepInspectError['code'], string> = {
+    const codes: Record<AepInspectError['code'] | 'service_identity_mismatch', string> = {
       aborted: 'AEP_INSPECT_NETWORK_ERROR',
       http_error: 'AEP_INSPECT_HTTP_ERROR',
       invalid_json: 'AEP_INSPECT_JSON_INVALID',
       invalid_media_type: 'AEP_INSPECT_MEDIA_TYPE_INVALID',
       invalid_redirect: 'AEP_INSPECT_REDIRECT_REJECTED',
       response_too_large: 'AEP_INSPECT_RESPONSE_TOO_LARGE',
+      service_identity_mismatch: 'AEP_SERVICE_IDENTITY_MISMATCH',
       validation_failed: 'AEP_INSPECT_DOCUMENT_INVALID',
     };
     return {
       code: codes[error.code],
       message: 'AEP Service Inspect failed.',
-      retryable: error.code !== 'validation_failed',
+      retryable: !NON_RETRYABLE_INSPECT_ERRORS.has(error.code),
     };
   }
   return undefined;
@@ -163,6 +166,9 @@ function commandError(error: unknown): ErrorOptions {
     if (code === 'authorization_denied')
       return { code: 'AEP_APPROVAL_DENIED', message: 'The InFlow approval was denied.' };
     return { code: typeof code === 'string' ? code : 'AEP_SIGN_FAILED', message: 'The AEP command failed.' };
+  }
+  if (error instanceof TypeError && error.message === 'Invalid AEP Grant response.') {
+    return { code: 'AEP_GRANT_RESPONSE_INVALID', message: 'The Service returned an invalid AEP Grant response.' };
   }
   if (error instanceof SecureStorageError) {
     const vaultCode =

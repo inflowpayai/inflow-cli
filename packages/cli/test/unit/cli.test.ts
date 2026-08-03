@@ -1,5 +1,5 @@
 import { spawn, type SpawnOptionsWithoutStdio } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
@@ -52,6 +52,18 @@ const MCP_TOOL_EXPECTATIONS = [
   ['mpp_pay', 'MPP: Pay Resource', false, true],
   ['mpp_status', 'MPP: Check Payment', true, false],
   ['mpp_supported', 'MPP: List Payment Methods', true, false],
+  ['odp_actions_resolve', 'ODP: Resolve Action', true, false],
+  ['odp_collections_get', 'ODP: Get Collection', true, false],
+  ['odp_collections_list', 'ODP: List Collections', true, false],
+  ['odp_collections_search', 'ODP: Search Collections', true, false],
+  ['odp_directory_search', 'ODP: Search Directory', true, false],
+  ['odp_directory_suggest', 'ODP: Suggest Keywords', true, false],
+  ['odp_inspect', 'ODP: Inspect Service', true, false],
+  ['odp_offerings_capabilities', 'ODP: Offering Search Capabilities', true, false],
+  ['odp_offerings_discover', 'ODP: Discover Offerings', true, false],
+  ['odp_offerings_get', 'ODP: Get Offering', true, false],
+  ['odp_offerings_list', 'ODP: List Offerings', true, false],
+  ['odp_offerings_search', 'ODP: Search Offerings', true, false],
   ['vault_change-passphrase', 'Vault: Change Passphrase', false, true],
   ['vault_lock', 'Vault: Lock Vault', false, false],
   ['vault_policy', 'Vault: Show Policy', true, false],
@@ -87,6 +99,17 @@ const CLI_SCHEMA_COMMANDS = [
   'mpp pay',
   'mpp status',
   'mpp supported',
+  'odp actions resolve',
+  'odp directory search',
+  'odp directory suggest',
+  'odp collections get',
+  'odp collections list',
+  'odp collections search',
+  'odp inspect',
+  'odp offerings discover',
+  'odp offerings get',
+  'odp offerings list',
+  'odp offerings search',
   'vault change-passphrase',
   'vault lock',
   'vault policy',
@@ -301,6 +324,8 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(manifest.main).toBe('./dist/npm-shim.js');
       expect(manifest.types).toBe('./dist/npm-shim.d.ts');
       expect(manifest.files).toEqual(['dist/npm-shim.js', 'dist/npm-shim.d.ts', 'README.md', 'LICENSE']);
+      expect(existsSync(resolve(PACKAGE_ROOT, 'LICENSE'))).toBe(true);
+      expect(existsSync(resolve(PACKAGE_ROOT, 'dist/npm-shim.d.ts'))).toBe(true);
     });
 
     it('--help exits 0 and prints the binary name + description', async () => {
@@ -308,13 +333,33 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(exitCode).toBe(0);
       const combined = stdout;
       expect(combined).toContain('inflow');
-      expect(combined).toContain('agent enrollment and agentic payments');
+      expect(combined).toContain('agentic discovery, onboarding, and payments');
       expect(combined).toContain('Agent Enrollment Protocol service commands');
-      expect(combined).toContain('Inspect a URL for agent enrollment and payment requirements');
+      expect(combined).toContain('Offering Discovery Protocol commands.');
+      expect(combined).toContain('Inspect a URL for agent discovery, enrollment, and payment capabilities');
       expect(combined).toContain('Machine Payments Protocol payment commands');
       expect(combined).toContain('x402 Protocol payment commands');
       expect(combined).not.toContain('--daemon');
       expect(combined).not.toMatch(/^\s+user\b/m);
+    });
+
+    it.each([
+      [['odp', 'directory', '--help'], 'Search the service directory.'],
+      [['odp', 'collections', '--help'], 'Browse collections from a service.'],
+      [['odp', 'offerings', '--help'], 'Find and inspect offerings.'],
+      [['odp', 'actions', '--help'], 'Inspect executable requests advertised by offerings.'],
+    ] as const)('%s prints the ODP subgroup description', async (args, description) => {
+      const { exitCode, stdout } = await run([...args]);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain(description);
+    });
+
+    it('odp collections shows subgroup help without initializing the vault', async () => {
+      const { exitCode, stdout, stderr } = await run(['odp', 'collections']);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('Usage: inflow odp collections <command>');
+      expect(stdout).toContain('Browse collections from a service.');
+      expect(stderr).not.toContain('vault');
     });
 
     it('does not dispatch the internal user command', async () => {
@@ -530,6 +575,17 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(stdout).not.toMatch(/^---/);
     });
 
+    it('--skill agentic-discovery prints the discovery playbook without frontmatter', async () => {
+      const { exitCode, stdout, stderr } = await run(['--skill', 'agentic-discovery'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe('');
+      expect(stdout.startsWith('# Agentic Discovery')).toBe(true);
+      expect(stdout).toContain('inflow odp directory search');
+      expect(stdout).not.toMatch(/^---/);
+    });
+
     it('--skill with an unknown name exits 1 and lists the available skills on stderr', async () => {
       const { exitCode, stdout, stderr } = await run(['--skill', 'no-such-skill'], {
         env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
@@ -537,6 +593,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(exitCode).toBe(1);
       expect(stdout).toBe('');
       expect(stderr).toContain("Unknown skill 'no-such-skill'");
+      expect(stderr).toContain('agentic-discovery');
       expect(stderr).toContain('agentic-enrollment');
       expect(stderr).toContain('agentic-payments');
     });
@@ -586,6 +643,31 @@ describe.skipIf(!existsSync(DIST_CLI))(
       const depositAddressesList = manifest.commands.find((c) => c.name === 'deposit-addresses list');
       expect(depositAddressesList).toBeDefined();
       expect(depositAddressesList?.description).toBe("List the authenticated user's configured deposit addresses");
+    });
+
+    it('--llms manifest contains the ODP command descriptions', async () => {
+      const { exitCode, stdout } = await run(['--llms', '--format', 'json'], {
+        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+      });
+      expect(exitCode).toBe(0);
+      const manifest = JSON.parse(stdout) as {
+        commands: { name: string; description?: string }[];
+      };
+      const descriptions = new Map(manifest.commands.map((command) => [command.name, command.description]));
+      const expected = [
+        ['odp actions resolve', "Resolve an offering's action into an executable request without invoking it."],
+        ['odp collections get', 'Get full collection details.'],
+        ['odp collections list', 'List collections from a service.'],
+        ['odp collections search', 'Search collections from a service.'],
+        ['odp directory search', 'Search the directory for services.'],
+        ['odp directory suggest', 'Suggest directory keywords.'],
+        ['odp inspect', "Inspect a service's capabilities."],
+        ['odp offerings discover', 'Find offerings across services selected from the directory.'],
+        ['odp offerings get', 'Get full offering details.'],
+        ['odp offerings list', 'List offerings from a service.'],
+        ['odp offerings search', 'Search offerings from a service.'],
+      ] as const;
+      for (const [name, description] of expected) expect(descriptions.get(name)).toBe(description);
     });
 
     it.each(['--llms', '--llms-full'] as const)('%s lists every AEP command', async (flag) => {
@@ -782,6 +864,10 @@ describe.skipIf(!existsSync(DIST_CLI))(
 );
 
 const REPO_ROOT = resolve(PACKAGE_ROOT, '../../');
+const SKILL_NAMES = readdirSync(resolve(REPO_ROOT, 'skills'), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && existsSync(resolve(REPO_ROOT, 'skills', entry.name, 'SKILL.md')))
+  .map((entry) => entry.name)
+  .sort();
 
 function readRepoFile(rel: string): string {
   return readFileSync(resolve(REPO_ROOT, rel), 'utf-8');
@@ -852,7 +938,7 @@ describe('plugin and skill distribution (spec 050)', () => {
     expect(entry?.args).toEqual(['--mcp']);
   });
 
-  for (const name of ['agentic-enrollment', 'agentic-payments']) {
+  for (const name of SKILL_NAMES) {
     it(`skills/${name}/SKILL.md has version and distribution metadata`, () => {
       const skill = readRepoFile(`skills/${name}/SKILL.md`);
       const versionMatch = skill.match(/^version:\s*(\d+\.\d+\.\d+[^\s]*)$/m);
@@ -884,7 +970,7 @@ describe('plugin and skill distribution (spec 050)', () => {
 
   it('skill version, plugin manifests, and packages/cli/package.json all agree', () => {
     const cliVersion = PKG_VERSION;
-    for (const name of ['agentic-enrollment', 'agentic-payments']) {
+    for (const name of SKILL_NAMES) {
       const skill = readRepoFile(`skills/${name}/SKILL.md`);
       const skillVersion = skill.match(/^version:\s*(.+)$/m)?.[1]?.trim();
       expect(skillVersion, name).toBe(cliVersion);

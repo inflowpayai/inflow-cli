@@ -58,7 +58,12 @@ describe('InspectView', () => {
       />,
     );
     await new Promise((r) => setTimeout(r, 80));
-    expect(lastFrame() ?? '').toContain('without payment');
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Payment required');
+    expect(frame).toContain('Status');
+    expect(frame).toContain('Response size');
+    expect(frame).toContain('mpp fetch');
+    expect(frame).not.toContain('mpp pay');
     unmount();
   });
 

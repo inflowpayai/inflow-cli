@@ -31,6 +31,7 @@ import { createAccessTokenProvider } from './session.js';
 import { sanitizeResource } from './utils/sanitize-proxy.js';
 import { InflowApiClient } from './utils/api-client.js';
 import { inspectService, type InspectServiceOptions, type InspectServiceResult } from '@aep-foundation/agent';
+import { OdpResource, type IOdpResource } from './odp.js';
 
 export interface IAepResource {
   inspect(options: InspectServiceOptions): Promise<InspectServiceResult>;
@@ -123,6 +124,8 @@ class MppResource implements IMppResource {
  * - `inflow.x402` ({@link IX402}) — `client()` (raw buyer client) + `pay` / `status` / `cancel` / `inspect` / `supported`.
  * - `inflow.mpp` ({@link IMpp}) — `client()` (raw `MppClient`) + `pay` / `status` / `cancel` / `inspect` / `decode` /
  *   `supported`.
+ * - `inflow.odp` ({@link IOdpResource}) — canonical directory search, Service inspection/navigation, and bounded
+ *   multi-Service Offering discovery.
  *
  * Credential resolution is mode-exclusive:
  *
@@ -143,6 +146,7 @@ export class Inflow {
   readonly x402: IX402;
   readonly mpp: IMpp;
   readonly aep: IAepResource;
+  readonly odp: IOdpResource;
   /**
    * The effective API base URL this client will hit, after resolution against `options.apiBaseUrl`, `INFLOW_BASE_URL`,
    * and the environment-derived default. Exposed for callers (CLI, MCP transports, etc.) that need to display "what URL
@@ -187,6 +191,7 @@ export class Inflow {
     const mppInternal: IMppResource = new MppResource(this.resolveMppOptions(options, dataOptions, dataConfig.fetch));
     this.mpp = augmentMpp(mppInternal, this.resolvedApiBaseUrl);
     this.aep = sanitizeResource<IAepResource>(new AepResource());
+    this.odp = new OdpResource(dataConfig.environment, dataConfig.fetch);
 
     this.auth = augmentAuth(rawAuth, rawUser, options.authStorage);
   }

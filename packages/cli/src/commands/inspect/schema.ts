@@ -1,7 +1,9 @@
 import { z } from 'incur';
 
 export const inspectArgs = z.object({
-  url: z.string().describe('The resource URL to probe for MPP and/or x402 payment challenges. No payment is made.'),
+  url: z
+    .string()
+    .describe('The resource URL to inspect for ODP, AEP, MPP, and x402. No enrollment or payment is performed.'),
 });
 
 export const inspectOptions = z.object({

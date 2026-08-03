@@ -17,9 +17,12 @@ minimumReleaseAgeExclude:
   - '@inflowpayai/mpp-buyer'
   - '@inflowpayai/x402'
   - '@inflowpayai/x402-buyer'
-  - '@aep-foundation/agent@0.3.0'
-  - '@aep-foundation/core@0.3.0'
-  - '@aep-foundation/platform@0.2.1'
+  - '@aep-foundation/agent@0.3.2'
+  - '@aep-foundation/core@0.4.0'
+  - '@aep-foundation/platform@0.2.2'
+  - '@offering-protocol/agent@0.3.0'
+  - '@offering-protocol/core@0.3.0'
+  - '@offering-protocol/directory@0.2.1'
 
 auto-install-peers: true
 

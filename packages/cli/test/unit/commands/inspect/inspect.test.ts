@@ -1,15 +1,48 @@
-import { MemoryStorage, type CombinedInspectResult } from '@inflowpayai/inflow-core';
+import {
+  MemoryStorage,
+  type CombinedInspectNoPayment,
+  type CombinedInspectResult,
+  type ServiceInspection,
+} from '@inflowpayai/inflow-core';
 import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
 import { encodePaymentRequiredHeader } from '@x402/core/http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildCombinedFrame,
+  buildNoPaymentFrame,
   createInspectCommand,
   type InspectCommandContext,
   runCombinedInspectCommand,
 } from '../../../../src/commands/inspect/index.js';
 
 const URL = 'https://seller.test/api';
+
+const odpInspect = {
+  capabilities: {
+    enrollment: [{ name: 'aep' }],
+    operations: [
+      { authentication: 'not-required', name: 'get-offering' },
+      { authentication: 'not-required', name: 'list-offerings' },
+    ],
+    payments: [],
+  },
+  document: {
+    description: 'Example products',
+    http: { endpoint_base: '/odp' },
+    language: 'en',
+    localizations: ['en'],
+    name: 'Example',
+    odp_version: '1.0',
+    operations: [
+      { authentication: 'not-required', name: 'get-offering' },
+      { authentication: 'not-required', name: 'list-offerings' },
+    ],
+  },
+  finalUrl: new globalThis.URL('https://seller.test/.well-known/odp'),
+  freshness: 'fetched',
+  requestedUrl: new globalThis.URL('https://seller.test/.well-known/odp'),
+  serviceOrigin: 'https://seller.test',
+} satisfies ServiceInspection;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -73,12 +106,13 @@ function ctx(): InspectCommandContext {
 }
 
 describe('buildCombinedFrame', () => {
-  it('includes the AEP Inspect document and lists AEP first', () => {
+  it('includes ODP and AEP inspection documents in protocol order', () => {
     const result: CombinedInspectResult = {
       outcome: 'inspected',
       url: URL,
       method: 'GET',
       status: 401,
+      odp: { kind: 'service', inspect: odpInspect },
       aep: {
         kind: 'service',
         reason: 'not_recognized',
@@ -102,7 +136,11 @@ describe('buildCombinedFrame', () => {
       x402: { kind: 'absent' },
     };
     const frame = buildCombinedFrame(result);
-    expect(frame['detected']).toEqual(['aep']);
+    expect(frame['detected']).toEqual(['odp', 'aep']);
+    expect(frame['odp']).toMatchObject({
+      available: true,
+      inspect: { service_origin: 'https://seller.test' },
+    });
     expect(frame['aep']).toMatchObject({
       required: true,
       challenge: { reason: 'not_recognized' },
@@ -117,6 +155,7 @@ describe('buildCombinedFrame', () => {
       url: URL,
       method: 'GET',
       status: 401,
+      odp: { kind: 'absent' },
       aep: { kind: 'error', code: 'AEP_INSPECT_FAILED', message: 'discovery failed', source: 'challenge' },
       mpp: { kind: 'absent' },
       x402: { kind: 'absent' },
@@ -136,6 +175,7 @@ describe('buildCombinedFrame', () => {
       url: URL,
       method: 'GET',
       status: 402,
+      odp: { kind: 'absent' },
       aep: { kind: 'absent', source: 'anonymous_probe' },
       mpp: {
         kind: 'challenges',
@@ -183,6 +223,7 @@ describe('buildCombinedFrame', () => {
       url: URL,
       method: 'GET',
       status: 402,
+      odp: { kind: 'absent' },
       aep: { kind: 'absent', source: 'anonymous_probe' },
       mpp: { kind: 'absent' },
       x402: { kind: 'absent' },
@@ -201,6 +242,7 @@ describe('buildCombinedFrame', () => {
       url: URL,
       method: 'GET',
       status: 402,
+      odp: { kind: 'absent' },
       aep: { kind: 'absent', source: 'anonymous_probe' },
       mpp: { kind: 'none-inflow', methods: ['other'] },
       x402: { kind: 'error', code: 'DECODE_FAILED', message: 'bad header' },
@@ -226,6 +268,7 @@ describe('buildCombinedFrame', () => {
       url: URL,
       method: 'GET',
       status: 200,
+      odp: { kind: 'absent' },
       aep: {
         kind: 'absent',
         openApiPolicy: {
@@ -254,6 +297,7 @@ describe('buildCombinedFrame', () => {
       url: URL,
       method: 'GET',
       status: 401,
+      odp: { kind: 'absent' },
       aep: {
         kind: 'blocked',
         inspect: {
@@ -311,7 +355,7 @@ describe('runCombinedInspectCommand (agent path)', () => {
   it('registers the top-level Inspect command metadata', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
     const command = createInspectCommand({} as never, new MemoryStorage());
-    expect(command.description).toBe('Inspect a URL for agent enrollment and payment requirements');
+    expect(command.description).toBe('Inspect a URL for agent discovery, enrollment, and payment capabilities');
     expect(command.outputPolicy).toBe('agent-only');
     expect(command.examples).toHaveLength(2);
     expect(await command.run(ctx())).toBeDefined();
@@ -395,6 +439,43 @@ describe('runCombinedInspectCommand (agent path)', () => {
     const frame = await runCombinedInspectCommand(ctx());
     expect(frame?.['outcome']).toBe('no-payment-required');
     expect(frame?.['status']).toBe(200);
+  });
+
+  it('preserves AEP Service discovery when the probed URL is public', () => {
+    const frame = buildNoPaymentFrame({
+      outcome: 'no-payment-required',
+      url: URL,
+      method: 'GET',
+      status: 200,
+      contentType: 'text/html',
+      bodySizeBytes: 2,
+      odp: { kind: 'service', inspect: odpInspect },
+      aep: {
+        kind: 'discovered',
+        inspect: {
+          commandUrl: (command: string) => new globalThis.URL(`https://seller.test/aep/${command}`),
+          document: {
+            aep_version: '1.0',
+            bindings: { supported: ['http'] },
+            commands: { supported: ['inspect', 'status'] },
+            core: { signing_algorithms: ['ES256'] },
+            http: { endpoint_base: '/aep' },
+            identity: { methods: ['did:web'] },
+            service: { did: 'did:web:seller.test' },
+          },
+          finalUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+          inspectUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+        },
+        source: 'anonymous_probe',
+      },
+    } satisfies CombinedInspectNoPayment);
+
+    expect(frame['detected']).toEqual(['odp', 'aep']);
+    expect(frame['aep']).toMatchObject({
+      required: false,
+      source: 'anonymous_probe',
+      inspect: { service_url: 'https://seller.test' },
+    });
   });
 
   it('errors UNEXPECTED_PROBE_STATUS on a 500', async () => {
