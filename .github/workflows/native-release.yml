@@ -12,13 +12,9 @@ on:
           - draft
           - publish
         default: preflight
-      version:
-        description: Package version to release.
-        required: true
-        type: string
 
 concurrency:
-  group: native-release-${{ inputs.version }}
+  group: native-release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -27,6 +23,8 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.release-source.outputs.version }}
     steps:
       - uses: actions/checkout@v5
 
@@ -35,29 +33,43 @@ jobs:
           node-version: 24.15.0
 
       - name: Validate release source
+        id: release-source
         env:
           GH_TOKEN: ${{ github.token }}
           IMMUTABLE_RELEASES_ENABLED: ${{ vars.IMMUTABLE_RELEASES_ENABLED }}
-          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          package_version="$(node -p "require('./packages/cli/package.json').version")"
-          test "$VERSION" = "$package_version"
-          test "$GITHUB_REF" = "refs/tags/v$VERSION"
-          tag_commit="$(git rev-list -n 1 "v$VERSION")"
-          test "$tag_commit" = "$GITHUB_SHA"
-          test "$IMMUTABLE_RELEASES_ENABLED" = 'true'
-          if gh release view "v$VERSION" >/dev/null 2>&1; then
-            echo "::error::v$VERSION already has a GitHub Release"
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "::error::Select a v<version> tag under 'Run workflow from'; branches cannot produce releases. Selected reference: $GITHUB_REF"
             exit 1
           fi
+          version="${GITHUB_REF#refs/tags/v}"
+          package_version="$(node -p "require('./packages/cli/package.json').version")"
+          if [ "$version" != "$package_version" ]; then
+            echo "::error::Selected tag v$version does not match package version $package_version."
+            exit 1
+          fi
+          tag_commit="$(git rev-list -n 1 "v$version")"
+          if [ "$tag_commit" != "$GITHUB_SHA" ]; then
+            echo "::error::Selected tag v$version does not resolve to the checked-out commit."
+            exit 1
+          fi
+          if [ "$IMMUTABLE_RELEASES_ENABLED" != 'true' ]; then
+            echo "::error::Immutable GitHub Releases must be enabled before publishing native artifacts."
+            exit 1
+          fi
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "::error::v$version already has a GitHub Release"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   macos:
     needs: validate
     uses: ./.github/workflows/macos-release.yml
     with:
       production: true
-      version: ${{ inputs.version }}
+      version: ${{ needs.validate.outputs.version }}
     secrets: inherit
 
   linux:
@@ -69,11 +81,12 @@ jobs:
     uses: ./.github/workflows/linux-release.yml
     with:
       production: true
-      version: ${{ inputs.version }}
+      version: ${{ needs.validate.outputs.version }}
     secrets: inherit
 
   stage:
     needs:
+      - validate
       - macos
       - linux
     runs-on: ubuntu-24.04
@@ -87,18 +100,18 @@ jobs:
       - name: Download macOS release stage
         uses: actions/download-artifact@v7
         with:
-          name: inflow-native-macos-${{ inputs.version }}
+          name: inflow-native-macos-${{ needs.validate.outputs.version }}
           path: dist/native/macos
 
       - name: Download Linux release stage
         uses: actions/download-artifact@v7
         with:
-          name: inflow-native-linux-${{ inputs.version }}
+          name: inflow-native-linux-${{ needs.validate.outputs.version }}
           path: dist/native/linux
 
       - name: Assemble and verify release assets
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
           node scripts/assemble-native-release-assets.mjs \
@@ -110,14 +123,16 @@ jobs:
       - name: Upload verified release stage
         uses: actions/upload-artifact@v6
         with:
-          name: inflow-native-release-${{ inputs.version }}
+          name: inflow-native-release-${{ needs.validate.outputs.version }}
           path: dist/native/assets
           if-no-files-found: error
           retention-days: 7
 
   publish:
     if: inputs.mode != 'preflight'
-    needs: stage
+    needs:
+      - validate
+      - stage
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -131,19 +146,19 @@ jobs:
       - name: Download verified release stage
         uses: actions/download-artifact@v7
         with:
-          name: inflow-native-release-${{ inputs.version }}
+          name: inflow-native-release-${{ needs.validate.outputs.version }}
           path: dist/native/assets
 
       - name: Verify release assets
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: node scripts/verify-native-release-assets.mjs dist/native/assets "$VERSION"
 
       - name: Create draft release with complete asset set
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
           existing_release_ids="$(gh api "repos/$GITHUB_REPOSITORY/releases" \
@@ -166,7 +181,7 @@ jobs:
       - name: Verify draft release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/releases/${{ steps.release.outputs.release_id }}" > dist/native/release.json
@@ -184,7 +199,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ steps.release.outputs.release_id }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > dist/native/release.json
@@ -205,7 +220,9 @@ jobs:
 
   homebrew:
     if: inputs.mode == 'publish'
-    needs: publish
+    needs:
+      - validate
+      - publish
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -213,7 +230,7 @@ jobs:
       - name: Download macOS release stage
         uses: actions/download-artifact@v7
         with:
-          name: inflow-native-macos-${{ inputs.version }}
+          name: inflow-native-macos-${{ needs.validate.outputs.version }}
           path: dist/native/macos
 
       - name: Resolve Homebrew Cask
@@ -238,7 +255,7 @@ jobs:
         env:
           CASK: ${{ steps.cask.outputs.path }}
           HOMEBREW_TAP_TOKEN: ${{ steps.homebrew-tap-token.outputs.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
           tap="$RUNNER_TEMP/homebrew-tap"
