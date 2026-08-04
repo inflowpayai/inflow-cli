@@ -123,6 +123,10 @@ inflow auth status --probe      # validate the token via GET /v1/users/self
 Reports which credential the CLI would use (OAuth access token, API key, or none), the active environment, and the
 resolved API URL — including the SDK's built-in defaults when nothing is overridden.
 
+A runtime `--api-key` or `INFLOW_API_KEY` can be reported without opening the local vault. Without a runtime API key,
+a locked vault returns a non-zero `{ code: "VAULT_LOCKED", message }` error because the stored authentication state is
+unavailable. Unlock the vault in a human-controlled terminal and retry.
+
 ## `balances`
 
 ### `balances list`

@@ -1,5 +1,6 @@
 import {
   type AuthStorage,
+  type AuthSnapshotFrame,
   type ConnectionSettings,
   describeUser,
   type DeviceAuthRequest,
@@ -437,7 +438,14 @@ async function* runAuthStatus(
     polling: c.options.interval > 0,
   });
   const update = toUpdateBlock(updateInfo);
-  const storedConnection = readStoredConnection(deps.authStorage);
+  const runtimeApiKey =
+    (ctx.apiKeySource === 'flag' || ctx.apiKeySource === 'env') && ctx.apiKey !== undefined && ctx.apiKey.length > 0;
+  let storedConnection: ConnectionSettings | null;
+  try {
+    storedConnection = runtimeApiKey ? null : readStoredConnection(deps.authStorage);
+  } catch (cause) {
+    return mapAuthStatusError(c, cause);
+  }
   const effectiveConnection = displayConnection(storedConnection, ctx);
   const composeOptions = {
     ...(update !== undefined ? { update } : {}),
@@ -445,6 +453,12 @@ async function* runAuthStatus(
     connection: effectiveConnection,
     verbose: ctx.verbose,
   };
+  let initialSnapshot: AuthSnapshotFrame;
+  try {
+    initialSnapshot = deps.authResource.snapshot(composeOptions);
+  } catch (cause) {
+    return mapAuthStatusError(c, cause);
+  }
 
   if (!c.agent && !c.formatExplicit) {
     const updateNotice = updateInfo ? { current: updateInfo.current, latest: updateInfo.latest } : undefined;
@@ -463,37 +477,61 @@ async function* runAuthStatus(
   }
 
   if (c.options.probe) {
-    const result = await deps.authResource.probeStatus({ composeOptions });
-    if (result.kind === 'pending' || result.kind === 'unauthenticated') {
-      yield sanitizeDeep(result.frame);
-      return;
+    try {
+      const result = await deps.authResource.probeStatus({ composeOptions });
+      if (result.kind === 'pending' || result.kind === 'unauthenticated') {
+        yield sanitizeDeep(result.frame);
+        return;
+      }
+      if (result.kind === 'authenticated') {
+        const augmented = { ...result.frame, user: result.user };
+        yield sanitizeDeep(augmented);
+        return;
+      }
+      if (result.kind === 'invalid') {
+        const rejected: Record<string, unknown> = { ...result.frame };
+        if (ctx.verbose) rejected['credentials_path'] = deps.authStorage.getPath();
+        if (update !== undefined) rejected['update'] = update;
+        yield sanitizeDeep(rejected);
+        return;
+      }
+      return c.error({
+        code: 'PROBE_FAILED',
+        message: result.error instanceof Error ? result.error.message : String(result.error),
+      });
+    } catch (cause) {
+      return mapAuthStatusError(c, cause);
     }
-    if (result.kind === 'authenticated') {
-      const augmented = { ...result.frame, user: result.user };
-      yield sanitizeDeep(augmented);
-      return;
-    }
-    if (result.kind === 'invalid') {
-      const rejected: Record<string, unknown> = { ...result.frame };
-      if (ctx.verbose) rejected['credentials_path'] = deps.authStorage.getPath();
-      if (update !== undefined) rejected['update'] = update;
-      yield sanitizeDeep(rejected);
-      return;
-    }
-    return c.error({
-      code: 'PROBE_FAILED',
-      message: result.error instanceof Error ? result.error.message : String(result.error),
-    });
   }
 
-  for await (const frame of deps.authResource.pollStatus({
-    interval: c.options.interval,
-    maxAttempts: c.options.maxAttempts,
-    timeout: c.options.timeout,
-    composeOptions,
-  })) {
-    yield sanitizeDeep(frame);
+  if (runtimeApiKey) {
+    yield sanitizeDeep(initialSnapshot);
+    return;
   }
+
+  try {
+    for await (const frame of deps.authResource.pollStatus({
+      interval: c.options.interval,
+      maxAttempts: c.options.maxAttempts,
+      timeout: c.options.timeout,
+      composeOptions,
+    })) {
+      yield sanitizeDeep(frame);
+    }
+  } catch (cause) {
+    return mapAuthStatusError(c, cause);
+  }
+}
+
+function mapAuthStatusError(c: AuthStatusContext, cause: unknown): never {
+  if (cause instanceof SecureStorageError && cause.secureStorageCode === 'vault_locked') {
+    return c.error({
+      code: 'VAULT_LOCKED',
+      message:
+        'Authentication status unavailable. The InFlow vault is locked. Run `inflow vault unlock` and try again.',
+    });
+  }
+  throw cause;
 }
 
 export function createAuthCli(
