@@ -22,6 +22,8 @@ Install the signed native CLI through one of these channels:
 | --- | --- |
 | macOS Homebrew | `brew tap inflowpayai/tap && brew install --cask inflow` |
 | macOS/Linux hosted installer | `curl -fsSL https://inflowcli.ai/install.sh \| bash` |
+| Windows PowerShell installer | `irm https://inflowcli.ai/install.ps1 \| iex` |
+| Cross-platform shell compatibility | `curl -fsSL https://inflowcli.ai/cli \| bash` |
 
 Current install instructions live at https://inflowcli.ai/.
 

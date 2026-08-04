@@ -13,6 +13,18 @@ macOS or Linux:
 curl -fsSL https://inflowcli.ai/install.sh | bash
 ```
 
+Windows PowerShell:
+
+```powershell
+irm https://inflowcli.ai/install.ps1 | iex
+```
+
+The compatibility shell endpoint selects the platform installer on macOS, Linux, and Git Bash-like Windows environments:
+
+```bash
+curl -fsSL https://inflowcli.ai/cli | bash
+```
+
 Running as an MCP server? Add an `inflow` server to your MCP client config that runs `inflow --mcp`.
 
 ## 2. Authenticate

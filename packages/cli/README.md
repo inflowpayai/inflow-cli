@@ -3,7 +3,9 @@
 The InFlow binary — Agent Enrollment Protocol access and agentic [MPP](https://mpp.dev) / [x402](https://x402.org)
 payments from your machine. See the [repository README](../../README.md) for project-level context.
 
-Install InFlow from [inflowcli.ai](https://inflowcli.ai/) to run commands, start MCP, or manage credentials.
+Install InFlow from [inflowcli.ai](https://inflowcli.ai/) to run commands, start MCP, or manage credentials. The hosted
+installers support macOS and Linux through `install.sh`, Windows through `install.ps1`, and cross-platform shell
+delegation through `/cli`.
 
 Every command supports a TTY rendering (Ink) and an agent rendering via `--format <json|toon|yaml|md|jsonl>`. The TTY
 view is what you get by default in an interactive terminal; the structured formats are what an AI assistant or pipeline

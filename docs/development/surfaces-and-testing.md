@@ -17,45 +17,38 @@ brew tap inflowpayai/tap
 brew install --cask inflow
 ```
 
-The hosted installer supports macOS, Debian/Ubuntu, and Fedora/RHEL:
+The hosted shell installer supports macOS, Debian/Ubuntu, and Fedora/RHEL:
 
 ```bash
 curl -fsSL https://inflowcli.ai/install.sh | bash
 ```
 
+On Windows PowerShell:
+
+```powershell
+irm https://inflowcli.ai/install.ps1 | iex
+```
+
+On macOS, Linux, or a Git Bash-like Windows environment, the compatibility endpoint delegates to the appropriate
+platform installer:
+
+```bash
+curl -fsSL https://inflowcli.ai/cli | bash
+```
+
+Windows users can also install through WinGet:
+
+```powershell
+winget install --id InFlowPayAI.InFlow --exact
+```
+
 Signed Linux ARM64 and AMD64 Debian packages, RPM packages, and standalone archives are published through GitHub
-Releases. Windows x64 and ARM64 MSI packages have passed their unsigned platform workflow, but production signing and
-publication await Microsoft identity approval.
+Releases. Signed Windows x64 and ARM64 MSI packages install the command-line application and on-demand vault service.
+For release-operator setup, see the [native release guide](./native-release.md).
 
-### Windows release signing
-
-The `windows release` GitHub Actions workflow is manual. Windows binaries do not build from pull requests, merges, or
-package releases. Manual runs with signing disabled build unsigned x64 and ARM64 MSI files and release metadata without
-publishing them. Production signing and publication await Microsoft identity approval.
-
-Production runs use Azure Artifact Signing in this order:
-
-1. Build the unsigned executable on its native architecture.
-2. Sign `inflow.exe` on the supported x64 signing runner.
-3. Build the architecture-specific MSI around the signed executable.
-4. Sign the MSI.
-5. Verify both Authenticode chains, publishers, and timestamps.
-6. Render the checksum, hosted installer, and WinGet manifests from the signed MSI.
-
-Create a protected GitHub environment named `windows-production`, require deployment approval, and configure these
-environment variables:
-
-- `AZURE_ARTIFACT_SIGNING_CLIENT_ID`
-- `AZURE_ARTIFACT_SIGNING_TENANT_ID`
-- `AZURE_ARTIFACT_SIGNING_SUBSCRIPTION_ID`
-- `AZURE_ARTIFACT_SIGNING_ENDPOINT`
-- `AZURE_ARTIFACT_SIGNING_ACCOUNT`
-- `AZURE_ARTIFACT_SIGNING_PROFILE`
-- `AZURE_ARTIFACT_SIGNING_SUBJECT`
-
-The Azure application must have an OpenID Connect federated credential scoped to the `windows-production` GitHub
-environment and the `Artifact Signing Certificate Profile Signer` role on the certificate profile. Do not create or
-store an Azure client secret or certificate private key in GitHub.
+The Windows MSI installs `inflow.exe` under `%ProgramFiles%\InFlow`, adds that directory to the system `PATH`, and
+registers the demand-start `InFlowVault` service as `NT SERVICE\InFlowVault`. Per-user encrypted vaults live under
+`%ProgramData%\InFlow\vaults`; uninstall preserves that directory.
 
 Verify the installed executable:
 
@@ -241,6 +234,12 @@ brew upgrade --cask inflow
 For a hosted installation, rerun the hosted installer. Reinstall or refresh the plugin separately when its skill or
 manifest changes, then restart the host.
 
+For WinGet:
+
+```powershell
+winget upgrade --id InFlowPayAI.InFlow --exact
+```
+
 The CLI checks the latest GitHub Release with a two-second deadline. Human executions may print an advisory update
 notice. `auth status` structured output may include `current_version` and `latest_version`. An advisory does not block
 the current command; `VERSION_UNSUPPORTED` means the upgrade is mandatory. Set `NO_UPDATE_NOTIFIER=1` to disable the
@@ -263,6 +262,19 @@ Hosted macOS uninstall:
 curl -fsSL https://inflowcli.ai/install.sh | bash -s -- --uninstall
 ```
 
+Hosted Windows uninstall:
+
+```powershell
+$env:INFLOW_UNINSTALL = '1'
+try { irm https://inflowcli.ai/install.ps1 | iex } finally { Remove-Item Env:INFLOW_UNINSTALL }
+```
+
+WinGet uninstall:
+
+```powershell
+winget uninstall --id InFlowPayAI.InFlow --exact
+```
+
 Windows Installer and Linux package uninstall preserve encrypted vault data. Linux `install.sh --purge` removes the
 package and system vault data. `inflow vault reset` is the cross-platform command for intentionally removing local vault
 state before uninstall.
@@ -271,8 +283,17 @@ state before uninstall.
 
 ### MCP process does not start
 
-Run `command -v inflow` in the same environment as the host. If the graphical host has a different `PATH`, configure the
-absolute path. Run `inflow --mcp` in a terminal and inspect the host's MCP logs.
+On macOS or Linux, run `command -v inflow` in the same environment as the host. If the graphical host has a different
+`PATH`, configure the absolute path. Run `inflow --mcp` in a terminal and inspect the host's MCP logs.
+
+On Windows, restart the terminal and graphical host after installation so they inherit the updated system `PATH`. If
+needed, configure the MCP command with the resolved full path, such as `C:\Program Files\InFlow\inflow.exe`, and inspect
+the service with:
+
+```powershell
+Get-Command inflow
+Get-Service InFlowVault
+```
 
 ### MCP tools are present but credential operations fail
 
@@ -307,6 +328,10 @@ not pass the legacy file to another application or attempt to import it into the
 Reinstall through the signed platform channel. Do not copy an executable between installations or invoke a development
 bundle as a substitute. On macOS, verify with `codesign --verify --deep --strict`; on Windows, inspect the Authenticode
 signature; on Linux, reinstall through the signed package or repository once the production repository is published.
+
+```powershell
+Get-AuthenticodeSignature "$env:ProgramFiles\InFlow\inflow.exe"
+```
 
 ## Privacy and security checks
 
