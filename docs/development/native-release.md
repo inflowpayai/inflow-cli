@@ -1,7 +1,8 @@
 # Native Release Automation
 
 Production releases use the `native release` GitHub Actions workflow. Create `v<version>` from the reviewed release
-commit, then dispatch the workflow from that tag with the matching package version and an explicit `mode` input:
+commit, then dispatch the workflow from that tag with an explicit `mode` input. The workflow derives the package version
+from the selected tag; selecting a branch is rejected:
 
 - `preflight` signs, notarizes, stages, and verifies the complete asset set without creating a GitHub Release.
 - `draft` creates and verifies an unpublished draft, then deletes it.
