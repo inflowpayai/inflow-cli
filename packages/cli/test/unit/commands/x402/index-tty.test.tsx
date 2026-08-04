@@ -302,6 +302,6 @@ describe('createX402Cli', () => {
     const cli = createX402Cli(inflow, storage, 'https://app.inflowpay.ai');
     expect(cli).toBeDefined();
     expect(cli.name).toBe('x402');
-    expect(cli.description).toContain('x402 payment commands');
+    expect(cli.description).toBe('x402 Protocol payment commands');
   });
 });

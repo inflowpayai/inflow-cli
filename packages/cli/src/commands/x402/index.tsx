@@ -844,7 +844,7 @@ async function runInspectCommand(
 
 export function createX402Cli(inflow: Inflow, authStorage: AuthStorage, apiBaseUrl: string) {
   const cli = Cli.create('x402', {
-    description: 'x402 payment commands (pay, fetch, inspect, status, cancel, decode, supported).',
+    description: 'x402 Protocol payment commands',
   });
 
   cli.command('pay', {

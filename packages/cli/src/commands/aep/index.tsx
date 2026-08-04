@@ -1188,7 +1188,7 @@ async function runRevoke(c: Context, inflow: Inflow, authStorage: AuthStorage): 
 }
 
 export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
-  const cli = Cli.create('aep', { description: 'Agent Enrollment Protocol Service commands.' });
+  const cli = Cli.create('aep', { description: 'Agent Enrollment Protocol service commands' });
   cli.command('inspect', {
     args: serviceReferenceArgs,
     description: 'Inspect an AEP Service without authentication.',

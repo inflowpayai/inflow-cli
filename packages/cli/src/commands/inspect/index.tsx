@@ -315,8 +315,7 @@ export async function runCombinedInspectCommand(
 
 export function createInspectCommand(inflow: Inflow, authStorage?: AuthStorage): InspectCommandDefinition {
   return {
-    description:
-      "Detect a URL's AEP authentication and payment requirements. Read-only probe - no authentication and no payment.",
+    description: 'Inspect a URL for agent enrollment and payment requirements',
     mcp: mcpTool('inspect'),
     args: inspectArgs,
     options: inspectOptions,

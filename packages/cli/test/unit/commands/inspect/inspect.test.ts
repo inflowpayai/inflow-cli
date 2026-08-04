@@ -311,7 +311,7 @@ describe('runCombinedInspectCommand (agent path)', () => {
   it('registers the top-level Inspect command metadata', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
     const command = createInspectCommand({} as never, new MemoryStorage());
-    expect(command.description).toContain('AEP authentication and payment requirements');
+    expect(command.description).toBe('Inspect a URL for agent enrollment and payment requirements');
     expect(command.outputPolicy).toBe('agent-only');
     expect(command.examples).toHaveLength(2);
     expect(await command.run(ctx())).toBeDefined();
