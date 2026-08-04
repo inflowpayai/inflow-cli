@@ -39,6 +39,51 @@ export function shouldStartVaultDaemon(argv: readonly string[], hasDirectApiKey 
   return false;
 }
 
+const MCP_VAULT_TOOLS = new Set([
+  'aep_enroll',
+  'aep_fetch',
+  'aep_grant',
+  'aep_revoke',
+  'aep_status',
+  'auth_login',
+  'auth_logout',
+  'auth_status',
+  'balances_list',
+  'deposit_addresses_list',
+  'mpp_fetch',
+  'mpp_pay',
+  'mpp_status',
+  'mpp_supported',
+  'user_get',
+  'vault_lock',
+  'vault_policy',
+  'vault_set_policy',
+  'x402_fetch',
+  'x402_pay',
+  'x402_status',
+  'x402_supported',
+]);
+
+const MCP_DIRECT_API_KEY_TOOLS = new Set([
+  'auth_status',
+  'balances_list',
+  'deposit_addresses_list',
+  'mpp_fetch',
+  'mpp_pay',
+  'mpp_status',
+  'mpp_supported',
+  'x402_fetch',
+  'x402_pay',
+  'x402_status',
+  'x402_supported',
+  'user_get',
+]);
+
+export function shouldStartVaultDaemonForMcpTool(toolName: string, hasDirectApiKey = false): boolean {
+  if (!MCP_VAULT_TOOLS.has(toolName)) return false;
+  return !hasDirectApiKey || !MCP_DIRECT_API_KEY_TOOLS.has(toolName);
+}
+
 export function shouldReconcileVaultDaemon(argv: readonly string[], hasDirectApiKey = false): boolean {
   if (shouldBypassVault(argv)) return false;
   const [group, subcommand] = commandPath(argv);
