@@ -92,10 +92,22 @@ describe('vault startup decisions', () => {
     expect(shouldUnlockVault(argv(...args))).toBe(expected);
   });
 
-  it('does not start or unlock the vault when a direct API key or schema mode is used', () => {
-    expect(shouldStartVaultDaemon(argv('aep', 'status'), true)).toBe(false);
-    expect(shouldReconcileVaultDaemon(argv('aep', 'status'), true)).toBe(false);
-    expect(shouldUnlockVault(argv('aep', 'status'), { hasDirectApiKey: true })).toBe(false);
+  it('still uses the vault for local-state commands when a direct InFlow API key is present', () => {
+    expect(shouldStartVaultDaemon(argv('aep', 'status'), true)).toBe(true);
+    expect(shouldReconcileVaultDaemon(argv('aep', 'status'), true)).toBe(true);
+    expect(shouldUnlockVault(argv('aep', 'status'), { hasDirectApiKey: true })).toBe(true);
+    expect(shouldStartVaultDaemon(argv('auth', 'login'), true)).toBe(true);
+    expect(shouldReconcileVaultDaemon(argv('auth', 'logout'), true)).toBe(true);
+  });
+
+  it('bypasses vault credentials that a direct InFlow API key replaces', () => {
+    expect(shouldStartVaultDaemon(argv('mpp', 'pay'), true)).toBe(false);
+    expect(shouldReconcileVaultDaemon(argv('balances', 'list'), true)).toBe(false);
+    expect(shouldReconcileVaultDaemon(argv('auth', 'status'), true)).toBe(false);
+    expect(shouldUnlockVault(argv('x402', 'fetch'), { hasDirectApiKey: true })).toBe(false);
+  });
+
+  it('does not touch the vault in schema mode', () => {
     expect(shouldStartVaultDaemon(argv('aep', 'status', '--schema'))).toBe(false);
     expect(shouldReconcileVaultDaemon(argv('aep', 'status', '--schema'))).toBe(false);
     expect(shouldUnlockVault(argv('aep', 'status', '--schema'))).toBe(false);

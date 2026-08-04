@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { __testing, pollAuthStatus } from '../../../src/auth/poll.js';
+import { __testing, composeAuthSnapshot, pollAuthStatus } from '../../../src/auth/poll.js';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import type { IAuthResource } from '../../../src/resources/interfaces.js';
 import type { AuthTokens } from '../../../src/types/index.js';
@@ -37,6 +37,29 @@ async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
 }
 
 describe('pollAuthStatus', () => {
+  it('reports an effective API key without reading locked credential storage', () => {
+    const storage = new MemoryStorage();
+    const getAuth = vi.spyOn(storage, 'getAuth').mockImplementation(() => {
+      throw new SecureStorageError('vault_locked', 'The InFlow vault is locked.');
+    });
+    const getApiKey = vi.spyOn(storage, 'getApiKey').mockImplementation(() => {
+      throw new SecureStorageError('vault_locked', 'The InFlow vault is locked.');
+    });
+
+    expect(
+      composeAuthSnapshot(storage, {
+        connection: { environment: 'production' },
+        effectiveApiKey: 'inflow_runtime_key',
+      }),
+    ).toEqual({
+      authenticated: true,
+      auth_method: 'api_key',
+      connection: { environment: 'production' },
+    });
+    expect(getAuth).not.toHaveBeenCalled();
+    expect(getApiKey).not.toHaveBeenCalled();
+  });
+
   it('uses a fallback only for an exact missing-vault-secret error', () => {
     expect(
       __testing.readStorageValue(() => {

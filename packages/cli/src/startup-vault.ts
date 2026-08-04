@@ -29,24 +29,27 @@ export function commandPath(argv: readonly string[]): string[] {
 }
 
 export function shouldStartVaultDaemon(argv: readonly string[], hasDirectApiKey = false): boolean {
-  if (shouldBypassVault(argv, hasDirectApiKey)) return false;
+  if (shouldBypassVault(argv)) return false;
   const [group, subcommand] = commandPath(argv);
   if (group === 'auth') return subcommand === 'login' || subcommand === 'logout';
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
   if (group === 'mpp' || group === 'x402') {
-    return isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
+    return !hasDirectApiKey && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
   }
   return false;
 }
 
 export function shouldReconcileVaultDaemon(argv: readonly string[], hasDirectApiKey = false): boolean {
-  if (shouldBypassVault(argv, hasDirectApiKey)) return false;
+  if (shouldBypassVault(argv)) return false;
   const [group, subcommand] = commandPath(argv);
-  if (group === 'auth') return isOneOf(subcommand, 'login', 'logout', 'status');
+  if (group === 'auth') {
+    return isOneOf(subcommand, 'login', 'logout') || (!hasDirectApiKey && subcommand === 'status');
+  }
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
   if (group === 'mpp' || group === 'x402') {
-    return isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
+    return !hasDirectApiKey && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
   }
+  if (hasDirectApiKey) return false;
   if (group === 'balances' || group === 'deposit-addresses') return subcommand === 'list';
   return group === 'user' && subcommand === 'get';
 }
@@ -55,19 +58,20 @@ export function shouldUnlockVault(
   argv: readonly string[],
   options: { hasDirectApiKey?: boolean; isAgent?: boolean } = {},
 ): boolean {
-  if (options.isAgent === true || shouldBypassVault(argv, options.hasDirectApiKey === true)) return false;
+  if (options.isAgent === true || shouldBypassVault(argv)) return false;
   const [group, subcommand] = commandPath(argv);
   if (group === 'auth') return subcommand === 'login';
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
   if (group === 'mpp' || group === 'x402') {
-    return isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
+    return options.hasDirectApiKey !== true && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
   }
+  if (options.hasDirectApiKey === true) return false;
   if (group === 'balances' || group === 'deposit-addresses') return subcommand === 'list';
   return group === 'user' && subcommand === 'get';
 }
 
-function shouldBypassVault(argv: readonly string[], hasDirectApiKey: boolean): boolean {
-  return hasDirectApiKey || argv.includes('--schema') || argv.includes('--help') || argv.includes('-h');
+function shouldBypassVault(argv: readonly string[]): boolean {
+  return argv.includes('--schema') || argv.includes('--help') || argv.includes('-h');
 }
 
 function isOneOf(value: string | undefined, ...choices: readonly string[]): boolean {

@@ -118,13 +118,18 @@ async function advancePendingFlow(
  * tokens are also present in storage.
  */
 export function composeAuthSnapshot(storage: AuthStorage, options: ComposeAuthSnapshotOptions = {}): AuthSnapshotFrame {
+  if (options.effectiveApiKey !== undefined && options.effectiveApiKey.length > 0) {
+    const frame: AuthenticatedFrame = {
+      authenticated: true,
+      auth_method: 'api_key',
+    };
+    if (options.verbose) frame.credentials_path = storage.getPath();
+    if (options.connection !== undefined) frame.connection = options.connection;
+    if (options.update !== undefined) frame.update = options.update;
+    return frame;
+  }
   const tokens = readStorageValue(() => storage.getAuth(), null);
-  // Runtime api key (from a flag/env) wins over the stored one. When composing a status frame mid-invocation this is what matches
-  // InflowResources's precedence and avoids "auth status says X but actual calls used Y" confusion.
-  const apiKey =
-    options.effectiveApiKey !== undefined && options.effectiveApiKey.length > 0
-      ? options.effectiveApiKey
-      : (readStorageValue(() => storage.getApiKey(), null) ?? undefined);
+  const apiKey = readStorageValue(() => storage.getApiKey(), null) ?? undefined;
   const pending = readStorageValue(() => storage.getPendingDeviceAuth(), null);
   const connection = options.connection ?? readStorageValue(() => storage.getConnection(), null) ?? undefined;
   const credentialsPath = options.verbose ? storage.getPath() : undefined;

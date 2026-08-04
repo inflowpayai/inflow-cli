@@ -615,7 +615,47 @@ describe('runAuthStatus (agent mode)', () => {
           defaultAuthCtx,
         ),
       ),
-    ).rejects.toMatchObject({ secureStorageCode: 'vault_locked' });
+    ).rejects.toThrow('c.error called');
+    expect(ctx.error).toHaveBeenCalledWith({
+      code: 'VAULT_LOCKED',
+      message:
+        'Authentication status unavailable. The InFlow vault is locked. Run `inflow vault unlock` and try again.',
+    });
+  });
+
+  it('reports a runtime API key without reading a locked vault', async () => {
+    const ctx = makeContext({
+      interval: 0,
+      maxAttempts: 0,
+      timeout: 60,
+      probe: false,
+    });
+    const storage = new LockedStorage();
+    const auth = makeAuthResource(storage);
+    const yields = await drainGenerator(
+      runAuthStatus(
+        ctx,
+        {
+          authResource: auth.resource,
+          userResource: makeUserResource().resource,
+          authStorage: storage,
+          updateProbe: undefined,
+        },
+        { ...defaultAuthCtx, apiKey: 'inflow_runtime_key', apiKeySource: 'flag' },
+      ),
+    );
+
+    expect(yields).toEqual([
+      {
+        authenticated: true,
+        auth_method: 'api_key',
+        connection: {
+          apiBaseUrl: 'https://api.inflowpay.ai',
+          environment: 'production',
+        },
+      },
+    ]);
+    expect(ctx.error).not.toHaveBeenCalled();
   });
 
   it('includes credentials_path in the agent payload when ctx.verbose=true', async () => {

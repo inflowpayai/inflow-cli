@@ -82,6 +82,9 @@ inflow auth login --client-name "<name>" --interval 5 --timeout 300
 
 **API key alternative:** if the user provides an API key, set `INFLOW_API_KEY=<key>` in the environment (or pass `--api-key <key>` to any command) instead of running `auth login`. The API key takes precedence over a saved device token.
 
+If `auth status` returns `VAULT_LOCKED`, authentication status is unavailable rather than unauthenticated. Tell the user
+to run `inflow vault unlock` themselves in a terminal, then retry `auth status`.
+
 ## Which protocol? - start here
 
 Before paying, decide which protocol the resource uses. **You do not choose it - the seller's 402 challenge decides.** Run one read-only, no-auth command and let it detect both:
@@ -314,6 +317,7 @@ These apply to both protocols (in addition to each section's protocol-specific c
 
 | Error code | Recovery | What to tell the user |
 | --- | --- | --- |
+| `VAULT_LOCKED` | Stored authentication status is unavailable. Ask the user to run `inflow vault unlock` themselves in a terminal, then retry. | "Your InFlow vault is locked. Please unlock it in your terminal, then I can check authentication again." |
 | `NOT_AUTHENTICATED` | No saved device token and no `--api-key` / `INFLOW_API_KEY` configured. Run `inflow auth login` or set the API key env var. | - |
 | `NO_INFLOW_MATCH` | Seller's rails aren't supported by the account. Fund a matching method/chain, or use a different seller. | "The seller wants `<method/rail or scheme×network>`, but your account can't pay on that rail. Either fund a matching method, or pick a different seller." |
 | `NO_FILTERED_MATCH` | A `pay` filter emptied the candidate list. Loosen the filter (flags per the delta table), or re-check the seller's unfiltered options with `inflow inspect <url>`. | "Your filter removed every option the seller accepts. Loosen it or re-check the seller's options with `inflow inspect`." |

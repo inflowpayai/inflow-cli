@@ -8,7 +8,7 @@
  * block below hits `balances list` against `sandbox.inflowpay.ai`.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -26,11 +26,13 @@ const cliBin = resolvePath(here, '../../dist/cli.js');
 let authDir = '';
 let authFile = '';
 beforeAll(() => {
-  authDir = mkdtempSync(join(tmpdir(), 'inflow-smoke-'));
+  const temporaryRoot = process.platform === 'darwin' ? '/private/tmp' : tmpdir();
+  authDir = realpathSync(mkdtempSync(join(temporaryRoot, 'inflow-smoke-')));
   authFile = join(authDir, 'auth.json');
 });
-afterAll(() => {
+afterAll(async () => {
   if (authDir.length > 0) {
+    await run(['vault', 'reset', '--force', '--format', 'json']);
     rmSync(authDir, { recursive: true, force: true });
   }
 });
@@ -51,7 +53,9 @@ function run(args: string[], env: NodeJS.ProcessEnv = {}): Promise<RunResult> {
       INFLOW_API_KEY: '',
       INFLOW_BASE_URL: 'http://127.0.0.1:1',
       INFLOW_ENVIRONMENT: 'sandbox',
+      HOME: authDir,
       NO_UPDATE_NOTIFIER: '1',
+      XDG_DATA_HOME: join(authDir, '.local', 'share'),
       ...env,
     };
     const child = spawn(process.execPath, [cliBin, ...args], {
