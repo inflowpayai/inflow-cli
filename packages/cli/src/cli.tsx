@@ -160,7 +160,8 @@ async function main(): Promise<void> {
   const verbose = extractBooleanFlag('--verbose');
   const isAgent = process.argv.includes('--format') || process.argv.includes('--mcp') || !process.stdout.isTTY;
   const vaultOptions: LocalVaultDaemonClientOptions = { buildId: cliBuildId, cliVersion };
-  const hasDirectApiKey = apiKeyFromFlag !== undefined || process.env['INFLOW_API_KEY'] !== undefined;
+  const apiKeyFromEnv = process.env['INFLOW_API_KEY'];
+  const hasDirectApiKey = (apiKeyFromFlag?.length ?? 0) > 0 || (apiKeyFromEnv?.length ?? 0) > 0;
   if (shouldReconcileVaultDaemon(process.argv, hasDirectApiKey)) {
     const status = await readVaultStatusWithoutStarting(vaultOptions);
     if (status.daemonRunning) await ensureLocalVaultDaemon(vaultOptions);
@@ -178,7 +179,6 @@ async function main(): Promise<void> {
     secretStore,
   });
 
-  const apiKeyFromEnv = process.env['INFLOW_API_KEY'];
   function readSavedApiKey(): string | undefined {
     try {
       return authStorage.getApiKey() ?? undefined;

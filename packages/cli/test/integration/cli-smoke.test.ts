@@ -130,6 +130,52 @@ describe('cli smoke', () => {
     expect(result.stdout.trimStart().startsWith('---')).toBe(false);
   });
 
+  it.each(['auth', 'aep', 'balances', 'deposit-addresses', 'mpp', 'vault', 'x402'])(
+    '%s group help does not require the vault daemon',
+    async (group) => {
+      const result = await run([group]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('Usage:');
+      expect(result.stderr).not.toContain('vault daemon');
+    },
+  );
+
+  it('leaf help does not require the vault daemon', async () => {
+    for (const args of [
+      ['aep', 'status', '--help'],
+      ['mpp', 'pay', '--help'],
+      ['balances', 'list', '--help'],
+    ]) {
+      const result = await run(args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('Usage:');
+      expect(result.stderr).not.toContain('vault daemon');
+    }
+  });
+
+  it.skipIf(process.platform !== 'darwin')(
+    'starts and resets the development vault daemon from the built CLI',
+    async () => {
+      const vaultRoot = mkdtempSync(join('/tmp', 'inflow-development-vault-'));
+      const env = {
+        HOME: vaultRoot,
+        XDG_DATA_HOME: join(vaultRoot, 'data'),
+      };
+      try {
+        const policy = await run(['vault', 'policy', '--format', 'json'], env);
+        expect(policy.exitCode, `${policy.stdout}\n${policy.stderr}`).toBe(0);
+        expect(parseAgentJson(policy.stdout)).toEqual(expect.any(Object));
+
+        const reset = await run(['vault', 'reset', '--force', '--format', 'json'], env);
+        expect(reset.exitCode, `${reset.stdout}\n${reset.stderr}`).toBe(0);
+        expect(parseAgentJson(reset.stdout)).toEqual({ reset: true });
+      } finally {
+        await run(['vault', 'reset', '--force', '--format', 'json'], env);
+        rmSync(vaultRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('auth status --format json yields an unauthenticated frame on a cold start', async () => {
     const result = await run(['auth', 'status', '--format', 'json']);
     expect(result.exitCode).toBe(0);

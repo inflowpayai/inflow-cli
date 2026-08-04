@@ -13,7 +13,6 @@ type VaultTestClient = {
   changePassphrase: ReturnType<typeof vi.fn>;
   getPolicy: ReturnType<typeof vi.fn>;
   lock: ReturnType<typeof vi.fn>;
-  reset: ReturnType<typeof vi.fn>;
   setPolicy: ReturnType<typeof vi.fn>;
   status: ReturnType<typeof vi.fn>;
   unlock: ReturnType<typeof vi.fn>;
@@ -23,6 +22,7 @@ type VaultTestDeps = {
   ensureDaemon: ReturnType<typeof vi.fn>;
   readPassphrase: ReturnType<typeof vi.fn>;
   readVaultStatus: ReturnType<typeof vi.fn>;
+  resetVault: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
 };
 type ResetVaultTestDeps = {
@@ -59,7 +59,6 @@ function deps(overrides: Partial<VaultTestDeps> = {}): VaultTestDeps {
       } satisfies VaultPolicy),
     ),
     lock: vi.fn(() => Promise.resolve()),
-    reset: vi.fn(() => Promise.resolve()),
     setPolicy: vi.fn((policy: VaultPolicy) => Promise.resolve(policy)),
     status: vi.fn(() =>
       Promise.resolve({
@@ -79,6 +78,7 @@ function deps(overrides: Partial<VaultTestDeps> = {}): VaultTestDeps {
     ensureDaemon: vi.fn(() => Promise.resolve(client)),
     readPassphrase: vi.fn(() => Promise.resolve(Buffer.from('123456'))),
     readVaultStatus: vi.fn(() => client.status()),
+    resetVault: vi.fn(() => Promise.resolve()),
     write: vi.fn(),
     ...overrides,
   };
@@ -338,7 +338,8 @@ describe('vault command runners', () => {
     await expect(__testing.runVaultReset(context({ force: true }, false), harness)).resolves.toEqual({ reset: true });
 
     expect(harness.client.lock).toHaveBeenCalledOnce();
-    expect(harness.client.reset).toHaveBeenCalledOnce();
+    expect(harness.resetVault).toHaveBeenCalledOnce();
+    expect(harness.ensureDaemon).toHaveBeenCalledOnce();
     expect(harness.write).toHaveBeenCalledWith('Vault locked.\n');
     expect(harness.write).toHaveBeenCalledWith('Vault reset complete.\n');
   });
@@ -625,7 +626,7 @@ describe('vault command runners', () => {
     await expect(__testing.runVaultReset(context({ force: false }), harness)).rejects.toMatchObject({
       code: 'VAULT_RESET_REQUIRES_FORCE',
     });
-    expect(harness.client.reset).not.toHaveBeenCalled();
+    expect(harness.resetVault).not.toHaveBeenCalled();
   });
 
   it('rejects agent passphrase changes without reading passphrases', async () => {

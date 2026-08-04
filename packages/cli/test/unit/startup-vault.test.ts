@@ -101,6 +101,32 @@ describe('vault startup decisions', () => {
     expect(shouldUnlockVault(argv('aep', 'status', '--schema'))).toBe(false);
   });
 
+  it.each(['auth', 'aep', 'balances', 'deposit-addresses', 'mpp', 'user', 'vault', 'x402'])(
+    'does not touch the vault for %s group help',
+    (group) => {
+      for (const args of [[group], [group, '--help'], [group, '-h']]) {
+        expect(shouldStartVaultDaemon(argv(...args))).toBe(false);
+        expect(shouldReconcileVaultDaemon(argv(...args))).toBe(false);
+        expect(shouldUnlockVault(argv(...args))).toBe(false);
+      }
+    },
+  );
+
+  it('does not touch the vault for help or unknown subcommands', () => {
+    for (const args of [
+      ['aep', 'status', '--help'],
+      ['mpp', 'pay', '-h'],
+      ['aep', 'unknown'],
+      ['balances', 'unknown'],
+      ['deposit-addresses', 'unknown'],
+      ['user', 'unknown'],
+    ]) {
+      expect(shouldStartVaultDaemon(argv(...args))).toBe(false);
+      expect(shouldReconcileVaultDaemon(argv(...args))).toBe(false);
+      expect(shouldUnlockVault(argv(...args))).toBe(false);
+    }
+  });
+
   it('does not prompt agents or MCP callers before command handling', () => {
     expect(shouldUnlockVault(argv('aep', 'status'), { isAgent: true })).toBe(false);
     expect(shouldUnlockVault(argv('--mcp'), { isAgent: true })).toBe(false);
