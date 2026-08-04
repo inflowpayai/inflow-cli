@@ -853,7 +853,7 @@ async function runInspectCommand(
 
 export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUrl: string) {
   const cli = Cli.create('mpp', {
-    description: 'MPP payment commands (pay, fetch, inspect, status, cancel, decode, supported).',
+    description: 'Machine Payments Protocol payment commands',
   });
 
   cli.command('pay', {
