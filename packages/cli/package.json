@@ -18,6 +18,7 @@
   "types": "./dist/npm-shim.d.ts",
   "scripts": {
     "build": "tsup",
+    "build:shim": "tsup --config tsup.shim.config.ts",
     "build:standalone": "tsup --config tsup.standalone.config.ts",
     "dev": "tsup --watch",
     "test": "vitest run --coverage",

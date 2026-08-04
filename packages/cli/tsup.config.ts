@@ -14,7 +14,7 @@ interface CliManifest {
 
 const manifest = JSON.parse(readFileSync(resolve(here, 'package.json'), 'utf-8')) as CliManifest;
 const buildId = computeBuildId();
-const vaultPeerNative = developmentVaultPeerNative();
+const vaultPeerNative = requiredDevelopmentVaultPeerNative();
 
 const skillsDir = resolve(repoRoot, 'skills');
 
@@ -88,12 +88,17 @@ function computeBuildId(): string {
   return hash.digest('hex');
 }
 
-function developmentVaultPeerNative(): { relativePath: string; sha256: string | undefined } {
+function requiredDevelopmentVaultPeerNative(): { relativePath: string; sha256: string } {
   const platformName = process.platform === 'win32' ? 'windows' : process.platform;
   const nativePath = resolve(repoRoot, `packages/core/native/build/vault_peer_${platformName}.node`);
+  if (!existsSync(nativePath)) {
+    throw new Error(
+      `Native vault peer verifier is missing at ${nativePath}. Run node scripts/build-vault-peer-native.mjs first.`,
+    );
+  }
   return {
     relativePath: `../../core/native/build/vault_peer_${platformName}.node`,
-    sha256: existsSync(nativePath) ? createHash('sha256').update(readFileSync(nativePath)).digest('hex') : undefined,
+    sha256: createHash('sha256').update(readFileSync(nativePath)).digest('hex'),
   };
 }
 
