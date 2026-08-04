@@ -45,6 +45,8 @@ try {
   await expectFakeDaemonRejected();
   const endpoint = await startUserServer();
 
+  await expectJson([executable, 'auth', 'status', '--format', 'json'], { authenticated: false });
+  await expectJson([executable, 'vault', 'status', '--format', 'json'], { lock_state: 'not_initialized' });
   await runPty([executable, 'vault', 'unlock'], `${passphrase}\n`, 'Vault initialized and unlocked.');
   await expectJson([executable, 'vault', 'status', '--format', 'json'], { lock_state: 'unlocked' });
   await expectJson([executable, '--api-key', apiKey, '--base-url', endpoint, 'auth', 'login', '--format', 'json'], {
@@ -68,7 +70,10 @@ try {
   await expectNodeClientRejected();
 
   await expectJson([executable, 'vault', 'lock', '--format', 'json'], { locked: true });
-  await expectFailure([executable, 'auth', 'status', '--format', 'json'], 'The InFlow vault is locked.');
+  await expectJson([executable, 'auth', 'status', '--format', 'json'], {
+    authenticated: false,
+    vault_locked: true,
+  });
   await runPty([executable, 'vault', 'unlock'], `${passphrase}\n`, 'Vault unlocked.');
   await expectJson([executable, 'auth', 'logout', '--format', 'json'], { authenticated: false });
   await waitFor(() => !pathExists(socketPath), 'The packaged vault daemon did not shut down after logout.');

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -211,11 +211,12 @@ function defaultNativeModulePath(): string {
   }
   const platformName = process.platform === 'linux' ? 'linux' : 'darwin';
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  const nativeRelativePath =
-    basename(moduleDirectory) === 'dist'
-      ? `../native/build/vault_peer_${platformName}.node`
-      : `../../native/build/vault_peer_${platformName}.node`;
-  return resolve(moduleDirectory, nativeRelativePath);
+  if (basename(moduleDirectory) === 'dist') {
+    const packageModule = resolve(moduleDirectory, `../native/build/vault_peer_${platformName}.node`);
+    if (existsSync(packageModule)) return packageModule;
+    return resolve(moduleDirectory, `../../core/native/build/vault_peer_${platformName}.node`);
+  }
+  return resolve(moduleDirectory, `../../native/build/vault_peer_${platformName}.node`);
 }
 
 function realExecutablePath(): string {

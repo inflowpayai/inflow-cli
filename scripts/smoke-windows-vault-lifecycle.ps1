@@ -326,6 +326,9 @@ try {
 
   $initial = Invoke-InFlowJson @('vault', 'status', '--format', 'json')
   if ($initial.lock_state -eq 'not_initialized') {
+    $firstAuthStatus = Invoke-InFlowJson @('auth', 'status', '--format', 'json')
+    Assert-True (-not $firstAuthStatus.authenticated) 'First-run auth status did not report an unauthenticated session.'
+    Add-Result 'first-run auth status activated the vault service without requiring unlock'
     Write-Host 'Choose a temporary vault passphrase, then enter the same value at each InFlow prompt.'
     & $Executable vault unlock
     Assert-True ($LASTEXITCODE -eq 0) 'Vault initialization failed.'

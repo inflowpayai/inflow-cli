@@ -27,15 +27,18 @@ try {
   const endpoint = await startUserServer();
 
   await runPty([executable, 'vault', 'unlock'], passphrase, 'Vault initialized and unlocked.');
-  await expectJson(
-    [executable, '--api-key', apiKey, '--base-url', endpoint, 'auth', 'login', '--format', 'json'],
-    { authenticated: true, method: 'api_key' },
-  );
+  await expectJson([executable, '--api-key', apiKey, '--base-url', endpoint, 'auth', 'login', '--format', 'json'], {
+    authenticated: true,
+    method: 'api_key',
+  });
   await expectAuthenticated();
   const previousPid = packagedDaemonPid();
 
   installApp(currentApp);
-  await expectFailure([executable, 'auth', 'status', '--format', 'json'], 'The InFlow vault is locked.');
+  await expectJson([executable, 'auth', 'status', '--format', 'json'], {
+    authenticated: false,
+    vault_locked: true,
+  });
   await waitFor(() => !processExists(previousPid), 'The previous daemon remained alive after upgrade.');
   const currentPid = packagedDaemonPid();
   await runPty([executable, 'vault', 'unlock'], passphrase, 'Vault unlocked.');
@@ -52,7 +55,10 @@ try {
   await expectLockUnlock();
 
   installApp(currentApp);
-  await expectFailure([executable, 'auth', 'status', '--format', 'json'], 'The InFlow vault is locked.');
+  await expectJson([executable, 'auth', 'status', '--format', 'json'], {
+    authenticated: false,
+    vault_locked: true,
+  });
   await waitFor(() => !processExists(downgradedPid), 'The downgraded daemon remained alive after re-upgrade.');
   const finalPid = packagedDaemonPid();
   await runPty([executable, 'vault', 'unlock'], passphrase, 'Vault unlocked.');
@@ -124,7 +130,10 @@ async function expectAuthenticated() {
 
 async function expectLockUnlock() {
   await expectJson([executable, 'vault', 'lock', '--format', 'json'], { locked: true });
-  await expectFailure([executable, 'auth', 'status', '--format', 'json'], 'The InFlow vault is locked.');
+  await expectJson([executable, 'auth', 'status', '--format', 'json'], {
+    authenticated: false,
+    vault_locked: true,
+  });
   await runPty([executable, 'vault', 'unlock'], passphrase, 'Vault unlocked.');
   await expectAuthenticated();
 }

@@ -592,7 +592,7 @@ describe('runAuthStatus (agent mode)', () => {
     expect(yields[0]).not.toHaveProperty('credentials_path');
   });
 
-  it('reports the locked vault instead of claiming the user is unauthenticated', async () => {
+  it('reports the locked vault without failing the status command', async () => {
     const ctx = makeContext({
       interval: 0,
       maxAttempts: 0,
@@ -602,20 +602,20 @@ describe('runAuthStatus (agent mode)', () => {
     const storage = new LockedStorage();
     const auth = makeAuthResource(storage);
     const user = makeUserResource();
-    await expect(
-      drainGenerator(
-        runAuthStatus(
-          ctx,
-          {
-            authResource: auth.resource,
-            userResource: user.resource,
-            authStorage: storage,
-            updateProbe: undefined,
-          },
-          defaultAuthCtx,
-        ),
+    const yields = await drainGenerator(
+      runAuthStatus(
+        ctx,
+        {
+          authResource: auth.resource,
+          userResource: user.resource,
+          authStorage: storage,
+          updateProbe: undefined,
+        },
+        defaultAuthCtx,
       ),
-    ).rejects.toMatchObject({ secureStorageCode: 'vault_locked' });
+    );
+    expect(yields).toHaveLength(1);
+    expect(yields[0]).toMatchObject({ authenticated: false, vault_locked: true });
   });
 
   it('includes credentials_path in the agent payload when ctx.verbose=true', async () => {

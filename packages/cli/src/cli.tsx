@@ -23,7 +23,6 @@ import {
   createVaultCli,
   ensureLocalVaultDaemon,
   ensureLocalVaultUnlocked,
-  readVaultStatusWithoutStarting,
   type LocalVaultDaemonClientOptions,
 } from './commands/vault/index.js';
 import { createX402Cli } from './commands/x402/index.js';
@@ -33,7 +32,7 @@ import {
   makeFrozenUpdateProbe,
   type UpdateProbe,
 } from './utils/update-probe.js';
-import { shouldReconcileVaultDaemon, shouldStartVaultDaemon, shouldUnlockVault } from './startup-vault.js';
+import { shouldStartVaultDaemon, shouldUnlockVault } from './startup-vault.js';
 
 declare const __CLI_VERSION__: string;
 declare const __CLI_BUILD_ID__: string;
@@ -161,10 +160,6 @@ async function main(): Promise<void> {
   const isAgent = process.argv.includes('--format') || process.argv.includes('--mcp') || !process.stdout.isTTY;
   const vaultOptions: LocalVaultDaemonClientOptions = { buildId: cliBuildId, cliVersion };
   const hasDirectApiKey = apiKeyFromFlag !== undefined || process.env['INFLOW_API_KEY'] !== undefined;
-  if (shouldReconcileVaultDaemon(process.argv, hasDirectApiKey)) {
-    const status = await readVaultStatusWithoutStarting(vaultOptions);
-    if (status.daemonRunning) await ensureLocalVaultDaemon(vaultOptions);
-  }
   if (shouldStartVaultDaemon(process.argv, hasDirectApiKey)) {
     await ensureLocalVaultDaemon(vaultOptions);
   }

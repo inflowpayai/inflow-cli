@@ -443,6 +443,7 @@ export async function ensureLocalVaultDaemon(options: LocalVaultDaemonClientOpti
   const client = new LocalVaultClient(options);
   if (await canUseDaemon(client, options)) return client;
   if (options.rootDirectory === undefined && (usesLinuxVaultService() || process.platform === 'win32')) {
+    if (process.platform === 'win32') await requestWindowsVaultServiceStart();
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
       if (await canUseDaemon(client, options)) return client;
@@ -471,6 +472,17 @@ export async function ensureLocalVaultDaemon(options: LocalVaultDaemonClientOpti
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new SecureStorageError('secure_storage_unavailable', 'The InFlow vault daemon did not start.');
+}
+
+function requestWindowsVaultServiceStart(): Promise<void> {
+  return new Promise((resolveStart) => {
+    const child = spawn('sc.exe', ['start', 'InFlowVault'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.once('error', resolveStart);
+    child.once('exit', resolveStart);
+  });
 }
 
 function daemonEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

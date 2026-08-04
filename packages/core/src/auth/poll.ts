@@ -56,6 +56,7 @@ export interface PendingFrame {
 
 export interface UnauthenticatedFrame {
   authenticated: false;
+  vault_locked?: true;
   credentials_path?: string;
   connection?: ConnectionSettings;
   update?: UpdateBlock;
@@ -118,6 +119,19 @@ async function advancePendingFlow(
  * tokens are also present in storage.
  */
 export function composeAuthSnapshot(storage: AuthStorage, options: ComposeAuthSnapshotOptions = {}): AuthSnapshotFrame {
+  try {
+    return composeReadableAuthSnapshot(storage, options);
+  } catch (cause) {
+    if (!(cause instanceof SecureStorageError) || cause.secureStorageCode !== 'vault_locked') throw cause;
+    const frame: UnauthenticatedFrame = { authenticated: false, vault_locked: true };
+    if (options.verbose) frame.credentials_path = storage.getPath();
+    if (options.connection !== undefined) frame.connection = options.connection;
+    if (options.update !== undefined) frame.update = options.update;
+    return frame;
+  }
+}
+
+function composeReadableAuthSnapshot(storage: AuthStorage, options: ComposeAuthSnapshotOptions): AuthSnapshotFrame {
   const tokens = readStorageValue(() => storage.getAuth(), null);
   // Runtime api key (from a flag/env) wins over the stored one. When composing a status frame mid-invocation this is what matches
   // InflowResources's precedence and avoids "auth status says X but actual calls used Y" confusion.
@@ -196,10 +210,14 @@ export async function* pollAuthStatus(
 ): AsyncGenerator<AuthStatusFrame> {
   for await (const outcome of pollAsync<AuthSnapshotFrame>({
     fn: async () => {
-      await advancePendingFlow(authResource, storage, composeOptions.connection);
+      try {
+        await advancePendingFlow(authResource, storage, composeOptions.connection);
+      } catch (cause) {
+        if (!(cause instanceof SecureStorageError) || cause.secureStorageCode !== 'vault_locked') throw cause;
+      }
       return composeAuthSnapshot(storage, composeOptions);
     },
-    isTerminal: (frame) => frame.authenticated,
+    isTerminal: (frame) => frame.authenticated || ('vault_locked' in frame && frame.vault_locked),
     isEqual: (a, b) => snapshotKey(a) === snapshotKey(b),
     interval: options.interval,
     maxAttempts: options.maxAttempts,

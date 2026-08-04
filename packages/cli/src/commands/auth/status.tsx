@@ -150,12 +150,17 @@ export const AuthStatus: React.FC<AuthStatusProps> = ({
 
   // Unauthenticated paths: kind === 'snapshot' (no auth or pending) or kind === 'invalid' (probed 401).
   const isInvalid = view.kind === 'invalid';
+  const isVaultLocked = view.kind === 'snapshot' && 'vault_locked' in view.frame && view.frame.vault_locked;
   const credentialsPath =
     view.kind === 'snapshot' && 'credentials_path' in view.frame ? view.frame.credentials_path : undefined;
   return (
     <Box flexDirection="column">
-      <Text color="yellow">✗ Not authenticated</Text>
-      <Text dimColor>Run &quot;inflow auth login&quot; to authenticate.</Text>
+      <Text color="yellow">{isVaultLocked ? 'Authentication status unavailable' : '✗ Not authenticated'}</Text>
+      <Text dimColor>
+        {isVaultLocked
+          ? 'The InFlow vault is locked. Run "inflow vault unlock" to inspect stored authentication.'
+          : 'Run "inflow auth login" to authenticate.'}
+      </Text>
       {verbose && credentialsPath !== undefined ? (
         <Box marginTop={1} paddingX={2}>
           <Text>

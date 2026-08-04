@@ -8,6 +8,7 @@ import {
   type IUserResource,
   InflowApiError,
   MemoryStorage,
+  SecureStorageError,
   type User,
 } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
@@ -56,7 +57,25 @@ function makeAuth(
   return augmentAuth(authResourceStub(), makeUserResource(opts.userImpl), opts.storage);
 }
 
+class LockedStorage extends MemoryStorage {
+  override getAuth(): AuthTokens | null {
+    throw new SecureStorageError('vault_locked', 'The InFlow vault is locked.');
+  }
+}
+
 describe('AuthStatus (TTY component)', () => {
+  it('renders an unlock instruction when the vault is locked', async () => {
+    const { lastFrame, unmount } = render(
+      <AuthStatus auth={makeAuth({ storage: new LockedStorage() })} probe={false} onComplete={() => undefined} />,
+    );
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('Authentication status unavailable');
+    });
+    expect(lastFrame()).toContain('inflow vault unlock');
+    expect(lastFrame()).not.toContain('inflow auth login');
+    unmount();
+  });
+
   it('renders the unauthenticated branch when there is no local auth', async () => {
     const storage = new MemoryStorage();
     const onComplete = vi.fn();

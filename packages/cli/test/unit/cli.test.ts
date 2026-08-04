@@ -309,6 +309,10 @@ describe.skipIf(!existsSync(DIST_CLI))(
       const combined = stdout;
       expect(combined).toContain('inflow');
       expect(combined).toContain('agent enrollment and agentic payments');
+      expect(combined).toContain('Agent Enrollment Protocol service commands');
+      expect(combined).toContain('Inspect a URL for agent enrollment and payment requirements');
+      expect(combined).toContain('Machine Payments Protocol payment commands');
+      expect(combined).toContain('x402 Protocol payment commands');
       expect(combined).not.toContain('--daemon');
       expect(combined).not.toMatch(/^\s+user\b/m);
     });

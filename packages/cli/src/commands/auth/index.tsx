@@ -550,7 +550,12 @@ function readStoredConnection(authStorage: AuthStorage): ConnectionSettings | nu
   try {
     return authStorage.getConnection();
   } catch (cause) {
-    if (cause instanceof SecureStorageError && cause.secureStorageCode === 'secure_storage_secret_missing') return null;
+    if (
+      cause instanceof SecureStorageError &&
+      (cause.secureStorageCode === 'secure_storage_secret_missing' || cause.secureStorageCode === 'vault_locked')
+    ) {
+      return null;
+    }
     throw cause;
   }
 }
