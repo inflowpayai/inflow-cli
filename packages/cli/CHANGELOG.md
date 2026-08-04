@@ -1,5 +1,35 @@
 # @inflowpayai/inflow
 
+## 0.10.3
+
+### Patch Changes
+
+- [#83](https://github.com/inflowpayai/inflow-cli/pull/83)
+  [`5f1d720`](https://github.com/inflowpayai/inflow-cli/commit/5f1d720ef568813d79d1ff291379912cd10be085) Thanks
+  [@nkavian](https://github.com/nkavian)! - Separate npm shim releases from runnable CLI builds that require the native
+  vault peer verifier.
+
+- [#77](https://github.com/inflowpayai/inflow-cli/pull/77)
+  [`20125fb`](https://github.com/inflowpayai/inflow-cli/commit/20125fb9723fe20d518abed436b01d3574c6f894) Thanks
+  [@nkavian](https://github.com/nkavian)! - Document Windows installation, upgrade, uninstall, direct-download, and
+  release-operator workflows alongside macOS and Linux.
+
+- [#81](https://github.com/inflowpayai/inflow-cli/pull/81)
+  [`4402ef3`](https://github.com/inflowpayai/inflow-cli/commit/4402ef3a60caee679b598592dc1e7103dcfc0d8a) Thanks
+  [@nkavian](https://github.com/nkavian)! - Clarify the top-level Agent Enrollment Protocol, inspect, Machine Payments
+  Protocol, and x402 command descriptions.
+
+- [#82](https://github.com/inflowpayai/inflow-cli/pull/82)
+  [`c02edb2`](https://github.com/inflowpayai/inflow-cli/commit/c02edb2d084a9bf6ae4fcebb54a22ce8c9a060b4) Thanks
+  [@nkavian](https://github.com/nkavian)! - Keep local-state vault handling independent from runtime InFlow API keys,
+  report locked authentication status with a stable `VAULT_LOCKED` error, and isolate integration tests from the user's
+  vault.
+
+- [#80](https://github.com/inflowpayai/inflow-cli/pull/80)
+  [`e321165`](https://github.com/inflowpayai/inflow-cli/commit/e3211657a904d83f2040851963fdf9d4d71c9793) Thanks
+  [@nkavian](https://github.com/nkavian)! - Prevent command help and idempotent vault reset from requiring daemon
+  startup, and restore verified development-daemon startup from the built CLI.
+
 ## 0.10.2
 
 ### Patch Changes
