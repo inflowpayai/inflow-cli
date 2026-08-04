@@ -33,7 +33,12 @@ import {
   makeFrozenUpdateProbe,
   type UpdateProbe,
 } from './utils/update-probe.js';
-import { shouldReconcileVaultDaemon, shouldStartVaultDaemon, shouldUnlockVault } from './startup-vault.js';
+import {
+  shouldReconcileVaultDaemon,
+  shouldStartVaultDaemon,
+  shouldStartVaultDaemonForMcpTool,
+  shouldUnlockVault,
+} from './startup-vault.js';
 
 declare const __CLI_VERSION__: string;
 declare const __CLI_BUILD_ID__: string;
@@ -271,6 +276,15 @@ async function main(): Promise<void> {
     mcp: { tools: { discovery: 'direct' } },
     version: cliVersion,
   });
+
+  if (process.argv.includes('--mcp')) {
+    cli.use(async (context, next) => {
+      if (shouldStartVaultDaemonForMcpTool(context.command, hasDirectApiKey, authStorage.isAuthenticated())) {
+        await ensureLocalVaultDaemon(vaultOptions);
+      }
+      await next();
+    });
+  }
 
   const backgroundUpdateProbe = makeBackgroundUpdateProbe(cliName, cliVersion);
   let updateProbe: UpdateProbe = backgroundUpdateProbe;

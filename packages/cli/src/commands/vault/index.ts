@@ -1,6 +1,5 @@
 import { Buffer } from 'node:buffer';
 import { spawn } from 'node:child_process';
-import { realpathSync } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import process from 'node:process';
@@ -46,7 +45,6 @@ type UnlockVaultDeps = {
 };
 type ResetVaultDeps = {
   client: ResetVaultClientLike;
-  executablePath: string;
   now: () => number;
   removeLocalState: (paths: ReturnType<typeof vaultFilePaths>) => Promise<void>;
   sleep: (milliseconds: number) => Promise<void>;
@@ -213,7 +211,6 @@ export type LocalVaultUnlockMode = 'agent' | 'human';
 export async function resetLocalVault(options: LocalVaultDaemonClientOptions = {}): Promise<void> {
   await resetLocalVaultWithDeps(options, {
     client: new LocalVaultClient(options),
-    executablePath: process.execPath,
     now: Date.now,
     removeLocalState: removeVaultLocalState,
     sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -349,28 +346,12 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}) {
   return cli;
 }
 
-function isCompatibleDaemon(
-  info: LocalVaultDaemonInfo,
-  options: LocalVaultDaemonClientOptions,
-  executablePath: string,
-): boolean {
-  return (
-    executableIdentityPath(info.executablePath) === executableIdentityPath(executablePath) &&
-    info.cliVersion === (options.cliVersion ?? null) &&
-    info.buildId === (options.buildId ?? null)
-  );
-}
-
-function executableIdentityPath(executablePath: string): string {
-  try {
-    return realpathSync.native(executablePath);
-  } catch {
-    return resolve(executablePath);
-  }
+function isCompatibleDaemon(info: LocalVaultDaemonInfo, options: LocalVaultDaemonClientOptions): boolean {
+  return info.cliVersion === (options.cliVersion ?? null) && info.buildId === (options.buildId ?? null);
 }
 
 async function resetLocalVaultWithDeps(options: LocalVaultDaemonClientOptions, deps: ResetVaultDeps): Promise<void> {
-  const daemon = await existingDaemonState(options, deps.client, deps.executablePath);
+  const daemon = await existingDaemonState(options, deps.client);
   if (daemon === 'compatible') {
     await deps.client.reset();
     return;
@@ -382,12 +363,11 @@ async function resetLocalVaultWithDeps(options: LocalVaultDaemonClientOptions, d
 async function existingDaemonState(
   options: LocalVaultDaemonClientOptions,
   client: ResetVaultClientLike,
-  executablePath: string,
 ): Promise<'compatible' | 'incompatible' | 'none'> {
   try {
     await client.status();
     const info = await client.info();
-    return isCompatibleDaemon(info, options, executablePath) ? 'compatible' : 'incompatible';
+    return isCompatibleDaemon(info, options) ? 'compatible' : 'incompatible';
   } catch (cause) {
     if (isVaultDaemonUnavailable(cause)) return 'none';
     throw cause;
@@ -499,7 +479,7 @@ async function canUseDaemon(client: LocalVaultClient, options: LocalVaultDaemonC
   try {
     await client.status();
     const info = await client.info();
-    return isCompatibleDaemon(info, options, process.execPath);
+    return isCompatibleDaemon(info, options);
   } catch (cause) {
     if (isVaultDaemonUnavailable(cause)) return false;
     throw cause;

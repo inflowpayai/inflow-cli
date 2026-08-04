@@ -113,11 +113,38 @@ describe('vault peer verifier', () => {
     expect(verified).toEqual([{ path: '/Applications/InFlow.app/Contents/MacOS/inflow', teamId: 'TEAM123456' }]);
   });
 
-  it('rejects wrong-user, wrong-executable, and signature-failed peers', () => {
+  it('accepts same-user macOS peers installed at another path when the release signature matches', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const verified: { path: string; teamId: string }[] = [];
+    const verifier = createVaultSocketPeerVerifier(
+      {
+        expectedExecutablePath: '/Applications/InFlow.app/Contents/MacOS/inflow',
+        nativeModulePath: '/native/vault_peer_darwin.node',
+        requireSignature: true,
+      },
+      dependencies({
+        currentUserId: 501,
+        peer: { path: '/Users/test/.local/share/inflow/InFlow.app/Contents/MacOS/inflow', pid: 123, uid: 501 },
+        realpaths: new Map(),
+        verifySignature(path, teamId) {
+          verified.push({ path, teamId });
+        },
+      }),
+    );
+
+    expect(verifier(socketWithFd(42))).toMatchObject({ pid: 123, uid: 501 });
+    expect(verified).toEqual([
+      {
+        path: '/Users/test/.local/share/inflow/InFlow.app/Contents/MacOS/inflow',
+        teamId: 'B96U57DTR2',
+      },
+    ]);
+  });
+
+  it('rejects wrong-user and signature-failed peers', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
 
     expect(() => peerVerifierFor({ path: '/usr/bin/inflow', pid: 123, uid: 502 })).toThrow(SecureStorageError);
-    expect(() => peerVerifierFor({ path: '/tmp/fake-inflow', pid: 123, uid: 501 })).toThrow(SecureStorageError);
     expect(() =>
       peerVerifierFor(
         { path: '/usr/bin/inflow', pid: 123, uid: 501 },
@@ -130,11 +157,26 @@ describe('vault peer verifier', () => {
     ).toThrow(SecureStorageError);
   });
 
+  it('still rejects a different executable path when signature verification is disabled', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const verifier = createVaultSocketPeerVerifier(
+      {
+        expectedExecutablePath: '/usr/bin/inflow',
+        nativeModulePath: '/native/vault_peer_darwin.node',
+        requireSignature: false,
+      },
+      dependencies({
+        currentUserId: 501,
+        peer: { path: '/tmp/fake-inflow', pid: 123, uid: 501 },
+        realpaths: new Map(),
+      }),
+    );
+
+    expect(() => verifier(socketWithFd(42))).toThrow(SecureStorageError);
+  });
+
   it('uses stable secure storage error codes for rejected peers', () => {
     expect(peerVerifierError({ path: '/usr/bin/inflow', pid: 123, uid: 502 })).toMatchObject({
-      secureStorageCode: 'secure_storage_peer_verification_failed',
-    });
-    expect(peerVerifierError({ path: '/tmp/fake-inflow', pid: 123, uid: 501 })).toMatchObject({
       secureStorageCode: 'secure_storage_peer_verification_failed',
     });
     expect(

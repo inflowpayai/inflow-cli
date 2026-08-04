@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  incur: 811c32d70903670aacd7e84800e2dac041ec445a5b47f9e4c34416077c2c793b
+  incur: 0824b3b77aaec73236cdb1253dff37b09b9a44755196899d06bce73b5fd5bdf5
 
 importers:
 
@@ -103,7 +103,7 @@ importers:
         version: 2.19.0
       incur:
         specifier: ^0.4.5
-        version: 0.4.19(patch_hash=811c32d70903670aacd7e84800e2dac041ec445a5b47f9e4c34416077c2c793b)
+        version: 0.4.19(patch_hash=0824b3b77aaec73236cdb1253dff37b09b9a44755196899d06bce73b5fd5bdf5)
       ink:
         specifier: ^5.2.1
         version: 5.2.1(@types/react@18.3.31)(react@18.3.1)
@@ -4626,7 +4626,7 @@ snapshots:
 
   imurmurhash@0.1.4: {}
 
-  incur@0.4.19(patch_hash=811c32d70903670aacd7e84800e2dac041ec445a5b47f9e4c34416077c2c793b):
+  incur@0.4.19(patch_hash=0824b3b77aaec73236cdb1253dff37b09b9a44755196899d06bce73b5fd5bdf5):
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/server': 2.0.0-alpha.4
@@ -5019,7 +5019,7 @@ snapshots:
 
   mppx@0.6.31(typescript@5.9.3)(viem@2.55.2(typescript@5.9.3)(zod@4.4.3)):
     dependencies:
-      incur: 0.4.19(patch_hash=811c32d70903670aacd7e84800e2dac041ec445a5b47f9e4c34416077c2c793b)
+      incur: 0.4.19(patch_hash=0824b3b77aaec73236cdb1253dff37b09b9a44755196899d06bce73b5fd5bdf5)
       ox: 0.14.27(typescript@5.9.3)(zod@4.4.3)
       viem: 2.55.2(typescript@5.9.3)(zod@4.4.3)
       zod: 4.4.3

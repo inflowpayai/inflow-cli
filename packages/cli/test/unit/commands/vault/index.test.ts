@@ -344,7 +344,7 @@ describe('vault command runners', () => {
     expect(harness.write).toHaveBeenCalledWith('Vault reset complete.\n');
   });
 
-  it('requires the same executable, version, and build when reusing a daemon', () => {
+  it('matches version and build after daemon authentication', () => {
     expect(
       __testing.isCompatibleDaemon(
         {
@@ -354,7 +354,6 @@ describe('vault command runners', () => {
           pid: 123,
         },
         { buildId: 'build-1', cliVersion: '0.9.0' },
-        '/Applications/InFlow.app/Contents/MacOS/inflow',
       ),
     ).toBe(true);
     expect(
@@ -366,7 +365,6 @@ describe('vault command runners', () => {
           pid: 123,
         },
         { buildId: 'build-1', cliVersion: '0.9.0' },
-        '/Applications/InFlow.app/Contents/MacOS/inflow',
       ),
     ).toBe(false);
     expect(
@@ -378,7 +376,6 @@ describe('vault command runners', () => {
           pid: 123,
         },
         { buildId: 'build-1', cliVersion: '0.9.0' },
-        '/Applications/InFlow.app/Contents/MacOS/inflow',
       ),
     ).toBe(false);
     expect(
@@ -390,36 +387,19 @@ describe('vault command runners', () => {
           pid: 123,
         },
         { buildId: 'build-1', cliVersion: '0.9.0' },
-        '/Applications/InFlow.app/Contents/MacOS/inflow',
       ),
-    ).toBe(false);
-  });
-
-  it('treats a symlinked packaged launcher as the same daemon executable', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'inflow-vault-executable-'));
-    const executable = join(root, 'InFlow.app', 'Contents', 'MacOS', 'inflow');
-    const launcher = join(root, 'bin', 'inflow');
-    try {
-      await mkdir(join(root, 'InFlow.app', 'Contents', 'MacOS'), { recursive: true });
-      await mkdir(join(root, 'bin'), { recursive: true });
-      await writeFile(executable, '');
-      await symlink('../InFlow.app/Contents/MacOS/inflow', launcher);
-
-      expect(
-        __testing.isCompatibleDaemon(
-          {
-            buildId: 'build-1',
-            cliVersion: '0.9.0',
-            executablePath: executable,
-            pid: 123,
-          },
-          { buildId: 'build-1', cliVersion: '0.9.0' },
-          launcher,
-        ),
-      ).toBe(true);
-    } finally {
-      rmSync(root, { force: true, recursive: true });
-    }
+    ).toBe(true);
+    expect(
+      __testing.isCompatibleDaemon(
+        {
+          buildId: null,
+          cliVersion: null,
+          executablePath: '/tmp/inflow',
+          pid: 123,
+        },
+        {},
+      ),
+    ).toBe(true);
   });
 
   it('resets through a compatible daemon without deleting underneath it', async () => {
