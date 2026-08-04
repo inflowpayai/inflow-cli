@@ -9,6 +9,7 @@ import { SecureStorageError } from './errors.js';
 import { runtimeRequire } from './runtime-require.js';
 
 declare const __VAULT_PEER_NATIVE_SHA256__: string | undefined;
+declare const __VAULT_PEER_NATIVE_RELATIVE_PATH__: string | undefined;
 
 export interface VaultSocketPeer {
   path: string;
@@ -208,6 +209,9 @@ function defaultNativeModulePath(): string {
   }
   if (process.platform === 'linux' && executablePath.includes('/bin/inflow')) {
     return resolve(dirname(executablePath), '../lib/inflow/native/vault_peer_linux.node');
+  }
+  if (typeof __VAULT_PEER_NATIVE_RELATIVE_PATH__ === 'string') {
+    return resolve(dirname(fileURLToPath(import.meta.url)), __VAULT_PEER_NATIVE_RELATIVE_PATH__);
   }
   const platformName = process.platform === 'linux' ? 'linux' : 'darwin';
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));

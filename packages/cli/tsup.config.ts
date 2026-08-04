@@ -14,6 +14,7 @@ interface CliManifest {
 
 const manifest = JSON.parse(readFileSync(resolve(here, 'package.json'), 'utf-8')) as CliManifest;
 const buildId = computeBuildId();
+const vaultPeerNative = developmentVaultPeerNative();
 
 const skillsDir = resolve(repoRoot, 'skills');
 
@@ -57,6 +58,8 @@ export default defineConfig({
     __CLI_NAME__: JSON.stringify(manifest.name),
     __CLI_VERSION__: JSON.stringify(manifest.version),
     __SKILL_BODIES__: JSON.stringify(skillBodies),
+    __VAULT_PEER_NATIVE_RELATIVE_PATH__: JSON.stringify(vaultPeerNative.relativePath),
+    __VAULT_PEER_NATIVE_SHA256__: JSON.stringify(vaultPeerNative.sha256),
   },
   esbuildOptions(options) {
     options.alias = {
@@ -83,6 +86,15 @@ function computeBuildId(): string {
     hash.update('\0');
   }
   return hash.digest('hex');
+}
+
+function developmentVaultPeerNative(): { relativePath: string; sha256: string | undefined } {
+  const platformName = process.platform === 'win32' ? 'windows' : process.platform;
+  const nativePath = resolve(repoRoot, `packages/core/native/build/vault_peer_${platformName}.node`);
+  return {
+    relativePath: `../../core/native/build/vault_peer_${platformName}.node`,
+    sha256: existsSync(nativePath) ? createHash('sha256').update(readFileSync(nativePath)).digest('hex') : undefined,
+  };
 }
 
 function buildIdentityFiles(): string[] {

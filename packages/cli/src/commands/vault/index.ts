@@ -30,12 +30,13 @@ interface VaultDeps {
   ensureDaemon: () => Promise<VaultClientLike>;
   readPassphrase: (prompt: string, context: VaultCommandContext) => Promise<Buffer>;
   readVaultStatus: () => Promise<VaultStatus>;
+  resetVault: () => Promise<void>;
   write: (text: string) => void;
 }
 
 type VaultClientLike = Pick<
   LocalVaultClient,
-  'changePassphrase' | 'getPolicy' | 'lock' | 'reset' | 'setPolicy' | 'status' | 'unlock'
+  'changePassphrase' | 'getPolicy' | 'lock' | 'setPolicy' | 'status' | 'unlock'
 >;
 type ResetVaultClientLike = Pick<LocalVaultClient, 'info' | 'reset' | 'shutdown' | 'status'>;
 type UnlockVaultClientLike = Pick<LocalVaultClient, 'status' | 'unlock'>;
@@ -68,6 +69,7 @@ function defaultDeps(options: LocalVaultDaemonClientOptions = {}): VaultDeps {
     ensureDaemon: () => ensureLocalVaultDaemon(options),
     readPassphrase,
     readVaultStatus: () => readVaultStatusWithoutStarting(options),
+    resetVault: () => resetLocalVault(options),
     write: (text) => {
       process.stdout.write(text);
     },
@@ -194,8 +196,7 @@ async function runVaultReset(c: VaultCommandContext, deps: VaultDeps = defaultDe
       message: 'Run `inflow vault reset --force` to remove the local vault.',
     });
   }
-  const client = await deps.ensureDaemon();
-  await mapSecureStorageError(c, () => client.reset());
+  await mapSecureStorageError(c, () => deps.resetVault());
   if (!c.agent && !c.formatExplicit) deps.write('Vault reset complete.\n');
   return { reset: true };
 }
