@@ -183,7 +183,8 @@ function createClientPeerVerifier(
   if (rootDirectory === undefined && usesLinuxVaultService()) {
     return createLinuxVaultBrokerPeerVerifier(linuxVaultServiceUserId(socketPath));
   }
-  return createVaultSocketPeerVerifier();
+  // A local Linux daemon is non-dumpable, so the kernel can withhold /proc/<pid>/exe after UID and pidfd checks pass.
+  return createVaultSocketPeerVerifier({ allowUnavailableExecutablePath: process.platform === 'linux' });
 }
 
 function parseInfo(value: Record<string, unknown>): LocalVaultDaemonInfo {

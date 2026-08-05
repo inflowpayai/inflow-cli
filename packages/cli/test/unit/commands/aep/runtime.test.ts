@@ -800,6 +800,38 @@ describe('CLI AEP approval resolver', () => {
     expect(mapAepRuntimeError(caught)).toMatchObject({ code: 'APPROVAL_CANCELLED' });
   });
 
+  it('keeps the approval polling delay referenced while a command is waiting', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ status: 'PENDING' }));
+    const controller = new AbortController();
+    const originalSetTimeout = globalThis.setTimeout;
+    let resolveTimer!: (timer: NodeJS.Timeout) => void;
+    const timerScheduled = new Promise<NodeJS.Timeout>((resolve) => {
+      resolveTimer = resolve;
+    });
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: () => void, milliseconds?: number) => {
+      const timer = originalSetTimeout(callback, milliseconds);
+      if (milliseconds === 10_000) resolveTimer(timer);
+      return timer;
+    });
+    const options = createCliAepAgentOptions({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      inflow: inflow(),
+      interval: 10,
+      timeout: 30,
+    });
+
+    const result = options.pendingSignResolver?.({
+      ...resolverInput(() => Promise.resolve({ clientAssertion: 'jwt', status: 'completed' })),
+      signal: controller.signal,
+    });
+    const timer = await timerScheduled;
+
+    expect(timer.hasRef()).toBe(true);
+    controller.abort();
+    await expect(result).rejects.toBeDefined();
+  });
+
   it('maps AEP not-recognized command errors to the enrollment guidance error', () => {
     expect(
       mapAepRuntimeError(

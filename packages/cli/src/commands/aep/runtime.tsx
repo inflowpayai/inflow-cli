@@ -182,7 +182,6 @@ async function approvalSleep(milliseconds: number, signals: readonly (AbortSigna
       cleanup();
       resolve();
     }, milliseconds);
-    timeout.unref();
     for (const signal of signals) signal?.addEventListener('abort', onAbort, { once: true });
   });
 }

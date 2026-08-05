@@ -134,7 +134,9 @@ function createPeerVerification(
           expectedUserId: linuxVaultServiceUserId(socketPath),
           requireSameUser: false,
         })
-      : createVaultPeerVerificationConfig();
+      : createVaultPeerVerificationConfig({
+          allowUnavailableExecutablePath: process.platform === 'linux',
+        });
   verifyVaultPeerVerificationConfig(configuration);
   return rootDirectory === undefined && usesLinuxVaultService()
     ? { ...configuration, linuxBrokerPublicKeyPath: LINUX_VAULT_BROKER_PUBLIC_KEY }
@@ -337,7 +339,9 @@ async function verifyPeer(socket) {
   }
   const peer = native.peerInfo(fd);
   if (typeof process.getuid !== 'function' || peer.uid !== process.getuid()) throw new Error('peer user mismatch');
-  if (realpathSync(peer.path) !== config.expectedExecutablePath) throw new Error('peer executable mismatch');
+  if (peer.executablePathAvailable === false) {
+    if (!config.allowUnavailableExecutablePath) throw new Error('peer executable unavailable');
+  } else if (realpathSync(peer.path) !== config.expectedExecutablePath) throw new Error('peer executable mismatch');
   if (config.requireSignature) {
     execFileSync('/usr/bin/codesign', [
       '--verify',
