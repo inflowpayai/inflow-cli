@@ -3,6 +3,7 @@ import {
   commandPath,
   shouldReconcileVaultDaemon,
   shouldStartVaultDaemon,
+  shouldStartVaultDaemonForMcpTool,
   shouldUnlockVault,
 } from '../../src/startup-vault.js';
 
@@ -143,5 +144,37 @@ describe('vault startup decisions', () => {
     expect(shouldUnlockVault(argv('aep', 'status'), { isAgent: true })).toBe(false);
     expect(shouldUnlockVault(argv('--mcp'), { isAgent: true })).toBe(false);
     expect(shouldUnlockVault(argv('mpp', 'pay', 'https://seller.test'), { isAgent: true })).toBe(false);
+  });
+
+  it.each([
+    ['auth_status', true],
+    ['balances_list', true],
+    ['deposit_addresses_list', true],
+    ['mpp_pay', true],
+    ['x402_fetch', true],
+    ['aep_status', true],
+    ['user_get', true],
+    ['vault_lock', true],
+    ['vault_status', false],
+    ['inspect', false],
+    ['mpp_inspect', false],
+    ['x402_inspect', false],
+  ] as const)('starts a stopped daemon before persistent MCP tool %s when required', (toolName, expected) => {
+    expect(shouldStartVaultDaemonForMcpTool(toolName)).toBe(expected);
+  });
+
+  it('does not start the vault for payment MCP tools backed by a direct API key', () => {
+    expect(shouldStartVaultDaemonForMcpTool('mpp_pay', true)).toBe(false);
+    expect(shouldStartVaultDaemonForMcpTool('x402_status', true)).toBe(false);
+    expect(shouldStartVaultDaemonForMcpTool('auth_status', true)).toBe(false);
+    expect(shouldStartVaultDaemonForMcpTool('aep_status', true)).toBe(true);
+  });
+
+  it('does not start the vault for session-backed MCP tools without stored credentials', () => {
+    expect(shouldStartVaultDaemonForMcpTool('mpp_pay', false, false)).toBe(false);
+    expect(shouldStartVaultDaemonForMcpTool('x402_status', false, false)).toBe(false);
+    expect(shouldStartVaultDaemonForMcpTool('auth_status', false, false)).toBe(false);
+    expect(shouldStartVaultDaemonForMcpTool('aep_status', false, false)).toBe(true);
+    expect(shouldStartVaultDaemonForMcpTool('vault_lock', false, false)).toBe(true);
   });
 });

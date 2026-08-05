@@ -83,7 +83,7 @@ export function createVaultSocketPeerVerifier(
         throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
       }
     }
-    if (dependencies.realpath(peer.path) !== config.expectedExecutablePath) {
+    if (!config.requireSignature && dependencies.realpath(peer.path) !== config.expectedExecutablePath) {
       throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
     }
     if (config.requireSignature) dependencies.verifySignature(peer.path, config.expectedTeamId);

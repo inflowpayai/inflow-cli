@@ -778,6 +778,31 @@ describe.skipIf(!existsSync(DIST_CLI))(
         rmSync(root, { force: true, recursive: true });
       }
     });
+
+    it('--mcp payment tools return authentication failures as tool errors', async () => {
+      const root = mkdtempSync('/tmp/inflow-mcp-payment-home-');
+      const request =
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'mpp_pay', arguments: { url: 'https://seller.test/resource' } },
+        }) + '\n';
+      try {
+        const { exitCode, stdout } = await run(['--mcp'], {
+          env: { ...process.env, HOME: root, NO_UPDATE_NOTIFIER: '1' },
+          stdin: request,
+        });
+        expect(exitCode).toBe(0);
+        const response = JSON.parse(stdout.trim()) as {
+          result?: { content?: { text?: string }[]; isError?: boolean };
+        };
+        expect(response.result?.isError).toBe(true);
+        expect(response.result?.content?.[0]?.text).toContain('Not authenticated');
+      } finally {
+        rmSync(root, { force: true, recursive: true });
+      }
+    });
   },
 );
 
