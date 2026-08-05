@@ -389,6 +389,17 @@ describe('vault command runners', () => {
         { buildId: 'build-1', cliVersion: '0.9.0' },
       ),
     ).toBe(true);
+    expect(
+      __testing.isCompatibleDaemon(
+        {
+          buildId: null,
+          cliVersion: null,
+          executablePath: '/tmp/inflow',
+          pid: 123,
+        },
+        {},
+      ),
+    ).toBe(true);
   });
 
   it('resets through a compatible daemon without deleting underneath it', async () => {
