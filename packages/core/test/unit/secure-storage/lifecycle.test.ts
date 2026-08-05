@@ -13,6 +13,7 @@ import {
   SecureSecretLifecycleCoordinator,
   SyncSecureSecretLifecycleCoordinator,
 } from '../../../src/secure-storage/lifecycle.js';
+import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
 
 class FailingAddManifest extends SecretReferenceManifest {
@@ -47,6 +48,18 @@ class FailingSyncAddManifest extends SyncSecretReferenceManifestStore {
 class FailingSyncRemoveManifest extends SyncSecretReferenceManifestStore {
   override remove(): void {
     throw new Error('manifest remove failed');
+  }
+}
+
+class LockedSecretStore extends MemorySecretStore {
+  override delete(): Promise<void> {
+    return Promise.reject(new SecureStorageError('vault_locked', 'The InFlow vault is locked.'));
+  }
+}
+
+class LockedSyncSecretStore extends SyncMemorySecretStore {
+  override delete(): void {
+    throw new SecureStorageError('vault_locked', 'The InFlow vault is locked.');
   }
 }
 
@@ -126,6 +139,23 @@ describe('SecureSecretLifecycleCoordinator', () => {
     expect(repository.listSecretLifecycle('deleting')).toEqual([]);
   });
 
+  it('preserves interrupted work when the asynchronous secret store is temporarily unavailable', async () => {
+    const pending = { purpose: 'api-key', reference: 'locked-pending' };
+    repository.beginSecretLifecycle(pending, null);
+    const lockedStore = new LockedSecretStore();
+    const lockedCoordinator = new SecureSecretLifecycleCoordinator(
+      repository,
+      lockedStore,
+      new SecretReferenceManifest(lockedStore),
+    );
+
+    await expect(lockedCoordinator.recoverInterruptedWork()).rejects.toMatchObject({
+      secureStorageCode: 'vault_locked',
+    });
+
+    expect(repository.listSecretLifecycle('pending')).toEqual([pending]);
+  });
+
   it('keeps a failed create recoverable after the secret item is written', async () => {
     const reference = { purpose: 'api-key', reference: 'create-failure' };
     const failing = new SecureSecretLifecycleCoordinator(repository, store, new FailingAddManifest(store));
@@ -193,6 +223,20 @@ describe('SecureSecretLifecycleCoordinator', () => {
     expect(() => syncStore.read(pending)).toThrow('A referenced secret is missing from secret store.');
     expect(repository.listSecretLifecycle('pending')).toEqual([]);
     expect(repository.listSecretLifecycle('deleting')).toEqual([]);
+  });
+
+  it('preserves interrupted work when the synchronous secret store is temporarily unavailable', () => {
+    const pending = { purpose: 'api-key', reference: 'sync-locked-pending' };
+    repository.beginSecretLifecycle(pending, null);
+    const lockedStore = new LockedSyncSecretStore();
+    const lockedCoordinator = new SyncSecureSecretLifecycleCoordinator(
+      repository,
+      lockedStore,
+      new SyncSecretReferenceManifestStore(lockedStore),
+    );
+
+    expect(() => lockedCoordinator.recoverInterruptedWork()).toThrow('The InFlow vault is locked.');
+    expect(repository.listSecretLifecycle('pending')).toEqual([pending]);
   });
 
   it('keeps synchronous create and delete failures recoverable after touching secret store', () => {

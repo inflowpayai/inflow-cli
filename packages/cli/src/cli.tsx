@@ -33,7 +33,13 @@ import {
   makeFrozenUpdateProbe,
   type UpdateProbe,
 } from './utils/update-probe.js';
-import { shouldReconcileVaultDaemon, shouldStartVaultDaemon, shouldUnlockVault } from './startup-vault.js';
+import {
+  isAgentInvocation,
+  normalizeFormatAssignments,
+  shouldReconcileVaultDaemon,
+  shouldStartVaultDaemon,
+  shouldUnlockVault,
+} from './startup-vault.js';
 
 declare const __CLI_VERSION__: string;
 declare const __CLI_BUILD_ID__: string;
@@ -158,7 +164,8 @@ async function main(): Promise<void> {
   const sandboxFlag = extractBooleanFlag('--sandbox');
   const apiKeyFromFlag = extractFlag('--api-key');
   const verbose = extractBooleanFlag('--verbose');
-  const isAgent = process.argv.includes('--format') || process.argv.includes('--mcp') || !process.stdout.isTTY;
+  normalizeFormatAssignments(process.argv);
+  const isAgent = isAgentInvocation(process.argv, process.stdout.isTTY);
   const vaultOptions: LocalVaultDaemonClientOptions = { buildId: cliBuildId, cliVersion };
   const apiKeyFromEnv = process.env['INFLOW_API_KEY'];
   const hasDirectApiKey = (apiKeyFromFlag?.length ?? 0) > 0 || (apiKeyFromEnv?.length ?? 0) > 0;

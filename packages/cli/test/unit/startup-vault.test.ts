@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   commandPath,
+  isAgentInvocation,
+  normalizeFormatAssignments,
   shouldReconcileVaultDaemon,
   shouldStartVaultDaemon,
   shouldUnlockVault,
@@ -11,6 +13,34 @@ function argv(...args: string[]): string[] {
 }
 
 describe('vault startup decisions', () => {
+  it.each([
+    ['separate output format', ['mpp', 'pay', '--format', 'json'], true, true],
+    ['assigned output format', ['mpp', 'pay', '--format=json'], true, true],
+    ['MCP mode', ['--mcp'], true, true],
+    ['redirected output', ['mpp', 'pay'], false, true],
+    ['interactive command', ['mpp', 'pay'], true, false],
+  ] as const)('detects %s as an agent invocation when appropriate', (_label, args, stdoutIsTty, expected) => {
+    expect(isAgentInvocation(argv(...args), stdoutIsTty)).toBe(expected);
+  });
+
+  it('normalizes assigned output formats for the command parser', () => {
+    const arguments_ = argv('mpp', 'pay', '--format=json', '--formatter=unchanged', '--format=md');
+
+    normalizeFormatAssignments(arguments_);
+
+    expect(arguments_).toEqual([
+      'node',
+      'inflow',
+      'mpp',
+      'pay',
+      '--format',
+      'json',
+      '--formatter=unchanged',
+      '--format',
+      'md',
+    ]);
+  });
+
   it.each([
     { args: ['--base-url', 'https://api.test', 'aep', 'status', 'https://seller.test'], path: ['aep', 'status'] },
     { args: ['--format=json', 'mpp', 'pay', 'https://seller.test'], path: ['mpp', 'pay'] },

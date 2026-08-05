@@ -53,6 +53,15 @@ import {
   serviceReferenceArgs,
 } from './schema.js';
 import {
+  ApprovalCancelledError,
+  approvalSleep,
+  approvalStatus,
+  approvalStatusBeforeDeadline,
+  ApprovalTimeoutError,
+  cancelApproval,
+  remainingApprovalDelay,
+} from './approval-polling.js';
+import {
   EnrollView,
   FetchView,
   GrantUnavailableView,
@@ -202,7 +211,6 @@ async function existingIdentity(storage: AepStorage, inspect: InspectServiceResu
 }
 
 class MissingIdentityError extends Error {}
-class ApprovalCancelledError extends Error {}
 class ApprovalDeniedError extends Error {}
 class PendingAepApproval extends Error {
   constructor(
@@ -219,40 +227,6 @@ class CliInputError extends Error {
   ) {
     super(message);
   }
-}
-
-async function approvalStatus(inflow: Inflow, approvalId: string): Promise<string> {
-  const response = await fetch(new URL(`/v1/approvals/${approvalId}`, inflow.resolvedApiBaseUrl), {
-    headers: await inflow.platformAuthenticationHeaders(),
-  });
-  if (!response.ok) throw new Error('Approval status request failed.');
-  const body: unknown = await response.json();
-  if (typeof body !== 'object' || body === null || typeof (body as Record<string, unknown>)['status'] !== 'string') {
-    throw new Error('Approval status response is invalid.');
-  }
-  return (body as Record<string, string>)['status'] as string;
-}
-
-async function cancelApproval(inflow: Inflow, approvalId: string): Promise<void> {
-  await fetch(new URL(`/v1/approvals/${approvalId}/cancel`, inflow.resolvedApiBaseUrl), {
-    headers: await inflow.platformAuthenticationHeaders(),
-    method: 'POST',
-  }).catch(() => undefined);
-}
-
-async function approvalSleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted === true) throw new ApprovalCancelledError();
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(resolve, milliseconds);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timeout);
-        reject(new ApprovalCancelledError());
-      },
-      { once: true },
-    );
-  });
 }
 
 async function approvedAssertion(
@@ -307,7 +281,7 @@ async function approvedAssertion(
   let attempts = 0;
   while (Date.now() < deadline && (options.maxAttempts === 0 || attempts < options.maxAttempts)) {
     if (options.signal?.aborted === true) throw new ApprovalCancelledError();
-    const status = await approvalStatus(inflow, approvalId);
+    const status = await approvalStatusBeforeDeadline(inflow, approvalId, deadline, [options.signal]);
     if (status === 'APPROVED') {
       const finalClaims = buildClientAssertionClaims({
         agentDid: identity.agentDid,
@@ -329,12 +303,10 @@ async function approvedAssertion(
     if (status === 'DECLINED') throw new ApprovalDeniedError();
     if (status === 'CANCELLED') throw new ApprovalCancelledError();
     attempts += 1;
-    await approvalSleep(interval * 1000, options.signal);
+    await approvalSleep(remainingApprovalDelay(deadline, interval * 1000), [options.signal]);
   }
   throw new ApprovalTimeoutError();
 }
-
-class ApprovalTimeoutError extends Error {}
 class ApprovalServerError extends Error {}
 
 type OpenApiPolicy = Awaited<ReturnType<typeof inspectOpenApiPolicy>>;
@@ -521,8 +493,12 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
             if (input.signal?.aborted === true) throw new ApprovalCancelledError();
             let status: string;
             try {
-              status = await approvalStatus(inflow, approvalId);
+              status = await approvalStatusBeforeDeadline(inflow, approvalId, deadline, [
+                input.signal,
+                controller.signal,
+              ]);
             } catch (error) {
+              if (error instanceof ApprovalCancelledError || error instanceof ApprovalTimeoutError) throw error;
               throw new ApprovalServerError(error instanceof Error ? error.message : String(error));
             }
             if (status === 'APPROVED') {
@@ -534,7 +510,7 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
               controller.abort();
               throw new ApprovalCancelledError();
             }
-            await approvalSleep(interval * 1000, input.signal);
+            await approvalSleep(remainingApprovalDelay(deadline, interval * 1000), [input.signal, controller.signal]);
           }
           throw new ApprovalTimeoutError();
         },

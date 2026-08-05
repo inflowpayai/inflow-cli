@@ -133,6 +133,52 @@ describe('SyncVaultSecretStore', () => {
     for (const code of codes) expect(__testing.codeFromResponse(code)).toBe(code);
     expect(__testing.codeFromResponse('unknown')).toBe('secure_storage_io_error');
   });
+
+  it('builds local and brokered Linux peer-verification configurations', () => {
+    const baseConfiguration = {
+      allowUnavailableExecutablePath: false,
+      expectedExecutablePath: '/opt/inflow/bin/inflow',
+      expectedTeamId: '',
+      nativeModulePath: '/opt/inflow/lib/vault-peer.node',
+      requireSameUser: true,
+      requireSignature: false,
+    };
+    const created: Record<string, unknown>[] = [];
+    const verified: unknown[] = [];
+    const dependencies = {
+      createConfig: (options: Record<string, unknown>) => {
+        created.push(options);
+        return { ...baseConfiguration, ...options };
+      },
+      isLinux: () => true,
+      linuxServiceUserId: () => 1001,
+      shouldRequirePeerVerification: () => true,
+      usesLinuxService: () => false,
+      verifyConfig: (configuration: unknown) => verified.push(configuration),
+    };
+
+    const local = __testing.createPeerVerification('/tmp/vault.sock', '/tmp/vault', dependencies);
+    expect(local).toMatchObject({ allowUnavailableExecutablePath: true });
+    expect(verified).toEqual([local]);
+
+    const broker = __testing.createPeerVerification('/run/inflow/vault.sock', undefined, {
+      ...dependencies,
+      usesLinuxService: () => true,
+    });
+    expect(broker).toMatchObject({
+      expectedUserId: 1001,
+      linuxBrokerPublicKeyPath: '/var/lib/inflow-broker/public.der',
+      requireSameUser: false,
+    });
+    expect(created).toContainEqual({ expectedUserId: 1001, requireSameUser: false });
+
+    expect(
+      __testing.createPeerVerification('/tmp/vault.sock', '/tmp/vault', {
+        ...dependencies,
+        shouldRequirePeerVerification: () => false,
+      }),
+    ).toBeUndefined();
+  });
 });
 
 async function startVaultSocketFixture(socketPath: string): Promise<ChildProcessByStdio<null, Readable, Readable>> {

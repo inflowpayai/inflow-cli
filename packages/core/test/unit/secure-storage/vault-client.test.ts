@@ -296,6 +296,33 @@ describe('LocalVaultClient', () => {
     expect(__testing.codeFromResponse('unknown')).toBe('secure_storage_io_error');
   });
 
+  it('selects peer verification for local and brokered Linux vault sockets', () => {
+    const localVerifier = () => ({ path: '/inflow', pid: 1, uid: 1 });
+    const brokerVerifier = () => ({ path: '/broker', pid: 2, uid: 2 });
+    const dependencies = {
+      createBrokerPeerVerifier: () => brokerVerifier,
+      createSocketPeerVerifier: () => localVerifier,
+      isLinux: () => true,
+      linuxServiceUserId: () => 1001,
+      shouldRequirePeerVerification: () => true,
+      usesLinuxService: () => false,
+    };
+
+    expect(__testing.createClientPeerVerifier('/tmp/vault.sock', '/tmp/vault', dependencies)).toBe(localVerifier);
+    expect(
+      __testing.createClientPeerVerifier('/run/inflow/vault.sock', undefined, {
+        ...dependencies,
+        usesLinuxService: () => true,
+      }),
+    ).toBe(brokerVerifier);
+    expect(
+      __testing.createClientPeerVerifier('/tmp/vault.sock', '/tmp/vault', {
+        ...dependencies,
+        shouldRequirePeerVerification: () => false,
+      }),
+    ).toBeUndefined();
+  });
+
   it('copies and clears valid salts and rejects malformed salts', () => {
     const salt = Buffer.alloc(16, 7);
     expect(__testing.parseSalt({ salt })).toEqual(Buffer.alloc(16, 7));

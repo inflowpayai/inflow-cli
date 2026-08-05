@@ -30,6 +30,28 @@ const SHARED_HEADER_INTS = 2;
 const SHARED_HEADER_BYTES = SHARED_HEADER_INTS * Int32Array.BYTES_PER_ELEMENT;
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+interface PeerVerificationDependencies {
+  createConfig(options: {
+    allowUnavailableExecutablePath?: boolean;
+    expectedUserId?: number;
+    requireSameUser?: boolean;
+  }): VaultPeerVerificationConfig;
+  isLinux(): boolean;
+  linuxServiceUserId(socketPath: string): number;
+  shouldRequirePeerVerification(): boolean;
+  usesLinuxService(): boolean;
+  verifyConfig(configuration: VaultPeerVerificationConfig): void;
+}
+
+const peerVerificationDependencies: PeerVerificationDependencies = {
+  createConfig: createVaultPeerVerificationConfig,
+  isLinux: () => process.platform === 'linux',
+  linuxServiceUserId: linuxVaultServiceUserId,
+  shouldRequirePeerVerification: shouldRequireVaultPeerVerification,
+  usesLinuxService: usesLinuxVaultService,
+  verifyConfig: verifyVaultPeerVerificationConfig,
+};
+
 export class SyncVaultSecretStore implements SyncSecureSecretStore {
   private readonly rootDirectory: string | undefined;
   private readonly socketPath: string;
@@ -126,17 +148,20 @@ function responseResult(response: VaultIpcResponse): Record<string, unknown> {
 function createPeerVerification(
   socketPath: string,
   rootDirectory: string | undefined,
+  dependencies: PeerVerificationDependencies = peerVerificationDependencies,
 ): (VaultPeerVerificationConfig & { linuxBrokerPublicKeyPath?: string }) | undefined {
-  if (!shouldRequireVaultPeerVerification()) return undefined;
+  if (!dependencies.shouldRequirePeerVerification()) return undefined;
   const configuration =
-    rootDirectory === undefined && usesLinuxVaultService()
-      ? createVaultPeerVerificationConfig({
-          expectedUserId: linuxVaultServiceUserId(socketPath),
+    rootDirectory === undefined && dependencies.usesLinuxService()
+      ? dependencies.createConfig({
+          expectedUserId: dependencies.linuxServiceUserId(socketPath),
           requireSameUser: false,
         })
-      : createVaultPeerVerificationConfig();
-  verifyVaultPeerVerificationConfig(configuration);
-  return rootDirectory === undefined && usesLinuxVaultService()
+      : dependencies.createConfig({
+          allowUnavailableExecutablePath: dependencies.isLinux(),
+        });
+  dependencies.verifyConfig(configuration);
+  return rootDirectory === undefined && dependencies.usesLinuxService()
     ? { ...configuration, linuxBrokerPublicKeyPath: LINUX_VAULT_BROKER_PUBLIC_KEY }
     : configuration;
 }
@@ -213,6 +238,7 @@ function codeFromResponse(code: string): SecureStorageErrorCode {
 /** @internal */
 export const __testing = {
   codeFromResponse,
+  createPeerVerification,
   errorFromWorker,
   kindForReference,
   responseResult,
@@ -337,7 +363,9 @@ async function verifyPeer(socket) {
   }
   const peer = native.peerInfo(fd);
   if (typeof process.getuid !== 'function' || peer.uid !== process.getuid()) throw new Error('peer user mismatch');
-  if (realpathSync(peer.path) !== config.expectedExecutablePath) throw new Error('peer executable mismatch');
+  if (peer.executablePathAvailable === false) {
+    if (!config.allowUnavailableExecutablePath) throw new Error('peer executable unavailable');
+  } else if (realpathSync(peer.path) !== config.expectedExecutablePath) throw new Error('peer executable mismatch');
   if (config.requireSignature) {
     execFileSync('/usr/bin/codesign', [
       '--verify',

@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SecureStorageError } from './errors.js';
 import type { SecureSqliteRepository, StoredVaultRecord } from './sqlite.js';
@@ -41,6 +41,38 @@ const POLICY_SETTING_NAME = 'vault-policy';
 const RECORD_ENCRYPTION_VERSION = 1;
 const SIDECAR_FILE_MODE = 0o600;
 
+interface AtomicSidecarWriteDependencies {
+  chmod(path: string, mode: number): Promise<void>;
+  rename(oldPath: string, newPath: string): Promise<void>;
+  rm(path: string, options: { force: true }): Promise<void>;
+  temporaryPath(sidecarPath: string): string;
+  writeFile(path: string, data: Uint8Array, options: { flag: 'wx'; mode: number }): Promise<void>;
+}
+
+const atomicSidecarWriteDependencies: AtomicSidecarWriteDependencies = {
+  chmod,
+  rename,
+  rm,
+  temporaryPath: (sidecarPath) => `${sidecarPath}.${process.pid}.${randomBytes(16).toString('hex')}.tmp`,
+  writeFile,
+};
+
+async function writeSidecarAtomically(
+  sidecarPath: string,
+  header: Uint8Array,
+  dependencies: AtomicSidecarWriteDependencies = atomicSidecarWriteDependencies,
+): Promise<void> {
+  const temporaryPath = dependencies.temporaryPath(sidecarPath);
+  try {
+    await dependencies.writeFile(temporaryPath, header, { flag: 'wx', mode: SIDECAR_FILE_MODE });
+    await dependencies.chmod(temporaryPath, SIDECAR_FILE_MODE);
+    await dependencies.rename(temporaryPath, sidecarPath);
+  } catch (cause) {
+    await Promise.allSettled([dependencies.rm(temporaryPath, { force: true })]);
+    throw cause;
+  }
+}
+
 export class LocalVaultBackend implements VaultBackend {
   private masterKey: ProtectedVaultKey | undefined;
   private readonly now: () => Date;
@@ -58,9 +90,12 @@ export class LocalVaultBackend implements VaultBackend {
   async changePassphrase(currentUnlockFactor: Uint8Array, nextUnlockFactor: Uint8Array): Promise<void> {
     const header = await readFile(this.sidecarPath);
     const nextHeader = changeVaultUnlockFactor(header, currentUnlockFactor, nextUnlockFactor);
-    await writeFile(this.sidecarPath, nextHeader, { flag: 'w', mode: SIDECAR_FILE_MODE });
-    await chmod(this.sidecarPath, SIDECAR_FILE_MODE);
-    this.replaceMasterKey(unwrapVaultMaterial(nextHeader, nextUnlockFactor));
+    try {
+      await writeSidecarAtomically(this.sidecarPath, nextHeader);
+      this.replaceMasterKey(unwrapVaultMaterial(nextHeader, nextUnlockFactor));
+    } finally {
+      nextHeader.fill(0);
+    }
   }
 
   async changeWrappingKey(
@@ -70,9 +105,12 @@ export class LocalVaultBackend implements VaultBackend {
   ): Promise<void> {
     const header = await readFile(this.sidecarPath);
     const nextHeader = changeVaultWrappingKey(header, currentWrappingKey, nextWrappingKey, nextSalt);
-    await writeFile(this.sidecarPath, nextHeader, { flag: 'w', mode: SIDECAR_FILE_MODE });
-    await chmod(this.sidecarPath, SIDECAR_FILE_MODE);
-    this.replaceMasterKey(unwrapVaultMaterialWithWrappingKey(nextHeader, nextWrappingKey));
+    try {
+      await writeSidecarAtomically(this.sidecarPath, nextHeader);
+      this.replaceMasterKey(unwrapVaultMaterialWithWrappingKey(nextHeader, nextWrappingKey));
+    } finally {
+      nextHeader.fill(0);
+    }
   }
 
   deleteExpired(input: DeleteExpiredVaultSecretsInput): void {
@@ -291,3 +329,5 @@ function isMissingFileError(cause: unknown): boolean {
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
+
+export const __testing = { writeSidecarAtomically };

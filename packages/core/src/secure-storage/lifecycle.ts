@@ -5,6 +5,7 @@ import type {
   SyncSecretReferenceManifest,
   SyncSecureSecretStore,
 } from './secret-store.js';
+import { SecureStorageError } from './errors.js';
 import type { SecureSqliteRepository } from './sqlite.js';
 
 function errorFromCause(cause: unknown): Error {
@@ -44,7 +45,7 @@ export class SecureSecretLifecycleCoordinator {
       this.repository.markSecretDeleting(reference);
     });
     try {
-      await this.store.delete(reference);
+      await this.deleteIfPresent(reference);
       await this.manifest.remove(reference);
       await this.repository.writeTransaction(() => {
         this.repository.deleteSecretLifecycle(reference);
@@ -71,8 +72,9 @@ export class SecureSecretLifecycleCoordinator {
   private async deleteIfPresent(reference: SecretReference): Promise<void> {
     try {
       await this.store.delete(reference);
-    } catch {
-      return;
+    } catch (cause) {
+      if (isMissingSecretError(cause)) return;
+      throw cause;
     }
   }
 }
@@ -104,7 +106,7 @@ export class SyncSecureSecretLifecycleCoordinator {
       this.repository.markSecretDeleting(reference);
     });
     try {
-      this.store.delete(reference);
+      this.deleteIfPresent(reference);
       this.manifest.remove(reference);
       this.repository.writeTransactionSync(() => {
         this.repository.deleteSecretLifecycle(reference);
@@ -131,8 +133,13 @@ export class SyncSecureSecretLifecycleCoordinator {
   private deleteIfPresent(reference: SecretReference): void {
     try {
       this.store.delete(reference);
-    } catch {
-      return;
+    } catch (cause) {
+      if (isMissingSecretError(cause)) return;
+      throw cause;
     }
   }
+}
+
+function isMissingSecretError(cause: unknown): boolean {
+  return cause instanceof SecureStorageError && cause.secureStorageCode === 'secure_storage_secret_missing';
 }
