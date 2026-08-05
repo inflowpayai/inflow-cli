@@ -79,9 +79,14 @@ const MCP_DIRECT_API_KEY_TOOLS = new Set([
   'user_get',
 ]);
 
-export function shouldStartVaultDaemonForMcpTool(toolName: string, hasDirectApiKey = false): boolean {
+export function shouldStartVaultDaemonForMcpTool(
+  toolName: string,
+  hasDirectApiKey = false,
+  hasStoredSession = true,
+): boolean {
   if (!MCP_VAULT_TOOLS.has(toolName)) return false;
-  return !hasDirectApiKey || !MCP_DIRECT_API_KEY_TOOLS.has(toolName);
+  if (!MCP_DIRECT_API_KEY_TOOLS.has(toolName)) return true;
+  return !hasDirectApiKey && hasStoredSession;
 }
 
 export function shouldReconcileVaultDaemon(argv: readonly string[], hasDirectApiKey = false): boolean {

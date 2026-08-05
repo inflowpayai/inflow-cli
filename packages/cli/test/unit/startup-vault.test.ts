@@ -169,4 +169,12 @@ describe('vault startup decisions', () => {
     expect(shouldStartVaultDaemonForMcpTool('auth_status', true)).toBe(false);
     expect(shouldStartVaultDaemonForMcpTool('aep_status', true)).toBe(true);
   });
+
+  it('does not start the vault for session-backed MCP tools without stored credentials', () => {
+    expect(shouldStartVaultDaemonForMcpTool('mpp_pay', false, false)).toBe(false);
+    expect(shouldStartVaultDaemonForMcpTool('x402_status', false, false)).toBe(false);
+    expect(shouldStartVaultDaemonForMcpTool('auth_status', false, false)).toBe(false);
+    expect(shouldStartVaultDaemonForMcpTool('aep_status', false, false)).toBe(true);
+    expect(shouldStartVaultDaemonForMcpTool('vault_lock', false, false)).toBe(true);
+  });
 });

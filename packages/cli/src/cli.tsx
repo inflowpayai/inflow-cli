@@ -279,7 +279,7 @@ async function main(): Promise<void> {
 
   if (process.argv.includes('--mcp')) {
     cli.use(async (context, next) => {
-      if (shouldStartVaultDaemonForMcpTool(context.command, hasDirectApiKey)) {
+      if (shouldStartVaultDaemonForMcpTool(context.command, hasDirectApiKey, authStorage.isAuthenticated())) {
         await ensureLocalVaultDaemon(vaultOptions);
       }
       await next();
