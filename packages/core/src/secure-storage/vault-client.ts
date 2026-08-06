@@ -25,6 +25,24 @@ export interface LocalVaultDaemonInfo {
   pid: number;
 }
 
+interface ClientPeerVerifierDependencies {
+  createBrokerPeerVerifier: typeof createLinuxVaultBrokerPeerVerifier;
+  createSocketPeerVerifier: typeof createVaultSocketPeerVerifier;
+  isLinux(): boolean;
+  linuxServiceUserId(socketPath: string): number;
+  shouldRequirePeerVerification(): boolean;
+  usesLinuxService(): boolean;
+}
+
+const clientPeerVerifierDependencies: ClientPeerVerifierDependencies = {
+  createBrokerPeerVerifier: createLinuxVaultBrokerPeerVerifier,
+  createSocketPeerVerifier: createVaultSocketPeerVerifier,
+  isLinux: () => process.platform === 'linux',
+  linuxServiceUserId: linuxVaultServiceUserId,
+  shouldRequirePeerVerification: shouldRequireVaultPeerVerification,
+  usesLinuxService: usesLinuxVaultService,
+};
+
 export class LocalVaultClient {
   private readonly rootDirectory: string | undefined;
   private readonly socketPath: string;
@@ -178,13 +196,14 @@ function parseSalt(value: Record<string, unknown>): Buffer {
 function createClientPeerVerifier(
   socketPath: string,
   rootDirectory: string | undefined,
+  dependencies: ClientPeerVerifierDependencies = clientPeerVerifierDependencies,
 ): VaultSocketPeerVerifier | undefined {
-  if (!shouldRequireVaultPeerVerification()) return undefined;
-  if (rootDirectory === undefined && usesLinuxVaultService()) {
-    return createLinuxVaultBrokerPeerVerifier(linuxVaultServiceUserId(socketPath));
+  if (!dependencies.shouldRequirePeerVerification()) return undefined;
+  if (rootDirectory === undefined && dependencies.usesLinuxService()) {
+    return dependencies.createBrokerPeerVerifier(dependencies.linuxServiceUserId(socketPath));
   }
   // A local Linux daemon is non-dumpable, so the kernel can withhold /proc/<pid>/exe after UID and pidfd checks pass.
-  return createVaultSocketPeerVerifier({ allowUnavailableExecutablePath: process.platform === 'linux' });
+  return dependencies.createSocketPeerVerifier({ allowUnavailableExecutablePath: dependencies.isLinux() });
 }
 
 function parseInfo(value: Record<string, unknown>): LocalVaultDaemonInfo {
@@ -249,6 +268,7 @@ function isNonNegativeInteger(value: unknown): value is number {
 /** @internal */
 export const __testing = {
   codeFromResponse,
+  createClientPeerVerifier,
   parseInfo,
   parsePolicy,
   parseSalt,

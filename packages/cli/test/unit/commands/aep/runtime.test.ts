@@ -532,9 +532,13 @@ describe('CLI AEP approval resolver', () => {
     );
 
     expect(result).toEqual({ clientAssertion: 'jwt', status: 'completed' });
-    expect(globalThis.fetch).toHaveBeenCalledWith(new URL('/v1/approvals/approval-1', 'https://platform.example'), {
-      headers: { 'X-Test-Platform': 'yes' },
-    });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      new URL('/v1/approvals/approval-1', 'https://platform.example'),
+      expect.objectContaining({
+        headers: { 'X-Test-Platform': 'yes' },
+        signal: expect.any(AbortSignal) as AbortSignal,
+      }),
+    );
   });
 
   it('lets an outer human payment view own the pending approval display', async () => {
@@ -627,6 +631,35 @@ describe('CLI AEP approval resolver', () => {
       inflow: inflow(),
       interval: 0.001,
       timeout: 0.001,
+    });
+
+    let caught: unknown;
+    try {
+      await options.pendingSignResolver?.(
+        resolverInput(() => Promise.resolve({ clientAssertion: 'jwt', status: 'completed' })),
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(mapAepRuntimeError(caught)).toEqual({
+      code: 'AEP_APPROVAL_TIMEOUT',
+      message: 'The InFlow approval timed out.',
+    });
+  });
+
+  it('aborts a stalled approval status request when the polling deadline expires', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('request aborted')), { once: true });
+      });
+    });
+    const options = createCliAepAgentOptions({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      inflow: inflow(),
+      interval: 1,
+      timeout: 0.005,
     });
 
     let caught: unknown;
@@ -797,6 +830,40 @@ describe('CLI AEP approval resolver', () => {
       caught = error;
     }
 
+    expect(mapAepRuntimeError(caught)).toMatchObject({ code: 'APPROVAL_CANCELLED' });
+  });
+
+  it('aborts a stalled approval status request when the caller cancels', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+      return new Promise<Response>((_resolve, reject) => {
+        if (init?.signal?.aborted === true) {
+          reject(new Error('request aborted'));
+          return;
+        }
+        init?.signal?.addEventListener('abort', () => reject(new Error('request aborted')), { once: true });
+      });
+    });
+    const controller = new AbortController();
+    const options = createCliAepAgentOptions({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      inflow: inflow(),
+      interval: 1,
+      timeout: 1,
+    });
+    const pending = options.pendingSignResolver?.({
+      ...resolverInput(() => Promise.resolve({ clientAssertion: 'jwt', status: 'completed' })),
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    let caught: unknown;
+    try {
+      await pending;
+    } catch (error) {
+      caught = error;
+    }
     expect(mapAepRuntimeError(caught)).toMatchObject({ code: 'APPROVAL_CANCELLED' });
   });
 

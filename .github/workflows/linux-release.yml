@@ -379,6 +379,26 @@ jobs:
             echo "::error::The Linux installer accepted a modified package"
             exit 1
           fi
+          cp -R dist/linux/release "$RUNNER_TEMP/injected-signing-key"
+          gpg --batch --passphrase '' --quick-gen-key \
+            'Injected InFlow CI Signing <attacker@example.test>' rsa2048 sign 1d
+          attacker_fingerprint="$(
+            gpg --batch --with-colons --list-secret-keys 'attacker@example.test' |
+              awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          test -n "$attacker_fingerprint"
+          gpg --batch --armor --export "$INFLOW_LINUX_SIGNING_FINGERPRINT" \
+            > "$RUNNER_TEMP/injected-signing-key/inflow-linux-signing-key.asc"
+          gpg --batch --armor --export "$attacker_fingerprint" \
+            >> "$RUNNER_TEMP/injected-signing-key/inflow-linux-signing-key.asc"
+          gpg --batch --yes --armor --detach-sign --local-user "$attacker_fingerprint" \
+            --output "$RUNNER_TEMP/injected-signing-key/SHA256SUMS.asc" \
+            "$RUNNER_TEMP/injected-signing-key/SHA256SUMS"
+          if INFLOW_RELEASE_BASE_URL="file://$RUNNER_TEMP/injected-signing-key" \
+            sh "$RUNNER_TEMP/injected-signing-key/install.sh"; then
+            echo "::error::The Linux installer trusted an injected signing key"
+            exit 1
+          fi
 
       - name: Install from signed release
         run: INFLOW_RELEASE_BASE_URL="file://$PWD/dist/linux/release" sh dist/linux/release/install.sh

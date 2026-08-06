@@ -2,5 +2,5 @@
 '@inflowpayai/inflow': patch
 ---
 
-Support vault peer verification on Linux 5.3+ kernels and non-dumpable local vault daemons, and keep AEP payment
-approval polling alive until the command completes.
+Harden native CLI behavior across vault peer verification, atomic vault-header and credential replacement, AEP approval
+deadlines, machine-readable output, and Linux release-key verification.
