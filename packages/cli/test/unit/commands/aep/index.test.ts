@@ -443,9 +443,9 @@ describe('aep commands', () => {
 
     const alreadyAborted = new AbortController();
     alreadyAborted.abort();
-    await expect(__testing.approvalSleep(1, alreadyAborted.signal)).rejects.toThrow('');
+    await expect(__testing.approvalSleep(1, [alreadyAborted.signal])).rejects.toThrow('');
     const controller = new AbortController();
-    const sleeping = __testing.approvalSleep(10_000, controller.signal);
+    const sleeping = __testing.approvalSleep(10_000, [controller.signal]);
     controller.abort();
     await expect(sleeping).rejects.toThrow('');
   });
@@ -632,7 +632,10 @@ describe('aep commands', () => {
     platformRecovery.identity = identity;
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 }))),
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'PENDING' }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 })),
     );
     fetchScenario.run = async (rawInput: unknown) => {
       const input = rawInput as {
@@ -721,6 +724,7 @@ describe('aep commands', () => {
         {
           ...context({
             header: [],
+            interval: 0.001,
             maxRedirects: 5,
             maxResponseBytes: 1024,
             method: 'GET',
@@ -826,6 +830,92 @@ describe('aep commands', () => {
         storage,
       ),
     ).rejects.toThrow('AEP_APPROVAL_SERVER_ERROR');
+  });
+
+  it('maps a stalled approval status request to the approval timeout', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input, init?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('request aborted')), { once: true });
+        });
+      }),
+    );
+    fetchScenario.run = async (rawInput: unknown) => {
+      const input = rawInput as {
+        agentOptions: {
+          pendingSignResolver: (input: {
+            continueSign(): Promise<never>;
+            pending: { platformContext: Record<string, unknown>; retryAfterSeconds: number; status: 'pending' };
+          }) => Promise<unknown>;
+        };
+      };
+      return input.agentOptions.pendingSignResolver({
+        continueSign: () => Promise.reject(new Error('must not continue')),
+        pending: { platformContext: { approval_id: 'approval-1' }, retryAfterSeconds: 1, status: 'pending' },
+      });
+    };
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+
+    await expect(
+      __testing.runFetch(
+        {
+          ...context({
+            header: [],
+            maxRedirects: 5,
+            maxResponseBytes: 1024,
+            method: 'GET',
+            showBody: true,
+            timeout: 0.005,
+          }),
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        storage,
+      ),
+    ).rejects.toThrow('AEP_APPROVAL_TIMEOUT');
+  });
+
+  it('maps a cancelled approval status request to cancellation', async () => {
+    fetchScenario.run = async (rawInput: unknown) => {
+      const input = rawInput as {
+        agentOptions: {
+          pendingSignResolver: (input: {
+            continueSign(): Promise<never>;
+            pending: { platformContext: Record<string, unknown>; retryAfterSeconds: number; status: 'pending' };
+            signal: AbortSignal;
+          }) => Promise<unknown>;
+        };
+      };
+      const controller = new AbortController();
+      controller.abort();
+      return input.agentOptions.pendingSignResolver({
+        continueSign: () => Promise.reject(new Error('must not continue')),
+        pending: { platformContext: { approval_id: 'approval-1' }, retryAfterSeconds: 1, status: 'pending' },
+        signal: controller.signal,
+      });
+    };
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+
+    await expect(
+      __testing.runFetch(
+        {
+          ...context({
+            header: [],
+            maxRedirects: 5,
+            maxResponseBytes: 1024,
+            method: 'GET',
+            showBody: true,
+            timeout: 30,
+          }),
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        storage,
+      ),
+    ).rejects.toThrow('APPROVAL_CANCELLED');
   });
   it('runs inspect, enrollment, status, grant, and revoke without exposing credentials', async () => {
     vi.stubGlobal(
@@ -1050,6 +1140,26 @@ describe('aep commands', () => {
     await expect(
       __testing.runEnroll(
         context({ approvalId: 'approval-1', interval: 1, maxAttempts: 1, timeout: 1 }),
+        inflow(),
+        storage,
+      ),
+    ).resolves.toEqual({ status: 'active' });
+  });
+
+  it('waits between pending enrollment approval polls before continuing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'PENDING' }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 })),
+    );
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+
+    await expect(
+      __testing.runEnroll(
+        context({ approvalId: 'approval-1', interval: 0.001, maxAttempts: 0, timeout: 1 }),
         inflow(),
         storage,
       ),

@@ -173,6 +173,78 @@ describe('vault peer verifier', () => {
     expect(verified).not.toHaveBeenCalled();
   });
 
+  it('allows a same-user Linux daemon whose hardened process hides its executable path only when requested', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const peer: VaultSocketPeer = {
+      executablePathAvailable: false,
+      path: '',
+      pid: 123,
+      uid: 1000,
+    };
+    const input = dependencies({
+      currentUserId: 1000,
+      peer,
+      realpaths: new Map([['/opt/inflow/bin/inflow', '/opt/inflow/bin/inflow']]),
+    });
+
+    const verifier = createVaultSocketPeerVerifier(
+      {
+        allowUnavailableExecutablePath: true,
+        expectedExecutablePath: '/opt/inflow/bin/inflow',
+        nativeModulePath: '/opt/inflow/lib/inflow/native/vault_peer_linux.node',
+      },
+      input,
+    );
+
+    expect(verifier(socketWithFd(42))).toEqual(peer);
+    expect(input.realpath).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when a peer executable path is unavailable by default', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const peer: VaultSocketPeer = {
+      executablePathAvailable: false,
+      path: '',
+      pid: 123,
+      uid: 1000,
+    };
+    const verifier = createVaultSocketPeerVerifier(
+      {
+        expectedExecutablePath: '/opt/inflow/bin/inflow',
+        nativeModulePath: '/opt/inflow/lib/inflow/native/vault_peer_linux.node',
+      },
+      dependencies({
+        currentUserId: 1000,
+        peer,
+        realpaths: new Map([['/opt/inflow/bin/inflow', '/opt/inflow/bin/inflow']]),
+      }),
+    );
+
+    expect(() => verifier(socketWithFd(42))).toThrow(SecureStorageError);
+  });
+
+  it('rejects unavailable executable paths on platforms that require signatures', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+
+    expect(() =>
+      createVaultSocketPeerVerifier(
+        {
+          allowUnavailableExecutablePath: true,
+          expectedExecutablePath: '/Applications/InFlow.app/Contents/MacOS/inflow',
+          nativeModulePath: '/native/vault_peer_darwin.node',
+          requireSignature: true,
+        },
+        dependencies({
+          currentUserId: 501,
+          peer: { executablePathAvailable: false, path: '', pid: 123, uid: 501 },
+          realpaths: new Map([
+            ['/Applications/InFlow.app/Contents/MacOS/inflow', '/Applications/InFlow.app/Contents/MacOS/inflow'],
+          ]),
+        }),
+      ),
+    ).toThrow('configuration is invalid');
+  });
+
   it('binds a service peer to an explicit operating-system user identity', () => {
     Object.defineProperty(process, 'platform', { value: 'linux' });
     const verifier = createVaultSocketPeerVerifier(
@@ -209,6 +281,7 @@ describe('vault peer verifier', () => {
 
   it('binds broker-transferred sockets to the attested executable, process, and user', () => {
     const config: VaultPeerVerificationConfig = {
+      allowUnavailableExecutablePath: false,
       expectedExecutablePath: '/opt/inflow/bin/inflow',
       expectedTeamId: '',
       nativeModulePath: '/opt/inflow/lib/inflow/native/vault_peer_linux.node',

@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { chmod, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
-import { LocalVaultBackend } from '../../../src/secure-storage/vault-local-backend.js';
+import { __testing, LocalVaultBackend } from '../../../src/secure-storage/vault-local-backend.js';
 import { vaultFilePaths } from '../../../src/secure-storage/vault-files.js';
 import { parseVaultSecretReference } from '../../../src/secure-storage/vault-types.js';
 
@@ -141,6 +141,29 @@ describe('LocalVaultBackend', () => {
     });
     await expect(backend.unlock(Buffer.from('654321'))).resolves.toMatchObject({ lockState: 'unlocked' });
   }, 15_000);
+
+  it('preserves the existing vault header when an atomic rotation write fails', async () => {
+    const sidecarPath = join(tmpDir, 'inflow.vault');
+    const temporaryPath = `${sidecarPath}.rotation.tmp`;
+    const original = Buffer.from('original vault header');
+    await writeFile(sidecarPath, original);
+
+    await expect(
+      __testing.writeSidecarAtomically(sidecarPath, Buffer.from('replacement vault header'), {
+        chmod,
+        rename,
+        rm,
+        temporaryPath: () => temporaryPath,
+        writeFile: async (target, data, options) => {
+          await writeFile(target, data.subarray(0, 4), options);
+          throw new Error('simulated interrupted write');
+        },
+      }),
+    ).rejects.toThrow('simulated interrupted write');
+
+    expect(await readFile(sidecarPath)).toEqual(original);
+    await expect(readFile(temporaryPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 
   it('fails closed when encrypted record metadata is changed', async () => {
     await backend.unlock(Buffer.from('123456'));

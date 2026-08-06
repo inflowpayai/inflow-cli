@@ -31,6 +31,14 @@ import { render } from 'ink';
 import React from 'react';
 import { persistedAepPublicDocumentCache } from '../../utils/aep-public-document-cache.js';
 import type { AuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
+import {
+  ApprovalCancelledError,
+  approvalSleep,
+  approvalStatusBeforeDeadline,
+  ApprovalTimeoutError,
+  cancelApproval,
+  remainingApprovalDelay,
+} from './approval-polling.js';
 import { PendingApprovalView } from './views.js';
 
 type PendingApprovalRenderer = Pick<ReturnType<typeof render>, 'clear' | 'unmount'>;
@@ -62,9 +70,7 @@ export interface AepApprovalDisplay {
 }
 
 class MissingIdentityError extends Error {}
-class ApprovalCancelledError extends Error {}
 class ApprovalDeniedError extends Error {}
-class ApprovalTimeoutError extends Error {}
 class ApprovalServerError extends Error {}
 class AuthenticationHeaderCollisionError extends Error {
   constructor(readonly headerName: string) {
@@ -146,45 +152,6 @@ function lazyStores(
       set: async (serviceUrl, result) => (await get()).inspectCache().set(serviceUrl, result),
     },
   };
-}
-
-async function approvalStatus(inflow: Inflow, approvalId: string): Promise<string> {
-  const response = await fetch(new URL(`/v1/approvals/${approvalId}`, inflow.resolvedApiBaseUrl), {
-    headers: await inflow.platformAuthenticationHeaders(),
-  });
-  if (!response.ok) throw new Error('Approval status request failed.');
-  const body: unknown = await response.json();
-  if (typeof body !== 'object' || body === null || typeof (body as Record<string, unknown>)['status'] !== 'string') {
-    throw new Error('Approval status response is invalid.');
-  }
-  return (body as Record<string, string>)['status'] as string;
-}
-
-async function cancelApproval(inflow: Inflow, approvalId: string): Promise<void> {
-  await fetch(new URL(`/v1/approvals/${approvalId}/cancel`, inflow.resolvedApiBaseUrl), {
-    headers: await inflow.platformAuthenticationHeaders(),
-    method: 'POST',
-  }).catch(() => undefined);
-}
-
-async function approvalSleep(milliseconds: number, signals: readonly (AbortSignal | undefined)[]): Promise<void> {
-  if (signals.some((signal) => signal?.aborted === true)) throw new ApprovalCancelledError();
-  await new Promise<void>((resolve, reject) => {
-    const cleanup = (): void => {
-      for (const signal of signals) signal?.removeEventListener('abort', onAbort);
-    };
-    const onAbort = (): void => {
-      clearTimeout(timeout);
-      cleanup();
-      reject(new ApprovalCancelledError());
-    };
-    const timeout: ReturnType<typeof setTimeout> = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, milliseconds);
-    timeout.unref();
-    for (const signal of signals) signal?.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 function hasHeader(headers: Record<string, string>, name: string): boolean {
@@ -295,8 +262,12 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
           if (input.signal?.aborted === true || controller.signal.aborted) throw new ApprovalCancelledError();
           let status: string;
           try {
-            status = await approvalStatus(options.inflow, approvalId);
+            status = await approvalStatusBeforeDeadline(options.inflow, approvalId, deadline, [
+              input.signal,
+              controller.signal,
+            ]);
           } catch (error) {
+            if (error instanceof ApprovalCancelledError || error instanceof ApprovalTimeoutError) throw error;
             throw new ApprovalServerError(error instanceof Error ? error.message : String(error));
           }
           if (status === 'APPROVED') {
@@ -308,7 +279,7 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
             controller.abort();
             throw new ApprovalCancelledError();
           }
-          await approvalSleep(interval * 1000, [input.signal, controller.signal]);
+          await approvalSleep(remainingApprovalDelay(deadline, interval * 1000), [input.signal, controller.signal]);
         }
         throw new ApprovalTimeoutError();
       } finally {

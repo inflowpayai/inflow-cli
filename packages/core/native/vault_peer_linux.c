@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include "vault_crypto_native.h"
@@ -21,6 +22,31 @@ static napi_value make_error(napi_env env, const char *code, const char *message
   napi_create_string_utf8(env, code, NAPI_AUTO_LENGTH, &code_value);
   napi_set_named_property(env, error, "code", code_value);
   return error;
+}
+
+static int open_peer_pidfd(int socket_fd, pid_t peer_pid) {
+#if defined(SO_PEERPIDFD)
+  /* SO_PEERPIDFD is race-free but was added only in Linux 6.5. */
+  int peer_pidfd = -1;
+  socklen_t peer_pidfd_length = sizeof(peer_pidfd);
+  if (getsockopt(socket_fd, SOL_SOCKET, SO_PEERPIDFD, &peer_pidfd, &peer_pidfd_length) == 0 && peer_pidfd >= 0) {
+    return peer_pidfd;
+  }
+  int socket_error = errno;
+  if (socket_error != ENOPROTOOPT && socket_error != EINVAL) {
+    errno = socket_error;
+    return -1;
+  }
+#endif
+#if defined(SYS_pidfd_open)
+  /* Keep supported LTS kernels on the pidfd-backed verification path. */
+  return (int)syscall(SYS_pidfd_open, peer_pid, 0);
+#else
+  (void)socket_fd;
+  (void)peer_pid;
+  errno = ENOTSUP;
+  return -1;
+#endif
 }
 
 static napi_value peer_info(napi_env env, napi_callback_info info) {
@@ -45,9 +71,8 @@ static napi_value peer_info(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  int peer_pidfd = -1;
-  socklen_t peer_pidfd_length = sizeof(peer_pidfd);
-  if (getsockopt(fd, SOL_SOCKET, SO_PEERPIDFD, &peer_pidfd, &peer_pidfd_length) != 0 || peer_pidfd < 0) {
+  int peer_pidfd = open_peer_pidfd(fd, credentials.pid);
+  if (peer_pidfd < 0) {
     napi_throw(env, make_error(env, "EPEERPIDFD", strerror(errno)));
     return NULL;
   }
@@ -62,14 +87,23 @@ static napi_value peer_info(napi_env env, napi_callback_info info) {
 
   char path[PATH_MAX];
   ssize_t path_length = readlink(proc_path, path, sizeof(path) - 1);
+  int executable_path_available = 1;
   if (path_length <= 0) {
     int saved_errno = errno;
-    close(peer_pidfd);
-    errno = saved_errno;
-    napi_throw(env, make_error(env, "EPEERPATH", strerror(errno)));
-    return NULL;
+    if (saved_errno == EACCES || saved_errno == EPERM) {
+      /* PR_SET_DUMPABLE=0 intentionally makes /proc/<pid>/exe unreadable to same-user clients. */
+      executable_path_available = 0;
+      path_length = 0;
+      path[0] = '\0';
+    } else {
+      close(peer_pidfd);
+      errno = saved_errno;
+      napi_throw(env, make_error(env, "EPEERPATH", strerror(errno)));
+      return NULL;
+    }
+  } else {
+    path[path_length] = '\0';
   }
-  path[path_length] = '\0';
 
   struct pollfd peer_poll = {
       .fd = peer_pidfd,
@@ -101,6 +135,10 @@ static napi_value peer_info(napi_env env, napi_callback_info info) {
   napi_value path_value;
   napi_create_string_utf8(env, path, (size_t)path_length, &path_value);
   napi_set_named_property(env, result, "path", path_value);
+
+  napi_value executable_path_available_value;
+  napi_get_boolean(env, executable_path_available, &executable_path_available_value);
+  napi_set_named_property(env, result, "executablePathAvailable", executable_path_available_value);
 
   return result;
 }

@@ -28,6 +28,23 @@ export function commandPath(argv: readonly string[]): string[] {
   return out;
 }
 
+export function isAgentInvocation(argv: readonly string[], stdoutIsTty: boolean | undefined): boolean {
+  return (
+    stdoutIsTty !== true ||
+    argv.includes('--mcp') ||
+    argv.some((argument) => argument === '--format' || argument.startsWith('--format='))
+  );
+}
+
+export function normalizeFormatAssignments(argv: string[]): void {
+  for (let index = 2; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument?.startsWith('--format=') !== true) continue;
+    argv.splice(index, 1, '--format', argument.slice('--format='.length));
+    index += 1;
+  }
+}
+
 export function shouldStartVaultDaemon(argv: readonly string[], hasDirectApiKey = false): boolean {
   if (shouldBypassVault(argv)) return false;
   const [group, subcommand] = commandPath(argv);

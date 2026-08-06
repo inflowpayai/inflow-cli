@@ -12,6 +12,7 @@ declare const __VAULT_PEER_NATIVE_SHA256__: string | undefined;
 declare const __VAULT_PEER_NATIVE_RELATIVE_PATH__: string | undefined;
 
 export interface VaultSocketPeer {
+  executablePathAvailable?: boolean;
   path: string;
   pid: number;
   principal?: string;
@@ -26,6 +27,7 @@ interface NativeVaultPeerModule {
 }
 
 interface VaultPeerVerifierOptions {
+  allowUnavailableExecutablePath?: boolean;
   expectedExecutablePath?: string;
   expectedNativeModuleSha256?: string;
   expectedTeamId?: string;
@@ -36,6 +38,7 @@ interface VaultPeerVerifierOptions {
 }
 
 export interface VaultPeerVerificationConfig {
+  allowUnavailableExecutablePath: boolean;
   expectedExecutablePath: string;
   expectedNativeModuleSha256?: string;
   expectedTeamId: string;
@@ -83,7 +86,11 @@ export function createVaultSocketPeerVerifier(
         throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
       }
     }
-    if (dependencies.realpath(peer.path) !== config.expectedExecutablePath) {
+    if (peer.executablePathAvailable === false) {
+      if (!config.allowUnavailableExecutablePath) {
+        throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+      }
+    } else if (dependencies.realpath(peer.path) !== config.expectedExecutablePath) {
       throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
     }
     if (config.requireSignature) dependencies.verifySignature(peer.path, config.expectedTeamId);
@@ -144,7 +151,11 @@ export function createVaultPeerVerificationConfig(
   const expectedTeamId = options.expectedTeamId ?? DEFAULT_TEAM_ID;
   const requireSignature =
     options.requireSignature ?? (process.platform === 'darwin' && expectedPath.includes('/InFlow.app/Contents/MacOS/'));
+  const allowUnavailableExecutablePath = options.allowUnavailableExecutablePath ?? false;
   const expectedNativeModuleSha256 = options.expectedNativeModuleSha256 ?? embeddedNativeModuleSha256();
+  if (allowUnavailableExecutablePath && (process.platform !== 'linux' || requireSignature)) {
+    throw new SecureStorageError('secure_storage_unavailable', 'Vault peer verification configuration is invalid.');
+  }
   if (
     options.expectedUserId !== undefined &&
     (!Number.isSafeInteger(options.expectedUserId) || options.expectedUserId < 0)
@@ -159,6 +170,7 @@ export function createVaultPeerVerificationConfig(
     throw new SecureStorageError('secure_storage_unavailable', 'Vault native module integrity is unavailable.');
   }
   return {
+    allowUnavailableExecutablePath,
     expectedExecutablePath: expectedPath,
     ...(expectedNativeModuleSha256 === undefined ? {} : { expectedNativeModuleSha256 }),
     expectedTeamId,
