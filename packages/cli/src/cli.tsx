@@ -29,6 +29,7 @@ import {
   type LocalVaultDaemonClientOptions,
 } from './commands/vault/index.js';
 import { createX402Cli } from './commands/x402/index.js';
+import { shouldEnsureVaultDaemonForMcpTool } from './mcp-metadata.js';
 import {
   formatUpdateNotice,
   makeBackgroundUpdateProbe,
@@ -281,6 +282,15 @@ async function main(): Promise<void> {
     mcp: { tools: { discovery: 'direct' } },
     version: cliVersion,
   });
+
+  if (process.argv.includes('--mcp')) {
+    cli.use(async (context, next) => {
+      if (shouldEnsureVaultDaemonForMcpTool(context.command, hasDirectApiKey)) {
+        await ensureLocalVaultDaemon(vaultOptions);
+      }
+      await next();
+    });
+  }
 
   const backgroundUpdateProbe = makeBackgroundUpdateProbe(cliName, cliVersion);
   let updateProbe: UpdateProbe = backgroundUpdateProbe;
