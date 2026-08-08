@@ -1,5 +1,76 @@
 # @inflowpayai/inflow
 
+## 0.11.0
+
+### Minor Changes
+
+- [#87](https://github.com/inflowpayai/inflow-cli/pull/87)
+  [`c942115`](https://github.com/inflowpayai/inflow-cli/commit/c9421154ece45e7a3fca85b13d93faa367b88ca6) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add ODP Service directory search, inspection, Collection navigation,
+  per-Service and federated Offering discovery, and read-only Action resolution. Protected catalog reads use the
+  existing AEP runtime, and catalog caches are isolated by a verified access context or disabled. Resolved Action
+  targets compose with the existing MPP and x402 payment commands. ODP failures return stable error codes without
+  exposing internal errors or stack traces. Direct Service commands reject unadvertised operations with an actionable
+  alternative, and the agentic discovery playbook guides capability-aware catalog navigation. Offering search exposes
+  resolved filters and sorts, and aggregate discovery derives its required Service operation from the Offering request.
+  The top-level inspect command reports ODP Service metadata before enrollment and payment details. Interactive ODP
+  commands render tabular directory, Collection, Offering, capability, and Action results with copyable continuation
+  commands and absolute schema-declared URLs. AEP Service identity mismatches fail with a stable non-retryable error.
+  Offering lists include descriptions, Collection hierarchy labels use explicit terminology, and directory search
+  presents facet counts as available filters over the complete matching result set. Offering details present structured
+  Price Preview semantics and explicit Action and Offering identifiers. Invalid AEP Grant responses return a stable
+  error instead of an internal-error fallback. Resource details omit Service-level ODP versions and empty localization
+  metadata. Collection and Offering searches reject missing search criteria locally with actionable list-command
+  guidance. Resolved compact Actions display their schema-declared inputs, required fields, and selectable values. MPP
+  and x402 requests with `--data` retain the documented JSON content type through AEP-aware probes and payment replays.
+
+### Patch Changes
+
+- [#94](https://github.com/inflowpayai/inflow-cli/pull/94)
+  [`a676003`](https://github.com/inflowpayai/inflow-cli/commit/a676003d8c42306b6e545f187bad480fcc83e80a) Thanks
+  [@nkavian](https://github.com/nkavian)! - Protect vault initialization and credential rotation from partial
+  vault-header writes.
+
+- [#93](https://github.com/inflowpayai/inflow-cli/pull/93)
+  [`1844276`](https://github.com/inflowpayai/inflow-cli/commit/1844276aafbe87e9bcd890eb9c29a13435c05c93) Thanks
+  [@nkavian](https://github.com/nkavian)! - Bound AEP approval status and cancellation requests by their configured
+  deadlines.
+
+- [#98](https://github.com/inflowpayai/inflow-cli/pull/98)
+  [`aebafd2`](https://github.com/inflowpayai/inflow-cli/commit/aebafd2154c59417bd1737efe8fe1d79a4ca402f) Thanks
+  [@nkavian](https://github.com/nkavian)! - Treat assigned `--format=value` arguments as agent-mode output and normalize
+  them for command parsing.
+
+- [#97](https://github.com/inflowpayai/inflow-cli/pull/97)
+  [`18e650d`](https://github.com/inflowpayai/inflow-cli/commit/18e650dfb196c1bf2d252068df44868b1d9fca4f) Thanks
+  [@nkavian](https://github.com/nkavian)! - Report errors returned by streaming MCP commands and close interrupted
+  command streams.
+
+- [#99](https://github.com/inflowpayai/inflow-cli/pull/99)
+  [`cee88f5`](https://github.com/inflowpayai/inflow-cli/commit/cee88f5d9e0c28641907f0ddbe3c1afeca7694bf) Thanks
+  [@nkavian](https://github.com/nkavian)! - Restart a stopped vault daemon before persistent MCP tools that use
+  vault-backed state.
+
+- [#95](https://github.com/inflowpayai/inflow-cli/pull/95)
+  [`6a8c182`](https://github.com/inflowpayai/inflow-cli/commit/6a8c182a441f782568b737db3c0112e81c25851a) Thanks
+  [@nkavian](https://github.com/nkavian)! - Preserve usable credentials when replacement storage fails and retain
+  recoverable secret cleanup work.
+
+- [#96](https://github.com/inflowpayai/inflow-cli/pull/96)
+  [`efb0a12`](https://github.com/inflowpayai/inflow-cli/commit/efb0a12a1276aaea6ddfdb8868597732fb6885b8) Thanks
+  [@nkavian](https://github.com/nkavian)! - Preserve recoverable credential lifecycle state when secure storage deletion
+  is temporarily unavailable.
+
+- [#90](https://github.com/inflowpayai/inflow-cli/pull/90)
+  [`b584f51`](https://github.com/inflowpayai/inflow-cli/commit/b584f513274a7b82adaf6995bd75e9e5c1f0850f) Thanks
+  [@nkavian](https://github.com/nkavian)! - Preserve the executable and service configuration during Windows MSI
+  upgrades, and authenticate the vault service by the server process identity reported by the named pipe.
+
+- [#92](https://github.com/inflowpayai/inflow-cli/pull/92)
+  [`261b3b2`](https://github.com/inflowpayai/inflow-cli/commit/261b3b2e06cf3c127327ba296667de4655ea150d) Thanks
+  [@nkavian](https://github.com/nkavian)! - Reject Linux release key files containing untrusted additional primary keys
+  and isolate verification state in a temporary directory.
+
 ## 0.10.3
 
 ### Patch Changes

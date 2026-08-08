@@ -1,5 +1,19 @@
 # @inflowpayai/inflow-core
 
+## 0.6.3
+
+### Patch Changes
+
+- [#94](https://github.com/inflowpayai/inflow-cli/pull/94)
+  [`a676003`](https://github.com/inflowpayai/inflow-cli/commit/a676003d8c42306b6e545f187bad480fcc83e80a) Thanks
+  [@nkavian](https://github.com/nkavian)! - Protect vault initialization and credential rotation from partial
+  vault-header writes.
+
+- [#96](https://github.com/inflowpayai/inflow-cli/pull/96)
+  [`efb0a12`](https://github.com/inflowpayai/inflow-cli/commit/efb0a12a1276aaea6ddfdb8868597732fb6885b8) Thanks
+  [@nkavian](https://github.com/nkavian)! - Preserve recoverable credential lifecycle state when secure storage deletion
+  is temporarily unavailable.
+
 ## 0.6.2
 
 ### Patch Changes
