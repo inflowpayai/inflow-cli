@@ -1,6 +1,18 @@
 name: windows release
 
 on:
+  workflow_call:
+    inputs:
+      sign:
+        required: true
+        type: boolean
+      publish:
+        required: false
+        type: boolean
+        default: false
+      tag:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       sign:
@@ -29,6 +41,12 @@ jobs:
   validate-inputs:
     runs-on: windows-2025
     steps:
+      - uses: actions/checkout@v6
+
+      - name: Test hosted installer
+        shell: pwsh
+        run: ./scripts/test-windows-hosted-installer.ps1
+
       - name: Validate release inputs
         shell: pwsh
         env:
@@ -125,7 +143,7 @@ jobs:
           if-no-files-found: error
 
   package-dry-run:
-    if: github.event_name == 'pull_request' || inputs.sign == false
+    if: inputs.sign == false
     needs: build-payload
     strategy:
       fail-fast: false
@@ -185,7 +203,7 @@ jobs:
           if-no-files-found: error
 
   package-signed:
-    if: github.event_name == 'workflow_dispatch' && inputs.sign
+    if: inputs.sign
     needs: build-payload
     runs-on: windows-2025
     environment: windows-production
@@ -305,7 +323,7 @@ jobs:
           if-no-files-found: error
 
   aggregate-dry-run:
-    if: github.event_name == 'pull_request' || inputs.sign == false
+    if: inputs.sign == false
     needs: package-dry-run
     runs-on: windows-2025
     steps:
@@ -345,7 +363,7 @@ jobs:
           if-no-files-found: error
 
   aggregate-signed:
-    if: github.event_name == 'workflow_dispatch' && inputs.sign
+    if: inputs.sign
     needs: package-signed
     runs-on: windows-2025
     environment: windows-production

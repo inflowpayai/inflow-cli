@@ -13,6 +13,8 @@ const assembler = resolve('scripts/assemble-native-release-assets.mjs');
 const packages = [
   `inflow-${version}-darwin-arm64.zip`,
   `inflow-${version}-darwin-x64.zip`,
+  `inflow-${version}-windows-arm64.msi`,
+  `inflow-${version}-windows-x64.msi`,
   `inflow-${version}-linux-arm64.tar.gz`,
   `inflow-${version}-linux-x64.tar.gz`,
   `inflow-${version}-1.aarch64.rpm`,
@@ -27,13 +29,17 @@ try {
     writeFileSync(join(baseline, name), name);
     writeFileSync(join(baseline, `${name}.sha256`), `${sha256(join(baseline, name))}  ${name}\n`);
   }
-  const linuxPackages = packages.filter((name) => !name.includes('-darwin-')).sort();
+  const linuxPackages = packages.filter((name) => !name.includes('-darwin-') && !name.includes('-windows-')).sort();
   writeFileSync(
     join(baseline, 'SHA256SUMS'),
     `${linuxPackages.map((name) => `${sha256(join(baseline, name))}  ${name}`).join('\n')}\n`,
   );
   writeFileSync(join(baseline, 'SHA256SUMS.asc'), 'test signature');
   writeFileSync(join(baseline, 'inflow-linux-signing-key.asc'), 'test public key');
+  writeFileSync(join(baseline, 'InFlowPayAI.InFlow.installer.yaml'), 'test installer manifest');
+  writeFileSync(join(baseline, 'InFlowPayAI.InFlow.locale.en-US.yaml'), 'test locale manifest');
+  writeFileSync(join(baseline, 'InFlowPayAI.InFlow.yaml'), 'test version manifest');
+  writeFileSync(join(baseline, 'install.ps1'), 'Write-Output test\n');
   writeFileSync(join(baseline, 'install.sh'), '#!/bin/sh\n');
 
   run(verifier, [baseline, version]);
@@ -80,14 +86,21 @@ try {
 
   const macStage = join(workspace, 'mac-stage');
   const linuxStage = join(workspace, 'linux-stage');
+  const windowsStage = join(workspace, 'windows-stage');
   mkdirSync(macStage);
   mkdirSync(linuxStage);
+  mkdirSync(windowsStage);
   for (const name of releaseAssets()) {
-    cpSync(join(baseline, name), join(name.includes('darwin') ? macStage : linuxStage, name));
+    const stage = name.includes('darwin')
+      ? macStage
+      : name.includes('windows') || name.endsWith('.ps1') || name.endsWith('.yaml')
+        ? windowsStage
+        : linuxStage;
+    cpSync(join(baseline, name), join(stage, name));
   }
   writeFileSync(join(macStage, 'inflow.rb'), 'cask');
   const assembled = join(workspace, 'assembled');
-  run(assembler, [assembled, macStage, linuxStage]);
+  run(assembler, [assembled, macStage, linuxStage, windowsStage]);
   run(verifier, [assembled, version]);
 } finally {
   rmSync(workspace, { recursive: true, force: true });
@@ -107,6 +120,10 @@ function releaseAssets() {
     'SHA256SUMS',
     'SHA256SUMS.asc',
     'inflow-linux-signing-key.asc',
+    'InFlowPayAI.InFlow.installer.yaml',
+    'InFlowPayAI.InFlow.locale.en-US.yaml',
+    'InFlowPayAI.InFlow.yaml',
+    'install.ps1',
     'install.sh',
   ];
 }

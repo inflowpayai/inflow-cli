@@ -6,7 +6,8 @@ from the selected tag; selecting a branch is rejected:
 
 - `preflight` signs, notarizes, stages, and verifies the complete asset set without creating a GitHub Release.
 - `draft` creates and verifies an unpublished draft, then deletes it.
-- `publish` creates and verifies the draft, publishes it, and updates Homebrew and WinGet.
+- `publish` creates and verifies the draft, publishes it, updates Homebrew, and produces the WinGet submission
+  manifests.
 
 The workflow requires immutable GitHub Releases and publishes only after macOS, Windows, and Linux succeed. The
 standalone platform workflows cannot publish a GitHub Release. They provide dry runs and protected signing checks;
@@ -56,9 +57,9 @@ The Azure application uses an OpenID Connect federated credential scoped to the 
 and has the `Artifact Signing Certificate Profile Signer` role on the certificate profile. Do not create or store an
 Azure client secret or certificate private key in GitHub.
 
-The combined workflow verifies both signed MSI files before publishing. It then publishes the rendered
-`InFlowPayAI.InFlow` manifests to the WinGet submission path and deploys the rendered `install.ps1` without altering its
-signed-artifact metadata.
+The combined workflow verifies both signed MSI files before publishing. The exact release asset set includes the
+rendered `install.ps1` and `InFlowPayAI.InFlow` manifests without altering their signed-artifact metadata. Submit those
+manifests to `microsoft/winget-pkgs` after the immutable GitHub Release is public.
 
 ## Linux
 
