@@ -1,5 +1,36 @@
 # @inflowpayai/inflow
 
+## 0.11.0
+
+### Minor Changes
+
+- [#87](https://github.com/inflowpayai/inflow-cli/pull/87)
+  [`c942115`](https://github.com/inflowpayai/inflow-cli/commit/c9421154ece45e7a3fca85b13d93faa367b88ca6) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add ODP Service directory search, inspection, Collection navigation,
+  per-Service and federated Offering discovery, and read-only Action resolution. Protected catalog reads use the
+  existing AEP runtime, and catalog caches are isolated by a verified access context or disabled. Resolved Action
+  targets compose with the existing MPP and x402 payment commands. ODP failures return stable error codes without
+  exposing internal errors or stack traces. Direct Service commands reject unadvertised operations with an actionable
+  alternative, and the agentic discovery playbook guides capability-aware catalog navigation. Offering search exposes
+  resolved filters and sorts, and aggregate discovery derives its required Service operation from the Offering request.
+  The top-level inspect command reports ODP Service metadata before enrollment and payment details. Interactive ODP
+  commands render tabular directory, Collection, Offering, capability, and Action results with copyable continuation
+  commands and absolute schema-declared URLs. AEP Service identity mismatches fail with a stable non-retryable error.
+  Offering lists include descriptions, Collection hierarchy labels use explicit terminology, and directory search
+  presents facet counts as available filters over the complete matching result set. Offering details present structured
+  Price Preview semantics and explicit Action and Offering identifiers. Invalid AEP Grant responses return a stable
+  error instead of an internal-error fallback. Resource details omit Service-level ODP versions and empty localization
+  metadata. Collection and Offering searches reject missing search criteria locally with actionable list-command
+  guidance. Resolved compact Actions display their schema-declared inputs, required fields, and selectable values. MPP
+  and x402 requests with `--data` retain the documented JSON content type through AEP-aware probes and payment replays.
+
+### Patch Changes
+
+- [#90](https://github.com/inflowpayai/inflow-cli/pull/90)
+  [`b584f51`](https://github.com/inflowpayai/inflow-cli/commit/b584f513274a7b82adaf6995bd75e9e5c1f0850f) Thanks
+  [@nkavian](https://github.com/nkavian)! - Preserve the executable and service configuration during Windows MSI
+  upgrades, and authenticate the vault service by the server process identity reported by the named pipe.
+
 ## 0.10.3
 
 ### Patch Changes
