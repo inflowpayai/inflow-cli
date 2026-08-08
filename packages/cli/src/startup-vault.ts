@@ -1,4 +1,4 @@
-export function commandPath(argv: readonly string[]): string[] {
+export function commandPath(argv: readonly string[], maxDepth = 2): string[] {
   const out: string[] = [];
   const valueFlags = new Set([
     '--api-base-url',
@@ -23,7 +23,7 @@ export function commandPath(argv: readonly string[]): string[] {
       continue;
     }
     out.push(arg);
-    if (out.length >= 2) break;
+    if (out.length >= maxDepth) break;
   }
   return out;
 }
@@ -33,6 +33,7 @@ export function shouldStartVaultDaemon(argv: readonly string[], hasDirectApiKey 
   const [group, subcommand] = commandPath(argv);
   if (group === 'auth') return subcommand === 'login' || subcommand === 'logout';
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
+  if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
   if (group === 'mpp' || group === 'x402') {
     return !hasDirectApiKey && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
   }
@@ -46,6 +47,7 @@ export function shouldReconcileVaultDaemon(argv: readonly string[], hasDirectApi
     return isOneOf(subcommand, 'login', 'logout') || (!hasDirectApiKey && subcommand === 'status');
   }
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
+  if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
   if (group === 'mpp' || group === 'x402') {
     return !hasDirectApiKey && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
   }
@@ -62,6 +64,7 @@ export function shouldUnlockVault(
   const [group, subcommand] = commandPath(argv);
   if (group === 'auth') return subcommand === 'login';
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
+  if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
   if (group === 'mpp' || group === 'x402') {
     return options.hasDirectApiKey !== true && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
   }
@@ -72,6 +75,16 @@ export function shouldUnlockVault(
 
 function shouldBypassVault(argv: readonly string[]): boolean {
   return argv.includes('--schema') || argv.includes('--help') || argv.includes('-h');
+}
+
+export function shouldConfigureOdpServiceTransport(argv: readonly string[]): boolean {
+  if (shouldBypassVault(argv)) return false;
+  const [group, subgroup, command] = commandPath(argv, 3);
+  if (group !== 'odp' || command === undefined) return false;
+  if (subgroup === 'actions') return command === 'resolve';
+  if (subgroup === 'collections') return isOneOf(command, 'get', 'list', 'search');
+  if (subgroup === 'offerings') return isOneOf(command, 'discover', 'get', 'list', 'search');
+  return false;
 }
 
 function isOneOf(value: string | undefined, ...choices: readonly string[]): boolean {

@@ -62,6 +62,7 @@ Setup alone is not enough. Before performing a task with InFlow, load and follow
 
 | Task                                          | Playbook                                                                                            |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Discover Services, products, and Actions      | run `inflow --skill agentic-discovery`, or fetch https://inflowcli.ai/skills/agentic-discovery.md   |
 | Enroll with or access an AEP Service          | run `inflow --skill agentic-enrollment`, or fetch https://inflowcli.ai/skills/agentic-enrollment.md |
 | Pay HTTP 402-protected resources (MPP / x402) | run `inflow --skill agentic-payments`, or fetch https://inflowcli.ai/skills/agentic-payments.md     |
 

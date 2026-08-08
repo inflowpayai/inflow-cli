@@ -15,10 +15,12 @@ import {
 import { Cli, Help } from 'incur';
 import { createAuthCli } from './commands/auth/index.js';
 import { createAepCli } from './commands/aep/index.js';
+import { aepCachePartition, createAepAwareFetch } from './commands/aep/runtime.js';
 import { createBalancesCli } from './commands/balances/index.js';
 import { createDepositAddressesCli } from './commands/deposit-addresses/index.js';
 import { createInspectCommand } from './commands/inspect/index.js';
 import { createMppCli } from './commands/mpp/index.js';
+import { createOdpCli } from './commands/odp/index.js';
 import {
   createVaultCli,
   ensureLocalVaultDaemon,
@@ -33,7 +35,12 @@ import {
   makeFrozenUpdateProbe,
   type UpdateProbe,
 } from './utils/update-probe.js';
-import { shouldReconcileVaultDaemon, shouldStartVaultDaemon, shouldUnlockVault } from './startup-vault.js';
+import {
+  shouldConfigureOdpServiceTransport,
+  shouldReconcileVaultDaemon,
+  shouldStartVaultDaemon,
+  shouldUnlockVault,
+} from './startup-vault.js';
 
 declare const __CLI_VERSION__: string;
 declare const __CLI_BUILD_ID__: string;
@@ -267,7 +274,7 @@ async function main(): Promise<void> {
   }
 
   const cli = Cli.create('inflow', {
-    description: 'InFlow - agent enrollment and agentic payments from your machine.',
+    description: 'InFlow - agentic discovery, onboarding, and payments from your machine.',
     mcp: { tools: { discovery: 'direct' } },
     version: cliVersion,
   });
@@ -303,6 +310,26 @@ async function main(): Promise<void> {
   cli.command(createX402Cli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createMppCli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createAepCli(inflow, authStorage));
+  let odp = inflow.odp;
+  if (shouldConfigureOdpServiceTransport(process.argv)) {
+    const cachePartition = await aepCachePartition(authStorage, inflow);
+    odp = inflow.odp.withServiceTransport({
+      ...(cachePartition === undefined ? {} : { cachePartition }),
+      transport: createAepAwareFetch({
+        authStorage,
+        context: {
+          agent: isAgent,
+          error(error): never {
+            throw new Error(error.message);
+          },
+          formatExplicit: process.argv.includes('--format'),
+        },
+        inflow,
+        timeout: 900,
+      }),
+    });
+  }
+  cli.command(createOdpCli(odp));
   cli.command('inspect', createInspectCommand(inflow, authStorage));
 
   await cli.serve();

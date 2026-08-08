@@ -80,6 +80,9 @@ Inspection is unauthenticated. It accepts a DID, hostname, origin, or full resou
 the resource authentication policy. The Service's OpenAPI metadata may provide the exact operation policy; otherwise
 the CLI uses the live authentication challenge. Do not infer support from a failed or unrelated endpoint.
 
+If inspection reports `service_identity_mismatch`, stop. Do not enroll, request an assertion, or send credentials to
+that Service. Directory membership does not override this failure.
+
 ## Fetch a resource
 
 Prefer `fetch` for normal resource access:

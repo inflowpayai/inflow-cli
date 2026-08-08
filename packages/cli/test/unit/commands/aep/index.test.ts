@@ -353,9 +353,20 @@ describe('aep commands', () => {
       message: 'AEP Service Inspect failed.',
       retryable: true,
     });
+    const identityMismatch = new AepInspectError('failed');
+    Object.defineProperty(identityMismatch, 'code', { value: 'service_identity_mismatch' });
+    expect(__testing.commandError(identityMismatch)).toEqual({
+      code: 'AEP_SERVICE_IDENTITY_MISMATCH',
+      message: 'AEP Service Inspect failed.',
+      retryable: false,
+    });
     expect(__testing.commandError(new Error('failed'))).toEqual({
       code: 'AEP_INTERNAL_ERROR',
       message: 'The AEP command failed unexpectedly.',
+    });
+    expect(__testing.commandError(new TypeError('Invalid AEP Grant response.'))).toEqual({
+      code: 'AEP_GRANT_RESPONSE_INVALID',
+      message: 'The Service returned an invalid AEP Grant response.',
     });
     expect(
       __testing.commandError(new SecureStorageError('secure_storage_secret_missing', 'The InFlow vault is locked.')),

@@ -37,6 +37,16 @@ const COLUMNS: ReadonlyArray<TableColumn<DecodedChallenge>> = [
   { header: 'Expires', cell: (c) => orDash(c.expires) },
 ];
 
+interface NoPaymentRow {
+  field: string;
+  value: string;
+}
+
+const NO_PAYMENT_COLUMNS: ReadonlyArray<TableColumn<NoPaymentRow>> = [
+  { header: 'Field', cell: (row) => row.field },
+  { header: 'Value', cell: (row) => row.value },
+];
+
 export interface InspectViewProps {
   url: string;
   method: string;
@@ -82,13 +92,18 @@ export const InspectView: React.FC<InspectViewProps> = ({ url, method, deps, onC
 
   if (phase.kind === 'no-payment') {
     const { result } = phase;
+    const rows: NoPaymentRow[] = [
+      { field: 'Payment required', value: 'No' },
+      { field: 'Status', value: String(result.status) },
+    ];
+    if (result.contentType !== undefined) rows.push({ field: 'Content type', value: result.contentType });
+    rows.push({ field: 'Response size', value: `${String(result.bodySizeBytes)} bytes` });
     return (
       <Box flexDirection="column">
-        <Text color="green">✓ Seller accepted without payment</Text>
-        <Text>{`status: ${String(result.status)}`}</Text>
-        {result.contentType !== undefined ? <Text>{`content-type: ${result.contentType}`}</Text> : null}
-        <Text>{`response size: ${String(result.bodySizeBytes)} bytes`}</Text>
-        <Text dimColor>Use `mpp pay` to fetch the body.</Text>
+        <Table columns={NO_PAYMENT_COLUMNS} rows={rows} />
+        <Box marginTop={1}>
+          <Text dimColor>Use `mpp fetch` to fetch the body.</Text>
+        </Box>
       </Box>
     );
   }

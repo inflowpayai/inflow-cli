@@ -28,6 +28,9 @@ const PUBLISHED = [
   '@aep-foundation/express',
   '@aep-foundation/platform',
   '@aep-foundation/service',
+  '@offering-protocol/agent',
+  '@offering-protocol/core',
+  '@offering-protocol/directory',
 ];
 const UNPUBLISHED = [];
 const LINKED = [...PUBLISHED, ...UNPUBLISHED];

@@ -13,6 +13,8 @@ import {
 } from '@aep-foundation/agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  aepCachePartition,
+  createAepAwareFetch,
   createAepAwareInspectProbe,
   createAepAwareSellerTransport,
   createCliAepAgentOptions,
@@ -159,10 +161,31 @@ describe('AEP-aware seller transport', () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(new Headers(fetchSpy.mock.calls[0]?.[1]?.headers).get('Authorization')).toBeNull();
+    expect(new Headers(fetchSpy.mock.calls[0]?.[1]?.headers).get('Content-Type')).toBe('application/json');
     expect(new Headers(fetchSpy.mock.calls[1]?.[1]?.headers).get('Authorization')).toBe('Payment CRED');
+    expect(new Headers(fetchSpy.mock.calls[1]?.[1]?.headers).get('Content-Type')).toBe('application/json');
     expect(new Headers(fetchSpy.mock.calls[1]?.[1]?.headers).get('X-Request')).toBe('one');
     expect(result.status).toBe(200);
     expect(Buffer.from(result.bytes).toString('utf8')).toBe('paid');
+  });
+
+  it('preserves an explicit content type for request bodies', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('accepted', { status: 200 }));
+    const transport = createAepAwareSellerTransport({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      inflow: inflow(),
+      timeout: 30,
+    });
+
+    await transport.request({
+      data: 'plain text',
+      headers: { 'content-type': 'text/plain' },
+      method: 'POST',
+      url: 'https://seller.test/resource',
+    });
+
+    expect(new Headers(fetchSpy.mock.calls[0]?.[1]?.headers).get('Content-Type')).toBe('text/plain');
   });
 
   it('rejects caller-controlled AEP authentication header collisions before contacting the seller', async () => {
@@ -253,12 +276,134 @@ describe('AEP-aware seller transport', () => {
   });
 });
 
+describe('AEP-aware ODP transport', () => {
+  it('preserves anonymous responses and caller headers', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (requestUrl(input) === 'https://seller.test/odp/offerings') {
+        expect(new Headers(init?.headers).get('Accept')).toBe('application/odp+json');
+        return Promise.resolve(new Response('public', { status: 200 }));
+      }
+      return Promise.resolve(new Response('missing', { status: 404 }));
+    });
+    const transport = createAepAwareFetch({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      inflow: inflow(),
+      timeout: 30,
+    });
+
+    const response = await transport('https://seller.test/odp/offerings', {
+      headers: { Accept: 'application/odp+json' },
+    });
+
+    expect(await response.text()).toBe('public');
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+
+  it('uses a stored AEP credential for a protected ODP read', async () => {
+    const authStorage = new MemoryStorage();
+    const storage = new AepStorage(authStorage, {
+      platformOrigin: 'https://platform.example',
+      userId: 'user-1',
+    });
+    await storage.credentials().saveCredential({
+      credential: {
+        access_token: 'stored-token',
+        credential_id: 'cred-1',
+        expires_at: '2999-01-01T00:00:00.000Z',
+        scopes: [],
+        token_type: 'Bearer',
+      },
+      credentialId: 'cred-1',
+      expiresAt: '2999-01-01T00:00:00.000Z',
+      grantType: 'oauth-bearer',
+      issuedAt: '2026-01-01T00:00:00.000Z',
+      serviceDid: 'did:web:seller.test',
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = requestUrl(input);
+      if (url === 'https://seller.test/.well-known/aep') {
+        return Promise.resolve(
+          Response.json(OAUTH_INSPECT_DOCUMENT, { headers: { 'content-type': 'application/aep+json' } }),
+        );
+      }
+      if (url === 'https://seller.test/openapi.json') {
+        return Promise.resolve(
+          Response.json(OAUTH_OPENAPI_DOCUMENT, { headers: { 'content-type': 'application/json' } }),
+        );
+      }
+      const authentication = new Headers(init?.headers).get('AEP-Authorization');
+      if (authentication === null) {
+        return Promise.resolve(
+          new Response('authentication required', {
+            headers: {
+              'WWW-Authenticate':
+                'AEP service_did="did:web:seller.test", inspect="https://seller.test/.well-known/aep"',
+            },
+            status: 401,
+          }),
+        );
+      }
+      expect(authentication).toBe('Bearer stored-token');
+      return Promise.resolve(Response.json({ items: [], odp_version: '1.0' }));
+    });
+    const transport = createAepAwareFetch({ authStorage, context: context(), inflow: inflow(), timeout: 30 });
+
+    const response = await transport('https://seller.test/resource');
+
+    expect(response.status).toBe(200);
+    expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
+    await expect(aepCachePartition(authStorage, inflow())).resolves.toBe('aep:["https://platform.example","user-1"]');
+  });
+
+  it('rejects caller-controlled AEP authentication and omits a cache partition without an owner', async () => {
+    const authStorage = new MemoryStorage();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const transport = createAepAwareFetch({ authStorage, context: context(), inflow: inflow(), timeout: 30 });
+
+    await expect(
+      transport('https://seller.test/odp/offerings', { headers: { 'AEP-Authorization': 'caller' } }),
+    ).rejects.toThrow('AEP-Authorization');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await expect(aepCachePartition(authStorage, inflow())).resolves.toBeUndefined();
+  });
+
+  it('disables catalog caching when the persisted AEP owner differs from the current user', async () => {
+    const authStorage = new MemoryStorage();
+    const storage = new AepStorage(authStorage, {
+      platformOrigin: 'https://platform.example',
+      userId: 'prior-user',
+    });
+    await storage.credentials().saveCredential({
+      credential: {
+        access_token: 'stored-token',
+        credential_id: 'cred-1',
+        expires_at: '2999-01-01T00:00:00.000Z',
+        scopes: [],
+        token_type: 'Bearer',
+      },
+      credentialId: 'cred-1',
+      expiresAt: '2999-01-01T00:00:00.000Z',
+      grantType: 'oauth-bearer',
+      issuedAt: '2026-01-01T00:00:00.000Z',
+      serviceDid: 'did:web:seller.test',
+    });
+
+    await expect(aepCachePartition(authStorage, inflow())).resolves.toBeUndefined();
+  });
+
+  it('leaves public ODP commands available when AEP storage is unavailable', async () => {
+    await expect(aepCachePartition({} as never, inflow())).resolves.toBeUndefined();
+  });
+});
+
 describe('AEP-aware read-only inspection probe', () => {
   it('passes through ordinary seller responses without AEP state', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = requestUrl(input);
       if (url === 'https://seller.test/.well-known/aep')
         return Promise.resolve(new Response('missing', { status: 404 }));
+      expect(new Headers(init?.headers).get('Content-Type')).toBe('application/json');
       return Promise.resolve(new Response('free', { headers: { 'content-type': 'text/plain' }, status: 200 }));
     });
     const probe = createAepAwareInspectProbe({
@@ -268,7 +413,7 @@ describe('AEP-aware read-only inspection probe', () => {
       timeout: 30,
     });
 
-    const result = await probe('https://seller.test/resource', { method: 'GET', headers: {} });
+    const result = await probe('https://seller.test/resource', { data: '{}', method: 'POST', headers: {} });
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(result.status).toBe(200);

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Redirect local SDK packages from `inflow-node` and `aep-node` checkouts via pnpm-workspace.yaml overrides. Use while
- * developing against unpublished SDK changes before the corresponding npm release lands.
+ * Redirect local SDK packages from `inflow-node`, `aep-node`, and `odp-node` checkouts via pnpm-workspace.yaml
+ * overrides. Use while developing against unpublished SDK changes before the corresponding npm release lands.
  *
- * Reads the target checkouts from `$INFLOW_NODE_PATH` and `$AEP_NODE_PATH` (both default to sibling checkouts). Bails
- * out if any linked package is missing or unbuilt in its target checkout.
+ * Reads the target checkouts from `$INFLOW_NODE_PATH`, `$AEP_NODE_PATH`, and `$ODP_NODE_PATH` (all default to sibling
+ * checkouts). Bails out if any linked package is missing or unbuilt in its target checkout.
  *
  * Writes to `pnpm-workspace.yaml`'s `overrides:` block — the modern home for workspace-level overrides under pnpm 11+
  * (the legacy `pnpm.overrides` and top-level `overrides` in `package.json` are either ignored or limited to transitive
@@ -28,7 +28,8 @@ const AEP_LINKED = [
   '@aep-foundation/platform',
   '@aep-foundation/service',
 ];
-const LINKED = [...INFLOW_LINKED, ...AEP_LINKED];
+const ODP_LINKED = ['@offering-protocol/agent', '@offering-protocol/core', '@offering-protocol/directory'];
+const LINKED = [...INFLOW_LINKED, ...AEP_LINKED, ...ODP_LINKED];
 const INFLOW_NODE_AEP_LINKED = ['@aep-foundation/core', '@aep-foundation/express', '@aep-foundation/service'];
 
 const BEGIN_MARK = '# >>> link-local-inflow-node:overrides';
@@ -48,6 +49,14 @@ function resolveAepNodePath() {
     return path.resolve(fromEnv);
   }
   return path.resolve(REPO_ROOT, '..', '..', 'AEP', 'aep-node');
+}
+
+function resolveOdpNodePath() {
+  const fromEnv = process.env.ODP_NODE_PATH;
+  if (fromEnv !== undefined && fromEnv.length > 0) {
+    return path.resolve(fromEnv);
+  }
+  return path.resolve(REPO_ROOT, '..', '..', 'ODP', 'odp-node');
 }
 
 async function fileExists(p) {
@@ -78,7 +87,7 @@ async function assertCheckout(checkoutPath, packages, checkoutName) {
   }
 }
 
-function buildOverridesBlock(workspaceRoot, inflowNodePath, aepNodePath, packages) {
+function buildOverridesBlock(workspaceRoot, inflowNodePath, aepNodePath, odpNodePath, packages) {
   const lines = [BEGIN_MARK, 'overrides:'];
   for (const name of packages.inflow) {
     const sub = name.split('/')[1];
@@ -89,15 +98,20 @@ function buildOverridesBlock(workspaceRoot, inflowNodePath, aepNodePath, package
     const rel = path.relative(workspaceRoot, path.join(aepNodePath, aepPackageDirectory(name)));
     lines.push(`  '${name}': link:${rel}`);
   }
+  for (const name of packages.odp) {
+    const sub = name.split('/')[1];
+    const rel = path.relative(workspaceRoot, path.join(odpNodePath, 'packages', sub));
+    lines.push(`  '${name}': link:${rel}`);
+  }
   lines.push(END_MARK);
   return lines.join('\n');
 }
 
-async function writeOverrides(workspaceRoot, inflowNodePath, aepNodePath, packages) {
+async function writeOverrides(workspaceRoot, inflowNodePath, aepNodePath, odpNodePath, packages) {
   const workspaceYaml = path.join(workspaceRoot, 'pnpm-workspace.yaml');
   const existing = await fs.readFile(workspaceYaml, 'utf-8');
   const stripped = stripExistingBlock(existing);
-  const block = buildOverridesBlock(workspaceRoot, inflowNodePath, aepNodePath, packages);
+  const block = buildOverridesBlock(workspaceRoot, inflowNodePath, aepNodePath, odpNodePath, packages);
   const next = stripped.endsWith('\n') ? `${stripped}${block}\n` : `${stripped}\n${block}\n`;
 
   if (next !== existing) await fs.writeFile(workspaceYaml, next, 'utf-8');
@@ -178,19 +192,23 @@ function run(cmd, args, opts = {}) {
 
 const inflowNodePath = resolveInflowNodePath();
 const aepNodePath = resolveAepNodePath();
+const odpNodePath = resolveOdpNodePath();
 await assertCheckout(inflowNodePath, INFLOW_LINKED, 'INFLOW_NODE');
 await assertCheckout(aepNodePath, AEP_LINKED, 'AEP_NODE');
+await assertCheckout(odpNodePath, ODP_LINKED, 'ODP_NODE');
 await clearLocalPackageReferences(REPO_ROOT, LINKED);
 await clearLocalPackageReferences(inflowNodePath, INFLOW_NODE_AEP_LINKED);
-const cliChanged = await writeOverrides(REPO_ROOT, inflowNodePath, aepNodePath, {
+const cliChanged = await writeOverrides(REPO_ROOT, inflowNodePath, aepNodePath, odpNodePath, {
   aep: AEP_LINKED,
   inflow: INFLOW_LINKED,
+  odp: ODP_LINKED,
 });
-const inflowNodeChanged = await writeOverrides(inflowNodePath, inflowNodePath, aepNodePath, {
+const inflowNodeChanged = await writeOverrides(inflowNodePath, inflowNodePath, aepNodePath, odpNodePath, {
   aep: AEP_LINKED.filter((name) =>
     ['@aep-foundation/core', '@aep-foundation/express', '@aep-foundation/service'].includes(name),
   ),
   inflow: [],
+  odp: [],
 });
 process.stdout.write(
   `link-local-inflow-node: ${cliChanged || inflowNodeChanged ? 'wrote' : 'kept'} overrides for the CLI and inflow-node workspaces.\n`,

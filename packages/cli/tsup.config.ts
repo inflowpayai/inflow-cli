@@ -61,6 +61,7 @@ export default defineConfig({
     __VAULT_PEER_NATIVE_RELATIVE_PATH__: JSON.stringify(vaultPeerNative.relativePath),
     __VAULT_PEER_NATIVE_SHA256__: JSON.stringify(vaultPeerNative.sha256),
   },
+  dts: true,
   esbuildOptions(options) {
     options.alias = {
       ...(options.alias ?? {}),

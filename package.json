@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.10.3",
   "type": "module",
-  "description": "InFlow — agentic MPP / x402 payments from your machine.",
+  "description": "InFlow — agentic discovery, onboarding, and payments from your machine.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/inflowpayai/inflow-cli.git"
@@ -41,7 +41,7 @@
     "smoke:linux-system-vault": "node scripts/smoke-linux-system-vault.mjs",
     "verify": "node scripts/clean-bundle-artifacts.mjs && pnpm format && pnpm typecheck && pnpm lint && pnpm test && pnpm typedoc && pnpm build",
     "dev": "turbo run dev --parallel",
-    "test": "turbo run test",
+    "test": "turbo run test --concurrency=1",
     "posttest": "node scripts/clean-bundle-artifacts.mjs",
     "coverage:changed": "node scripts/check-changed-coverage.mjs",
     "test:native-release-assets": "node scripts/test-native-release-assets.mjs",

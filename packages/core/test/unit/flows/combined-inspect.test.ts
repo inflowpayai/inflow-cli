@@ -1,6 +1,8 @@
 import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
+import { AepInspectError } from '@aep-foundation/agent';
 import { encodePaymentRequiredHeader } from '@x402/core/http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ServiceInspection } from '@offering-protocol/agent';
 import {
   type CombinedInspectEvent,
   reduceCombinedInspect,
@@ -62,7 +64,53 @@ const aepInspect = {
   inspectUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
 };
 
+const odpInspect = {
+  capabilities: {
+    enrollment: [{ name: 'aep' }],
+    operations: [
+      { authentication: 'not-required', name: 'get-offering' },
+      { authentication: 'not-required', name: 'list-offerings' },
+    ],
+    payments: [],
+  },
+  document: {
+    description: 'Example products',
+    http: { endpoint_base: '/odp' },
+    language: 'en',
+    localizations: ['en'],
+    name: 'Example',
+    odp_version: '1.0',
+    operations: [
+      { authentication: 'not-required', name: 'get-offering' },
+      { authentication: 'not-required', name: 'list-offerings' },
+    ],
+  },
+  finalUrl: new globalThis.URL('https://seller.test/.well-known/odp'),
+  freshness: 'fetched',
+  requestedUrl: new globalThis.URL('https://seller.test/.well-known/odp'),
+  serviceOrigin: 'https://seller.test',
+} satisfies ServiceInspection;
+
 describe('runCombinedInspectPipeline', () => {
+  it('includes independent ODP inspection without changing the resource probe', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('hi', { status: 200 }));
+    const events: CombinedInspectEvent[] = [];
+
+    await runCombinedInspectPipeline(
+      {
+        inspectOdp: vi.fn().mockResolvedValue(odpInspect),
+        probeOptions: { method: 'GET', headers: {} },
+        url: URL,
+      },
+      (event) => events.push(event),
+    );
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(events[0]?.type).toBe('no-payment');
+    if (events[0]?.type === 'no-payment')
+      expect(events[0].result.odp).toEqual({ kind: 'service', inspect: odpInspect });
+  });
+
   it('blocks definitive OpenAPI AEP policy without probing the resource when no credential is available', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('probe should not run'));
     const inspectAep = vi.fn().mockResolvedValue(aepInspect);
@@ -154,6 +202,45 @@ describe('runCombinedInspectPipeline', () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(events[0]?.type).toBe('no-payment');
+    if (events[0]?.type !== 'no-payment') return;
+    expect(events[0].result.aep).toEqual({
+      kind: 'discovered',
+      inspect: aepInspect,
+      source: 'anonymous_probe',
+    });
+  });
+
+  it('probes for payment after OpenAPI classifies the resource as public', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('payment required', {
+        status: 402,
+        headers: { 'WWW-Authenticate': renderChallengeHeader(mppChallenge()) },
+      }),
+    );
+    const policy = {
+      freshness: 'fresh' as const,
+      matchedOperation: { method: 'GET', pathTemplate: '/api' },
+      methods: [] as string[],
+      source: 'openapi' as const,
+      state: 'public' as const,
+    };
+    const events: CombinedInspectEvent[] = [];
+
+    await runCombinedInspectPipeline(
+      {
+        inspectAep: vi.fn().mockResolvedValue(aepInspect),
+        inspectAepPolicy: vi.fn().mockResolvedValue(policy),
+        url: URL,
+        probeOptions: { method: 'GET', headers: {} },
+      },
+      (event) => events.push(event),
+    );
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(events[0]?.type).toBe('inspected');
+    if (events[0]?.type !== 'inspected') return;
+    expect(events[0].result.aep).toEqual({ kind: 'openapi', inspect: aepInspect, policy });
+    expect(events[0].result.mpp.kind).toBe('challenges');
   });
 
   it('decodes BOTH protocols from one 402 (single probe)', async () => {
@@ -215,6 +302,29 @@ describe('runCombinedInspectPipeline', () => {
       kind: 'error',
       code: 'AEP_INSPECT_FAILED',
       message: 'discovery failed',
+      source: 'challenge',
+    });
+  });
+
+  it('reports an AEP Service identity mismatch without obscuring the security failure', async () => {
+    mock402({ 'WWW-Authenticate': 'AEP' });
+    const mismatch = new AepInspectError('Service identity mismatch');
+    Object.defineProperty(mismatch, 'code', { value: 'service_identity_mismatch' });
+    const events: CombinedInspectEvent[] = [];
+    await runCombinedInspectPipeline(
+      {
+        inspectAep: vi.fn().mockRejectedValue(mismatch),
+        url: URL,
+        probeOptions: { method: 'GET', headers: {} },
+      },
+      (event) => events.push(event),
+    );
+    expect(events[0]?.type).toBe('inspected');
+    if (events[0]?.type !== 'inspected') return;
+    expect(events[0].result.aep).toEqual({
+      kind: 'error',
+      code: 'AEP_SERVICE_IDENTITY_MISMATCH',
+      message: 'Service identity mismatch',
       source: 'challenge',
     });
   });

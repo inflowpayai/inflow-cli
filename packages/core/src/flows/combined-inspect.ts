@@ -1,5 +1,6 @@
 import type { PaymentRequirements } from '@inflowpayai/x402';
-import type { AepOpenApiOperationPolicy, InspectServiceResult } from '@aep-foundation/agent';
+import { AepInspectError, type AepOpenApiOperationPolicy, type InspectServiceResult } from '@aep-foundation/agent';
+import type { ServiceInspection } from '@offering-protocol/agent';
 import { fromFoundationRequirements } from '@inflowpayai/x402-buyer';
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { type DecodedChallenge, summarizeChallenge } from './mpp-decode.js';
@@ -48,6 +49,11 @@ export type AepInspectSource = 'openapi' | 'challenge' | 'anonymous_probe' | 'no
 export type AepSection =
   | { kind: 'absent'; openApiPolicy?: AepOpenApiOperationPolicy; source: 'anonymous_probe' | 'not_checked' }
   | {
+      kind: 'discovered';
+      inspect: InspectServiceResult;
+      source: 'anonymous_probe';
+    }
+  | {
       kind: 'blocked';
       inspect: InspectServiceResult;
       message: string;
@@ -71,12 +77,18 @@ export type AepSection =
       source: 'challenge';
     };
 
+export type OdpSection =
+  | { kind: 'absent' }
+  | { kind: 'service'; inspect: ServiceInspection }
+  | { kind: 'error'; code: string; message: string };
+
 /** Result when the seller responded 402: both protocol sections decoded from the same response. */
 export interface CombinedInspectResult {
   outcome: 'inspected';
   url: string;
   method: string;
   status?: number;
+  odp: OdpSection;
   aep: AepSection;
   mpp: MppSection;
   x402: X402Section;
@@ -90,6 +102,8 @@ export interface CombinedInspectNoPayment {
   status: number;
   contentType: string | undefined;
   bodySizeBytes: number;
+  odp: OdpSection;
+  aep: AepSection;
 }
 
 export type CombinedInspectPhase =
@@ -117,6 +131,7 @@ export function reduceCombinedInspect(state: CombinedInspectPhase, event: Combin
 }
 
 export interface CombinedInspectPipelineDeps {
+  inspectOdp?: (serviceUrl: string) => Promise<ServiceInspection>;
   inspectAep?: (serviceUrl: string) => Promise<InspectServiceResult>;
   inspectAepPolicy?: (
     inspect: InspectServiceResult,
@@ -130,6 +145,24 @@ export interface CombinedInspectPipelineDeps {
   url: string;
 }
 
+async function buildOdpSection(deps: CombinedInspectPipelineDeps): Promise<OdpSection> {
+  if (deps.inspectOdp === undefined) return { kind: 'absent' };
+  try {
+    return { kind: 'service', inspect: await deps.inspectOdp(deps.url) };
+  } catch (error) {
+    const status =
+      typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number'
+        ? error.status
+        : undefined;
+    if (status === 404 || status === 410) return { kind: 'absent' };
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+        ? error.code
+        : 'ODP_INSPECT_FAILED';
+    return { kind: 'error', code, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function aepChallenge(probe: SellerProbeResult): { present: boolean; reason?: string } {
   const value = probe.headers.get('www-authenticate');
   if (value === null) return { present: false };
@@ -141,18 +174,22 @@ function aepChallenge(probe: SellerProbeResult): { present: boolean; reason?: st
 async function buildAepSection(
   probe: SellerProbeResult,
   deps: CombinedInspectPipelineDeps,
-  openApiPolicy?: AepOpenApiOperationPolicy,
+  fallback?: { inspect: InspectServiceResult; policy: AepOpenApiOperationPolicy },
 ): Promise<AepSection> {
   const challenge = aepChallenge(probe);
   if (!challenge.present)
-    return { kind: 'absent', ...(openApiPolicy === undefined ? {} : { openApiPolicy }), source: 'anonymous_probe' };
+    return fallback === undefined
+      ? { kind: 'absent', source: 'anonymous_probe' }
+      : fallback.policy.state === 'public'
+        ? { kind: 'openapi', inspect: fallback.inspect, policy: fallback.policy }
+        : { kind: 'discovered', inspect: fallback.inspect, source: 'anonymous_probe' };
   const reason = challenge.reason === undefined ? {} : { reason: challenge.reason };
   if (deps.inspectAep === undefined) {
     return {
       kind: 'error',
       code: 'AEP_INSPECT_UNAVAILABLE',
       message: 'AEP Inspect is unavailable.',
-      ...(openApiPolicy === undefined ? {} : { openApiPolicy }),
+      ...(fallback === undefined ? {} : { openApiPolicy: fallback.policy }),
       source: 'challenge',
       ...reason,
     };
@@ -160,31 +197,34 @@ async function buildAepSection(
   try {
     return {
       kind: 'service',
-      inspect: await deps.inspectAep(deps.url),
-      ...(openApiPolicy === undefined ? {} : { openApiPolicy }),
+      inspect: fallback?.inspect ?? (await deps.inspectAep(deps.url)),
+      ...(fallback === undefined ? {} : { openApiPolicy: fallback.policy }),
       source: 'challenge',
       ...reason,
     };
   } catch (error) {
+    const identityMismatch = error instanceof AepInspectError && String(error.code) === 'service_identity_mismatch';
     return {
       kind: 'error',
-      code: 'AEP_INSPECT_FAILED',
+      code: identityMismatch ? 'AEP_SERVICE_IDENTITY_MISMATCH' : 'AEP_INSPECT_FAILED',
       message: error instanceof Error ? error.message : String(error),
-      ...(openApiPolicy === undefined ? {} : { openApiPolicy }),
+      ...(fallback === undefined ? {} : { openApiPolicy: fallback.policy }),
       source: 'challenge',
       ...reason,
     };
   }
 }
 
-async function buildOpenApiAepSection(
-  deps: CombinedInspectPipelineDeps,
-): Promise<{ fallbackPolicy?: AepOpenApiOperationPolicy; probe?: SellerProbeResult; section?: AepSection }> {
+async function buildOpenApiAepSection(deps: CombinedInspectPipelineDeps): Promise<{
+  fallback?: { inspect: InspectServiceResult; policy: AepOpenApiOperationPolicy };
+  probe?: SellerProbeResult;
+  section?: AepSection;
+}> {
   if (deps.inspectAep === undefined || deps.inspectAepPolicy === undefined) return {};
   try {
     const inspect = await deps.inspectAep(deps.url);
     const policy = await deps.inspectAepPolicy(inspect, { method: deps.probeOptions.method, url: deps.url });
-    if (policy.state === 'fallback') return { fallbackPolicy: policy };
+    if (policy.state === 'fallback') return { fallback: { inspect, policy } };
     if (policy.state === 'required' && deps.authenticatedProbe !== undefined) {
       const probe = await deps.authenticatedProbe(inspect, { url: deps.url, ...deps.probeOptions });
       if (probe !== undefined) {
@@ -203,7 +243,7 @@ async function buildOpenApiAepSection(
         },
       };
     }
-    return { section: { kind: 'openapi', inspect, policy } };
+    return { fallback: { inspect, policy } };
   } catch {
     return {};
   }
@@ -249,6 +289,7 @@ export async function runCombinedInspectPipeline(
   deps: CombinedInspectPipelineDeps,
   emit: (event: CombinedInspectEvent) => void,
 ): Promise<void> {
+  const odpPromise = buildOdpSection(deps);
   const openApiAep = await buildOpenApiAepSection(deps);
   if (openApiAep.section !== undefined) {
     if (openApiAep.probe !== undefined) {
@@ -259,6 +300,7 @@ export async function runCombinedInspectPipeline(
           url: deps.url,
           method: deps.probeOptions.method,
           status: openApiAep.probe.status,
+          odp: await odpPromise,
           aep: openApiAep.section,
           mpp: buildMppSection(openApiAep.probe),
           x402: buildX402Section(openApiAep.probe),
@@ -272,6 +314,7 @@ export async function runCombinedInspectPipeline(
         outcome: 'inspected',
         url: deps.url,
         method: deps.probeOptions.method,
+        odp: await odpPromise,
         aep: openApiAep.section,
         mpp: { kind: 'absent' },
         x402: { kind: 'absent' },
@@ -288,7 +331,7 @@ export async function runCombinedInspectPipeline(
     return;
   }
 
-  const aep = await buildAepSection(probe, deps, openApiAep.fallbackPolicy);
+  const aep = await buildAepSection(probe, deps, openApiAep.fallback);
 
   if (probe.status !== 402 && !(probe.status === 401 && aep.kind !== 'absent')) {
     if (!isSuccessStatus(probe.status)) {
@@ -308,6 +351,8 @@ export async function runCombinedInspectPipeline(
         status: probe.status,
         contentType: probe.contentType,
         bodySizeBytes: probe.bytes.byteLength,
+        odp: await odpPromise,
+        aep,
       },
     });
     return;
@@ -320,6 +365,7 @@ export async function runCombinedInspectPipeline(
       url: deps.url,
       method: deps.probeOptions.method,
       status: probe.status,
+      odp: await odpPromise,
       aep,
       mpp: buildMppSection(probe),
       x402: buildX402Section(probe),
