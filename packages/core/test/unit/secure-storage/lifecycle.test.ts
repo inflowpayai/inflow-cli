@@ -139,6 +139,17 @@ describe('SecureSecretLifecycleCoordinator', () => {
     expect(repository.listSecretLifecycle('deleting')).toEqual([]);
   });
 
+  it('completes a retried asynchronous delete when the secret is already absent', async () => {
+    const reference = { purpose: 'api-key', reference: 'missing-delete' };
+    await coordinator.create(reference, Buffer.from('secret'), null);
+    await store.delete(reference);
+
+    await coordinator.delete(reference);
+
+    expect(repository.listSecretLifecycle('deleting')).toEqual([]);
+    expect(await manifest.read()).toEqual([]);
+  });
+
   it('preserves interrupted work when the asynchronous secret store is temporarily unavailable', async () => {
     const pending = { purpose: 'api-key', reference: 'locked-pending' };
     repository.beginSecretLifecycle(pending, null);
@@ -152,7 +163,6 @@ describe('SecureSecretLifecycleCoordinator', () => {
     await expect(lockedCoordinator.recoverInterruptedWork()).rejects.toMatchObject({
       secureStorageCode: 'vault_locked',
     });
-
     expect(repository.listSecretLifecycle('pending')).toEqual([pending]);
   });
 
@@ -223,6 +233,20 @@ describe('SecureSecretLifecycleCoordinator', () => {
     expect(() => syncStore.read(pending)).toThrow('A referenced secret is missing from secret store.');
     expect(repository.listSecretLifecycle('pending')).toEqual([]);
     expect(repository.listSecretLifecycle('deleting')).toEqual([]);
+  });
+
+  it('completes a retried synchronous delete when the secret is already absent', () => {
+    const syncStore = new SyncMemorySecretStore();
+    const syncManifest = new SyncSecretReferenceManifestStore(syncStore);
+    const syncCoordinator = new SyncSecureSecretLifecycleCoordinator(repository, syncStore, syncManifest);
+    const reference = { purpose: 'api-key', reference: 'sync-missing-delete' };
+    syncCoordinator.create(reference, Buffer.from('secret'), null);
+    syncStore.delete(reference);
+
+    syncCoordinator.delete(reference);
+
+    expect(repository.listSecretLifecycle('deleting')).toEqual([]);
+    expect(syncManifest.read()).toEqual([]);
   });
 
   it('preserves interrupted work when the synchronous secret store is temporarily unavailable', () => {

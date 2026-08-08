@@ -1,3 +1,4 @@
+import { SecureStorageError } from './errors.js';
 import type {
   SecretReference,
   SecretReferenceManifest,
@@ -5,7 +6,6 @@ import type {
   SyncSecretReferenceManifest,
   SyncSecureSecretStore,
 } from './secret-store.js';
-import { SecureStorageError } from './errors.js';
 import type { SecureSqliteRepository } from './sqlite.js';
 
 function errorFromCause(cause: unknown): Error {
