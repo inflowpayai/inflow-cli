@@ -10,6 +10,12 @@
       DowngradeErrorMessage="A newer version of InFlow is already installed."
       Schedule="afterInstallInitialize"
     />
+    <SetProperty
+      Id="REINSTALLMODE"
+      Value="amus"
+      After="FindRelatedProducts"
+      Condition="WIX_UPGRADE_DETECTED"
+    />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
@@ -40,6 +46,7 @@
         Arguments="--daemon vault-windows-service"
         Vital="yes"
       >
+        <ServiceConfig ServiceSid="unrestricted" OnInstall="yes" OnReinstall="yes" />
         <PermissionEx
           Id="InFlowVaultServicePermissions"
           Sddl="D:(A;;CCLCSWLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPLOCRRC;;;AU)"
@@ -63,16 +70,5 @@
       </CreateFolder>
     </Component>
 
-    <CustomAction
-      Id="ConfigureInFlowVaultServiceSid"
-      Directory="SystemFolder"
-      ExeCommand="sc.exe sidtype InFlowVault unrestricted"
-      Execute="deferred"
-      Impersonate="no"
-      Return="check"
-    />
-    <InstallExecuteSequence>
-      <Custom Action="ConfigureInFlowVaultServiceSid" After="InstallServices" Condition='NOT REMOVE~="ALL"' />
-    </InstallExecuteSequence>
   </Package>
 </Wix>
