@@ -55,7 +55,7 @@ jobs:
       INFLOW_NOTARY_PROFILE: inflow-notary
       INFLOW_RELEASE_CODESIGN_IDENTITY: 'Developer ID Application: Jarwin, Inc. (B96U57DTR2)'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -187,7 +187,7 @@ jobs:
     runs-on: macos-15
     needs: build-macos
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
