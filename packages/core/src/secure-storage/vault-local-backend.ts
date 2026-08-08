@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SecureStorageError } from './errors.js';
 import type { SecureSqliteRepository, StoredVaultRecord } from './sqlite.js';
@@ -29,6 +29,7 @@ import {
   type VaultStatus,
 } from './vault-backend.js';
 import { createVaultSecretReference, parseVaultSecretReference, type VaultSecretKind } from './vault-types.js';
+import { writeVaultHeader } from './vault-atomic-file.js';
 
 export interface LocalVaultBackendOptions {
   paths?: VaultFilePaths;
@@ -39,7 +40,6 @@ export interface LocalVaultBackendOptions {
 
 const POLICY_SETTING_NAME = 'vault-policy';
 const RECORD_ENCRYPTION_VERSION = 1;
-const SIDECAR_FILE_MODE = 0o600;
 
 export class LocalVaultBackend implements VaultBackend {
   private masterKey: ProtectedVaultKey | undefined;
@@ -58,9 +58,16 @@ export class LocalVaultBackend implements VaultBackend {
   async changePassphrase(currentUnlockFactor: Uint8Array, nextUnlockFactor: Uint8Array): Promise<void> {
     const header = await readFile(this.sidecarPath);
     const nextHeader = changeVaultUnlockFactor(header, currentUnlockFactor, nextUnlockFactor);
-    await writeFile(this.sidecarPath, nextHeader, { flag: 'w', mode: SIDECAR_FILE_MODE });
-    await chmod(this.sidecarPath, SIDECAR_FILE_MODE);
-    this.replaceMasterKey(unwrapVaultMaterial(nextHeader, nextUnlockFactor));
+    const nextMasterKey = unwrapVaultMaterial(nextHeader, nextUnlockFactor);
+    try {
+      await writeVaultHeader(this.sidecarPath, nextHeader, {
+        onPublished: () => this.replaceMasterKey(nextMasterKey),
+        replace: true,
+      });
+    } finally {
+      nextHeader.fill(0);
+      nextMasterKey.fill(0);
+    }
   }
 
   async changeWrappingKey(
@@ -70,9 +77,16 @@ export class LocalVaultBackend implements VaultBackend {
   ): Promise<void> {
     const header = await readFile(this.sidecarPath);
     const nextHeader = changeVaultWrappingKey(header, currentWrappingKey, nextWrappingKey, nextSalt);
-    await writeFile(this.sidecarPath, nextHeader, { flag: 'w', mode: SIDECAR_FILE_MODE });
-    await chmod(this.sidecarPath, SIDECAR_FILE_MODE);
-    this.replaceMasterKey(unwrapVaultMaterialWithWrappingKey(nextHeader, nextWrappingKey));
+    const nextMasterKey = unwrapVaultMaterialWithWrappingKey(nextHeader, nextWrappingKey);
+    try {
+      await writeVaultHeader(this.sidecarPath, nextHeader, {
+        onPublished: () => this.replaceMasterKey(nextMasterKey),
+        replace: true,
+      });
+    } finally {
+      nextHeader.fill(0);
+      nextMasterKey.fill(0);
+    }
   }
 
   deleteExpired(input: DeleteExpiredVaultSecretsInput): void {
@@ -182,9 +196,15 @@ export class LocalVaultBackend implements VaultBackend {
       if (!isMissingFileError(cause)) throw cause;
       const material = createVaultMaterial(unlockFactor);
       await mkdir(path.dirname(this.sidecarPath), { mode: 0o700, recursive: true });
-      await writeFile(this.sidecarPath, material.header, { flag: 'wx', mode: SIDECAR_FILE_MODE });
-      await chmod(this.sidecarPath, SIDECAR_FILE_MODE);
-      this.replaceMasterKey(material.masterKey);
+      try {
+        await writeVaultHeader(this.sidecarPath, material.header, {
+          onPublished: () => this.replaceMasterKey(material.masterKey),
+          replace: false,
+        });
+      } finally {
+        material.header.fill(0);
+        material.masterKey.fill(0);
+      }
     }
     return this.status();
   }
@@ -212,9 +232,15 @@ export class LocalVaultBackend implements VaultBackend {
       if (!isMissingFileError(cause)) throw cause;
       const material = createVaultMaterialWithWrappingKey(wrappingKey, salt);
       await mkdir(path.dirname(this.sidecarPath), { mode: 0o700, recursive: true });
-      await writeFile(this.sidecarPath, material.header, { flag: 'wx', mode: SIDECAR_FILE_MODE });
-      await chmod(this.sidecarPath, SIDECAR_FILE_MODE);
-      this.replaceMasterKey(material.masterKey);
+      try {
+        await writeVaultHeader(this.sidecarPath, material.header, {
+          onPublished: () => this.replaceMasterKey(material.masterKey),
+          replace: false,
+        });
+      } finally {
+        material.header.fill(0);
+        material.masterKey.fill(0);
+      }
     }
     return this.status();
   }
