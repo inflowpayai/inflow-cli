@@ -85,7 +85,55 @@
              : []),
 --- a/dist/Mcp.js
 +++ b/dist/Mcp.js
-@@ -130,6 +130,7 @@
+@@ -69,18 +69,46 @@
+         const progressToken = options.extra?.mcpReq?._meta?.progressToken;
+         let i = 0;
++        const iterator = result.stream[Symbol.asyncIterator]();
++        let completed = false;
+         try {
+-            for await (const chunk of result.stream) {
++            while (true) {
++                const item = await iterator.next();
++                if (item.done) {
++                    completed = true;
++                    const returned = item.value;
++                    if (returned !== null &&
++                        typeof returned === 'object' &&
++                        returned[Symbol.for('incur.sentinel')] === 'error') {
++                        const cta = formatCtaBlock(options.name ?? tool.name, returned.cta);
++                        const text = returned.message ?? 'Command failed';
++                        return {
++                            content: [{ type: 'text', text: cta ? `${text}\n\n${renderCtaText(cta)}` : text }],
++                            ...(cta ? { _meta: { cta } } : undefined),
++                            isError: true,
++                        };
++                    }
++                    break;
++                }
++                const chunk = item.value;
+                 chunks.push(chunk);
+                 if (progressToken !== undefined && options.sendNotification)
+                     await options.sendNotification({
+                         method: 'notifications/progress',
+                         params: { progressToken, progress: ++i, message: Json.stringify(chunk) },
+                     });
+             }
+         }
+         catch (err) {
+             return {
+                 content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+                 isError: true,
+             };
+         }
++        finally {
++            if (!completed && iterator.return) {
++                try {
++                    await iterator.return();
++                }
++                catch { }
++            }
++        }
+@@ -130,6 +158,7 @@
      const hasInput = Object.keys(mergedShape).length > 0;
      server.registerTool(tool.name, {
          ...(tool.description ? { description: tool.description } : undefined),
@@ -93,7 +141,7 @@
          ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
          ...(tool.outputSchema
              ? { outputSchema: options.fromJsonSchema(tool.outputSchema) }
-@@ -159,6 +160,7 @@
+@@ -159,6 +188,7 @@
          return toolResult({
              tools: page.map((tool) => ({
                  name: tool.name,
@@ -101,7 +149,7 @@
                  ...(tool.description ? { description: tool.description } : undefined),
                  ...(tool.annotations ? { annotations: tool.annotations } : undefined),
              })),
-@@ -177,6 +179,7 @@
+@@ -177,6 +207,7 @@
              return toolError(`Unknown tool: ${params.name}`);
          return toolResult({
              name: tool.name,
@@ -109,7 +157,7 @@
              ...(tool.description ? { description: tool.description } : undefined),
              inputSchema: tool.inputSchema,
              ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
-@@ -284,7 +287,8 @@
+@@ -284,7 +315,8 @@
  export function collectTools(commands, prefix, parentMiddlewares = [], filter) {
      const tools = filterTools(collectToolEntries(commands, prefix, parentMiddlewares), filter);
      assertUniqueToolNames(tools);
@@ -119,7 +167,7 @@
  }
  function collectToolEntries(commands, prefix, parentMiddlewares = []) {
      const result = [];
-@@ -306,6 +310,7 @@
+@@ -306,6 +338,7 @@
              const outputSchema = entry.output ? mcpOutputSchema(entry.output) : undefined;
              result.push({
                  name: mcp?.name ?? path.join('_'),
