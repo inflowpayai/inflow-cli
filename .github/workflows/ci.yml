@@ -13,7 +13,7 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -55,8 +55,9 @@ jobs:
         run: pnpm coverage:changed
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
+          disable_search: true
           use_oidc: true
           files: packages/cli/coverage/lcov.info,packages/core/coverage/lcov.info
 
@@ -67,7 +68,7 @@ jobs:
         run: pnpm build
 
       - name: Build Linux package
-        run: sudo env "PATH=$PATH" "INFLOW_ARGON2_SOURCE_DIR=$INFLOW_ARGON2_SOURCE_DIR" pnpm build:linux-package
+        run: sudo env "PATH=$PATH" CI=1 "INFLOW_ARGON2_SOURCE_DIR=$INFLOW_ARGON2_SOURCE_DIR" pnpm build:linux-package
 
       - name: Test packaged Linux vault
         run: |

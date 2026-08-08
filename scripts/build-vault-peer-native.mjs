@@ -132,6 +132,7 @@ function buildPinnedArgon2Objects(argon2Root) {
         '-std=c11',
         '-Wall',
         '-Wextra',
+        '-Wno-type-limits',
         '-fPIC',
         '-DARGON2_NO_THREADS',
         '-I',
