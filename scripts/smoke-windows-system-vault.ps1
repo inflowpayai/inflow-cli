@@ -152,8 +152,12 @@ function Assert-ClientRejectsWrongDaemonIdentity {
   New-Item -ItemType Directory -Path $copyRoot -Force | Out-Null
   Copy-Item -LiteralPath (Split-Path $Executable -Parent) -Destination $copyRoot -Recurse
   $copiedExecutable = Join-Path $copyRoot 'InFlow\inflow.exe'
-  $result = Invoke-InFlow $copiedExecutable @('vault', 'status', '--format', 'json')
+  $result = Invoke-InFlow $copiedExecutable @('vault', 'policy', '--format', 'json')
   Assert-True ($result.ExitCode -ne 0) 'A copied client accepted the installed daemon identity.'
+  $output = "$($result.Stdout)`n$($result.Stderr)"
+  Assert-True (
+    $output -match 'secure_storage_peer_verification_failed|Vault peer verification failed'
+  ) 'A copied client failed for a reason other than daemon identity verification.'
   Add-Result 'client rejects a daemon at a different executable identity'
 }
 

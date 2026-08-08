@@ -146,11 +146,11 @@ static int initialize_service_events(void) {
   return service_ready_event != NULL && service_stopped_event != NULL;
 }
 
-static int peer_process_id(HANDLE pipe, ULONG *pid) {
-  if (GetNamedPipeClientProcessId(pipe, pid) && *pid > 0) {
-    return 1;
-  }
+static int peer_process_id(HANDLE pipe, int peer_is_client, ULONG *pid) {
   *pid = 0;
+  if (peer_is_client) {
+    return GetNamedPipeClientProcessId(pipe, pid) && *pid > 0;
+  }
   return GetNamedPipeServerProcessId(pipe, pid) && *pid > 0;
 }
 
@@ -266,7 +266,7 @@ static int pipe_client_identity(
   success =
       OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &token) &&
       token_sid(token, sid) &&
-      peer_process_id(pipe, &confirmed_pid) &&
+      peer_process_id(pipe, 1, &confirmed_pid) &&
       confirmed_pid == observed_pid;
   if (token != NULL) {
     CloseHandle(token);
@@ -369,7 +369,7 @@ static int pipe_peer_identity(
     DWORD *path_length,
     wchar_t **sid) {
   ULONG observed_pid = 0;
-  if (!peer_process_id(pipe, &observed_pid)) {
+  if (!peer_process_id(pipe, peer_is_client, &observed_pid)) {
     return 0;
   }
   if (peer_is_client) {
@@ -385,7 +385,7 @@ static int pipe_peer_identity(
   }
   ULONG confirmed_pid = 0;
   const int success =
-      peer_process_id(pipe, &confirmed_pid) &&
+      peer_process_id(pipe, peer_is_client, &confirmed_pid) &&
       confirmed_pid == observed_pid &&
       process_path(process, path, path_length) &&
       process_sid(process, sid);
@@ -988,7 +988,7 @@ static napi_value peer_info(napi_env env, napi_callback_info info) {
     return NULL;
   }
   ULONG pid = 0;
-  if (!peer_process_id(handle_value, &pid)) {
+  if (!peer_process_id(handle_value, 0, &pid)) {
     napi_throw(env, make_error(env, "EPEERPID", "named pipe peer process is unavailable"));
     return NULL;
   }
