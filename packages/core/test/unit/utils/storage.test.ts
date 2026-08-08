@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthTokens } from '../../../src/types/index.js';
 import { MemoryStorage, Storage } from '../../../src/utils/storage.js';
 import { AepStorage } from '../../../src/aep/storage.js';
+import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import { SyncMemorySecretStore, type SecretReference } from '../../../src/secure-storage/secret-store.js';
 import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
 
@@ -27,6 +28,23 @@ class CountingSecretStore extends SyncMemorySecretStore {
   override read(reference: SecretReference): Uint8Array {
     this.readReferences.push(reference);
     return super.read(reference);
+  }
+}
+
+class FaultInjectingSecretStore extends CountingSecretStore {
+  failDeletes = false;
+  failRefreshTokenCreates = false;
+
+  override create(reference: SecretReference, value: Uint8Array): void {
+    if (this.failRefreshTokenCreates && reference.purpose === 'auth-refresh-token') {
+      throw new SecureStorageError('secure_storage_io_error', 'simulated refresh-token write failure');
+    }
+    super.create(reference, value);
+  }
+
+  override delete(reference: SecretReference): void {
+    if (this.failDeletes) throw new SecureStorageError('secure_storage_io_error', 'simulated delete failure');
+    super.delete(reference);
   }
 }
 
@@ -171,6 +189,69 @@ describe('Storage (file-backed)', () => {
 
     expect(() => write(storage)).toThrow('metadata write failed');
     expect(secretStore.deleted).toHaveLength(expectedDeletes);
+  });
+
+  it('keeps the previous auth session when replacement token creation fails partway through', () => {
+    const secretStore = new FaultInjectingSecretStore();
+    const storage = new Storage({ cwd: tmpDir, secretStore });
+    storage.setAuth(sampleAuth);
+    secretStore.failRefreshTokenCreates = true;
+
+    expect(() =>
+      storage.setAuth({
+        access_token: 'replacement-access',
+        expires_in: 7200,
+        refresh_token: 'replacement-refresh',
+        token_type: 'Bearer',
+      }),
+    ).toThrow('simulated refresh-token write failure');
+
+    expect(storage.getAuth()).toMatchObject({ access_token: 'a', refresh_token: 'r' });
+  });
+
+  it('keeps existing secrets usable when replacement metadata cannot be committed', () => {
+    const secretStore = new CountingSecretStore();
+    const storage = new Storage({ cwd: tmpDir, secretStore });
+    const pending = {
+      device_code: 'old-device-code',
+      expires_at: Date.now() + 60_000,
+      interval: 5,
+      phrase: 'OLD-1',
+      verification_url: 'https://example.test/verify',
+    };
+    storage.setAuth(sampleAuth);
+    storage.setApiKey('old-api-key');
+    storage.setPendingDeviceAuth(pending);
+    vi.spyOn(SecureSqliteRepository.prototype, 'upsertSetting').mockImplementation(() => {
+      throw new Error('metadata write failed');
+    });
+
+    expect(() =>
+      storage.setAuth({
+        access_token: 'new-access',
+        expires_in: 7200,
+        refresh_token: 'new-refresh',
+        token_type: 'Bearer',
+      }),
+    ).toThrow('metadata write failed');
+    expect(() => storage.setApiKey('new-api-key')).toThrow('metadata write failed');
+    expect(() => storage.setPendingDeviceAuth({ ...pending, device_code: 'new-device-code' })).toThrow(
+      'metadata write failed',
+    );
+
+    expect(storage.getAuth()).toMatchObject({ access_token: 'a', refresh_token: 'r' });
+    expect(storage.getApiKey()).toBe('old-api-key');
+    expect(storage.getPendingDeviceAuth()).toEqual(pending);
+  });
+
+  it('commits replacement metadata even when obsolete-secret cleanup must be deferred', () => {
+    const secretStore = new FaultInjectingSecretStore();
+    const storage = new Storage({ cwd: tmpDir, secretStore });
+    storage.setApiKey('old-api-key');
+    secretStore.failDeletes = true;
+
+    expect(() => storage.setApiKey('new-api-key')).not.toThrow();
+    expect(storage.getApiKey()).toBe('new-api-key');
   });
 
   it('isAuthenticated is true with just an apiKey set (no device tokens)', () => {
@@ -463,6 +544,54 @@ describe('Storage (file-backed)', () => {
       }),
     ).toThrow('metadata write failed');
     expect(secretStore.deleted).toHaveLength(1);
+  });
+
+  it('keeps existing AEP credentials usable when replacement metadata cannot be committed', () => {
+    const secretStore = new CountingSecretStore();
+    const storage = new Storage({ cwd: tmpDir, secretStore });
+    const owner = { platformOrigin: 'https://platform.example', userId: 'user-1' };
+    storage.setAepState({
+      credentials: {
+        'did:web:service.example': {
+          old: {
+            credential: { credential_id: 'old', value: 'old-secret-value' },
+            credentialId: 'old',
+            grantType: 'api-key',
+            issuedAt: '2026-01-01T00:00:00.000Z',
+            serviceDid: 'did:web:service.example',
+          },
+        },
+      },
+      identities: {},
+      owner,
+      version: 1,
+    });
+    vi.spyOn(SecureSqliteRepository.prototype, 'upsertSetting').mockImplementation(() => {
+      throw new Error('metadata write failed');
+    });
+
+    expect(() =>
+      storage.setAepState({
+        credentials: {
+          'did:web:service.example': {
+            replacement: {
+              credential: { credential_id: 'replacement', value: 'new-secret-value' },
+              credentialId: 'replacement',
+              grantType: 'api-key',
+              issuedAt: '2026-01-01T00:00:00.000Z',
+              serviceDid: 'did:web:service.example',
+            },
+          },
+        },
+        identities: {},
+        owner,
+        version: 1,
+      }),
+    ).toThrow('metadata write failed');
+
+    expect(storage.getAepState()?.credentials['did:web:service.example']?.['old']).toMatchObject({
+      credential: { credential_id: 'old', value: 'old-secret-value' },
+    });
   });
 
   it('clears secure AEP state when direct operations use a different owner', () => {

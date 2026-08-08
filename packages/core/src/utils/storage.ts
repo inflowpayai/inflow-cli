@@ -188,12 +188,13 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
   setAuth(auth: AuthTokens): void {
     this.initialize();
     const persisted = withComputedExpiry(auth);
-    this.clearAuth();
+    const previous = this.repository.getSetting(AUTH_SETTING)?.payload;
     const accessToken = createOpaqueSecretReference('auth-access-token');
     const refreshToken = createOpaqueSecretReference('auth-refresh-token');
-    this.lifecycle.create(accessToken, utf8(persisted.access_token), null, { setting: AUTH_SETTING });
-    this.lifecycle.create(refreshToken, utf8(persisted.refresh_token), null, { setting: AUTH_SETTING });
+    const created = [accessToken, refreshToken];
     try {
+      this.lifecycle.create(accessToken, utf8(persisted.access_token), null, { setting: AUTH_SETTING });
+      this.lifecycle.create(refreshToken, utf8(persisted.refresh_token), null, { setting: AUTH_SETTING });
       this.repository.upsertSetting(AUTH_SETTING, {
         accessToken,
         refreshToken,
@@ -203,20 +204,17 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
         ...(persisted.expires_at === undefined ? {} : { expiresAt: persisted.expires_at }),
       } satisfies StoredAuth);
     } catch (cause) {
-      this.lifecycle.delete(accessToken);
-      this.lifecycle.delete(refreshToken);
+      this.discardSecrets(created);
       throw cause;
     }
+    if (isStoredAuth(previous)) this.discardSecrets([previous.accessToken, previous.refreshToken]);
   }
 
   clearAuth(): void {
     this.initialize();
     const stored = this.repository.getSetting(AUTH_SETTING)?.payload;
-    if (isStoredAuth(stored)) {
-      this.lifecycle.delete(stored.accessToken);
-      this.lifecycle.delete(stored.refreshToken);
-    }
     this.repository.deleteSetting(AUTH_SETTING);
+    if (isStoredAuth(stored)) this.discardSecrets([stored.accessToken, stored.refreshToken]);
   }
 
   isAuthenticated(): boolean {
@@ -239,24 +237,23 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
       throw new InflowConfigurationError('Storage.setApiKey: api key must be a non-empty string.');
     }
     this.initialize();
-    this.clearApiKey();
+    const previous = this.repository.getSetting(API_KEY_SETTING)?.payload;
     const secret = createOpaqueSecretReference('api-key');
-    this.lifecycle.create(secret, utf8(apiKey), null, { setting: API_KEY_SETTING });
     try {
+      this.lifecycle.create(secret, utf8(apiKey), null, { setting: API_KEY_SETTING });
       this.repository.upsertSetting(API_KEY_SETTING, { secret } satisfies StoredSecret);
     } catch (cause) {
-      this.lifecycle.delete(secret);
+      this.discardSecrets([secret]);
       throw cause;
     }
+    if (isStoredSecret(previous)) this.discardSecrets([previous.secret]);
   }
 
   clearApiKey(): void {
     this.initialize();
     const stored = this.repository.getSetting(API_KEY_SETTING)?.payload;
-    if (isStoredSecret(stored)) {
-      this.lifecycle.delete(stored.secret);
-    }
     this.repository.deleteSetting(API_KEY_SETTING);
+    if (isStoredSecret(stored)) this.discardSecrets([stored.secret]);
   }
 
   getConnection(): ConnectionSettings | null {
@@ -294,10 +291,10 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
 
   setPendingDeviceAuth(pending: PendingDeviceAuth): void {
     this.initialize();
-    this.clearPendingDeviceAuth();
+    const previous = this.repository.getSetting(PENDING_AUTH_SETTING)?.payload;
     const deviceCode = createOpaqueSecretReference('pending-device-code');
-    this.lifecycle.create(deviceCode, utf8(pending.device_code), null, { setting: PENDING_AUTH_SETTING });
     try {
+      this.lifecycle.create(deviceCode, utf8(pending.device_code), null, { setting: PENDING_AUTH_SETTING });
       this.repository.upsertSetting(PENDING_AUTH_SETTING, {
         deviceCode,
         interval: pending.interval,
@@ -306,18 +303,17 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
         phrase: pending.phrase,
       } satisfies StoredPendingDeviceAuth);
     } catch (cause) {
-      this.lifecycle.delete(deviceCode);
+      this.discardSecrets([deviceCode]);
       throw cause;
     }
+    if (isStoredPendingDeviceAuth(previous)) this.discardSecrets([previous.deviceCode]);
   }
 
   clearPendingDeviceAuth(): void {
     this.initialize();
     const stored = this.repository.getSetting(PENDING_AUTH_SETTING)?.payload;
-    if (isStoredPendingDeviceAuth(stored)) {
-      this.lifecycle.delete(stored.deviceCode);
-    }
     this.repository.deleteSetting(PENDING_AUTH_SETTING);
+    if (isStoredPendingDeviceAuth(stored)) this.discardSecrets([stored.deviceCode]);
   }
 
   clearAll(): void {
@@ -331,14 +327,8 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
   clearAepState(): void {
     this.initialize();
     const stored = this.repository.getSetting(AEP_STATE_SETTING)?.payload;
-    if (isStoredAepState(stored)) {
-      for (const serviceRecords of Object.values(stored.credentials)) {
-        for (const record of Object.values(serviceRecords)) {
-          this.lifecycle.delete(record.credentialSecret);
-        }
-      }
-    }
     this.repository.deleteSetting(AEP_STATE_SETTING);
+    if (isStoredAepState(stored)) this.discardSecrets(aepCredentialReferences(stored));
   }
 
   deleteAepCredentials(owner: AepOwner, serviceDid: string, selector: AepCredentialDeleteSelector): void {
@@ -349,18 +339,21 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
       this.clearAepState();
       return;
     }
-    const records = stored.credentials[serviceDid];
+    const next = structuredClone(stored);
+    const records = next.credentials[serviceDid];
     if (records === undefined) return;
+    const removed: SecretReference[] = [];
     for (const [credentialId, record] of Object.entries(records)) {
       if (matchesStoredAepCredential(record, selector)) {
-        this.lifecycle.delete(record.credentialSecret);
+        removed.push(record.credentialSecret);
         delete records[credentialId];
       }
     }
     if (Object.keys(records).length === 0) {
-      delete stored.credentials[serviceDid];
+      delete next.credentials[serviceDid];
     }
-    this.repository.upsertSetting(AEP_STATE_SETTING, stored);
+    this.repository.upsertSetting(AEP_STATE_SETTING, next);
+    this.discardSecrets(removed);
   }
 
   findAepIdentity(owner: AepOwner, serviceDid: string): AgentServiceIdentity | undefined {
@@ -406,7 +399,7 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
 
   setAepState(state: AepPersistedState): void {
     this.initialize();
-    this.clearAepState();
+    const previous = this.repository.getSetting(AEP_STATE_SETTING)?.payload;
     const created: SecretReference[] = [];
     const credentials: StoredAepState['credentials'] = {};
     try {
@@ -439,11 +432,10 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
         ...(state.inspect === undefined ? {} : { inspect: structuredClone(state.inspect) }),
       } satisfies StoredAepState);
     } catch (cause) {
-      for (const reference of created) {
-        this.lifecycle.delete(reference);
-      }
+      this.discardSecrets(created);
       throw cause;
     }
+    if (isStoredAepState(previous)) this.discardSecrets(aepCredentialReferences(previous));
   }
 
   getDiscoveryDocuments(): AepPublicDocumentCacheRecord[] {
@@ -498,6 +490,14 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
     this.lifecycle.recoverInterruptedWork();
     deleteLegacyConfigFile(legacyConfigPathFromOptions(this.options));
     this.initialized = true;
+  }
+
+  private discardSecrets(references: readonly SecretReference[]): void {
+    for (const reference of references) {
+      try {
+        this.lifecycle.delete(reference);
+      } catch {}
+    }
   }
 
   private replacePublicDocuments(
@@ -759,6 +759,12 @@ function isStoredAepState(value: unknown): value is StoredAepState {
     }
   }
   return isRecord(value['identities']);
+}
+
+function aepCredentialReferences(state: StoredAepState): SecretReference[] {
+  return Object.values(state.credentials).flatMap((records) =>
+    Object.values(records).map((record) => record.credentialSecret),
+  );
 }
 
 function sameAepOwner(left: AepOwner, right: AepOwner): boolean {
