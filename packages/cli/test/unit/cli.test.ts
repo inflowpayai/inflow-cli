@@ -518,6 +518,19 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(stdout).toContain('Missing value for flag: --format');
     });
 
+    it('accepts an assigned output format', async () => {
+      const root = mkdtempSync('/tmp/inflow-format-assignment-');
+      try {
+        const { exitCode, stdout } = await run(['auth', 'status', '--format=json'], {
+          env: { ...process.env, HOME: root, NO_UPDATE_NOTIFIER: '1' },
+        });
+        expect(exitCode).toBe(0);
+        expect(JSON.parse(stdout)).toEqual(expect.any(Array));
+      } finally {
+        rmSync(root, { force: true, recursive: true });
+      }
+    });
+
     it('auth status --format md renders nested connection data instead of [object Object]', async () => {
       const { exitCode, stdout } = await run(
         ['--auth', `/tmp/inflow-test-md-${String(process.pid)}.json`, 'auth', 'status', '--format', 'md'],

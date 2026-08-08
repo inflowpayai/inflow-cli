@@ -36,6 +36,8 @@ import {
   type UpdateProbe,
 } from './utils/update-probe.js';
 import {
+  isAgentInvocation,
+  normalizeFormatAssignments,
   shouldConfigureOdpServiceTransport,
   shouldReconcileVaultDaemon,
   shouldStartVaultDaemon,
@@ -165,7 +167,8 @@ async function main(): Promise<void> {
   const sandboxFlag = extractBooleanFlag('--sandbox');
   const apiKeyFromFlag = extractFlag('--api-key');
   const verbose = extractBooleanFlag('--verbose');
-  const isAgent = process.argv.includes('--format') || process.argv.includes('--mcp') || !process.stdout.isTTY;
+  normalizeFormatAssignments(process.argv);
+  const isAgent = isAgentInvocation(process.argv, process.stdout.isTTY);
   const vaultOptions: LocalVaultDaemonClientOptions = { buildId: cliBuildId, cliVersion };
   const apiKeyFromEnv = process.env['INFLOW_API_KEY'];
   const hasDirectApiKey = (apiKeyFromFlag?.length ?? 0) > 0 || (apiKeyFromEnv?.length ?? 0) > 0;
