@@ -206,7 +206,7 @@ pnpm changeset
 ## Release automation
 
 Production releases use one atomic native workflow that signs and verifies the macOS, Windows, and Linux artifacts
-before publishing an immutable GitHub Release and updating the platform distribution channels. See the
+before publishing an immutable GitHub Release, updating Homebrew, and producing the WinGet submission manifests. See the
 [native release guide](./docs/development/native-release.md) for workflow modes, platform credentials, signing order,
 and recovery procedures.
 

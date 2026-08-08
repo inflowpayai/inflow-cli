@@ -14,6 +14,8 @@ if (version === undefined || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(versio
 const packages = [
   `inflow-${version}-darwin-arm64.zip`,
   `inflow-${version}-darwin-x64.zip`,
+  `inflow-${version}-windows-arm64.msi`,
+  `inflow-${version}-windows-x64.msi`,
   `inflow-${version}-linux-arm64.tar.gz`,
   `inflow-${version}-linux-x64.tar.gz`,
   `inflow-${version}-1.aarch64.rpm`,
@@ -26,6 +28,10 @@ const expected = [
   'SHA256SUMS',
   'SHA256SUMS.asc',
   'inflow-linux-signing-key.asc',
+  'InFlowPayAI.InFlow.installer.yaml',
+  'InFlowPayAI.InFlow.locale.en-US.yaml',
+  'InFlowPayAI.InFlow.yaml',
+  'install.ps1',
   'install.sh',
 ].sort();
 const actual = readdirSync(root)
@@ -44,7 +50,7 @@ for (const name of packages) {
   if (checksum !== `${digest}  ${name}`) throw new Error(`Checksum mismatch for ${name}.`);
 }
 
-const linuxPackages = packages.filter((name) => !name.includes('-darwin-')).sort();
+const linuxPackages = packages.filter((name) => !name.includes('-darwin-') && !name.includes('-windows-')).sort();
 const sums = readFileSync(join(root, 'SHA256SUMS'), 'utf8').trim().split('\n').sort();
 const expectedSums = linuxPackages.map((name) => `${sha256(join(root, name))}  ${name}`).sort();
 if (sums.join('\n') !== expectedSums.join('\n')) throw new Error('SHA256SUMS does not match the Linux packages.');

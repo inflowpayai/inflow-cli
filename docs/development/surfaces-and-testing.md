@@ -9,8 +9,8 @@ withdrawals, sellers, and users.
 
 ## Install the native application
 
-Install InFlow before configuring an agent host. Public installation currently supports Apple Silicon and Intel macOS
-through Homebrew:
+Install InFlow before configuring an agent host. Public installation supports Apple Silicon and Intel macOS, Windows x64
+and ARM64, and Linux ARM64 and AMD64. On macOS, Homebrew is available:
 
 ```bash
 brew tap inflowpayai/tap

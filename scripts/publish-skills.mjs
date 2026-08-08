@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 /**
- * Publishes web-served skill files and stamps shared values into the install scripts. Destination: the inflowcli.ai
- * docroot in the sibling server repo — ../inflow-server/src/main/resources/static/cli/ (skipped silently when absent).
+ * Publishes web-served CLI files. Destination: the inflowcli.ai docroot in the sibling server repo —
+ * ../inflow-server/src/main/resources/static/cli/ (skipped silently when absent).
  *
- * 1. Skills/skill.md → <dest>/skill.md (entry point)
- * 2. Skills/<name>/SKILL.md → <dest>/skills/<name>.md (full playbooks; `allowed-tools` frontmatter stripped —
+ * 1. Hosted installers → <dest>/{cli,install.sh,install.ps1}
+ * 2. Skills/skill.md → <dest>/skill.md (entry point)
+ * 3. Skills/<name>/SKILL.md → <dest>/skills/<name>.md (full playbooks; `allowed-tools` frontmatter stripped —
  *    host-execution directive, meaningless in web copies; all other frontmatter including `version:` preserved) Source
  *    of truth: skills/ for content, packages/cli/package.json for versions. Idempotent. Wired into the root `build`
  *    script after align-skill-version.js.
- * 3. The inflowcli.ai sitemap skill entries are derived from the same skill directories.
+ * 4. The inflowcli.ai sitemap skill entries are derived from the same skill directories.
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,6 +21,11 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const skillsDir = resolve(repoRoot, 'skills');
 const cliDist = resolve(repoRoot, 'packages/cli/dist/cli.js');
 const dest = resolve(repoRoot, '../inflow-server/src/main/resources/static/cli');
+const hostedFiles = new Map([
+  ['cli', resolve(repoRoot, 'packaging/hosted/cli')],
+  ['install.sh', resolve(repoRoot, 'packaging/hosted/install.sh')],
+  ['install.ps1', resolve(repoRoot, 'packaging/windows/hosted-install.ps1')],
+]);
 const playbooks = readdirSync(skillsDir, { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && existsSync(resolve(skillsDir, entry.name, 'SKILL.md')))
   .map((entry) => entry.name)
@@ -48,6 +54,11 @@ if (!existsSync(dest)) {
   process.stdout.write(`publish-skills: skipped (no ${dest})\n`);
   process.exit(0);
 }
+
+for (const [name, source] of hostedFiles) {
+  copyFileSync(source, resolve(dest, name));
+}
+process.stdout.write(`publish-skills: [${[...hostedFiles.keys()].join(', ')}] → ${dest}\n`);
 
 /** Remove the `allowed-tools` key (scalar, inline list, or block list) from YAML frontmatter. */
 function stripAllowedTools(markdown) {

@@ -84,11 +84,24 @@ jobs:
       version: ${{ needs.validate.outputs.version }}
     secrets: inherit
 
+  windows:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/windows-release.yml
+    with:
+      publish: false
+      sign: true
+      tag: v${{ needs.validate.outputs.version }}
+    secrets: inherit
+
   stage:
     needs:
       - validate
       - macos
       - linux
+      - windows
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -109,6 +122,12 @@ jobs:
           name: inflow-native-linux-${{ needs.validate.outputs.version }}
           path: dist/native/linux
 
+      - name: Download Windows release stage
+        uses: actions/download-artifact@v7
+        with:
+          name: inflow-windows-signed-release
+          path: dist/native/windows
+
       - name: Assemble and verify release assets
         env:
           VERSION: ${{ needs.validate.outputs.version }}
@@ -117,7 +136,8 @@ jobs:
           node scripts/assemble-native-release-assets.mjs \
             dist/native/assets \
             dist/native/macos \
-            dist/native/linux
+            dist/native/linux \
+            dist/native/windows
           node scripts/verify-native-release-assets.mjs dist/native/assets "$VERSION"
 
       - name: Upload verified release stage
