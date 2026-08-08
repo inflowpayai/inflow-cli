@@ -42,9 +42,15 @@ checksum() {
   fi
 }
 
-fingerprint() {
+primary_fingerprints() {
   gpg --batch --with-colons --show-keys "$1" |
-    awk -F: '$1 == "fpr" { print toupper($10); exit }'
+    awk -F: '
+      $1 == "pub" { awaiting_primary_fingerprint = 1; next }
+      awaiting_primary_fingerprint && $1 == "fpr" {
+        print toupper($10)
+        awaiting_primary_fingerprint = 0
+      }
+    '
 }
 
 if [ "$(uname -s)" != 'Linux' ]; then
@@ -103,6 +109,9 @@ command -v gpg >/dev/null 2>&1 || fail "OpenPGP verification requires gpg."
 command -v gpgv >/dev/null 2>&1 || fail "OpenPGP verification requires gpgv."
 temporary_directory="$(mktemp -d)"
 trap cleanup EXIT HUP INT TERM
+GNUPGHOME="$temporary_directory/gnupg"
+export GNUPGHOME
+mkdir -m 700 "$GNUPGHOME"
 
 if command -v apt-get >/dev/null 2>&1; then
   asset="inflow_${version}_${debian_architecture}.deb"
@@ -121,8 +130,8 @@ curl --fail --location --silent --show-error --output "$temporary_directory/SHA2
 curl --fail --location --silent --show-error --output "$temporary_directory/inflow-linux-signing-key.asc" \
   "$release_base_url/inflow-linux-signing-key.asc"
 
-actual_fingerprint="$(fingerprint "$temporary_directory/inflow-linux-signing-key.asc")"
-[ "$actual_fingerprint" = "$signing_fingerprint" ] ||
+actual_fingerprints="$(primary_fingerprints "$temporary_directory/inflow-linux-signing-key.asc")"
+[ "$actual_fingerprints" = "$signing_fingerprint" ] ||
   fail "The Linux release signing-key fingerprint is invalid."
 gpg --batch --yes --dearmor --output "$temporary_directory/inflow-linux-signing-key.gpg" \
   "$temporary_directory/inflow-linux-signing-key.asc"
