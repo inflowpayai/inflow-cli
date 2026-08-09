@@ -74,6 +74,9 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@24.13.3)(msw@2.15.0(@types/node@24.13.3)(typescript@5.9.3))
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
 
   packages/cli:
     dependencies:

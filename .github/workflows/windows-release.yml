@@ -325,7 +325,7 @@ jobs:
   aggregate-dry-run:
     if: inputs.sign == false
     needs: package-dry-run
-    runs-on: windows-2025
+    runs-on: windows-11-arm
     steps:
       - uses: actions/checkout@v6
 
@@ -351,6 +351,13 @@ jobs:
           INFLOW_WINDOWS_SIGNING_SUBJECT: CN=Unsigned InFlow Dry Run
         run: pnpm build:windows-release-metadata
 
+      - name: Verify WinGet manifest contract
+        run: node scripts/verify-winget-manifests.mjs dist/windows/winget
+
+      - name: Validate manifests with WinGet
+        shell: powershell
+        run: ./scripts/validate-winget-manifests.ps1 -ManifestDirectory dist/windows/winget
+
       - name: Upload combined dry-run release
         uses: actions/upload-artifact@v6
         with:
@@ -365,7 +372,7 @@ jobs:
   aggregate-signed:
     if: inputs.sign
     needs: package-signed
-    runs-on: windows-2025
+    runs-on: windows-11-arm
     permissions:
       contents: read
     steps:
@@ -392,6 +399,13 @@ jobs:
         env:
           INFLOW_WINDOWS_SIGNING_SUBJECT: ${{ vars.AZURE_ARTIFACT_SIGNING_SUBJECT }}
         run: pnpm build:windows-release-metadata
+
+      - name: Verify WinGet manifest contract
+        run: node scripts/verify-winget-manifests.mjs dist/windows/winget
+
+      - name: Validate manifests with WinGet
+        shell: powershell
+        run: ./scripts/validate-winget-manifests.ps1 -ManifestDirectory dist/windows/winget
 
       - name: Upload combined signed release
         uses: actions/upload-artifact@v6

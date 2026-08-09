@@ -36,9 +36,7 @@ try {
   );
   writeFileSync(join(baseline, 'SHA256SUMS.asc'), 'test signature');
   writeFileSync(join(baseline, 'inflow-linux-signing-key.asc'), 'test public key');
-  writeFileSync(join(baseline, 'InFlowPayAI.InFlow.installer.yaml'), 'test installer manifest');
-  writeFileSync(join(baseline, 'InFlowPayAI.InFlow.locale.en-US.yaml'), 'test locale manifest');
-  writeFileSync(join(baseline, 'InFlowPayAI.InFlow.yaml'), 'test version manifest');
+  writeWingetManifests(baseline);
   writeFileSync(join(baseline, 'install.ps1'), 'Write-Output test\n');
   writeFileSync(join(baseline, 'install.sh'), '#!/bin/sh\n');
 
@@ -62,6 +60,16 @@ try {
   const unexpected = scenario('unexpected');
   writeFileSync(join(unexpected, 'unexpected.zip'), 'unexpected');
   reject('unexpected asset', verifier, [unexpected, version]);
+
+  const wrongManifestHash = scenario('wrong-manifest-hash');
+  const installerManifest = join(wrongManifestHash, 'InFlowPayAI.InFlow.installer.yaml');
+  writeFileSync(installerManifest, readFileSync(installerManifest, 'utf8').replace(/[A-F0-9]{64}/u, '0'.repeat(64)));
+  reject('mismatched WinGet installer hash', verifier, [wrongManifestHash, version]);
+
+  const unresolvedManifest = scenario('unresolved-manifest');
+  const versionManifest = join(unresolvedManifest, 'InFlowPayAI.InFlow.yaml');
+  writeFileSync(versionManifest, readFileSync(versionManifest, 'utf8').replace(version, '__INFLOW_VERSION__'));
+  reject('unresolved WinGet template value', verifier, [unresolvedManifest, version]);
 
   const malformedJson = join(workspace, 'malformed.json');
   writeFileSync(malformedJson, JSON.stringify({ assets: {} }));
@@ -126,6 +134,25 @@ function releaseAssets() {
     'install.ps1',
     'install.sh',
   ];
+}
+
+function writeWingetManifests(root) {
+  const x64 = `inflow-${version}-windows-x64.msi`;
+  const arm64 = `inflow-${version}-windows-arm64.msi`;
+  const replacements = new Map([
+    ['__INFLOW_VERSION__', version],
+    ['__INFLOW_MSI_SHA256_X64_UPPER__', sha256(join(root, x64)).toUpperCase()],
+    ['__INFLOW_MSI_SHA256_ARM64_UPPER__', sha256(join(root, arm64)).toUpperCase()],
+  ]);
+  for (const [source, destination] of [
+    ['packaging/windows/winget/installer.yaml.template', 'InFlowPayAI.InFlow.installer.yaml'],
+    ['packaging/windows/winget/locale.en-US.yaml.template', 'InFlowPayAI.InFlow.locale.en-US.yaml'],
+    ['packaging/windows/winget/version.yaml.template', 'InFlowPayAI.InFlow.yaml'],
+  ]) {
+    let content = readFileSync(resolve(source), 'utf8');
+    for (const [token, value] of replacements) content = content.replaceAll(token, value);
+    writeFileSync(join(root, destination), content);
+  }
 }
 
 function run(script, args) {
