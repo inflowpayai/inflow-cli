@@ -1,5 +1,5 @@
 ---
-version: 0.11.0
+version: 0.11.1
 name: agentic-enrollment
 description: Inspect, enroll with, authenticate to, and manage credentials for Agent Enrollment Protocol Services through InFlow. Use when an agent needs to discover an AEP Service, access an AEP-protected resource, check enrollment, request or revoke Service credentials, or continue an InFlow approval.
 allowed-tools: ['Bash(inflow:*)', 'Bash(brew:*)', 'Bash(curl:*)']
