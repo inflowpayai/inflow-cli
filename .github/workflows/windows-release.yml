@@ -366,7 +366,6 @@ jobs:
     if: inputs.sign
     needs: package-signed
     runs-on: windows-2025
-    environment: windows-production
     permissions:
       contents: read
     steps:
