@@ -186,8 +186,31 @@ describe('Windows vault transport', () => {
       }),
     ).toMatchObject({ id: 'request-1', ok: true });
     expect(transport.connect).toHaveBeenCalledWith('\\\\.\\pipe\\InFlowVault');
+    expect(transport.close).toHaveBeenCalledOnce();
     expect(transport.close).toHaveBeenCalledWith({ connection, peer });
     expect(responseFrame).toEqual(Buffer.alloc(responseFrame.byteLength));
+  });
+
+  it('closes a Windows IPC connection once when exchange fails', () => {
+    const connection = { connection: {}, peer };
+    const transport = {
+      close: vi.fn(),
+      connect: vi.fn(() => connection),
+      exchange: vi.fn(() => {
+        throw new Error('exchange failed');
+      }),
+    };
+
+    expect(() =>
+      sendWindowsVaultIpcRequestWithTransport(transport, '\\\\.\\pipe\\InFlowVault', {
+        id: 'request-1',
+        method: 'vault.status',
+        params: {},
+        version: 1,
+      }),
+    ).toThrow('exchange failed');
+    expect(transport.close).toHaveBeenCalledOnce();
+    expect(transport.close).toHaveBeenCalledWith(connection);
   });
 
   it('rejects malformed Windows IPC responses and still clears their bytes', () => {
