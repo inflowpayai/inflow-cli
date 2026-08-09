@@ -825,11 +825,9 @@ static napi_value exchange_pipe_request(napi_env env, napi_callback_info info) {
   DWORD response_length = 0;
   if (!write_exact(connection->handle, request, (DWORD)request_length) ||
       !read_frame(connection->handle, &response, &response_length)) {
-    close_connection(connection);
     napi_throw(env, make_error(env, "EPIPEEXCHANGE", "named pipe request failed"));
     return NULL;
   }
-  close_connection(connection);
   napi_value result;
   napi_create_buffer_copy(env, response_length, response, NULL, &result);
   vault_secure_clear(response, response_length);
