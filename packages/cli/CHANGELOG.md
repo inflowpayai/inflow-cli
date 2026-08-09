@@ -1,5 +1,14 @@
 # @inflowpayai/inflow
 
+## 0.11.1
+
+### Patch Changes
+
+- [#102](https://github.com/inflowpayai/inflow-cli/pull/102)
+  [`870b4fb`](https://github.com/inflowpayai/inflow-cli/commit/870b4fb42a114365ceb467ffeaf97a430319f299) Thanks
+  [@nkavian](https://github.com/nkavian)! - Fix Windows vault requests by closing each named-pipe connection exactly
+  once.
+
 ## 0.11.0
 
 ### Minor Changes
