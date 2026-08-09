@@ -1,5 +1,14 @@
 # @inflowpayai/inflow
 
+## 0.11.2
+
+### Patch Changes
+
+- [#105](https://github.com/inflowpayai/inflow-cli/pull/105)
+  [`03373d5`](https://github.com/inflowpayai/inflow-cli/commit/03373d5bf0b0fbfdcc1369c906c6fb6f2804fe9f) Thanks
+  [@nkavian](https://github.com/nkavian)! - Install verifier dependencies before staging and publishing native release
+  assets.
+
 ## 0.11.1
 
 ### Patch Changes
