@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
@@ -49,6 +50,8 @@ for (const name of packages) {
   const checksum = readFileSync(join(root, `${name}.sha256`), 'utf8').trim();
   if (checksum !== `${digest}  ${name}`) throw new Error(`Checksum mismatch for ${name}.`);
 }
+
+execFileSync(process.execPath, [resolve('scripts/verify-winget-manifests.mjs'), root, version], { stdio: 'inherit' });
 
 const linuxPackages = packages.filter((name) => !name.includes('-darwin-') && !name.includes('-windows-')).sort();
 const sums = readFileSync(join(root, 'SHA256SUMS'), 'utf8').trim().split('\n').sort();

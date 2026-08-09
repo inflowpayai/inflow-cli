@@ -1,3 +1,5 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.12.0.schema.json
+
 PackageIdentifier: InFlowPayAI.InFlow
 PackageVersion: __INFLOW_VERSION__
 DefaultLocale: en-US
