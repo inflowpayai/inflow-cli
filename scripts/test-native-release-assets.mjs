@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { parse } from 'yaml';
 
 const version = '1.2.3';
 const workspace = mkdtempSync(join(tmpdir(), 'inflow-native-release-'));
@@ -110,6 +111,7 @@ try {
   const assembled = join(workspace, 'assembled');
   run(assembler, [assembled, macStage, linuxStage, windowsStage]);
   run(verifier, [assembled, version]);
+  verifyWorkflowDependencies();
 } finally {
   rmSync(workspace, { recursive: true, force: true });
 }
@@ -166,4 +168,26 @@ function reject(label, script, args) {
 
 function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+function verifyWorkflowDependencies() {
+  const workflow = parse(readFileSync(resolve('.github/workflows/native-release.yml'), 'utf8'));
+  for (const jobName of ['stage', 'publish']) {
+    const steps = workflow.jobs?.[jobName]?.steps;
+    if (!Array.isArray(steps)) throw new Error(`The native release ${jobName} job is unavailable.`);
+    const pnpmIndex = steps.findIndex((step) => step?.uses === 'pnpm/action-setup@v6');
+    const installIndex = steps.findIndex((step) => step?.run === 'pnpm install --frozen-lockfile');
+    const verifyIndex = steps.findIndex((step) =>
+      typeof step?.run === 'string' ? step.run.includes('verify-native-release-assets.mjs') : false,
+    );
+    if (
+      pnpmIndex === -1 ||
+      installIndex === -1 ||
+      verifyIndex === -1 ||
+      pnpmIndex >= installIndex ||
+      installIndex >= verifyIndex
+    ) {
+      throw new Error(`The native release ${jobName} job must install dependencies before verifying release assets.`);
+    }
+  }
 }
