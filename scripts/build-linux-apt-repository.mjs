@@ -12,9 +12,12 @@ const signingKey = requiredEnvironment('INFLOW_LINUX_SIGNING_KEY_ID');
 const architectures = ['amd64', 'arm64'];
 const distributionRoot = join(outputRoot, 'dists/stable');
 const poolRoot = join(outputRoot, 'pool/main/i/inflow');
+const overridePath = join(outputRoot, 'indices/override');
 
 rmSync(outputRoot, { force: true, recursive: true });
 mkdirSync(poolRoot, { recursive: true });
+mkdirSync(dirname(overridePath), { recursive: true });
+writeFileSync(overridePath, 'inflow optional utils\n');
 
 const debianPackages = readdirSync(packageRoot)
   .filter((name) => name.endsWith('.deb'))
@@ -29,7 +32,11 @@ for (const name of debianPackages) copyFileSync(join(packageRoot, name), join(po
 for (const architecture of architectures) {
   const binaryRoot = join(distributionRoot, 'main', `binary-${architecture}`);
   mkdirSync(binaryRoot, { recursive: true });
-  const packages = run('dpkg-scanpackages', ['--arch', architecture, 'pool/main/i/inflow', '/dev/null'], outputRoot);
+  const packages = run(
+    'dpkg-scanpackages',
+    ['--arch', architecture, 'pool/main/i/inflow', 'indices/override'],
+    outputRoot,
+  );
   if (packages.length === 0) throw new Error(`APT metadata is empty for ${architecture}.`);
   writeFileSync(join(binaryRoot, 'Packages'), packages);
   writeFileSync(join(binaryRoot, 'Packages.gz'), gzipSync(packages, { level: 9 }));

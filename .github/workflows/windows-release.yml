@@ -92,7 +92,7 @@ jobs:
           cache: pnpm
 
       - name: Configure Visual C++ tools
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9
         with:
           arch: ${{ matrix.architecture }}
 

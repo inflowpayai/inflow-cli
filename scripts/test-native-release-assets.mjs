@@ -112,6 +112,7 @@ try {
   run(assembler, [assembled, macStage, linuxStage, windowsStage]);
   run(verifier, [assembled, version]);
   verifyWorkflowDependencies();
+  verifyWindowsBuildAction();
 } finally {
   rmSync(workspace, { recursive: true, force: true });
 }
@@ -189,5 +190,15 @@ function verifyWorkflowDependencies() {
     ) {
       throw new Error(`The native release ${jobName} job must install dependencies before verifying release assets.`);
     }
+  }
+}
+
+function verifyWindowsBuildAction() {
+  const workflow = parse(readFileSync(resolve('.github/workflows/windows-release.yml'), 'utf8'));
+  const steps = workflow.jobs?.['build-payload']?.steps;
+  if (!Array.isArray(steps)) throw new Error('The Windows payload build job is unavailable.');
+  const configure = steps.find((step) => step?.name === 'Configure Visual C++ tools');
+  if (configure?.uses !== 'TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9') {
+    throw new Error('The Windows payload build must use the pinned Node.js 24 MSVC setup action.');
   }
 }
