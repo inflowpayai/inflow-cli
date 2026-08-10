@@ -1,11 +1,52 @@
 $ErrorActionPreference = 'Stop'
 
 $version = '__INFLOW_VERSION__'
-$uninstall = $env:INFLOW_UNINSTALL -eq '1'
-if ($uninstall) {
-  $product = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+
+function Get-NativeWindowsArchitecture {
+  if ($null -eq ('InFlow.WindowsArchitecture' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace InFlow {
+  public static class WindowsArchitecture {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWow64Process2(
+      IntPtr process,
+      out ushort processMachine,
+      out ushort nativeMachine
+    );
+  }
+}
+'@
+  }
+  [uint16]$processMachine = 0
+  [uint16]$nativeMachine = 0
+  $process = [System.Diagnostics.Process]::GetCurrentProcess()
+  if (-not [InFlow.WindowsArchitecture]::IsWow64Process2(
+    $process.Handle,
+    [ref]$processMachine,
+    [ref]$nativeMachine
+  )) {
+    throw 'Could not resolve the native Windows architecture.'
+  }
+  switch ($nativeMachine) {
+    0x8664 { return 'x64' }
+    0xaa64 { return 'arm64' }
+    default { throw "InFlow $version is not published for native Windows machine type 0x$($nativeMachine.ToString('x4'))." }
+  }
+}
+
+function Get-InFlowProduct {
+  return Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
     Where-Object { $_.DisplayName -eq 'InFlow' -and $_.Publisher -eq 'Jarwin, Inc.' } |
     Select-Object -First 1
+}
+
+$uninstall = $env:INFLOW_UNINSTALL -eq '1'
+if ($uninstall) {
+  $product = Get-InFlowProduct
   if ($null -eq $product) {
     Write-Output 'InFlow is not installed.'
     exit 0
@@ -19,10 +60,12 @@ if ($uninstall) {
   exit 0
 }
 
-$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
-if ($architecture -notin @('x64', 'arm64')) {
-  throw "InFlow $version is not published for Windows architecture '$architecture'."
+$product = Get-InFlowProduct
+if ($null -ne $product -and $product.DisplayVersion -eq $version) {
+  Write-Output "InFlow $version is already installed."
+  exit 0
 }
+$architecture = Get-NativeWindowsArchitecture
 
 $asset = "inflow-$version-windows-$architecture.msi"
 $uri = "https://github.com/inflowpayai/inflow-cli/releases/download/v$version/$asset"

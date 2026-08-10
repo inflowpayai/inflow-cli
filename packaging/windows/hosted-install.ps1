@@ -5,11 +5,52 @@ $ErrorActionPreference = 'Stop'
 $repository = 'inflowpayai/inflow-cli'
 $headers = @{ 'User-Agent' = 'inflow-installer' }
 $expectedPublisher = 'CN="Jarwin, Inc.", O="Jarwin, Inc.", L=Gilroy, S=California, C=US'
-$uninstall = $env:INFLOW_UNINSTALL -eq '1'
-if ($uninstall) {
-  $product = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+
+function Get-NativeWindowsArchitecture {
+  if ($null -eq ('InFlow.WindowsArchitecture' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace InFlow {
+  public static class WindowsArchitecture {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWow64Process2(
+      IntPtr process,
+      out ushort processMachine,
+      out ushort nativeMachine
+    );
+  }
+}
+'@
+  }
+  [uint16]$processMachine = 0
+  [uint16]$nativeMachine = 0
+  $process = [System.Diagnostics.Process]::GetCurrentProcess()
+  if (-not [InFlow.WindowsArchitecture]::IsWow64Process2(
+    $process.Handle,
+    [ref]$processMachine,
+    [ref]$nativeMachine
+  )) {
+    throw 'Could not resolve the native Windows architecture.'
+  }
+  switch ($nativeMachine) {
+    0x8664 { return 'x64' }
+    0xaa64 { return 'arm64' }
+    default { throw "InFlow is not published for native Windows machine type 0x$($nativeMachine.ToString('x4'))." }
+  }
+}
+
+function Get-InFlowProduct {
+  return Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
     Where-Object { $_.DisplayName -eq 'InFlow' -and $_.Publisher -eq 'Jarwin, Inc.' } |
     Select-Object -First 1
+}
+
+$uninstall = $env:INFLOW_UNINSTALL -eq '1'
+if ($uninstall) {
+  $product = Get-InFlowProduct
   if ($null -eq $product) {
     Write-Output 'InFlow is not installed.'
     exit 0
@@ -23,10 +64,7 @@ if ($uninstall) {
   exit 0
 }
 
-$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
-if ($architecture -notin @('x64', 'arm64')) {
-  throw "InFlow is not published for Windows architecture '$architecture'."
-}
+$architecture = Get-NativeWindowsArchitecture
 $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$repository/releases/latest"
 $tag = [string]$release.tag_name
 $tagMatch = [regex]::Match($tag, '^v([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$')
@@ -36,6 +74,11 @@ if (-not $tagMatch.Success) {
 $version = $tagMatch.Groups[1].Value
 if ($release.draft -or $release.prerelease -or $release.immutable -ne $true) {
   throw 'The latest InFlow release is not published and immutable.'
+}
+$product = Get-InFlowProduct
+if ($null -ne $product -and $product.DisplayVersion -eq $version) {
+  Write-Output "InFlow $version is already installed."
+  exit 0
 }
 $assetName = "inflow-$version-windows-$architecture.msi"
 $assets = @($release.assets | Where-Object { $_.name -eq $assetName })
