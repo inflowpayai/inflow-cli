@@ -171,11 +171,11 @@ importers:
         specifier: ^0.3.0
         version: 0.3.0(@types/json-schema@7.0.15)
       '@offering-protocol/core':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.3.1
+        version: 0.3.1
       '@offering-protocol/directory':
-        specifier: ^0.2.2
-        version: 0.2.2
+        specifier: ^0.2.3
+        version: 0.2.3
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
@@ -1075,12 +1075,12 @@ packages:
     resolution: {integrity: sha512-DMV3kVml6u3n6N20DX4aXHB/yFvOaPPR4963KvozU8pJhO+X6pBKvUweRA7MlkIhTUkX2MevxmkmPG4UmUAZHQ==}
     engines: {node: '>=22.0.0'}
 
-  '@offering-protocol/core@0.3.0':
-    resolution: {integrity: sha512-ScxWjZC/ZdENzP/iyGHuCAEMEKuLDxMs+V9xo3fV4W/fr3ewr7LX6/lmNUxyly4lINEulRZS/jTg1UDAUg0W6g==}
+  '@offering-protocol/core@0.3.1':
+    resolution: {integrity: sha512-pt4xuQkmtpWi1QM1cyQQ5NnKQm5V5L575h/2K8ZpRvecKhwA8GrBfUakwrgdFaiIRaXSEqr8+uLQkdJC9BBUhw==}
     engines: {node: '>=22.0.0'}
 
-  '@offering-protocol/directory@0.2.2':
-    resolution: {integrity: sha512-ZLpYNVj/1TMMgcMxuZd3s036pAh1PTxba8RZGYYhWgxtw6RwC9oGfUn99/j9vh96OTT4qltClv8eqIAy//Tsnw==}
+  '@offering-protocol/directory@0.2.3':
+    resolution: {integrity: sha512-c9AHNuO44wqNFZ8zH7hRvLCtDwF2WkcHZmh/FcasuL1Z03eM8ErMa8WWNVD/WbE1JB9pIxpHTs4A2dw4HGxSAQ==}
     engines: {node: '>=22.0.0'}
 
   '@open-draft/deferred-promise@2.2.0':
@@ -3877,23 +3877,23 @@ snapshots:
       '@apidevtools/json-schema-ref-parser': 15.5.1(patch_hash=ca5f5de9c8ad987a918b0d6f20a673248dbee2e7f169701c4d6c633dc1b43153)(@types/json-schema@7.0.15)
       '@hyperjump/browser': 1.4.0
       '@hyperjump/json-schema': 1.17.7(@hyperjump/browser@1.4.0)
-      '@offering-protocol/core': 0.3.0
-      '@offering-protocol/directory': 0.2.2
+      '@offering-protocol/core': 0.3.1
+      '@offering-protocol/directory': 0.2.3
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       http-cache-semantics: 4.2.0
     transitivePeerDependencies:
       - '@types/json-schema'
 
-  '@offering-protocol/core@0.3.0':
+  '@offering-protocol/core@0.3.1':
     dependencies:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       bcp-47: 2.1.1
 
-  '@offering-protocol/directory@0.2.2':
+  '@offering-protocol/directory@0.2.3':
     dependencies:
-      '@offering-protocol/core': 0.3.0
+      '@offering-protocol/core': 0.3.1
 
   '@open-draft/deferred-promise@2.2.0': {}
 

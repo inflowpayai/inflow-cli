@@ -1,4 +1,5 @@
 import { z } from 'incur';
+import { PAYMENT_FILTERS } from './payments.js';
 
 const operation = z.enum([
   'get-collection',
@@ -24,9 +25,9 @@ export const directorySearchOptions = z.object({
     .describe('Repeatable enrollment protocol filter.'),
   operation: z.array(operation).default([]).describe('Repeatable ODP operation filter.'),
   payment: z
-    .array(z.enum(['mpp', 'x402']))
+    .array(z.enum(PAYMENT_FILTERS))
     .default([])
-    .describe('Repeatable payment protocol filter.'),
+    .describe('Repeatable payment filter in protocol or protocol:option form.'),
 });
 
 export const directorySuggestArgs = z.object({
@@ -132,9 +133,9 @@ export const offeringDiscoverOptions = z.object({
     .default([])
     .describe('Repeatable directory ODP operation filter; inferred from the Offering request when omitted.'),
   payment: z
-    .array(z.enum(['mpp', 'x402']))
+    .array(z.enum(PAYMENT_FILTERS))
     .default([])
-    .describe('Repeatable directory payment protocol filter.'),
+    .describe('Repeatable directory payment filter in protocol or protocol:option form.'),
   refinement: z.array(z.string()).default([]).describe('Repeatable filter identifier to refine.'),
   serviceQuery: z.string().optional().describe('Free-text query used only to select Services from the directory.'),
   sort: z.string().optional().describe('Advertised sort identifier sent to each selected Service.'),

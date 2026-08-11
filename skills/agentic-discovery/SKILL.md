@@ -68,8 +68,12 @@ agent uses for subsequent `inspect`, `collections`, `offerings`, and `actions` c
 Search with free text and structured filters when they are known:
 
 ```bash
-inflow odp directory search compute --keyword gpu --operation search-offerings --payment mpp --format json
+inflow odp directory search compute --keyword gpu --operation search-offerings --payment mpp:inflow --format json
 ```
+
+Use `--payment mpp` or `--payment x402` to match a protocol regardless of its advertised options.
+Use `protocol:option`, such as `mpp:solana` or `x402:base`, to require one Service-advertised payment option.
+Repeat `--payment` to provide alternatives.
 
 Use suggestions when the directory's normalized keywords are unknown:
 

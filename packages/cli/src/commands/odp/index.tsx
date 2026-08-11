@@ -23,6 +23,13 @@ import { createOfferingsCli } from './offerings.js';
 import { createActionsCli } from './actions.js';
 import { executeOdpCommand, odpCommandError } from './command.js';
 import { Continuation, listed, summarize } from './presentation.js';
+import {
+  normalizePaymentFilters,
+  paymentNameLabel,
+  paymentOptionLabel,
+  paymentProtocolLabel,
+  type PaymentFilter,
+} from './payments.js';
 
 interface CommandContext {
   agent: boolean;
@@ -50,7 +57,7 @@ interface SearchInput {
     | 'search-collections'
     | 'search-offerings'
   >;
-  payment: Array<'mpp' | 'x402'>;
+  payment: PaymentFilter[];
 }
 
 function searchRequest(input: SearchInput): DirectorySearchRequest {
@@ -58,7 +65,7 @@ function searchRequest(input: SearchInput): DirectorySearchRequest {
     ...(input.keyword.length === 0 ? {} : { keywords: input.keyword }),
     ...(input.enrollment.length === 0 ? {} : { enrollment: input.enrollment.map((name) => ({ name })) }),
     ...(input.operation.length === 0 ? {} : { operations: input.operation.map((name) => ({ name })) }),
-    ...(input.payment.length === 0 ? {} : { payments: input.payment.map((name) => ({ name })) }),
+    ...(input.payment.length === 0 ? {} : { payments: normalizePaymentFilters(input.payment) }),
   };
   return {
     ...(input.query === undefined ? {} : { query: input.query }),
@@ -153,7 +160,7 @@ export function SearchView({ page }: { page: DirectorySearchPage }) {
     origin: service.service_origin,
     protocols: listed([
       ...(service.protocols?.enrollment ?? []).map(({ name }) => name),
-      ...(service.protocols?.payments ?? []).map(({ name }) => name),
+      ...(service.protocols?.payments ?? []).map(paymentProtocolLabel),
     ]),
   }));
   const columns: ReadonlyArray<TableColumn<(typeof rows)[number]>> = [
@@ -166,7 +173,16 @@ export function SearchView({ page }: { page: DirectorySearchPage }) {
     ...(page.facets?.keywords ?? []).map(({ count, value }) => ({ count, facet: 'Keyword', value })),
     ...(page.facets?.enrollment ?? []).map(({ count, value }) => ({ count, facet: 'Enrollment', value: value.name })),
     ...(page.facets?.operations ?? []).map(({ count, value }) => ({ count, facet: 'Operation', value: value.name })),
-    ...(page.facets?.payments ?? []).map(({ count, value }) => ({ count, facet: 'Payment', value: value.name })),
+    ...(page.facets?.payment_options ?? []).map(({ count, value }) => ({
+      count,
+      facet: 'Payment Option',
+      value: `${paymentNameLabel(value.name)}: ${paymentOptionLabel(value.option)}`,
+    })),
+    ...(page.facets?.payments ?? []).map(({ count, value }) => ({
+      count,
+      facet: 'Payment',
+      value: paymentNameLabel(value.name),
+    })),
   ];
   const facetColumns: ReadonlyArray<TableColumn<(typeof facets)[number]>> = [
     { header: 'Filter', cell: (row) => row.facet },

@@ -39,6 +39,7 @@ import {
   summarize,
   type DetailRow,
 } from './presentation.js';
+import { paymentProtocolLabel } from './payments.js';
 
 interface CommandContext {
   agent: boolean;
@@ -293,7 +294,9 @@ export function OdpDetailsTable({ inspection }: { inspection: ServiceInspection 
     ...detail('Enrollment', listed(capabilities.enrollment.map(({ name }) => name))),
     ...detail(
       'Payments',
-      listed(capabilities.payments.map(({ authentication, name }) => capabilityLabel(name, authentication))),
+      listed(
+        capabilities.payments.map((payment) => capabilityLabel(paymentProtocolLabel(payment), payment.authentication)),
+      ),
     ),
   ];
   return <DetailsTable rows={rows} />;
