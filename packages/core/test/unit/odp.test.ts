@@ -15,6 +15,13 @@ const serviceDocument = {
 };
 
 describe('Inflow.odp', () => {
+  it('accepts an empty suggestion result from the directory', async () => {
+    const fetch: typeof globalThis.fetch = () => Promise.resolve(Response.json({ items: [] }));
+    const inflow = new Inflow({ fetch });
+
+    await expect(inflow.odp.suggestServices({ prefix: 'unmatched' })).resolves.toEqual([]);
+  });
+
   it('uses the canonical sandbox directory and sanitizes directory results', async () => {
     const calls: Request[] = [];
     const fetch: typeof globalThis.fetch = (input, init) => {

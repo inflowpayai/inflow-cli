@@ -44,6 +44,15 @@ if (!isAtLeastNodeVersion(process.versions.node, 24, 15, 0)) {
 if (typeof process.getuid !== 'function' || process.getuid() !== 0) {
   throw new Error('Linux packaging requires root so release ownership can be normalized.');
 }
+const argon2SourceDirectory = process.env.INFLOW_ARGON2_SOURCE_DIR;
+if (argon2SourceDirectory === undefined || argon2SourceDirectory.length === 0) {
+  throw new Error(
+    'Linux packaging requires INFLOW_ARGON2_SOURCE_DIR to identify the pinned Argon2 20190702 source directory.',
+  );
+}
+if (!existsSync(resolve(argon2SourceDirectory))) {
+  throw new Error(`Pinned Argon2 source directory is unavailable: ${argon2SourceDirectory}`);
+}
 
 rmSync(artifactRoot, { force: true, recursive: true });
 mkdirSync(buildRoot, { recursive: true });
@@ -53,6 +62,7 @@ mkdirSync(runtimePath, { recursive: true });
 run('pnpm', ['--filter', '@inflowpayai/inflow-core', 'build']);
 run(process.execPath, ['scripts/build-vault-peer-native.mjs']);
 run('pnpm', ['--filter', '@inflowpayai/inflow', 'build:standalone']);
+run(process.execPath, ['scripts/verify-standalone-runtime.mjs']);
 
 copyArgon2Runtime();
 copyMcpRuntime();

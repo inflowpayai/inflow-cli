@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveInflowSdkConfig, requireFetchImplementation } from '../../src/config.js';
 import { InflowConfigurationError } from '../../src/errors.js';
+import { ProxyAgent } from 'undici';
 
 describe('resolveInflowSdkConfig', () => {
   const ORIGINAL_ENV = { ...process.env };
@@ -14,6 +15,7 @@ describe('resolveInflowSdkConfig', () => {
 
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
+    vi.unstubAllGlobals();
   });
 
   it('defaults environment to production and apiBaseUrl', () => {
@@ -158,10 +160,16 @@ describe('resolveInflowSdkConfig', () => {
     expect(calls[0]?.headers.get('X-Custom')).toBe('caller');
   });
 
-  it('proxy-fetch wrapper surfaces InflowConfigurationError when undici import fails', async () => {
+  it('proxy-fetch wrapper supplies an Undici proxy dispatcher', async () => {
+    const calls: Array<RequestInit & { dispatcher?: unknown }> = [];
+    vi.stubGlobal('fetch', (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+      calls.push(init ?? {});
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
     process.env['INFLOW_HTTP_PROXY'] = 'http://proxy.test';
     const c = resolveInflowSdkConfig();
-    await expect(c.fetch('https://x/')).rejects.toBeInstanceOf(InflowConfigurationError);
+    await c.fetch('https://x/');
+    expect(calls[0]?.dispatcher).toBeInstanceOf(ProxyAgent);
   });
 });
 
