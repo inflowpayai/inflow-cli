@@ -220,7 +220,7 @@ fi
 ### `odp directory`
 
 ```bash
-inflow odp directory search gpu --keyword compute --payment mpp --format json
+inflow odp directory search gpu --keyword compute --payment mpp:inflow --format json
 inflow odp directory suggest gp --limit 10 --format json
 ```
 
@@ -230,6 +230,11 @@ requests the continuation, so callers do not interpret or reconstruct it. `--san
 directory.
 
 Suggestions return `{ items }`, where each item is a directory keyword matching the supplied prefix.
+
+`--payment mpp` matches any Service advertising MPP. Add an ODP payment option after a colon to require a
+Service-advertised option, such as `--payment mpp:solana` or `--payment x402:base`. Repeat the flag for alternatives.
+Multiple options for one protocol are grouped into one directory filter; a broad protocol filter supersedes narrower
+options for that protocol.
 
 ### `odp inspect`
 
@@ -271,7 +276,7 @@ inflow odp offerings get https://compute.example gpu-a100 --format json
 inflow odp offerings discover a100 \
   --service-query compute \
   --keyword gpu \
-  --payment mpp \
+  --payment mpp:inflow \
   --max-services 10 \
   --max-offerings-per-service 5 \
   --format json

@@ -21,6 +21,7 @@ import {
 import type { InflowEnvironment } from './config.js';
 import { sanitizeDeep } from './utils/sanitize-text.js';
 
+export { PAYMENT_OPTIONS } from '@offering-protocol/core';
 export { OdpInspectionError, OdpRequestError } from '@offering-protocol/agent';
 export { DirectoryRequestError } from '@offering-protocol/directory';
 
@@ -55,6 +56,8 @@ export type {
   Offering,
   OfferingPage,
   PageEnvelope,
+  PaymentOption,
+  PaymentProtocol,
   TerseCollection,
   TerseOffering,
 } from '@offering-protocol/core';

@@ -34,7 +34,7 @@ const inspection: ServiceInspection = {
   capabilities: {
     enrollment: [{ name: 'aep' }],
     operations,
-    payments: [{ authentication: 'required', name: 'mpp' }],
+    payments: [{ authentication: 'required', name: 'mpp', options: ['inflow', 'tempo'] }],
   },
   document: {
     description: 'Compute catalog',
@@ -46,7 +46,7 @@ const inspection: ServiceInspection = {
     operations,
     protocols: {
       enrollment: [{ name: 'aep' }],
-      payments: [{ authentication: 'required', name: 'mpp' }],
+      payments: [{ authentication: 'required', name: 'mpp', options: ['inflow', 'tempo'] }],
     },
   },
   finalUrl: new URL('https://compute.example/.well-known/odp'),
@@ -268,7 +268,7 @@ describe('ODP Service and Collection commands', () => {
     expect(lastFrame()).toContain('list-collections');
     expect(lastFrame()).toContain('get-collection (authentication required)');
     expect(lastFrame()).toContain('aep');
-    expect(lastFrame()).toContain('mpp (authentication required)');
+    expect(lastFrame()).toContain('MPP: InFlow, Tempo (authentication required)');
   });
 
   it('renders Collection pages and full Collection details for interactive terminals', () => {

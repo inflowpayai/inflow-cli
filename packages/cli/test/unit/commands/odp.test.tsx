@@ -65,14 +65,18 @@ describe('ODP directory commands', () => {
         keyword: ['gpu'],
         limit: 10,
         operation: ['search-offerings'],
-        payment: ['mpp'],
+        payment: ['mpp:inflow', 'mpp:solana'],
         query: 'compute',
       },
     );
 
     expect(result).toEqual(page);
     expect(searchServices).toHaveBeenCalledWith({
-      filters: { keywords: ['gpu'], operations: [{ name: 'search-offerings' }], payments: [{ name: 'mpp' }] },
+      filters: {
+        keywords: ['gpu'],
+        operations: [{ name: 'search-offerings' }],
+        payments: [{ name: 'mpp', options: ['inflow', 'solana'] }],
+      },
       limit: 10,
       query: 'compute',
     });
@@ -133,12 +137,19 @@ describe('ODP directory commands', () => {
       localizations: ['en'],
       name: 'Compute',
       operations: [{ authentication: 'not-required', name: 'list-offerings' }],
+      protocols: {
+        payments: [{ authentication: 'not-required', name: 'mpp', options: ['inflow', 'solana'] }],
+      },
       service_origin: 'https://compute.example',
     };
     const search = render(
       <SearchView
         page={{
-          facets: { keywords: [{ count: 12, value: 'gpu' }] },
+          facets: {
+            keywords: [{ count: 12, value: 'gpu' }],
+            payment_options: [{ count: 4, value: { name: 'mpp', option: 'inflow' } }],
+            payments: [{ count: 6, value: { authentication: 'not-required', name: 'mpp' } }],
+          },
           items: [service],
           next: '/v1/services/search?cursor=next',
         }}
@@ -147,6 +158,9 @@ describe('ODP directory commands', () => {
     expect(search.lastFrame()).toContain('Compute catalog');
     expect(search.lastFrame()).toContain('Available Filters');
     expect(search.lastFrame()).toContain('Matching Services');
+    expect(search.lastFrame()).toContain('MPP: InFlow, Solana');
+    expect(search.lastFrame()).toContain('Payment Option');
+    expect(search.lastFrame()).toContain('MPP: InFlow');
     expect(search.lastFrame()).toContain('Use these values with --keyword');
     expect(search.lastFrame()).toContain("inflow odp directory search --next '/v1/services/search?cursor=next'");
     expect(render(<SearchView page={{ items: [] }} />).lastFrame()).toContain('No Services found');

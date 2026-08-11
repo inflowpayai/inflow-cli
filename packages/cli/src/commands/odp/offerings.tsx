@@ -45,6 +45,7 @@ import {
   summarize,
   type DetailRow,
 } from './presentation.js';
+import { normalizePaymentFilters, type PaymentFilter } from './payments.js';
 
 interface CommandContext {
   agent: boolean;
@@ -110,7 +111,7 @@ interface DiscoveryInput {
   maxServices: number | undefined;
   enrollment: 'aep'[];
   operations: OfferingDiscoverOperation[];
-  payments: Array<'mpp' | 'x402'>;
+  payments: PaymentFilter[];
   query: string | undefined;
   refinements: string[];
   serviceQuery: string | undefined;
@@ -315,7 +316,7 @@ export async function runOfferingDiscovery(
       ...(input.keywords.length === 0 ? {} : { keywords: input.keywords }),
       ...(input.enrollment.length === 0 ? {} : { enrollment: input.enrollment.map((name) => ({ name })) }),
       operations: operations.map((name) => ({ name })),
-      ...(input.payments.length === 0 ? {} : { payments: input.payments.map((name) => ({ name })) }),
+      ...(input.payments.length === 0 ? {} : { payments: normalizePaymentFilters(input.payments) }),
     };
     const services = {
       ...(input.serviceQuery === undefined ? {} : { query: input.serviceQuery }),

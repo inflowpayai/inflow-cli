@@ -294,7 +294,7 @@ describe('ODP Offering commands', () => {
       maxServices: 10,
       enrollment: [],
       operations: ['search-offerings'],
-      payments: ['mpp'],
+      payments: ['mpp:inflow', 'mpp:tempo'],
       query: 'a100',
       refinements: [],
       serviceQuery: 'compute',
@@ -308,7 +308,11 @@ describe('ODP Offering commands', () => {
       maxServices: 10,
       offerings: { query: 'a100' },
       services: {
-        filters: { keywords: ['gpu'], operations: [{ name: 'search-offerings' }], payments: [{ name: 'mpp' }] },
+        filters: {
+          keywords: ['gpu'],
+          operations: [{ name: 'search-offerings' }],
+          payments: [{ name: 'mpp', options: ['inflow', 'tempo'] }],
+        },
         query: 'compute',
       },
     });
