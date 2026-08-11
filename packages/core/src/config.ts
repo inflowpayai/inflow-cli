@@ -1,6 +1,7 @@
 import { InflowConfigurationError } from './errors.js';
 import type { AccessTokenProvider } from './session.js';
 import { type AuthStorage, storage } from './utils/storage.js';
+import { ProxyAgent } from 'undici';
 
 export interface InflowSdkLogger {
   debug(message: string): void;
@@ -71,25 +72,13 @@ export function resolveApiBaseUrl(options: Pick<InflowOptions, 'apiBaseUrl' | 'e
 }
 
 function createProxyFetch(baseFetch: typeof globalThis.fetch, proxyUrl: string): typeof globalThis.fetch {
-  let dispatcherPromise: Promise<unknown> | null = null;
+  let dispatcher: ProxyAgent | undefined;
 
   return (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
-    if (!dispatcherPromise) {
-      const mod = 'undici';
-      dispatcherPromise = (
-        import(mod) as Promise<{
-          ProxyAgent: new (url: string) => unknown;
-        }>
-      )
-        .then((m) => new m.ProxyAgent(proxyUrl))
-        .catch(() => {
-          throw new InflowConfigurationError(
-            'INFLOW_HTTP_PROXY requires the "undici" package. Install it with: npm install undici',
-          );
-        });
-    }
-
-    return dispatcherPromise.then((dispatcher) => baseFetch(input, { ...init, dispatcher } as RequestInit));
+    dispatcher ??= new ProxyAgent(proxyUrl);
+    const proxyInit: RequestInit = { ...init };
+    Reflect.set(proxyInit, 'dispatcher', dispatcher);
+    return baseFetch(input, proxyInit);
   };
 }
 

@@ -5,7 +5,8 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  incur: aeae32ab87b3e46a5c59987af280484b29ad31f08a42eb18234f04f432e71dde
+  '@apidevtools/json-schema-ref-parser@15.5.1': ca5f5de9c8ad987a918b0d6f20a673248dbee2e7f169701c4d6c633dc1b43153
+  incur@0.4.19: 0b9fdf853853ff7ca9528795341eb495abb7eb086e1126eeaa81f99c4233541b
 
 importers:
 
@@ -106,7 +107,7 @@ importers:
         version: 2.19.0
       incur:
         specifier: ^0.4.5
-        version: 0.4.19(patch_hash=aeae32ab87b3e46a5c59987af280484b29ad31f08a42eb18234f04f432e71dde)
+        version: 0.4.19(patch_hash=0b9fdf853853ff7ca9528795341eb495abb7eb086e1126eeaa81f99c4233541b)
       ink:
         specifier: ^5.2.1
         version: 5.2.1(@types/react@18.3.31)(react@18.3.1)
@@ -147,6 +148,9 @@ importers:
       strip-ansi:
         specifier: ^7.2.0
         version: 7.2.0
+      undici:
+        specifier: 7.18.2
+        version: 7.18.2
     devDependencies:
       '@aep-foundation/agent':
         specifier: ^0.3.2
@@ -170,8 +174,8 @@ importers:
         specifier: ^0.3.0
         version: 0.3.0
       '@offering-protocol/directory':
-        specifier: ^0.2.1
-        version: 0.2.1
+        specifier: ^0.2.2
+        version: 0.2.2
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
@@ -1075,8 +1079,8 @@ packages:
     resolution: {integrity: sha512-ScxWjZC/ZdENzP/iyGHuCAEMEKuLDxMs+V9xo3fV4W/fr3ewr7LX6/lmNUxyly4lINEulRZS/jTg1UDAUg0W6g==}
     engines: {node: '>=22.0.0'}
 
-  '@offering-protocol/directory@0.2.1':
-    resolution: {integrity: sha512-7/ckVKMjRxowcbqHGWjjaf8UVkoHn1zU+tfLCEesqHGVzv6r2YJjPTLTmTk/Bo7U2pj6q3e2opVtMPQdm2gjmQ==}
+  '@offering-protocol/directory@0.2.2':
+    resolution: {integrity: sha512-ZLpYNVj/1TMMgcMxuZd3s036pAh1PTxba8RZGYYhWgxtw6RwC9oGfUn99/j9vh96OTT4qltClv8eqIAy//Tsnw==}
     engines: {node: '>=22.0.0'}
 
   '@open-draft/deferred-promise@2.2.0':
@@ -2934,6 +2938,10 @@ packages:
     resolution: {integrity: sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA==}
     engines: {node: '>=18.17'}
 
+  undici@7.18.2:
+    resolution: {integrity: sha512-y+8YjDFzWdQlSE9N5nzKMT3g4a5UBX1HKowfdXh0uvAnTaqqwqB92Jt4UXBAeKekDs5IaDKyJFR4X1gYVCgXcw==}
+    engines: {node: '>=20.18.1'}
+
   unist-util-stringify-position@4.0.0:
     resolution: {integrity: sha512-0ASV06AAoKCDkS2+xw5RXJywruurpbC4JZSm7nr7MOt1ojAzvyyaO+UxZf18j8FCF6kmzCZKcAgN/yu2gm2XgQ==}
 
@@ -3137,7 +3145,7 @@ snapshots:
       '@jridgewell/gen-mapping': 0.3.13
       '@jridgewell/trace-mapping': 0.3.31
 
-  '@apidevtools/json-schema-ref-parser@15.5.1(@types/json-schema@7.0.15)':
+  '@apidevtools/json-schema-ref-parser@15.5.1(patch_hash=ca5f5de9c8ad987a918b0d6f20a673248dbee2e7f169701c4d6c633dc1b43153)(@types/json-schema@7.0.15)':
     dependencies:
       '@types/json-schema': 7.0.15
       js-yaml: 5.2.3
@@ -3866,11 +3874,11 @@ snapshots:
 
   '@offering-protocol/agent@0.3.0(@types/json-schema@7.0.15)':
     dependencies:
-      '@apidevtools/json-schema-ref-parser': 15.5.1(@types/json-schema@7.0.15)
+      '@apidevtools/json-schema-ref-parser': 15.5.1(patch_hash=ca5f5de9c8ad987a918b0d6f20a673248dbee2e7f169701c4d6c633dc1b43153)(@types/json-schema@7.0.15)
       '@hyperjump/browser': 1.4.0
       '@hyperjump/json-schema': 1.17.7(@hyperjump/browser@1.4.0)
       '@offering-protocol/core': 0.3.0
-      '@offering-protocol/directory': 0.2.1
+      '@offering-protocol/directory': 0.2.2
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       http-cache-semantics: 4.2.0
@@ -3883,7 +3891,7 @@ snapshots:
       ajv-formats: 3.0.1(ajv@8.20.0)
       bcp-47: 2.1.1
 
-  '@offering-protocol/directory@0.2.1':
+  '@offering-protocol/directory@0.2.2':
     dependencies:
       '@offering-protocol/core': 0.3.0
 
@@ -4829,7 +4837,7 @@ snapshots:
 
   imurmurhash@0.1.4: {}
 
-  incur@0.4.19(patch_hash=aeae32ab87b3e46a5c59987af280484b29ad31f08a42eb18234f04f432e71dde):
+  incur@0.4.19(patch_hash=0b9fdf853853ff7ca9528795341eb495abb7eb086e1126eeaa81f99c4233541b):
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/server': 2.0.0-alpha.4
@@ -5243,7 +5251,7 @@ snapshots:
     dependencies:
       '@stripe/stripe-js': 9.9.0
       eventsource-parser: 3.1.0
-      incur: 0.4.19(patch_hash=aeae32ab87b3e46a5c59987af280484b29ad31f08a42eb18234f04f432e71dde)
+      incur: 0.4.19(patch_hash=0b9fdf853853ff7ca9528795341eb495abb7eb086e1126eeaa81f99c4233541b)
       ox: 0.14.33(typescript@5.9.3)(zod@4.4.3)
       viem: 2.55.10(typescript@5.9.3)(zod@4.4.3)
       zod: 4.4.3
@@ -5774,6 +5782,8 @@ snapshots:
   undici-types@7.18.2: {}
 
   undici@6.28.0: {}
+
+  undici@7.18.2: {}
 
   unist-util-stringify-position@4.0.0:
     dependencies:

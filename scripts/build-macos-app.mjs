@@ -70,6 +70,7 @@ run('pnpm', ['--filter', '@inflowpayai/inflow-core', 'build']);
 run(process.execPath, ['scripts/build-vault-peer-native.mjs']);
 signVaultPeerBuild();
 run('pnpm', ['--filter', '@inflowpayai/inflow', 'build:standalone']);
+run(process.execPath, ['scripts/verify-standalone-runtime.mjs']);
 
 mkdirSync(dirname(standaloneBundlePath), { recursive: true });
 copyFileSync(join(repoRoot, 'packages/cli/dist/cli.standalone.mjs'), standaloneBundlePath);

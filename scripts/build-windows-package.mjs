@@ -97,6 +97,7 @@ function buildExecutablePayload() {
   run(process.execPath, [tsupCli, '--config', 'tsup.standalone.config.ts'], {
     cwd: join(repoRoot, 'packages/cli'),
   });
+  run(process.execPath, ['scripts/verify-standalone-runtime.mjs']);
   copyArgon2Runtime();
   copyMcpRuntime();
   copyVaultPeerRuntime();

@@ -1,19 +1,20 @@
+diff --git a/dist/Cli.js b/dist/Cli.js
+index 1824430f9f3ef6281694c173c5ab995f8bc571ad..abecbd1aca63d5542b59e06666ab3f0224149b36 100644
 --- a/dist/Cli.js
 +++ b/dist/Cli.js
-@@ -1802,12 +1802,15 @@
+@@ -1802,12 +1802,15 @@ function extractBuiltinFlags(argv, options = {}) {
              format = 'json';
              formatExplicit = true;
          }
 -        else if (token === '--format' && argv[i + 1]) {
 -            if (!validFormats.has(argv[i + 1]))
--                throw new ParseError({
--                    message: `Invalid format: "${argv[i + 1]}". Expected one of: ${[...validFormats].join(', ')}`,
 +        else if (token === '--format') {
 +            const value = argv[i + 1];
 +            if (value === undefined)
 +                throw new ParseError({ message: 'Missing value for flag: --format' });
 +            if (!validFormats.has(value))
-+                throw new ParseError({
+                 throw new ParseError({
+-                    message: `Invalid format: "${argv[i + 1]}". Expected one of: ${[...validFormats].join(', ')}`,
 +                    message: `Invalid format: "${value}". Expected one of: ${[...validFormats].join(', ')}`,
                  });
 -            format = argv[i + 1];
@@ -21,9 +22,11 @@
              formatExplicit = true;
              i++;
          }
+diff --git a/dist/Formatter.js b/dist/Formatter.js
+index 43342243991d9d04ec1b67ae223454bdd0741a82..752bd9f6a0f5522d536c830e4b2c7511bccb5c43 100644
 --- a/dist/Formatter.js
 +++ b/dist/Formatter.js
-@@ -54,15 +54,22 @@
+@@ -54,15 +54,22 @@ function table(headers, rows) {
      const body = rows.map((r) => `| ${headers.map((_, i) => pad(r[i] ?? '', i)).join(' | ')} |`);
      return `${headerRow}\n${sep}\n${body.join('\n')}`;
  }
@@ -48,6 +51,8 @@
  }
  /** Formats a value as Markdown, recursing into nested objects. */
  function formatMarkdown(value, path = []) {
+diff --git a/dist/Help.d.ts b/dist/Help.d.ts
+index 87bac4745eb88aefdfc8b897fd6cd1f584683163..529b6be4b8032fdf1db90f71f06058dc3d8f64ba 100644
 --- a/dist/Help.d.ts
 +++ b/dist/Help.d.ts
 @@ -1,5 +1,10 @@
@@ -61,9 +66,11 @@
  /** Formats help text for a router CLI or command group. */
  export declare function formatRoot(name: string, options?: formatRoot.Options): string;
  export declare namespace formatRoot {
+diff --git a/dist/Help.js b/dist/Help.js
+index ad48d9ada2766ed57ca366a01f38df81f1d3a353..c3f120ed39ff7e82a8b47d1a19fe9b153410612d 100644
 --- a/dist/Help.js
 +++ b/dist/Help.js
-@@ -2,6 +2,11 @@
+@@ -2,6 +2,11 @@ import { z } from 'zod';
  import { builtinCommands } from './internal/command.js';
  import { toKebab } from './internal/helpers.js';
  import { defaultEnvSource } from './Parser.js';
@@ -75,7 +82,7 @@
  /** Formats help text for a router CLI or command group. */
  export function formatRoot(name, options = {}) {
      const { aliases, configFlag, description, globals, version, commands = [], root = false, } = options;
-@@ -290,6 +295,7 @@
+@@ -290,6 +295,7 @@ function globalOptionsLines(root = false, configFlag, globals) {
          }
      }
      const flags = [
@@ -83,9 +90,51 @@
          ...(configFlag
              ? [{ flag: `--${configFlag} <path>`, desc: 'Load JSON option defaults from a file' }]
              : []),
+diff --git a/dist/Mcp.js b/dist/Mcp.js
+index d916f16d0d3789a809d7a90d88ed6de7844708fd..ff7dafc4c8933df2d1e22ecda0b462c258b1c8d2 100644
 --- a/dist/Mcp.js
 +++ b/dist/Mcp.js
-@@ -69,18 +69,46 @@
+@@ -1,15 +1,13 @@
+ import { z } from 'zod';
++import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
+ import * as Command from './internal/command.js';
+ import { formatCtaBlock, renderCtaText } from './internal/cta.js';
+ import * as Json from './internal/json.js';
+ import * as Schema from './Schema.js';
+ /** Starts a stdio MCP server that exposes commands as tools. */
+ export async function serve(name, version, commands, options = {}) {
+-    // Lazy: only runs when actually serving MCP, so plain command runs don't pay for the SDK import.
+-    const stdio = importStdioModule();
+     const mcp = await import('@modelcontextprotocol/server');
+     const { fromJsonSchema, McpServer } = mcp;
+-    const StdioServerTransport = await importStdioServerTransport(mcp, stdio);
+     const server = new McpServer({ name, ...(options.title ? { title: options.title } : undefined), version }, options.instructions ? { instructions: options.instructions } : undefined);
+     registerTools(server, commands, {
+         env: options.env,
+@@ -26,21 +24,6 @@ export async function serve(name, version, commands, options = {}) {
+     const transport = new StdioServerTransport(input, output);
+     await server.connect(transport);
+ }
+-async function importStdioServerTransport(mcp, stdio) {
+-    const transport = mcp.StdioServerTransport;
+-    if (transport)
+-        return transport;
+-    const result = await stdio;
+-    if (result.error)
+-        throw result.error;
+-    return result.module.StdioServerTransport;
+-}
+-function importStdioModule() {
+-    return importModule('@modelcontextprotocol/server/stdio')
+-        .then((module) => ({ module }))
+-        .catch((error) => ({ error }));
+-}
+-const importModule = (specifier) => import(specifier);
+ /** @internal Executes a tool call and returns a CallToolResult. */
+ export async function callTool(tool, params, options = {}) {
+     const allMiddleware = [
+@@ -68,8 +51,28 @@ export async function callTool(tool, params, options = {}) {
+         const chunks = [];
          const progressToken = options.extra?.mcpReq?._meta?.progressToken;
          let i = 0;
 +        const iterator = result.stream[Symbol.asyncIterator]();
@@ -114,14 +163,7 @@
                  chunks.push(chunk);
                  if (progressToken !== undefined && options.sendNotification)
                      await options.sendNotification({
-                         method: 'notifications/progress',
-                         params: { progressToken, progress: ++i, message: Json.stringify(chunk) },
-                     });
-             }
-         }
-         catch (err) {
-             return {
-                 content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+@@ -84,6 +87,14 @@ export async function callTool(tool, params, options = {}) {
                  isError: true,
              };
          }
@@ -133,7 +175,10 @@
 +                catch { }
 +            }
 +        }
-@@ -130,6 +158,7 @@
+         return { content: [{ type: 'text', text: Json.stringify(chunks) }] };
+     }
+     if (!result.ok) {
+@@ -130,6 +141,7 @@ function registerDirectTool(server, tool, options) {
      const hasInput = Object.keys(mergedShape).length > 0;
      server.registerTool(tool.name, {
          ...(tool.description ? { description: tool.description } : undefined),
@@ -141,7 +186,7 @@
          ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
          ...(tool.outputSchema
              ? { outputSchema: options.fromJsonSchema(tool.outputSchema) }
-@@ -159,6 +188,7 @@
+@@ -159,6 +171,7 @@ function registerDiscoveryTools(server, tools, options) {
          return toolResult({
              tools: page.map((tool) => ({
                  name: tool.name,
@@ -149,7 +194,7 @@
                  ...(tool.description ? { description: tool.description } : undefined),
                  ...(tool.annotations ? { annotations: tool.annotations } : undefined),
              })),
-@@ -177,6 +207,7 @@
+@@ -177,6 +190,7 @@ function registerDiscoveryTools(server, tools, options) {
              return toolError(`Unknown tool: ${params.name}`);
          return toolResult({
              name: tool.name,
@@ -157,7 +202,7 @@
              ...(tool.description ? { description: tool.description } : undefined),
              inputSchema: tool.inputSchema,
              ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
-@@ -284,7 +315,8 @@
+@@ -284,7 +298,8 @@ function toolError(message) {
  export function collectTools(commands, prefix, parentMiddlewares = [], filter) {
      const tools = filterTools(collectToolEntries(commands, prefix, parentMiddlewares), filter);
      assertUniqueToolNames(tools);
@@ -167,7 +212,7 @@
  }
  function collectToolEntries(commands, prefix, parentMiddlewares = []) {
      const result = [];
-@@ -306,6 +338,7 @@
+@@ -306,6 +321,7 @@ function collectToolEntries(commands, prefix, parentMiddlewares = []) {
              const outputSchema = entry.output ? mcpOutputSchema(entry.output) : undefined;
              result.push({
                  name: mcp?.name ?? path.join('_'),
