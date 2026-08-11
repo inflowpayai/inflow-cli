@@ -1,6 +1,6 @@
 {
   "name": "@inflowpayai/inflow",
-  "version": "0.11.2",
+  "version": "0.11.3",
   "type": "module",
   "license": "MIT",
   "description": "InFlow - agentic discovery, onboarding, and payments from your machine.",

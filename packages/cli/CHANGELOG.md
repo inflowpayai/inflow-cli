@@ -1,5 +1,19 @@
 # @inflowpayai/inflow
 
+## 0.11.3
+
+### Patch Changes
+
+- [#110](https://github.com/inflowpayai/inflow-cli/pull/110)
+  [`8b8801b`](https://github.com/inflowpayai/inflow-cli/commit/8b8801bc08d99be2ed38a4f05b7e710043f5065e) Thanks
+  [@nkavian](https://github.com/nkavian)! - Bundle runtime module imports used by MCP and network transports, accept
+  empty directory suggestion results, and require the pinned Argon2 source when packaging Linux applications.
+
+- [#108](https://github.com/inflowpayai/inflow-cli/pull/108)
+  [`f43a58c`](https://github.com/inflowpayai/inflow-cli/commit/f43a58cc632bf60b79296e1626a62b03fd8f4f08) Thanks
+  [@nkavian](https://github.com/nkavian)! - Select Windows installers using the native host architecture under
+  PowerShell emulation and skip same-version MSI reconfiguration.
+
 ## 0.11.2
 
 ### Patch Changes
