@@ -17,6 +17,7 @@ import {
   reduceMppPay,
   runMppPayPipeline,
 } from '../../../src/flows/mpp-pay.js';
+import { DEFAULT_ACCEPT_PAYMENT_HEADER } from '../../../src/flows/mpp-shared.js';
 
 const SELLER = 'https://seller.test/api';
 const INFLOW = 'https://mpp.test';
@@ -128,6 +129,154 @@ describe('runMppPayPipeline', () => {
 
     expect(order).toEqual(['aep-then-payment-challenge', 'payment-created', 'paid-replay']);
     expect(terminal?.type).toBe('replayed');
+  });
+
+  it('injects a default Accept-Payment header and preserves the request body through replay', async () => {
+    const data = '{"order":1}';
+    const frames: Array<{
+      stage: 'probe' | 'replay';
+      headers: Record<string, string>;
+      data: string | undefined;
+    }> = [];
+    const request = (input: {
+      additionalAuthenticationHeaders?: Record<string, string>;
+      data?: string;
+      headers: Record<string, string>;
+      method: string;
+      url: string;
+    }) => {
+      frames.push({
+        stage: input.additionalAuthenticationHeaders === undefined ? 'probe' : 'replay',
+        headers: input.headers,
+        data: input.data,
+      });
+      if (input.additionalAuthenticationHeaders !== undefined) {
+        expect(input.additionalAuthenticationHeaders).toEqual({ Authorization: 'Payment CRED-ORDER' });
+        return Promise.resolve({
+          bytes: new Uint8Array(Buffer.from('paid')),
+          contentType: 'text/plain',
+          headers: new Headers(),
+          status: 200,
+        });
+      }
+      return Promise.resolve({
+        bytes: new Uint8Array(),
+        contentType: undefined,
+        headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(challenge()) }),
+        status: 402,
+      });
+    };
+    const client = {
+      createTransaction: () => {
+        return Promise.resolve({ state: 'ready', credential: 'CRED-ORDER', transactionId: 'tx-order' });
+      },
+    };
+
+    const terminal = (
+      await collect(
+        deps({
+          client: client as unknown as MppClient,
+          probeOptions: { method: 'POST', headers: {}, data },
+          sellerTransport: { request },
+        }),
+      )
+    ).at(-1);
+
+    expect(frames.map((frame) => frame.stage)).toEqual(['probe', 'replay']);
+    expect(frames.map((frame) => frame.data)).toEqual([data, data]);
+    expect(frames[0]?.headers['Accept-Payment']).toBe(DEFAULT_ACCEPT_PAYMENT_HEADER);
+    expect(frames[1]?.headers['Accept-Payment']).toBe(DEFAULT_ACCEPT_PAYMENT_HEADER);
+    expect(terminal?.type).toBe('replayed');
+  });
+
+  it('uses a caller-supplied lowercase Accept-Payment header and preserves it through replay', async () => {
+    const frames: Array<{ stage: 'probe' | 'replay'; headers: Record<string, string> }> = [];
+    const request = (input: {
+      additionalAuthenticationHeaders?: Record<string, string>;
+      headers: Record<string, string>;
+      method: string;
+      url: string;
+    }) => {
+      frames.push({
+        stage: input.additionalAuthenticationHeaders === undefined ? 'probe' : 'replay',
+        headers: input.headers,
+      });
+      if (input.additionalAuthenticationHeaders !== undefined) {
+        return Promise.resolve({
+          bytes: new Uint8Array(Buffer.from('paid')),
+          contentType: 'text/plain',
+          headers: new Headers(),
+          status: 200,
+        });
+      }
+      return Promise.resolve({
+        bytes: new Uint8Array(),
+        contentType: undefined,
+        headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(challenge()) }),
+        status: 402,
+      });
+    };
+    const client = {
+      createTransaction: () => {
+        return Promise.resolve({ state: 'ready', credential: 'CRED-ORDER', transactionId: 'tx-order' });
+      },
+    };
+
+    const terminal = (
+      await collect(
+        deps({
+          client: client as unknown as MppClient,
+          sellerTransport: { request },
+          probeOptions: { method: 'GET', headers: { 'accept-payment': 'tempo/charge' } },
+        }),
+      )
+    ).at(-1);
+
+    expect(frames[0]?.headers['accept-payment']).toBe('tempo/charge');
+    expect(frames[1]?.headers['accept-payment']).toBe('tempo/charge');
+    expect(terminal?.type).toBe('replayed');
+  });
+
+  it('narrows the injected header when a supported payment method filter is supplied', async () => {
+    const frames: Array<{ stage: 'probe' | 'replay'; headers: Record<string, string> }> = [];
+    const request = (input: {
+      additionalAuthenticationHeaders?: Record<string, string>;
+      headers: Record<string, string>;
+      method: string;
+      url: string;
+    }) => {
+      if (input.additionalAuthenticationHeaders === undefined) {
+        frames.push({ stage: 'probe', headers: input.headers });
+        return Promise.resolve({
+          bytes: new Uint8Array(),
+          contentType: undefined,
+          headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(challenge()) }),
+          status: 402,
+        });
+      }
+      frames.push({ stage: 'replay', headers: input.headers });
+      return Promise.resolve({
+        bytes: new Uint8Array(Buffer.from('paid')),
+        contentType: 'text/plain',
+        headers: new Headers(),
+        status: 200,
+      });
+    };
+    const client = {
+      createTransaction: () => {
+        return Promise.resolve({ state: 'ready', credential: 'CRED-ORDER', transactionId: 'tx-order' });
+      },
+    };
+
+    await collect(
+      deps({
+        client: client as unknown as MppClient,
+        paymentMethodFilter: 'tempo',
+        sellerTransport: { request },
+      }),
+    );
+
+    expect(frames[0]?.headers['Accept-Payment']).toBe('tempo/charge');
   });
 
   it('pays a Tempo challenge when selected by payment method', async () => {

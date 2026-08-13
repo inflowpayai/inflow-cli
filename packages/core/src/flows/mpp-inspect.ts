@@ -9,6 +9,7 @@ import {
   filterPayableChallenges,
   hasAnyChallengeFilter,
   INVALID_402_CODE,
+  resolveAcceptPaymentProbeOptions,
   isSuccessStatus,
   NO_FILTERED_MATCH_CODE,
   NO_INFLOW_MATCH_CODE,
@@ -113,9 +114,13 @@ export async function runMppInspectPipeline(
   deps: MppInspectPipelineDeps,
   emit: (event: MppInspectEvent) => void,
 ): Promise<void> {
+  const probeOptions = resolveAcceptPaymentProbeOptions(deps.probeOptions, {
+    paymentMethod: deps.paymentMethodFilter,
+    intent: deps.intentFilter,
+  });
   let probe: SellerProbeResult;
   try {
-    probe = await (deps.probe ?? sellerProbe)(deps.url, deps.probeOptions);
+    probe = await (deps.probe ?? sellerProbe)(deps.url, probeOptions);
   } catch (err) {
     if (err instanceof PaymentInspectionBlockedError) {
       emit({ type: 'blocked', result: err.blocked });
@@ -139,7 +144,7 @@ export async function runMppInspectPipeline(
       result: {
         outcome: 'no-payment-required',
         url: deps.url,
-        method: deps.probeOptions.method,
+        method: probeOptions.method,
         status: probe.status,
         contentType: probe.contentType,
         bodySizeBytes: probe.bytes.byteLength,
@@ -190,7 +195,7 @@ export async function runMppInspectPipeline(
     result: {
       outcome: 'challenges',
       url: deps.url,
-      method: deps.probeOptions.method,
+      method: probeOptions.method,
       realm,
       challenges: filtered.map(summarizeChallenge),
     },

@@ -1,4 +1,5 @@
-import { METHOD_INFLOW, METHOD_TEMPO, type MppChallenge } from '@inflowpayai/mpp';
+import { INTENT_CHARGE, METHOD_INFLOW, METHOD_TEMPO, type MppChallenge } from '@inflowpayai/mpp';
+import type { SellerProbeOptions } from '@inflowpayai/x402-buyer/probe';
 import { decodeChallengeRequest } from './mpp-decode.js';
 
 /** Error code emitted when a seller returns 402 but carries no `WWW-Authenticate: Payment` challenge header. */
@@ -27,6 +28,63 @@ export function isSuccessStatus(status: number): boolean {
 /** Keep only the challenges minted for methods the InFlow buyer can fulfil (`inflow` and `tempo`). */
 export function filterPayableChallenges(challenges: readonly MppChallenge[]): MppChallenge[] {
   return challenges.filter((challenge) => challenge.method === METHOD_INFLOW || challenge.method === METHOD_TEMPO);
+}
+
+const ACCEPT_PAYMENT_HEADER_NAME = 'accept-payment';
+const SUPPORTED_ACCEPT_PAYMENT_CAPABILITIES = [
+  { method: METHOD_INFLOW, intent: INTENT_CHARGE },
+  { method: METHOD_TEMPO, intent: INTENT_CHARGE },
+] as const;
+
+function formatAcceptPaymentCapability(capability: { method: string; intent: string }): string {
+  return `${capability.method}/${capability.intent}`;
+}
+
+export const DEFAULT_ACCEPT_PAYMENT_HEADER =
+  SUPPORTED_ACCEPT_PAYMENT_CAPABILITIES.map(formatAcceptPaymentCapability).join(', ');
+
+function normalizeCallerAcceptPaymentHeader(headers: Record<string, string>): Record<string, string> | undefined {
+  const entries = Object.entries(headers);
+  const acceptPaymentEntries = entries.filter(([name]) => name.toLowerCase() === ACCEPT_PAYMENT_HEADER_NAME);
+  const selected = acceptPaymentEntries.at(-1);
+  if (selected === undefined) return undefined;
+
+  const normalized = Object.fromEntries(entries.filter(([name]) => name.toLowerCase() !== ACCEPT_PAYMENT_HEADER_NAME));
+  normalized[selected[0]] = selected[1];
+  return normalized;
+}
+
+function resolveAcceptPaymentHeaderValue(
+  filters: { paymentMethod?: string | undefined; intent?: string | undefined } = {},
+): string {
+  const matching = SUPPORTED_ACCEPT_PAYMENT_CAPABILITIES.filter(
+    ({ method, intent }) =>
+      (filters.paymentMethod === undefined || method === filters.paymentMethod) &&
+      (filters.intent === undefined || intent === filters.intent),
+  );
+  return matching.length === 0 ? DEFAULT_ACCEPT_PAYMENT_HEADER : matching.map(formatAcceptPaymentCapability).join(', ');
+}
+
+export function resolveAcceptPaymentProbeOptions(
+  probeOptions: SellerProbeOptions,
+  filters: { paymentMethod?: string | undefined; intent?: string | undefined } = {},
+): SellerProbeOptions {
+  const callerHeaders = normalizeCallerAcceptPaymentHeader(probeOptions.headers);
+  if (callerHeaders !== undefined) {
+    return {
+      ...probeOptions,
+      // Caller values stay opaque so valid weighting and wildcard syntax can pass through unchanged.
+      headers: callerHeaders,
+    };
+  }
+
+  return {
+    ...probeOptions,
+    headers: {
+      ...probeOptions.headers,
+      'Accept-Payment': resolveAcceptPaymentHeaderValue(filters),
+    },
+  };
 }
 
 /**

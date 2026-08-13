@@ -1,11 +1,14 @@
 import { encode, type MppChallenge } from '@inflowpayai/mpp';
+import type { SellerProbeOptions } from '@inflowpayai/x402-buyer/probe';
 import { describe, expect, it } from 'vitest';
 import {
   buildNoFilteredMatchMessage,
+  DEFAULT_ACCEPT_PAYMENT_HEADER,
   filterChallenges,
   filterPayableChallenges,
   hasAnyChallengeFilter,
   isSuccessStatus,
+  resolveAcceptPaymentProbeOptions,
 } from '../../../src/flows/mpp-shared.js';
 
 function challenge(method: string): MppChallenge {
@@ -105,6 +108,57 @@ describe('hasAnyChallengeFilter', () => {
   it('is false for an empty filter set and true otherwise', () => {
     expect(hasAnyChallengeFilter({})).toBe(false);
     expect(hasAnyChallengeFilter({ rail: 'balance' })).toBe(true);
+  });
+});
+
+describe('resolveAcceptPaymentProbeOptions', () => {
+  const baseOptions = (headers: Record<string, string>): SellerProbeOptions => ({ method: 'GET', headers });
+
+  it('injects the default Accept-Payment pair list when none is supplied', () => {
+    const options = baseOptions({});
+    const out = resolveAcceptPaymentProbeOptions(options);
+    expect(out).toEqual({ method: 'GET', headers: { 'Accept-Payment': DEFAULT_ACCEPT_PAYMENT_HEADER } });
+    expect(out.headers).not.toBe(options.headers);
+  });
+
+  it('preserves caller-supplied Accept-Payment regardless of header casing', () => {
+    const out = resolveAcceptPaymentProbeOptions(baseOptions({ 'acCePt-PaYmEnT': 'tempo/charge' }));
+    expect(out).toEqual({ method: 'GET', headers: { 'acCePt-PaYmEnT': 'tempo/charge' } });
+  });
+
+  it('uses the last caller-supplied Accept-Payment value when header casing differs', () => {
+    const out = resolveAcceptPaymentProbeOptions(
+      baseOptions({ 'Accept-Payment': 'inflow/charge', existing: 'value', 'accept-payment': 'tempo/charge;q=0.8' }),
+    );
+    expect(out).toEqual({
+      method: 'GET',
+      headers: { existing: 'value', 'accept-payment': 'tempo/charge;q=0.8' },
+    });
+  });
+
+  it('narrows using either a method or intent filter', () => {
+    const outByMethod = resolveAcceptPaymentProbeOptions(baseOptions({}), { paymentMethod: 'inflow' });
+    const outByIntent = resolveAcceptPaymentProbeOptions(baseOptions({}), { intent: 'charge' });
+    expect(outByMethod.headers['Accept-Payment']).toBe('inflow/charge');
+    expect(outByIntent.headers['Accept-Payment']).toBe(DEFAULT_ACCEPT_PAYMENT_HEADER);
+  });
+
+  it('narrows to a safe supported pair when both payment method and intent are provided', () => {
+    const out = resolveAcceptPaymentProbeOptions(baseOptions({}), { paymentMethod: 'tempo', intent: 'charge' });
+    expect(out.headers['Accept-Payment']).toBe('tempo/charge');
+  });
+
+  it('falls back to default pairs when the requested filter pair is unsupported', () => {
+    const out = resolveAcceptPaymentProbeOptions(baseOptions({}), { paymentMethod: 'inflow', intent: 'refund' });
+    expect(out.headers['Accept-Payment']).toBe(DEFAULT_ACCEPT_PAYMENT_HEADER);
+  });
+
+  it('does not mutate the caller object', () => {
+    const headers = { existing: 'value' };
+    const options: SellerProbeOptions = { method: 'GET', headers };
+    const out = resolveAcceptPaymentProbeOptions(options);
+    expect(options).toEqual({ method: 'GET', headers: { existing: 'value' } });
+    expect(out.headers).not.toBe(headers);
   });
 });
 

@@ -5,7 +5,7 @@ import { fromFoundationRequirements } from '@inflowpayai/x402-buyer';
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { type DecodedChallenge, summarizeChallenge } from './mpp-decode.js';
 import { parseMppHeaderFromProbe } from './mpp-inspect.js';
-import { filterPayableChallenges } from './mpp-shared.js';
+import { filterPayableChallenges, resolveAcceptPaymentProbeOptions } from './mpp-shared.js';
 import { isSuccessStatus, UNEXPECTED_PROBE_STATUS_CODE } from './x402-shared.js';
 import { parseX402HeaderFromProbe } from './x402-inspect.js';
 
@@ -290,7 +290,8 @@ export async function runCombinedInspectPipeline(
   emit: (event: CombinedInspectEvent) => void,
 ): Promise<void> {
   const odpPromise = buildOdpSection(deps);
-  const openApiAep = await buildOpenApiAepSection(deps);
+  const resolvedProbeOptions = resolveAcceptPaymentProbeOptions(deps.probeOptions);
+  const openApiAep = await buildOpenApiAepSection({ ...deps, probeOptions: resolvedProbeOptions });
   if (openApiAep.section !== undefined) {
     if (openApiAep.probe !== undefined) {
       emit({
@@ -298,7 +299,7 @@ export async function runCombinedInspectPipeline(
         result: {
           outcome: 'inspected',
           url: deps.url,
-          method: deps.probeOptions.method,
+          method: resolvedProbeOptions.method,
           status: openApiAep.probe.status,
           odp: await odpPromise,
           aep: openApiAep.section,
@@ -313,7 +314,7 @@ export async function runCombinedInspectPipeline(
       result: {
         outcome: 'inspected',
         url: deps.url,
-        method: deps.probeOptions.method,
+        method: resolvedProbeOptions.method,
         odp: await odpPromise,
         aep: openApiAep.section,
         mpp: { kind: 'absent' },
@@ -325,7 +326,7 @@ export async function runCombinedInspectPipeline(
 
   let probe: SellerProbeResult;
   try {
-    probe = await sellerProbe(deps.url, deps.probeOptions);
+    probe = await sellerProbe(deps.url, resolvedProbeOptions);
   } catch (err) {
     emit({ type: 'errored', code: 'INSPECT_FAILED', message: err instanceof Error ? err.message : String(err) });
     return;
@@ -347,7 +348,7 @@ export async function runCombinedInspectPipeline(
       result: {
         outcome: 'no-payment-required',
         url: deps.url,
-        method: deps.probeOptions.method,
+        method: resolvedProbeOptions.method,
         status: probe.status,
         contentType: probe.contentType,
         bodySizeBytes: probe.bytes.byteLength,
@@ -363,7 +364,7 @@ export async function runCombinedInspectPipeline(
     result: {
       outcome: 'inspected',
       url: deps.url,
-      method: deps.probeOptions.method,
+      method: resolvedProbeOptions.method,
       status: probe.status,
       odp: await odpPromise,
       aep,
