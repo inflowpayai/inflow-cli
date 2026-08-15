@@ -1,5 +1,5 @@
 ---
-version: 0.11.3
+version: 0.12.0
 name: agentic-discovery
 description: Discover Services and products through InFlow using the Offering Discovery Protocol. Use when an agent needs to search the directory, inspect a Service's supported catalog operations, browse Collections, find Offerings, inspect full product details, or resolve an Action before enrollment or payment.
 allowed-tools: ['Bash(inflow:*)', 'Bash(brew:*)', 'Bash(curl:*)']

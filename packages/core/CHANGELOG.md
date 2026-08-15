@@ -1,5 +1,19 @@
 # @inflowpayai/inflow-core
 
+## 0.7.0
+
+### Minor Changes
+
+- [#114](https://github.com/inflowpayai/inflow-cli/pull/114)
+  [`98c94aa`](https://github.com/inflowpayai/inflow-cli/commit/98c94aa2731c53629d7422b2a7343bf7d051abe1) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add MPP subscription activation and protocol-neutral subscription management
+  commands. Display recurring terms before approval, select among multiple subscription options with stable option
+  identifiers, and provide list, get, fetch, and cancel commands. Each fetch obtains a fresh short-lived authorization
+  from InFlow; no standing subscription credential is stored in the local vault. Subscription output includes active,
+  past-due, expired, cancelled, revoked, pending, and failed lifecycle states plus the next scheduled billing attempt.
+  Subscription output identifies the seller by name and presents the seller website as a hostname in human-readable CLI
+  tables while retaining the complete website URL in structured output.
+
 ## 0.6.3
 
 ### Patch Changes
