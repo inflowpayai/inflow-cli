@@ -8,6 +8,7 @@ import {
   reduceCombinedInspect,
   runCombinedInspectPipeline,
 } from '../../../src/flows/combined-inspect.js';
+import { DEFAULT_ACCEPT_PAYMENT_HEADER } from '../../../src/flows/mpp-shared.js';
 
 const URL = 'https://seller.test/api';
 
@@ -92,6 +93,29 @@ const odpInspect = {
 } satisfies ServiceInspection;
 
 describe('runCombinedInspectPipeline', () => {
+  async function collectWithHeaders(
+    probeHeaders: Record<string, string>,
+    customFetch?: (
+      input: Parameters<typeof globalThis.fetch>[0],
+      init: Parameters<typeof globalThis.fetch>[1],
+    ) => Promise<Response>,
+  ): Promise<Headers | undefined> {
+    let observed: Headers | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      (input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1]) => {
+        observed = init?.headers instanceof Headers ? init.headers : new Headers(init?.headers);
+        const response =
+          customFetch === undefined ? new Response('payment required', { status: 200 }) : customFetch(input, init);
+        return Promise.resolve(response);
+      },
+    );
+    await runCombinedInspectPipeline(
+      { probeOptions: { method: 'GET', headers: probeHeaders }, url: URL },
+      () => undefined,
+    );
+    return observed;
+  }
+
   it('includes independent ODP inspection without changing the resource probe', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('hi', { status: 200 }));
     const events: CombinedInspectEvent[] = [];
@@ -174,6 +198,11 @@ describe('runCombinedInspectPipeline', () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(authenticatedProbe).toHaveBeenCalledOnce();
+    expect(authenticatedProbe).toHaveBeenCalledWith(aepInspect, {
+      url: URL,
+      method: 'GET',
+      headers: { 'Accept-Payment': DEFAULT_ACCEPT_PAYMENT_HEADER },
+    });
     expect(events[0]?.type).toBe('inspected');
     if (events[0]?.type !== 'inspected') return;
     expect(events[0].result.aep.kind).toBe('openapi');
@@ -407,6 +436,30 @@ describe('runCombinedInspectPipeline', () => {
     const [event] = await collect();
     expect(event?.type).toBe('errored');
     if (event?.type === 'errored') expect(event.code).toBe('INSPECT_FAILED');
+  });
+
+  it('injects the default Accept-Payment header when probing with no caller header', async () => {
+    const observed = await collectWithHeaders({}, () =>
+      Promise.resolve(
+        new Response('payment required', {
+          status: 402,
+          headers: { 'WWW-Authenticate': renderChallengeHeader(mppChallenge()) },
+        }),
+      ),
+    );
+    expect(observed?.get('accept-payment')).toBe(DEFAULT_ACCEPT_PAYMENT_HEADER);
+  });
+
+  it('preserves a caller-supplied lowercase Accept-Payment header on probe', async () => {
+    const observed = await collectWithHeaders({ 'accept-payment': 'tempo/charge' }, () =>
+      Promise.resolve(
+        new Response('payment required', {
+          status: 402,
+          headers: { 'WWW-Authenticate': renderChallengeHeader(mppChallenge('tempo')) },
+        }),
+      ),
+    );
+    expect(observed?.get('accept-payment')).toBe('tempo/charge');
   });
 });
 

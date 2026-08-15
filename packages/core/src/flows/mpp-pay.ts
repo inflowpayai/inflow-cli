@@ -24,6 +24,7 @@ import {
   filterChallenges,
   filterPayableChallenges,
   hasAnyChallengeFilter,
+  resolveAcceptPaymentProbeOptions,
   INVALID_402_CODE,
   isSuccessStatus,
   NO_FILTERED_MATCH_CODE,
@@ -239,7 +240,11 @@ async function resolveTransaction(
  */
 export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: MppPayEvent) => void): Promise<void> {
   try {
-    const probe = await sellerRequest(deps.sellerTransport, { url: deps.url, ...deps.probeOptions });
+    const probeOptions = resolveAcceptPaymentProbeOptions(deps.probeOptions, {
+      paymentMethod: deps.paymentMethodFilter,
+      intent: deps.intentFilter,
+    });
+    const probe = await sellerRequest(deps.sellerTransport, { url: deps.url, ...probeOptions });
     if (probe.status !== 402) {
       if (!isSuccessStatus(probe.status)) {
         emit({
@@ -255,7 +260,7 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
         result: {
           outcome: 'no-payment-required',
           url: deps.url,
-          method: deps.probeOptions.method,
+          method: probeOptions.method,
           status: probe.status,
           contentType: probe.contentType,
           ...attachment,
@@ -376,10 +381,10 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
     const credential = resolved.credential;
     const replay = await sellerRequest(deps.sellerTransport, {
       url: deps.url,
-      method: deps.probeOptions.method,
-      headers: deps.probeOptions.headers,
+      method: probeOptions.method,
+      headers: probeOptions.headers,
       additionalAuthenticationHeaders: { [HEADERS.AUTHORIZATION]: `${SCHEME_PAYMENT} ${credential}` },
-      ...(deps.probeOptions.data !== undefined ? { data: deps.probeOptions.data } : {}),
+      ...(probeOptions.data !== undefined ? { data: probeOptions.data } : {}),
     });
     const attachment = await buildBodyAttachment(replay.bytes, deps.showBody, deps.outputFile);
 
@@ -389,7 +394,7 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
         result: {
           outcome: 'seller-rejected',
           url: deps.url,
-          method: deps.probeOptions.method,
+          method: probeOptions.method,
           transactionId: createdFrame.transactionId,
           challengeId: challenge.id,
           responseStatus: replay.status,
@@ -406,7 +411,7 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
       result: {
         outcome: 'paid',
         url: deps.url,
-        method: deps.probeOptions.method,
+        method: probeOptions.method,
         transactionId: createdFrame.transactionId,
         challengeId: challenge.id,
         intent: challenge.intent,

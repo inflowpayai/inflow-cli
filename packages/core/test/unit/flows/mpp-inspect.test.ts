@@ -10,6 +10,7 @@ import {
   reduceMppInspect,
   runMppInspectPipeline,
 } from '../../../src/index.js';
+import { DEFAULT_ACCEPT_PAYMENT_HEADER } from '../../../src/flows/mpp-shared.js';
 
 const SELLER = 'https://seller.test/api';
 const server = setupServer();
@@ -61,6 +62,41 @@ describe('runMppInspectPipeline', () => {
       expect(event.result.challenges[0]?.amount).toBe('10');
       expect(event.result.challenges[0]?.currency).toBe('USDC');
     }
+  });
+
+  it('injects the default Accept-Payment header when probing and decoding MPP', async () => {
+    let headers: Record<string, string> | undefined;
+    const [event] = await collect({
+      probe: (_url, options) => {
+        headers = options.headers;
+        return Promise.resolve({
+          bytes: new Uint8Array(),
+          contentType: undefined,
+          headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(challenge()) }),
+          status: 402,
+        });
+      },
+    });
+    expect(event?.type).toBe('challenges');
+    expect(headers?.['Accept-Payment']).toBe(DEFAULT_ACCEPT_PAYMENT_HEADER);
+  });
+
+  it('keeps an explicitly supplied lower-case Accept-Payment header on probe', async () => {
+    let headers: Record<string, string> | undefined;
+    const [event] = await collect({
+      probeOptions: { method: 'GET', headers: { 'accept-payment': 'tempo/charge' } },
+      probe: (_url, options) => {
+        headers = options.headers;
+        return Promise.resolve({
+          bytes: new Uint8Array(),
+          contentType: undefined,
+          headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(challenge('tempo')) }),
+          status: 402,
+        });
+      },
+    });
+    expect(event?.type).toBe('challenges');
+    expect(headers?.['accept-payment']).toBe('tempo/charge');
   });
 
   it('parses Tempo challenges from a 402', async () => {
