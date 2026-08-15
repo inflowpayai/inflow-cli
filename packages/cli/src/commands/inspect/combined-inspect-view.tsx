@@ -3,7 +3,6 @@ import {
   type CombinedInspectPhase,
   type CombinedInspectPipelineDeps,
   type CombinedInspectResult,
-  type DecodedChallenge,
   type AepSection,
   type MppSection,
   type OdpSection,
@@ -19,23 +18,12 @@ import { useEffect, useReducer } from 'react';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { Table, type TableColumn } from '../../utils/table.js';
 import { AepDetailsTable } from '../aep/views.js';
+import { MppChallengePresentation } from '../mpp/challenge-presentation.js';
 import { OdpDetailsTable } from '../odp/service.js';
 
 function orDash(value: string | undefined): string {
   return value === undefined || value === '' ? '—' : value;
 }
-
-/**
- * Triage column set for the combined view — only the decision-relevant fields. MPP carries a reliable human `amount`
- * and `currency` symbol, so both are shown.
- */
-const MPP_TRIAGE_COLUMNS: ReadonlyArray<TableColumn<DecodedChallenge>> = [
-  { header: 'Method', cell: (c) => c.method },
-  { header: 'Intent', cell: (c) => c.intent },
-  { header: 'Amount', cell: (c) => orDash(c.amount) },
-  { header: 'Currency', cell: (c) => orDash(c.currency) },
-  { header: 'Rail', cell: (c) => orDash(c.rail) },
-];
 
 /**
  * Triage column set for x402. `Amount` is the raw atomic units the seller advertised (no decimals on the wire); `Asset`
@@ -51,14 +39,14 @@ const X402_TRIAGE_COLUMNS: ReadonlyArray<TableColumn<PaymentRequirements>> = [
 ];
 
 interface ProtocolSummaryRow {
-  protocol: string;
+  capability: string;
   serviceCapability: string;
   currentRequest: string;
   evidence: string;
 }
 
 const PROTOCOL_SUMMARY_COLUMNS: ReadonlyArray<TableColumn<ProtocolSummaryRow>> = [
-  { header: 'Protocol', cell: (row) => row.protocol },
+  { header: 'Capability', cell: (row) => row.capability },
   { header: 'Service capability', cell: (row) => row.serviceCapability },
   { header: 'Current request', cell: (row) => row.currentRequest },
   { header: 'Evidence', cell: (row) => row.evidence },
@@ -76,7 +64,7 @@ function aepSummary(section: AepSection, status: number | undefined): ProtocolSu
   const http = responseEvidence(status);
   if (section.kind === 'absent') {
     return {
-      protocol: 'AEP',
+      capability: 'AEP',
       serviceCapability: 'Not advertised',
       currentRequest: 'Authentication not required',
       evidence: http ?? 'Live probe',
@@ -84,7 +72,7 @@ function aepSummary(section: AepSection, status: number | undefined): ProtocolSu
   }
   if (section.kind === 'blocked') {
     return {
-      protocol: 'AEP',
+      capability: 'AEP',
       serviceCapability: 'Supported',
       currentRequest: 'Authentication required',
       evidence: 'AEP OpenAPI',
@@ -92,7 +80,7 @@ function aepSummary(section: AepSection, status: number | undefined): ProtocolSu
   }
   if (section.kind === 'openapi') {
     return {
-      protocol: 'AEP',
+      capability: 'AEP',
       serviceCapability: 'Supported',
       currentRequest: section.policy.state === 'required' ? 'Authentication required' : 'Authentication not required',
       evidence: evidence('AEP OpenAPI', http),
@@ -100,7 +88,7 @@ function aepSummary(section: AepSection, status: number | undefined): ProtocolSu
   }
   if (section.kind === 'discovered') {
     return {
-      protocol: 'AEP',
+      capability: 'AEP',
       serviceCapability: 'Supported',
       currentRequest: 'Authentication not required',
       evidence: evidence('AEP', http),
@@ -108,17 +96,42 @@ function aepSummary(section: AepSection, status: number | undefined): ProtocolSu
   }
   if (section.kind === 'service') {
     return {
-      protocol: 'AEP',
+      capability: 'AEP',
       serviceCapability: 'Supported',
       currentRequest: 'Authentication required',
       evidence: evidence('AEP challenge', http),
     };
   }
   return {
-    protocol: 'AEP',
+    capability: 'AEP',
     serviceCapability: 'Detected; inspection failed',
     currentRequest: 'Authentication required',
     evidence: evidence('AEP challenge', http),
+  };
+}
+
+function odpSummary(section: OdpSection): ProtocolSummaryRow {
+  if (section.kind === 'service') {
+    return {
+      capability: 'ODP',
+      serviceCapability: 'Supported',
+      currentRequest: 'Catalog available',
+      evidence: 'ODP',
+    };
+  }
+  if (section.kind === 'error') {
+    return {
+      capability: 'ODP',
+      serviceCapability: 'Inspection failed',
+      currentRequest: 'Catalog unknown',
+      evidence: 'ODP inspection',
+    };
+  }
+  return {
+    capability: 'ODP',
+    serviceCapability: 'Not advertised',
+    currentRequest: 'Catalog unavailable',
+    evidence: 'ODP inspection',
   };
 }
 
@@ -147,7 +160,7 @@ function paymentSummary(
   else if (section.kind === 'none-inflow') currentRequest = 'Payment required; unsupported method';
   else currentRequest = 'Payment required';
   return {
-    protocol,
+    capability: protocol,
     serviceCapability: odpAdvertised || liveAdvertised ? 'Supported' : 'Not advertised',
     currentRequest,
     evidence: evidence(
@@ -160,6 +173,7 @@ function paymentSummary(
 function protocolSummaryRows(result: CombinedInspectResult | CombinedInspectNoPayment): ProtocolSummaryRow[] {
   const status = result.status;
   return [
+    odpSummary(result.odp),
     aepSummary(result.aep, status),
     paymentSummary('MPP', result.odp, result.aep, result.outcome === 'inspected' ? result.mpp : undefined, status),
     paymentSummary('x402', result.odp, result.aep, result.outcome === 'inspected' ? result.x402 : undefined, status),
@@ -172,25 +186,15 @@ const ProtocolSummaryTable: React.FC<{ result: CombinedInspectResult | CombinedI
 
 const HttpRequirementsHeader: React.FC<{
   result: CombinedInspectResult | CombinedInspectNoPayment;
-}> = ({ result }) => {
-  const detected = detectedProtocols(
-    result.odp,
-    result.aep,
-    result.outcome === 'inspected' ? result.mpp : { kind: 'absent' },
-    result.outcome === 'inspected' ? result.x402 : { kind: 'absent' },
-  );
-  return (
-    <Text>
-      <Text bold>HTTP requirements</Text>
-      {' for '}
-      <Text color="cyan">{result.url}</Text>
-      {'  ·  '}
-      <Text dimColor>{`detected: ${detected.length > 0 ? detected.join(', ') : 'none'}`}</Text>
-    </Text>
-  );
-};
+}> = ({ result }) => (
+  <Text>
+    <Text bold>HTTP requirements</Text>
+    {' for '}
+    <Text color="cyan">{result.url}</Text>
+  </Text>
+);
 
-/** Protocols with at least one usable entry — drives the `detected:` summary and the agent frame. */
+/** Protocols with at least one usable entry in the structured agent output. */
 export function detectedProtocols(odp: OdpSection, aep: AepSection, mpp: MppSection, x402: X402Section): string[] {
   const out: string[] = [];
   if (odp.kind === 'service') out.push('odp');
@@ -204,7 +208,7 @@ const OdpSectionView: React.FC<{ section: OdpSection }> = ({ section }) => {
   if (section.kind === 'absent') {
     return (
       <Text>
-        <Text bold>── ODP ──</Text> <Text dimColor>not advertised</Text>
+        <Text bold>── ODP ──</Text> <Text dimColor>Service catalog not available.</Text>
       </Text>
     );
   }
@@ -348,7 +352,7 @@ const MppSectionView: React.FC<{ section: MppSection }> = ({ section }) => {
         {'  ·  '}
         <Text dimColor>{`${String(count)} challenge${count === 1 ? '' : 's'}`}</Text>
       </Text>
-      <Table columns={MPP_TRIAGE_COLUMNS} rows={[...section.challenges]} />
+      <MppChallengePresentation challenges={section.challenges} />
     </Box>
   );
 };
@@ -429,15 +433,19 @@ export const CombinedInspectView: React.FC<CombinedInspectViewProps> = ({ url, m
       <Box flexDirection="column">
         <HttpRequirementsHeader result={result} />
         <Box marginTop={1} flexDirection="column">
-          <Text bold>Protocol summary</Text>
+          <Text bold>Capability summary</Text>
           <ProtocolSummaryTable result={result} />
         </Box>
-        <Box marginTop={1}>
-          <OdpSectionView section={result.odp} />
-        </Box>
-        <Box marginTop={1}>
-          <AepSectionView section={result.aep} />
-        </Box>
+        {result.odp.kind !== 'absent' && (
+          <Box marginTop={1}>
+            <OdpSectionView section={result.odp} />
+          </Box>
+        )}
+        {result.aep.kind !== 'absent' && (
+          <Box marginTop={1}>
+            <AepSectionView section={result.aep} />
+          </Box>
+        )}
       </Box>
     );
   }
@@ -456,27 +464,29 @@ export const CombinedInspectView: React.FC<CombinedInspectViewProps> = ({ url, m
     <Box flexDirection="column">
       <HttpRequirementsHeader result={result} />
       <Box marginTop={1} flexDirection="column">
-        <Text bold>Protocol summary</Text>
+        <Text bold>Capability summary</Text>
         <ProtocolSummaryTable result={result} />
       </Box>
-      <Box marginTop={1}>
-        <OdpSectionView section={result.odp} />
-      </Box>
-      <Box marginTop={1}>
-        <AepSectionView section={result.aep} />
-      </Box>
-      <Box marginTop={1}>
-        <MppSectionView section={result.mpp} />
-      </Box>
-      <Box marginTop={1}>
-        <X402SectionView section={result.x402} />
-      </Box>
-      <Box marginTop={1}>
-        <Text dimColor>
-          Full detail: `inflow odp inspect` / `inflow aep inspect` / `inflow mpp inspect` / `inflow x402 inspect`, or
-          --format json.
-        </Text>
-      </Box>
+      {result.odp.kind !== 'absent' && (
+        <Box marginTop={1}>
+          <OdpSectionView section={result.odp} />
+        </Box>
+      )}
+      {result.aep.kind !== 'absent' && (
+        <Box marginTop={1}>
+          <AepSectionView section={result.aep} />
+        </Box>
+      )}
+      {result.mpp.kind !== 'absent' && (
+        <Box marginTop={1}>
+          <MppSectionView section={result.mpp} />
+        </Box>
+      )}
+      {result.x402.kind !== 'absent' && (
+        <Box marginTop={1}>
+          <X402SectionView section={result.x402} />
+        </Box>
+      )}
     </Box>
   );
 };

@@ -115,7 +115,7 @@ function buildIdentityFiles(): string[] {
     resolve(repoRoot, 'packages/cli/package.json'),
     resolve(repoRoot, 'packages/cli/tsup.config.ts'),
     resolve(repoRoot, 'packages/cli/tsup.standalone.config.ts'),
-    resolve(repoRoot, 'patches/@apidevtools__json-schema-ref-parser@15.5.1.patch'),
+    resolve(repoRoot, 'patches/@apidevtools__json-schema-ref-parser@15.5.2.patch'),
     resolve(repoRoot, 'patches/incur@0.4.19.patch'),
     ...existingSourceFiles(resolve(repoRoot, 'packages/core/native')),
     ...sourceFiles(resolve(repoRoot, 'packages/core/src')),

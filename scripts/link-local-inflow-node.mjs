@@ -18,6 +18,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { setAllowUnusedPatches } from './local-link-workspace.mjs';
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WORKSPACE_YAML = path.join(REPO_ROOT, 'pnpm-workspace.yaml');
 const INFLOW_LINKED = ['@inflowpayai/x402', '@inflowpayai/x402-buyer', '@inflowpayai/mpp', '@inflowpayai/mpp-buyer'];
@@ -198,6 +200,7 @@ await assertCheckout(aepNodePath, AEP_LINKED, 'AEP_NODE');
 await assertCheckout(odpNodePath, ODP_LINKED, 'ODP_NODE');
 await clearLocalPackageReferences(REPO_ROOT, LINKED);
 await clearLocalPackageReferences(inflowNodePath, INFLOW_NODE_AEP_LINKED);
+await setAllowUnusedPatches(WORKSPACE_YAML, true);
 const cliChanged = await writeOverrides(REPO_ROOT, inflowNodePath, aepNodePath, odpNodePath, {
   aep: AEP_LINKED,
   inflow: INFLOW_LINKED,

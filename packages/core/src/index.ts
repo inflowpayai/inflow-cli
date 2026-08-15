@@ -8,6 +8,7 @@
  *   inflow.user              IUser              — retrieve() (raw) + get() (agent-projected)
  *   inflow.balances          IBalanceResource   — list()
  *   inflow.depositAddresses  IDepositAddressResource — list()
+ *   inflow.subscriptions     ISubscriptionResource — authorize() / list() / get() / cancel()
  *   inflow.x402              IX402              — client() (raw buyer) + pay/fetch/status/cancel/inspect/supported
  *   inflow.odp               IOdpResource        — directory search, Service inspection/navigation, federated discovery
  *
@@ -108,6 +109,8 @@ export type {
   IAuthResource,
   IBalanceResource,
   IDepositAddressResource,
+  ISubscriptionResource,
+  SubscriptionListOptions,
   IUserResource,
 } from './resources/interfaces.js';
 
@@ -115,6 +118,7 @@ export type {
 export { AuthResource } from './resources/auth.js';
 export { BalanceResource } from './resources/balance.js';
 export { DepositAddressResource } from './resources/deposit-address.js';
+export { SubscriptionResource } from './resources/subscription.js';
 export { UserResource } from './resources/user.js';
 
 /* Session, storage, sanitization, polling generic ------------------------- */

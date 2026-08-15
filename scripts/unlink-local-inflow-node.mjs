@@ -13,6 +13,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { setAllowUnusedPatches } from './local-link-workspace.mjs';
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_PKG_JSON = path.join(REPO_ROOT, 'package.json');
 const WORKSPACE_YAML = path.join(REPO_ROOT, 'pnpm-workspace.yaml');
@@ -155,8 +157,9 @@ async function stripFromPackageJson() {
 const { changed: yamlChanged, reverted, kept } = await revertWorkspaceYaml();
 const pkgChanged = await stripFromPackageJson();
 const inflowNodeChanged = await removeInflowNodeOverrides();
+const patchSettingChanged = await setAllowUnusedPatches(WORKSPACE_YAML, false);
 
-if (!yamlChanged && !pkgChanged) {
+if (!yamlChanged && !pkgChanged && !patchSettingChanged) {
   process.stdout.write('unlink-local-inflow-node: no published-package link overrides present; nothing to revert.\n');
 } else {
   process.stdout.write(

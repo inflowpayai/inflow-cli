@@ -49,3 +49,43 @@ export interface DepositAddresses {
   configured: ConfiguredDepositAddress[];
   unconfigured: UnconfiguredDepositAddress[];
 }
+
+export type SubscriptionStatus = 'ACTIVE' | 'CANCELLED' | 'EXPIRED' | 'FAILED' | 'PAST_DUE' | 'PENDING' | 'REVOKED';
+
+export type SubscriptionPeriod = 'minute' | 'hour' | 'day' | 'week' | 'month' | 'quarter' | 'year';
+
+export interface Subscription {
+  amount: string;
+  billingAnchor: string;
+  buyerId?: string;
+  cancelled?: string;
+  created: string;
+  currency: string;
+  externalId?: string;
+  failed?: string;
+  lastChargedPeriod: number;
+  nextBillingDate?: string;
+  pastDue?: string;
+  periodCount: number;
+  period0Amount: string;
+  periodUnit: SubscriptionPeriod;
+  sellerId?: string;
+  sellerName?: string;
+  sellerWebsite?: string;
+  status: SubscriptionStatus;
+  subscriptionExpires: string;
+  subscriptionId: string;
+  transactionType: string;
+  updated: string;
+}
+
+export interface PagedSubscriptions {
+  count: number;
+  data: Subscription[];
+  total: number;
+}
+
+export interface SubscriptionAuthorization {
+  credential: string;
+  expires: string;
+}

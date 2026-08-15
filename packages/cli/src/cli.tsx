@@ -21,6 +21,7 @@ import { createDepositAddressesCli } from './commands/deposit-addresses/index.js
 import { createInspectCommand } from './commands/inspect/index.js';
 import { createMppCli } from './commands/mpp/index.js';
 import { createOdpCli } from './commands/odp/index.js';
+import { createSubscriptionsCli } from './commands/subscriptions/index.js';
 import {
   createVaultCli,
   ensureLocalVaultDaemon,
@@ -319,6 +320,7 @@ async function main(): Promise<void> {
   );
   cli.command(createBalancesCli(inflow.balances, authStorage, inflow));
   cli.command(createDepositAddressesCli(inflow.depositAddresses, authStorage, inflow));
+  cli.command(createSubscriptionsCli(inflow.subscriptions, authStorage, inflow));
   cli.command(createVaultCli(vaultOptions));
   cli.command(createX402Cli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createMppCli(inflow, authStorage, resolvedApiBaseUrl));

@@ -216,9 +216,9 @@ and recovery procedures.
   render shell over `inflow-core`. See [`packages/cli/README.md`](./packages/cli/README.md) for the full command
   reference.
 - `@inflowpayai/inflow-core` (`packages/core`) — the headless InFlow client behind the binary. One augmented handle per
-  command group (`inflow.auth`, `inflow.user`, `inflow.balances`, `inflow.depositAddresses`, `inflow.x402`,
-  `inflow.mpp`) carrying both protocol primitives and the command-shaped operations, plus the helpers (sanitization,
-  polling, seller-probe) that make both work. Workspace-internal today; see
+  command group (`inflow.auth`, `inflow.user`, `inflow.balances`, `inflow.depositAddresses`, `inflow.subscriptions`,
+  `inflow.x402`, `inflow.mpp`) carrying both protocol primitives and the command-shaped operations, plus the helpers
+  (sanitization, polling, seller-probe) that make both work. Workspace-internal today; see
   [`packages/core/examples/`](./packages/core/examples/) for runnable scripts.
 
 ## Repository

@@ -57,6 +57,7 @@ export interface MppFetchInput {
   showBody: boolean;
   outputFile?: string;
   sellerTransport?: SellerRequestTransport;
+  credential?: string;
 }
 
 export interface MppFetchRun {
@@ -68,6 +69,9 @@ function failedMessage(response: MppTransactionResponse): string {
 }
 
 async function resolveReady(input: MppFetchInput): Promise<MppTransactionResponse | { error: MppFetchEvent }> {
+  if (input.credential !== undefined) {
+    return { state: 'ready', transactionId: input.transactionId, credential: input.credential };
+  }
   if (input.interval <= 0) {
     const snapshot = await input.client.getTransaction(input.transactionId);
     if (snapshot.state === 'ready') return snapshot;

@@ -16,6 +16,7 @@ The package exposes three things:
      `updated`).
    - `inflow.balances` (`IBalanceResource`) — `list()`.
    - `inflow.depositAddresses` (`IDepositAddressResource`) — `list()`.
+   - `inflow.subscriptions` (`ISubscriptionResource`) — `authorize()`, `list()`, `get()`, and `cancel()`.
    - `inflow.x402` (`IX402`) — `client()` (lazy buyer client) plus `pay` / `status` / `cancel` / `inspect` /
      `supported`.
    - `inflow.mpp` (`IMpp`) — `client()` (lazy `MppClient` for MPP, the Machine Payments Protocol, from

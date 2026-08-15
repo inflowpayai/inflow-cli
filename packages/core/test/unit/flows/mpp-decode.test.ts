@@ -75,6 +75,30 @@ describe('summarizeChallenge', () => {
     expect(out).not.toHaveProperty('chainId');
   });
 
+  it('projects recurring consent terms from a subscription challenge', () => {
+    const out = summarizeChallenge({
+      ...inflowChallenge(),
+      intent: 'subscription',
+      request: encode({
+        amount: '10',
+        currency: 'USD',
+        externalId: 'seller-plan',
+        methodDetails: { rail: 'balance' },
+        periodCount: 1,
+        periodUnit: 'month',
+        subscriptionExpires: '2027-08-01T00:00:00Z',
+      }),
+    });
+    expect(out).toMatchObject({
+      externalId: 'seller-plan',
+      periodCount: 1,
+      periodUnit: 'month',
+      subscriptionExpires: '2027-08-01T00:00:00Z',
+    });
+    expect(out.optionId).toHaveLength(12);
+    expect(out.optionFingerprint).toHaveLength(64);
+  });
+
   it('surfaces the opaque correlation blob when the challenge carries one', () => {
     const out = summarizeChallenge({ ...inflowChallenge(), opaque: 'eyJpc3MiOiJpbmZsb3cifQ' });
     expect(out.opaque).toBe('eyJpc3MiOiJpbmZsb3cifQ');

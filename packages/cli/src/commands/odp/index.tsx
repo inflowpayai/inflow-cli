@@ -289,7 +289,7 @@ function createInspectCommand(resource: Pick<IOdpResource, 'inspect'>) {
 }
 
 export function createInspectCli(resource: Pick<IOdpResource, 'inspect'>) {
-  const cli = Cli.create('odp', { description: 'Offering Discovery Protocol commands.' });
+  const cli = Cli.create('odp', { description: 'Offering Discovery Protocol commands' });
   cli.command('inspect', createInspectCommand(resource));
   return cli;
 }

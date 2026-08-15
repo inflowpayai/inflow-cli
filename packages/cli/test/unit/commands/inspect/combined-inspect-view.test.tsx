@@ -43,7 +43,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mppHeader(method = 'inflow'): string {
+function mppHeader(method = 'inflow', subscription = false): string {
   const request =
     method === 'tempo'
       ? {
@@ -52,12 +52,17 @@ function mppHeader(method = 'inflow'): string {
           methodDetails: { chainId: 42431, feePayer: false, supportedModes: ['pull'] },
           recipient: '0x61d64bdb13debd1844defecd45cf737403de9813',
         }
-      : { amount: '0.10', currency: 'USDC', methodDetails: { rail: 'balance' } };
+      : {
+          amount: '0.10',
+          currency: 'USDC',
+          methodDetails: { rail: 'balance' },
+          ...(subscription ? { periodCount: 1, periodUnit: 'month', subscriptionExpires: '2999-12-31T00:00:00Z' } : {}),
+        };
   const challenge: MppChallenge = {
     id: `chal-${method}`,
     realm: 'mpp.test',
     method,
-    intent: 'charge',
+    intent: subscription ? 'subscription' : 'charge',
     request: encode(request),
     expires: '2999-01-01T00:00:00Z',
   };
@@ -211,15 +216,15 @@ describe('CombinedInspectView', () => {
     const { lastFrame, unmount } = renderAepView();
     await settle();
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('detected: aep');
+    expect(frame).not.toContain('detected:');
     expect(frame).toContain('Service DID');
     expect(frame).toContain('did:web:service.test');
-    expect(frame.indexOf('── AEP ──')).toBeLessThan(frame.indexOf('── MPP ──'));
-    expect(frame.indexOf('── MPP ──')).toBeLessThan(frame.indexOf('── x402 ──'));
+    expect(frame).not.toContain('── MPP ──');
+    expect(frame).not.toContain('── x402 ──');
     unmount();
   });
 
-  it('renders both sections with detected: mpp, x402 and triage columns', async () => {
+  it('renders supported payment sections and triage columns', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response('payment required', {
         status: 402,
@@ -229,7 +234,10 @@ describe('CombinedInspectView', () => {
     const { lastFrame, unmount } = renderView();
     await settle();
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('detected: mpp, x402');
+    expect(frame).not.toContain('detected:');
+    expect(frame).toContain('Capability summary');
+    expect(frame).toContain('Catalog unavailable');
+    expect(frame).not.toContain('── ODP ──');
     expect(frame).toContain('── MPP ──');
     expect(frame).toContain('── x402 ──');
     // MPP triage columns
@@ -239,20 +247,39 @@ describe('CombinedInspectView', () => {
     for (const h of ['Scheme', 'Network', 'Asset']) expect(frame).toContain(h);
     expect(frame).toContain('eip155:84532');
     expect(frame).toContain('0xUSDCcontractaddress0000000000000000000000');
-    expect(frame).toContain('--format json');
+    expect(frame).not.toContain('Full detail:');
     unmount();
   });
 
-  it('shows that the missing protocol has no live challenge (x402-only)', async () => {
+  it('renders recurring terms in the combined MPP section', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('payment required', {
+        status: 402,
+        headers: { 'WWW-Authenticate': mppHeader('inflow', true) },
+      }),
+    );
+    const { lastFrame, unmount } = renderView();
+    await settle();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('subscription');
+    expect(frame).toContain('Subscription option 1');
+    expect(frame).toContain('Billing frequency');
+    expect(frame).toContain('Every month');
+    expect(frame).toContain('Subscription ends');
+    expect(frame).toContain('2999-12-31T00:00:00Z');
+    unmount();
+  });
+
+  it('hides the absent payment detail section (x402-only)', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response('payment required', { status: 402, headers: { 'PAYMENT-REQUIRED': x402Header() } }),
     );
     const { lastFrame, unmount } = renderView();
     await settle();
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('detected: x402');
-    expect(frame).toContain('── MPP ──');
-    expect(frame).toContain('no live challenge at this URL');
+    expect(frame).not.toContain('detected:');
+    expect(frame).not.toContain('── MPP ──');
+    expect(frame).toContain('── x402 ──');
     unmount();
   });
 
@@ -263,7 +290,7 @@ describe('CombinedInspectView', () => {
     const { lastFrame, unmount } = renderView();
     await settle();
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('detected: mpp');
+    expect(frame).not.toContain('detected:');
     expect(frame).toContain('tempo');
     // Raw wire amount — the CLI does not translate base units to a decimal.
     expect(frame).toContain('10000');
@@ -277,17 +304,21 @@ describe('CombinedInspectView', () => {
     const { lastFrame, unmount } = renderView();
     await settle();
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('detected: none');
+    expect(frame).not.toContain('detected:');
     expect(frame).toContain('not payable by InFlow: other');
     unmount();
   });
 
-  it('reports detected: none on a 402 with neither header', async () => {
+  it('hides all absent detail sections on a 402 with neither header', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('nope', { status: 402 }));
     const { lastFrame, unmount } = renderView();
     await settle();
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('detected: none');
+    expect(frame).not.toContain('detected:');
+    expect(frame).not.toContain('── ODP ──');
+    expect(frame).not.toContain('── AEP ──');
+    expect(frame).not.toContain('── MPP ──');
+    expect(frame).not.toContain('── x402 ──');
     unmount();
   });
 
@@ -299,12 +330,13 @@ describe('CombinedInspectView', () => {
     await settle();
     const frame = lastFrame() ?? '';
     expect(frame).toContain('HTTP requirements');
-    expect(frame).toContain('Protocol summary');
+    expect(frame).toContain('Capability summary');
+    expect(frame).toContain('ODP');
     expect(frame).toContain('Service capability');
     expect(frame).toContain('Current request');
     expect(frame).toContain('Payment not required');
-    expect(frame).toContain('── AEP ──');
-    expect(frame).toContain('not required for this URL');
+    expect(frame).not.toContain('── AEP ──');
+    expect(frame).not.toContain('── ODP ──');
     expect(frame).not.toContain('HTTP response');
     expect(frame).not.toContain('Response size');
     expect(frame).not.toContain('Seller accepted without payment');

@@ -57,12 +57,17 @@ For host-specific skill and MCP installation, see the repository's
 | `inflow x402 decode <header>`                                    | Decode a raw `PAYMENT-REQUIRED` header value. No auth required.                                                                   |
 | `inflow x402 supported`                                          | List the buyer-side `(scheme, network)` capability cache.                                                                         |
 | `inflow mpp pay <url>`                                           | Create an MPP payment transaction and optionally poll/replay inline.                                                              |
-| `inflow mpp fetch <tx> <url>`                                    | Resume an MPP transaction, wait for a ready credential when configured, and fetch the seller resource.                            |
+| `inflow mpp subscribe <url>`                                     | Approve and activate an MPP subscription.                                                                                         |
+| `inflow mpp fetch <tx> <url>`                                    | Complete a ready or pending MPP payment and fetch the seller resource.                                                            |
 | `inflow mpp inspect <url>`                                       | Read-only probe. Parse the seller's MPP `Payment` challenge(s) for a URL — no auth, no payment.                                   |
 | `inflow mpp status <transactionId>`                              | Poll the buyer-side state of an in-flight MPP transaction without contacting the seller.                                          |
 | `inflow mpp cancel <approvalId>`                                 | Best-effort cancel of an in-flight MPP approval. Requires authentication; success does not verify the server-side approval state. |
 | `inflow mpp decode <value>`                                      | Decode a `WWW-Authenticate: Payment` header, or a base64url credential / receipt. No auth required.                               |
 | `inflow mpp supported`                                           | List the methods the buyer can pay with — by intent, settlement rail, and currency.                                               |
+| `inflow subscriptions list`                                      | List your subscriptions.                                                                                                          |
+| `inflow subscriptions get <id>`                                  | View a subscription's details.                                                                                                    |
+| `inflow subscriptions fetch <id> <url>`                          | Fetch a resource using a fresh short-lived subscription authorization.                                                            |
+| `inflow subscriptions cancel <id>`                               | Cancel a subscription immediately.                                                                                                |
 
 ## Global flags
 
@@ -693,13 +698,14 @@ code. The `x402` group adds these codes:
 
 The `mpp` command group is the MPP analog of `x402`, for sellers that answer `402` with `WWW-Authenticate: Payment …`
 (the MPP `Payment` auth scheme) instead of x402's `PAYMENT-REQUIRED`. It is built on `@inflowpayai/mpp`'s `MppClient`
-and mirrors `x402` command-for-command — `pay`, `fetch`, `inspect`, `status`, `cancel`, `decode`, `supported` — with the
-same TTY + agent renderings, the same two-process approval handoff, and the same `--output-file` / `--format` behaviour.
+and mirrors the x402 payment commands while adding `subscribe` for recurring payments. It uses the same TTY + agent
+renderings, the same two-process approval handoff, and the same `--output-file` / `--format` behaviour.
 
 ```bash
 inflow mpp inspect <url>                                    # parse the seller's Payment challenge(s) — read-only
 inflow mpp pay <url> --interval 5 --max-attempts 60         # fast path: create -> poll -> replay -> return body
 inflow mpp pay <url> --format json                          # two-process: returns transaction_id + a `mpp fetch` _next hint
+inflow mpp subscribe <url> --option-id <optionId> --interval 5 # select terms, approve, and settle period zero
 inflow mpp fetch <transactionId> <url> --interval 5         # resume and fetch the seller resource
 inflow mpp status <transactionId> --interval 5              # monitor state only; never contacts the seller
 inflow mpp cancel <approvalId>                              # best-effort cancel of a pending approval
@@ -714,7 +720,9 @@ Differences from `x402`:
   funding instrument.
 - `fetch` attaches the base64url credential as `Authorization: Payment <credential>` and never exposes it in Fetch
   output. If AEP authentication is required, the replay also carries a non-colliding AEP credential such as
-  `AEP-Authorization`. `status` can still show or save the credential for diagnostics.
+  `AEP-Authorization`. Subscription fetches obtain a fresh, short-lived credential for the seller's current challenge;
+  no standing subscription credential is stored locally. `status` can still show or save a one-time payment credential
+  for diagnostics.
 - A 402 carrying no `inflow`-method challenge fails with `NO_INFLOW_MATCH`.
 
 #### Challenge-selection flags (`pay` and `inspect`)
@@ -730,6 +738,25 @@ the rail is fixed by the seller, so the buyer filters by method/intent/currency/
 | `--currency <CODE>`      | Only consider challenges in this currency (e.g. `USDC`). Disambiguates when the seller offers the `inflow` method in more than one currency.                              |
 | `--rail <rail>`          | Only consider challenges on this settlement rail (e.g. `balance`, `instrument`).                                                                                          |
 | `--instrument-id <uuid>` | Funding instrument id for an instrument-rail (fiat) challenge. The only option that selects _how_ to fund rather than which challenge — the rail itself is seller-pinned. |
+
+## `subscriptions`
+
+Subscription management is protocol-neutral. Activation currently uses `mpp subscribe`; list, get, and cancellation
+operate on the resulting subscription independently of the protocol that created it.
+
+```bash
+inflow subscriptions list
+inflow subscriptions list --status active
+inflow subscriptions get <subscriptionId>
+inflow subscriptions fetch <subscriptionId> <url>
+inflow subscriptions cancel <subscriptionId>
+```
+
+List output is buyer-scoped. A participating buyer or seller can retrieve or immediately cancel one subscription.
+Subscription fetch requests a short-lived authorization from InFlow and sends it to the seller. The subscription can
+therefore be used from any authenticated InFlow CLI installation. Cancellation is idempotent. Failed renewal collection
+moves a subscription to `PAST_DUE`; a later successful retry restores `ACTIVE`. Once the subscription end is reached,
+`EXPIRED` is terminal. Use `subscriptions get` to see the next scheduled billing attempt.
 
 ### Errors (mpp group)
 

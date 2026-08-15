@@ -47,6 +47,48 @@ describe('InspectView', () => {
     unmount();
   });
 
+  it('renders recurring terms for a subscription challenge', async () => {
+    const subscription = {
+      ...challenge(),
+      intent: 'subscription' as const,
+      request: encode({
+        amount: '10',
+        currency: 'USDC',
+        methodDetails: { rail: 'balance' },
+        periodCount: 1,
+        periodUnit: 'month',
+        subscriptionExpires: '2999-12-31T00:00:00Z',
+      }),
+    };
+    server.use(
+      http.get(
+        SELLER,
+        () =>
+          new HttpResponse(null, {
+            status: 402,
+            headers: { 'WWW-Authenticate': renderChallengeHeader(subscription) },
+          }),
+      ),
+    );
+    const { lastFrame, unmount } = render(
+      <InspectView
+        url={SELLER}
+        method="GET"
+        deps={{ url: SELLER, probeOptions: { method: 'GET', headers: {} } }}
+        onComplete={vi.fn()}
+      />,
+    );
+    await new Promise((r) => setTimeout(r, 80));
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('subscription');
+    expect(frame).toContain('Subscription option 1');
+    expect(frame).toContain('Billing frequency');
+    expect(frame).toContain('Every month');
+    expect(frame).toContain('Subscription ends');
+    expect(frame).toContain('2999-12-31T00:00:00Z');
+    unmount();
+  });
+
   it('renders the no-payment branch on a 2xx probe', async () => {
     server.use(http.get(SELLER, () => new HttpResponse('hi', { status: 200 })));
     const { lastFrame, unmount } = render(
@@ -135,6 +177,10 @@ describe('structured frames', () => {
             expires: '2999-01-01T00:00:00Z',
             description: 'Widgets',
             digest: 'sha-256=:abc:',
+            periodCount: 1,
+            periodUnit: 'month',
+            subscriptionExpires: '2999-12-31T00:00:00Z',
+            externalId: 'monthly-plan',
           },
           { id: 'chal-2', realm: 'mpp.test', method: 'inflow', intent: 'charge' },
         ],
@@ -158,6 +204,10 @@ describe('structured frames', () => {
           expires: '2999-01-01T00:00:00Z',
           description: 'Widgets',
           digest: 'sha-256=:abc:',
+          period_count: 1,
+          period_unit: 'month',
+          subscription_expires: '2999-12-31T00:00:00Z',
+          external_id: 'monthly-plan',
         },
         { id: 'chal-2', realm: 'mpp.test', method: 'inflow', intent: 'charge' },
       ],

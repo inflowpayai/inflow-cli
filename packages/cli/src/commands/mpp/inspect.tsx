@@ -14,6 +14,7 @@ import type React from 'react';
 import { useEffect, useReducer } from 'react';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { Table, type TableColumn } from '../../utils/table.js';
+import { MppChallengePresentation } from './challenge-presentation.js';
 
 export {
   type MppInspectPhase,
@@ -23,19 +24,6 @@ export {
   reduceMppInspect,
   runMppInspectPipeline,
 };
-
-function orDash(value: string | undefined): string {
-  return value === undefined || value === '' ? '—' : value;
-}
-
-const COLUMNS: ReadonlyArray<TableColumn<DecodedChallenge>> = [
-  { header: 'Method', cell: (c) => c.method },
-  { header: 'Intent', cell: (c) => c.intent },
-  { header: 'Amount', cell: (c) => orDash(c.amount) },
-  { header: 'Currency', cell: (c) => orDash(c.currency) },
-  { header: 'Rail', cell: (c) => orDash(c.rail) },
-  { header: 'Expires', cell: (c) => orDash(c.expires) },
-];
 
 interface NoPaymentRow {
   field: string;
@@ -143,7 +131,7 @@ export const InspectView: React.FC<InspectViewProps> = ({ url, method, deps, onC
         <Text dimColor>{`${String(count)} challenge${count === 1 ? '' : 's'}`}</Text>
       </Text>
       <Box marginTop={1}>
-        <Table columns={COLUMNS} rows={[...result.challenges]} />
+        <MppChallengePresentation challenges={result.challenges} />
       </Box>
       <Box marginTop={1}>
         <Text dimColor>Use --format json to see challenge ids and digests.</Text>
@@ -167,6 +155,12 @@ export function challengeToFrame(challenge: DecodedChallenge): Record<string, un
   if (challenge.expires !== undefined) row['expires'] = challenge.expires;
   if (challenge.description !== undefined) row['description'] = challenge.description;
   if (challenge.digest !== undefined) row['digest'] = challenge.digest;
+  if (challenge.periodCount !== undefined) row['period_count'] = challenge.periodCount;
+  if (challenge.periodUnit !== undefined) row['period_unit'] = challenge.periodUnit;
+  if (challenge.subscriptionExpires !== undefined) row['subscription_expires'] = challenge.subscriptionExpires;
+  if (challenge.externalId !== undefined) row['external_id'] = challenge.externalId;
+  if (challenge.optionId !== undefined) row['option_id'] = challenge.optionId;
+  if (challenge.optionFingerprint !== undefined) row['option_fingerprint'] = challenge.optionFingerprint;
   return row;
 }
 

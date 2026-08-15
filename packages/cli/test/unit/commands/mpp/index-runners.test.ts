@@ -4,23 +4,33 @@ import { encode, type MppChallenge, type MppClient, renderChallengeHeader } from
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing, createMppCli } from '../../../../src/commands/mpp/index.js';
 
-const { runPayCommand, runFetchCommand, runStatusCommand, runCancelCommand, runSupportedCommand, runInspectCommand } =
-  __testing;
+const {
+  runPayCommand,
+  runSubscribeCommand,
+  runFetchCommand,
+  runStatusCommand,
+  runCancelCommand,
+  runSupportedCommand,
+  runInspectCommand,
+} = __testing;
 
 const SELLER = 'https://seller.test/api';
 
-function challenge(method = 'inflow'): MppChallenge {
+function challenge(method = 'inflow', intent = 'charge'): MppChallenge {
   return {
-    id: `chal-${method}`,
+    id: `chal-${method}-${intent}`,
     realm: 'mpp.test',
     method,
-    intent: 'charge',
+    intent,
     request: encode({ amount: '10', currency: 'USDC', methodDetails: { rail: 'balance' } }),
   };
 }
 
-function challenge402(): Response {
-  return new Response(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(challenge()) } });
+function challenge402(intent = 'charge'): Response {
+  return new Response(null, {
+    status: 402,
+    headers: { 'WWW-Authenticate': renderChallengeHeader(challenge('inflow', intent)) },
+  });
 }
 
 function makeClient(overrides: Partial<MppClient> = {}): MppClient {
@@ -222,6 +232,57 @@ describe('mpp agent runners', () => {
     );
     const frames = await drain(runPayCommand(ctx as never, inflow, storage, 'https://app'));
     expect(frames.at(-1)).toMatchObject({ outcome: 'paid', transaction_id: 'tx-1', credential: 'CRED' });
+  });
+
+  it('runSubscribeCommand drives a subscription challenge to a paid frame with intent subscription', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy.mockResolvedValueOnce(challenge402('subscription'));
+    fetchSpy.mockResolvedValueOnce(
+      new Response('SUBBED', {
+        status: 200,
+        headers: {
+          'Payment-Receipt': encode({
+            method: 'inflow',
+            reference: 'sub-1',
+            settlement: { amount: '10', currency: 'USDC' },
+            status: 'success',
+            subscriptionId: 'subscription-id',
+            timestamp: '2026-08-01T00:00:00Z',
+          }),
+        },
+      }),
+    );
+    const client = makeClient({
+      createTransaction: vi.fn(() =>
+        Promise.resolve({ state: 'ready', credential: 'CRED', transactionId: 'sub-1' }),
+      ) as MppClient['createTransaction'],
+    });
+    const { inflow, storage } = authed(client);
+    // No `intent` in options: subscribe pins it internally.
+    const ctx = agentCtx(
+      { url: SELLER },
+      { method: 'GET', header: [], interval: 5, maxAttempts: 0, timeout: 900, showBody: true },
+    );
+    const frames = await drain(runSubscribeCommand(ctx as never, inflow, storage, 'https://app'));
+    expect(frames.at(-1)).toMatchObject({
+      credential: 'CRED',
+      intent: 'subscription',
+      outcome: 'paid',
+      transaction_id: 'sub-1',
+    });
+  });
+
+  it('runSubscribeCommand pins the intent, rejecting a charge-only challenge that plain pay would accept', async () => {
+    // The seller offers only a `charge` challenge; because subscribe forces --intent=subscription it filters to none.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(challenge402('charge'));
+    const { inflow, storage } = authed(makeClient());
+    const ctx = agentCtx(
+      { url: SELLER },
+      { method: 'GET', header: [], interval: 5, maxAttempts: 0, timeout: 900, showBody: true },
+    );
+    await expect(drain(runSubscribeCommand(ctx as never, inflow, storage, 'https://app'))).rejects.toThrow(
+      'c.error: NO_FILTERED_MATCH',
+    );
   });
 
   it('runFetchCommand fetches a ready transaction without creating a transaction or exposing the credential', async () => {

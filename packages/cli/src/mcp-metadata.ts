@@ -19,6 +19,7 @@ type ToolName =
   | 'mpp_inspect'
   | 'mpp_pay'
   | 'mpp_status'
+  | 'mpp_subscribe'
   | 'mpp_supported'
   | 'odp_collections_get'
   | 'odp_collections_list'
@@ -32,6 +33,10 @@ type ToolName =
   | 'odp_offerings_list'
   | 'odp_offerings_search'
   | 'odp_actions_resolve'
+  | 'subscriptions_cancel'
+  | 'subscriptions_fetch'
+  | 'subscriptions_get'
+  | 'subscriptions_list'
   | 'vault_change-passphrase'
   | 'vault_lock'
   | 'vault_policy'
@@ -131,7 +136,7 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
   mpp_cancel: write('MPP: Cancel Approval', 'Cancel an MPP approval.', { destructive: true, idempotent: true }),
   mpp_decode: read('MPP: Decode Header', 'Decode an MPP Payment header, credential, or receipt.', false),
   mpp_fetch: vault(
-    write('MPP: Fetch Resource', 'Fetch an MPP resource using an existing or pending payment transaction.'),
+    write('MPP: Fetch Resource', 'Complete a ready or pending MPP payment and fetch the seller resource.'),
     'stored-session',
   ),
   mpp_inspect: read('MPP: Inspect Resource', 'Inspect a resource for MPP payment requirements.'),
@@ -142,6 +147,12 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
     'stored-session',
   ),
   mpp_status: vault(read('MPP: Check Payment', 'Poll the status of an MPP payment transaction.'), 'stored-session'),
+  mpp_subscribe: vault(
+    write('MPP: Subscribe to Resource', 'Subscribe to an MPP-protected resource.', {
+      destructive: true,
+    }),
+    'stored-session',
+  ),
   mpp_supported: vault(
     read('MPP: List Payment Methods', 'List MPP payment methods available to the buyer.'),
     'stored-session',
@@ -164,6 +175,24 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
     'ODP: Resolve Action',
     "Resolve an offering's action into an executable request without invoking it.",
   ),
+  subscriptions_cancel: vault(
+    write('Subscriptions: Cancel Subscription', 'Cancel your subscription immediately.', {
+      destructive: true,
+      idempotent: true,
+    }),
+    'stored-session',
+  ),
+  subscriptions_fetch: vault(
+    write('Subscriptions: Fetch Resource', 'Fetch a resource using a fresh subscription authorization.', {
+      destructive: true,
+    }),
+    'required',
+  ),
+  subscriptions_get: vault(
+    read('Subscriptions: Get Subscription', 'View your subscription details.'),
+    'stored-session',
+  ),
+  subscriptions_list: vault(read('Subscriptions: List Subscriptions', 'List your subscriptions.'), 'stored-session'),
   'vault_change-passphrase': write('Vault: Change Passphrase', 'Change the local vault PIN or passphrase.', {
     destructive: true,
   }),

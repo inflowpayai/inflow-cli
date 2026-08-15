@@ -71,6 +71,7 @@ describe('vault startup decisions', () => {
     ['aep revoke', ['aep', 'revoke'], true],
     ['aep status', ['aep', 'status'], true],
     ['mpp pay', ['mpp', 'pay'], true],
+    ['mpp subscribe', ['mpp', 'subscribe'], true],
     ['mpp fetch', ['mpp', 'fetch'], true],
     ['mpp status', ['mpp', 'status'], true],
     ['mpp supported', ['mpp', 'supported'], true],
@@ -87,6 +88,8 @@ describe('vault startup decisions', () => {
     ['odp inspect', ['odp', 'inspect'], false],
     ['balances list', ['balances', 'list'], false],
     ['deposit-addresses list', ['deposit-addresses', 'list'], false],
+    ['subscriptions list', ['subscriptions', 'list'], false],
+    ['subscriptions fetch', ['subscriptions', 'fetch', 'id', 'https://seller.test'], true],
     ['user get', ['user', 'get'], false],
     ['vault unlock', ['vault', 'unlock'], false],
     ['top inspect', ['inspect'], false],
@@ -97,8 +100,11 @@ describe('vault startup decisions', () => {
   it.each([
     ['auth status', ['auth', 'status'], true],
     ['balances list', ['balances', 'list'], true],
+    ['subscriptions get', ['subscriptions', 'get', 'id'], true],
+    ['subscriptions fetch', ['subscriptions', 'fetch', 'id', 'https://seller.test'], true],
     ['aep status', ['aep', 'status'], true],
     ['mpp pay', ['mpp', 'pay'], true],
+    ['mpp subscribe', ['mpp', 'subscribe'], true],
     ['x402 fetch', ['x402', 'fetch'], true],
     ['aep inspect', ['aep', 'inspect'], false],
     ['odp offerings list', ['odp', 'offerings', 'list', 'https://service.test'], true],
@@ -121,10 +127,13 @@ describe('vault startup decisions', () => {
     ['aep revoke', ['aep', 'revoke'], true],
     ['aep status', ['aep', 'status'], true],
     ['mpp pay', ['mpp', 'pay'], true],
+    ['mpp subscribe', ['mpp', 'subscribe'], true],
     ['mpp fetch', ['mpp', 'fetch'], true],
     ['mpp status', ['mpp', 'status'], true],
     ['mpp supported', ['mpp', 'supported'], true],
     ['mpp inspect', ['mpp', 'inspect'], false],
+    ['subscriptions cancel', ['subscriptions', 'cancel', 'id'], true],
+    ['subscriptions fetch', ['subscriptions', 'fetch', 'id', 'https://seller.test'], true],
     ['x402 pay', ['x402', 'pay'], true],
     ['x402 fetch', ['x402', 'fetch'], true],
     ['x402 status', ['x402', 'status'], true],
@@ -154,6 +163,23 @@ describe('vault startup decisions', () => {
     expect(shouldUnlockVault(odpArgs, { hasDirectApiKey: true })).toBe(true);
     expect(shouldStartVaultDaemon(argv('auth', 'login'), true)).toBe(true);
     expect(shouldReconcileVaultDaemon(argv('auth', 'logout'), true)).toBe(true);
+    for (const subcommand of ['fetch', 'subscribe']) {
+      expect(shouldStartVaultDaemon(argv('mpp', subcommand), true)).toBe(true);
+      expect(shouldReconcileVaultDaemon(argv('mpp', subcommand), true)).toBe(true);
+      expect(shouldUnlockVault(argv('mpp', subcommand), { hasDirectApiKey: true })).toBe(true);
+    }
+    for (const args of [argv('mpp', 'pay', '--intent', 'subscription'), argv('mpp', 'pay', '--intent=subscription')]) {
+      expect(shouldStartVaultDaemon(args, true)).toBe(true);
+      expect(shouldReconcileVaultDaemon(args, true)).toBe(true);
+      expect(shouldUnlockVault(args, { hasDirectApiKey: true })).toBe(true);
+    }
+    expect(shouldStartVaultDaemon(argv('subscriptions', 'cancel', 'id'), true)).toBe(true);
+    expect(shouldReconcileVaultDaemon(argv('subscriptions', 'cancel', 'id'), true)).toBe(true);
+    expect(shouldUnlockVault(argv('subscriptions', 'cancel', 'id'), { hasDirectApiKey: true })).toBe(true);
+    const subscriptionFetchArgs = argv('subscriptions', 'fetch', 'id', 'https://seller.test');
+    expect(shouldStartVaultDaemon(subscriptionFetchArgs, true)).toBe(true);
+    expect(shouldReconcileVaultDaemon(subscriptionFetchArgs, true)).toBe(true);
+    expect(shouldUnlockVault(subscriptionFetchArgs, { hasDirectApiKey: true })).toBe(true);
   });
 
   it('bypasses vault credentials that a direct InFlow API key replaces', () => {

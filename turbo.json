@@ -17,7 +17,7 @@
         "package.json",
         "../../package.json",
         "../../pnpm-lock.yaml",
-        "../../patches/@apidevtools__json-schema-ref-parser@15.5.1.patch",
+        "../../patches/@apidevtools__json-schema-ref-parser@15.5.2.patch",
         "../../patches/incur@0.4.19.patch",
         "../../skills/**",
         "../core/package.json",

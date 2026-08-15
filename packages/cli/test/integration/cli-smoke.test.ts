@@ -134,7 +134,7 @@ describe('cli smoke', () => {
     expect(result.stdout.trimStart().startsWith('---')).toBe(false);
   });
 
-  it.each(['auth', 'aep', 'balances', 'deposit-addresses', 'mpp', 'vault', 'x402'])(
+  it.each(['auth', 'aep', 'balances', 'deposit-addresses', 'mpp', 'subscriptions', 'vault', 'x402'])(
     '%s group help does not require the vault daemon',
     async (group) => {
       const result = await run([group]);
@@ -149,6 +149,7 @@ describe('cli smoke', () => {
       ['aep', 'status', '--help'],
       ['mpp', 'pay', '--help'],
       ['balances', 'list', '--help'],
+      ['subscriptions', 'list', '--help'],
     ]) {
       const result = await run(args);
       expect(result.exitCode).toBe(0);

@@ -56,8 +56,23 @@ export const payOptions = z.object({
     .string()
     .optional()
     .describe(
-      'Write the base64url `Authorization: Payment` credential to this file path (mode 0o600, overwrites silently). When set, the result frame includes `credential_saved_to: <absolute_path>` instead of `credential`. Use to keep one-time payment credentials out of chat transcripts and logs.',
+      'Write the base64url `Authorization: Payment` credential to this file path (mode 0o600, overwrites silently). When set, the result frame includes `credential_saved_to: <absolute_path>` instead of `credential`.',
     ),
+});
+
+export const subscribeArgs = z.object({
+  url: z.string().describe('The MPP-protected resource URL to subscribe to.'),
+});
+
+export const subscribeOptions = z.object({
+  optionId: z
+    .string()
+    .regex(/^[0-9a-fA-F]{1,64}$/)
+    .optional()
+    .describe(
+      'Subscription option ID or full fingerprint from `mpp inspect` or `inspect`. Required when multiple options are available.',
+    ),
+  ...payOptions.omit({ intent: true }).shape,
 });
 
 export const statusArgs = z.object({
@@ -65,7 +80,9 @@ export const statusArgs = z.object({
 });
 
 export const fetchArgs = z.object({
-  transactionId: z.string().describe('The transaction id returned by `mpp pay`.'),
+  transactionId: z
+    .string()
+    .describe('The transaction id returned by `mpp pay` or a pending `mpp subscribe` operation.'),
   resourceUrl: z.string().describe('The MPP-protected resource URL to fetch.'),
 });
 
@@ -112,7 +129,7 @@ export const statusOptions = z.object({
     .string()
     .optional()
     .describe(
-      'Write the base64url `Authorization: Payment` credential to this file path (mode 0o600, overwrites silently). When set, the ready frame includes `credential_saved_to: <absolute_path>` instead of `credential`. Use to keep one-time payment credentials out of chat transcripts and logs.',
+      'Write the base64url `Authorization: Payment` credential to this file path (mode 0o600, overwrites silently). When set, the ready frame includes `credential_saved_to: <absolute_path>` instead of `credential`.',
     ),
 });
 

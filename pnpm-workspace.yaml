@@ -31,5 +31,5 @@ strict-peer-dependencies: false
 allowUnusedPatches: false
 
 patchedDependencies:
-  '@apidevtools/json-schema-ref-parser@15.5.1': patches/@apidevtools__json-schema-ref-parser@15.5.1.patch
+  '@apidevtools/json-schema-ref-parser@15.5.2': patches/@apidevtools__json-schema-ref-parser@15.5.2.patch
   incur@0.4.19: patches/incur@0.4.19.patch
