@@ -47,7 +47,7 @@ describe('vault type mappings', () => {
     }
 
     expect(() => vaultSecretKindName(0)).toThrow('Vault secret kind is unknown.');
-    expect(() => vaultSecretKindName(6)).toThrow('Vault secret kind is unknown.');
+    expect(() => vaultSecretKindName(7)).toThrow('Vault secret kind is unknown.');
   });
 
   it('round-trips stable record status codes and rejects unknown values', () => {

@@ -129,16 +129,18 @@ describe('PayView', () => {
     unmount();
   });
 
-  it('renders the error frame when no supported MPP challenge is offered', async () => {
+  it('hands terminal errors to the command without rendering a duplicate', async () => {
     server.use(
       http.get(SELLER, () => {
         const other: MppChallenge = { ...challenge(), id: 'chal-other', method: 'other' };
         return new HttpResponse(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(other) } });
       }),
     );
-    const { lastFrame, unmount } = render(<PayView url={SELLER} method="GET" deps={deps()} onComplete={vi.fn()} />);
+    const onComplete = vi.fn();
+    const { lastFrame, unmount } = render(<PayView url={SELLER} method="GET" deps={deps()} onComplete={onComplete} />);
     await new Promise((r) => setTimeout(r, 120));
-    expect(lastFrame() ?? '').toContain('NO_INFLOW_MATCH');
+    expect(lastFrame() ?? '').not.toContain('NO_INFLOW_MATCH');
+    expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error', code: 'NO_INFLOW_MATCH' }));
     unmount();
   });
 
@@ -163,6 +165,46 @@ describe('PayView', () => {
     stdin.write('\r');
     await new Promise((r) => setTimeout(r, 120));
     expect(vi.mocked(openUrl)).toHaveBeenCalledWith(expect.stringContaining('ap-9'));
+    unmount();
+  });
+
+  it('shows all recurring terms while subscription approval is pending', async () => {
+    const subscriptionChallenge: MppChallenge = {
+      ...challenge(),
+      intent: 'subscription',
+      request: encode({
+        amount: '12.5',
+        currency: 'USD',
+        externalId: 'seller-plan',
+        methodDetails: { rail: 'balance' },
+        periodCount: 1,
+        periodUnit: 'month',
+        subscriptionExpires: '2027-08-01T00:00:00Z',
+      }),
+    };
+    server.use(
+      http.get(
+        SELLER,
+        () =>
+          new HttpResponse(null, {
+            status: 402,
+            headers: { 'WWW-Authenticate': renderChallengeHeader(subscriptionChallenge) },
+          }),
+      ),
+      http.post(`${INFLOW}/v1/transactions/mpp`, () =>
+        HttpResponse.json({ state: 'pending', transactionId: 'tx-1', approvalId: 'ap-9', retryAfterSeconds: 5 }),
+      ),
+    );
+    const { lastFrame, unmount } = render(
+      <PayView url={SELLER} method="GET" deps={{ ...deps(), awaitPayment: false }} onComplete={vi.fn()} />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('recurring amount: 12.5 USD');
+    expect(frame).toContain('billing period: every 1 month');
+    expect(frame).toContain('expires: 2027-08-01T00:00:00Z');
+    expect(frame).toContain('seller reference: seller-plan');
+    expect(frame).toContain('Either participant can cancel immediately.');
     unmount();
   });
 

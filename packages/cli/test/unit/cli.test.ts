@@ -51,6 +51,7 @@ const MCP_TOOL_EXPECTATIONS = [
   ['mpp_inspect', 'MPP: Inspect Resource', true, false],
   ['mpp_pay', 'MPP: Pay Resource', false, true],
   ['mpp_status', 'MPP: Check Payment', true, false],
+  ['mpp_subscribe', 'MPP: Subscribe to Resource', false, true],
   ['mpp_supported', 'MPP: List Payment Methods', true, false],
   ['odp_actions_resolve', 'ODP: Resolve Action', true, false],
   ['odp_collections_get', 'ODP: Get Collection', true, false],
@@ -64,6 +65,10 @@ const MCP_TOOL_EXPECTATIONS = [
   ['odp_offerings_get', 'ODP: Get Offering', true, false],
   ['odp_offerings_list', 'ODP: List Offerings', true, false],
   ['odp_offerings_search', 'ODP: Search Offerings', true, false],
+  ['subscriptions_cancel', 'Subscriptions: Cancel Subscription', false, true],
+  ['subscriptions_fetch', 'Subscriptions: Fetch Resource', false, true],
+  ['subscriptions_get', 'Subscriptions: Get Subscription', true, false],
+  ['subscriptions_list', 'Subscriptions: List Subscriptions', true, false],
   ['vault_change-passphrase', 'Vault: Change Passphrase', false, true],
   ['vault_lock', 'Vault: Lock Vault', false, false],
   ['vault_policy', 'Vault: Show Policy', true, false],
@@ -98,6 +103,7 @@ const CLI_SCHEMA_COMMANDS = [
   'mpp inspect',
   'mpp pay',
   'mpp status',
+  'mpp subscribe',
   'mpp supported',
   'odp actions resolve',
   'odp directory search',
@@ -110,6 +116,9 @@ const CLI_SCHEMA_COMMANDS = [
   'odp offerings get',
   'odp offerings list',
   'odp offerings search',
+  'subscriptions cancel',
+  'subscriptions get',
+  'subscriptions list',
   'vault change-passphrase',
   'vault lock',
   'vault policy',
@@ -335,7 +344,8 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(combined).toContain('inflow');
       expect(combined).toContain('agentic discovery, onboarding, and payments');
       expect(combined).toContain('Agent Enrollment Protocol service commands');
-      expect(combined).toContain('Offering Discovery Protocol commands.');
+      expect(combined).toContain('Offering Discovery Protocol commands');
+      expect(combined).not.toContain('Offering Discovery Protocol commands.');
       expect(combined).toContain('Inspect a URL for agent discovery, enrollment, and payment capabilities');
       expect(combined).toContain('Machine Payments Protocol payment commands');
       expect(combined).toContain('x402 Protocol payment commands');
@@ -352,6 +362,17 @@ describe.skipIf(!existsSync(DIST_CLI))(
       const { exitCode, stdout } = await run([...args]);
       expect(exitCode).toBe(0);
       expect(stdout).toContain(description);
+    });
+
+    it('subscriptions help describes the buyer-facing actions', async () => {
+      const { exitCode, stdout } = await run(['subscriptions']);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('Subscription management commands');
+      expect(stdout).toContain('List your subscriptions.');
+      expect(stdout).toContain('View your subscription details.');
+      expect(stdout).toContain('Cancel your subscription immediately.');
+      expect(stdout).not.toContain('buyer or seller');
+      expect(stdout).not.toContain('authenticated buyer');
     });
 
     it('odp collections shows subgroup help without initializing the vault', async () => {
@@ -797,6 +818,15 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(tools.find((entry) => entry.name === 'mpp_pay')).toMatchObject({
         title: 'MPP: Pay Resource',
         annotations: { destructiveHint: true, readOnlyHint: false, title: 'MPP: Pay Resource' },
+      });
+      expect(tools.find((entry) => entry.name === 'subscriptions_cancel')).toMatchObject({
+        title: 'Subscriptions: Cancel Subscription',
+        annotations: {
+          destructiveHint: true,
+          idempotentHint: true,
+          readOnlyHint: false,
+          title: 'Subscriptions: Cancel Subscription',
+        },
       });
       expect(tools.find((entry) => entry.name === 'vault_unlock')).toMatchObject({
         title: 'Vault: Unlock Vault',

@@ -10,6 +10,7 @@ import {
   readHeaderAll,
   SCHEME_PAYMENT,
   decodeReceipt,
+  subscriptionOptionFingerprints,
 } from '@inflowpayai/mpp';
 import type { SellerProbeOptions } from '@inflowpayai/x402-buyer/probe';
 import { userFacingApiError } from './api-error.js';
@@ -32,6 +33,7 @@ import {
   NO_INFLOW_MATCH_MESSAGE,
   UNEXPECTED_PROBE_STATUS_CODE,
 } from './mpp-shared.js';
+import type { ISubscriptionResource } from '../resources/interfaces.js';
 
 interface MppPayResultBase {
   url: string;
@@ -55,6 +57,8 @@ export interface MppPaySettlement {
   timestamp?: string;
   amount?: string;
   currency?: string;
+  externalId?: string;
+  subscriptionId?: string;
 }
 
 export interface MppPayResultSuccess extends MppPayResultBase {
@@ -142,6 +146,8 @@ export function reduceMppPay(state: MppPayPhase, event: MppPayEvent): MppPayPhas
 
 export interface MppPayPipelineDeps {
   client: MppClient;
+  subscriptions?: ISubscriptionResource;
+  subscriptionId?: string;
   apiBaseUrl: string;
   url: string;
   probeOptions: SellerProbeOptions;
@@ -155,6 +161,8 @@ export interface MppPayPipelineDeps {
   currencyFilter?: string;
   /** Caller-supplied `--rail` filter — matches the decoded request's settlement `rail`. */
   railFilter?: string;
+  /** Stable subscription option fingerprint or unambiguous prefix selected from inspect output. */
+  optionIdFilter?: string;
   showBody: boolean;
   /** When set, body bytes are written here and the result carries `outputSavedTo` instead of inline `body`. */
   outputFile?: string;
@@ -205,6 +213,8 @@ export function buildSettlement(headers: Headers): MppPaySettlement | undefined 
     reference: receipt.reference,
     status: receipt.status,
     timestamp: receipt.timestamp,
+    ...(receipt.externalId === undefined ? {} : { externalId: receipt.externalId }),
+    ...(receipt.subscriptionId === undefined ? {} : { subscriptionId: receipt.subscriptionId }),
   };
 }
 
@@ -309,19 +319,83 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
       return;
     }
 
-    const challenge = selected[0] as MppChallenge;
-    emit({ type: 'decoded', challenge: summarizeChallenge(challenge) });
+    let resolvedChallenges = selected;
+    if (deps.intentFilter === 'subscription') {
+      const fingerprints = subscriptionOptionFingerprints(selected);
+      const seen = new Set<string>();
+      const options = selected
+        .map((challenge, index) => ({ challenge, option: fingerprints[index] }))
+        .filter(({ option }) => {
+          if (option === undefined) return true;
+          if (seen.has(option.fingerprint)) return false;
+          seen.add(option.fingerprint);
+          return true;
+        });
+      resolvedChallenges = options.map(({ challenge }) => challenge);
+      const optionIdFilter = deps.optionIdFilter;
+      if (optionIdFilter !== undefined) {
+        resolvedChallenges = options
+          .filter(({ option }) => option?.fingerprint.startsWith(optionIdFilter.toLowerCase()) === true)
+          .map(({ challenge }) => challenge);
+        if (resolvedChallenges.length === 0) {
+          emit({
+            type: 'errored',
+            code: 'SUBSCRIPTION_OPTION_NOT_FOUND',
+            message: `No subscription option matches ${deps.optionIdFilter}. Available: ${options.map(({ option }) => option?.optionId ?? '(unavailable)').join(', ')}.`,
+          });
+          return;
+        }
+      }
+      if (resolvedChallenges.length !== 1 && deps.subscriptionId === undefined) {
+        emit({
+          type: 'errored',
+          code: 'SUBSCRIPTION_OPTION_AMBIGUOUS',
+          message: `Select one subscription option with --option-id. Available: ${options.map(({ option }) => option?.optionId ?? '(unavailable)').join(', ')}.`,
+        });
+        return;
+      }
+    }
+
+    let challenge = resolvedChallenges[0] as MppChallenge;
 
     const options: InflowPaymentOptions = deps.instrumentId !== undefined ? { instrumentId: deps.instrumentId } : {};
 
     let created: MppTransactionResponse;
     try {
-      created = await deps.client.createTransaction({ challenge, options });
+      if (deps.subscriptionId !== undefined) {
+        if (deps.subscriptions === undefined) throw new Error('Subscription authorization resource is unavailable.');
+        let authorization: Awaited<ReturnType<ISubscriptionResource['authorize']>> | undefined;
+        let authorizationError: unknown;
+        for (const candidate of resolvedChallenges) {
+          try {
+            authorization = await deps.subscriptions.authorize(deps.subscriptionId, candidate);
+            challenge = candidate;
+            break;
+          } catch (err) {
+            authorizationError = err;
+          }
+        }
+        if (authorization === undefined) {
+          throw authorizationError instanceof Error
+            ? authorizationError
+            : new Error('No challenge matches this subscription.');
+        }
+        created = {
+          state: 'ready',
+          transactionId: deps.subscriptionId,
+          credential: authorization.credential,
+          expires: authorization.expires,
+        };
+      } else {
+        created = await deps.client.createTransaction({ challenge, options });
+      }
     } catch (err) {
       const mapped = mapMppError(err);
       emit({ type: 'errored', code: mapped.code, message: mapped.message });
       return;
     }
+
+    emit({ type: 'decoded', challenge: summarizeChallenge(challenge) });
 
     const createdFrame: MppPayCreated = {
       transactionId: created.transactionId ?? '',

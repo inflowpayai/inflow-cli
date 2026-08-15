@@ -17,7 +17,7 @@ import {
   sanitizeDeep,
   type SellerProbeOptions,
 } from '@inflowpayai/inflow-core';
-import type { MppSupportedResponse, MppTransactionResponse } from '@inflowpayai/mpp';
+import { INTENT_SUBSCRIPTION, type MppSupportedResponse, type MppTransactionResponse } from '@inflowpayai/mpp';
 import { Cli } from 'incur';
 import type React from 'react';
 import { useMemo } from 'react';
@@ -52,9 +52,13 @@ import {
   payOptions,
   statusArgs,
   statusOptions,
+  subscribeArgs,
+  subscribeOptions,
 } from './schema.js';
 import { MppStatusView } from './status.js';
 import { SupportedView } from './supported.js';
+
+type MppStorage = AuthStorage;
 
 type ErrorOptions = {
   code: string;
@@ -66,7 +70,7 @@ type ErrorOptions = {
 interface PayContext {
   agent: boolean;
   formatExplicit: boolean;
-  args: { url: string };
+  args: { url: string; subscriptionId?: string };
   options: {
     paymentMethod?: string | undefined;
     intent?: string | undefined;
@@ -82,6 +86,7 @@ interface PayContext {
     showBody: boolean;
     outputFile?: string | undefined;
     credentialFile?: string | undefined;
+    optionId?: string | undefined;
   };
   error: (err: ErrorOptions) => never;
 }
@@ -246,6 +251,7 @@ const PayViewWithAuthentication: React.FC<PayViewWithAuthenticationProps> = ({
       apiBaseUrl,
       awaitPayment: true,
       sellerTransport,
+      subscriptions: inflow.subscriptions,
     }),
     [apiBaseUrl, c, client, probeOptions, sellerTransport],
   );
@@ -316,7 +322,9 @@ function buildPayPipelineInput(
     ...(c.options.intent !== undefined ? { intentFilter: c.options.intent } : {}),
     ...(c.options.currency !== undefined ? { currencyFilter: c.options.currency } : {}),
     ...(c.options.rail !== undefined ? { railFilter: c.options.rail } : {}),
+    ...(c.options.optionId !== undefined ? { optionIdFilter: c.options.optionId } : {}),
     ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
+    ...(c.args.subscriptionId !== undefined ? { subscriptionId: c.args.subscriptionId } : {}),
   };
 }
 
@@ -339,6 +347,12 @@ function challengeFields(challenge: DecodedChallenge): Record<string, unknown> {
   if (challenge.amount !== undefined) out['amount'] = challenge.amount;
   if (challenge.currency !== undefined) out['currency'] = challenge.currency;
   if (challenge.rail !== undefined) out['rail'] = challenge.rail;
+  if (challenge.periodCount !== undefined) out['period_count'] = challenge.periodCount;
+  if (challenge.periodUnit !== undefined) out['period_unit'] = challenge.periodUnit;
+  if (challenge.subscriptionExpires !== undefined) out['subscription_expires'] = challenge.subscriptionExpires;
+  if (challenge.externalId !== undefined) out['external_id'] = challenge.externalId;
+  if (challenge.optionId !== undefined) out['option_id'] = challenge.optionId;
+  if (challenge.optionFingerprint !== undefined) out['option_fingerprint'] = challenge.optionFingerprint;
   return out;
 }
 
@@ -453,10 +467,10 @@ export function toStatusFrame(response: MppTransactionResponse, credentialFile?:
   return frame;
 }
 
-async function* runPayCommand(
+export async function* runPayCommand(
   c: PayContext,
   inflow: Inflow,
-  authStorage: AuthStorage,
+  authStorage: MppStorage,
   apiBaseUrl: string,
 ): AsyncGenerator<unknown, unknown> {
   assertSessionGuard(c, authStorage, inflow);
@@ -517,7 +531,8 @@ async function* runPayCommand(
       continue;
     }
     if (event.type === 'replayed') {
-      yield sanitizeDeep(paidFrameFromResult(event.result, c.options.credentialFile));
+      const frame = paidFrameFromResult(event.result, c.options.credentialFile);
+      yield sanitizeDeep(frame);
       return;
     }
     if (event.type === 'rejected') {
@@ -534,10 +549,30 @@ async function* runPayCommand(
   }
 }
 
-async function* runFetchCommand(
+type SubscribeContext = Omit<PayContext, 'options'> & {
+  options: Omit<PayContext['options'], 'intent'>;
+};
+
+async function* runSubscribeCommand(
+  c: SubscribeContext,
+  inflow: Inflow,
+  authStorage: MppStorage,
+  apiBaseUrl: string,
+): AsyncGenerator<unknown, unknown> {
+  const payContext: PayContext = {
+    agent: c.agent,
+    formatExplicit: c.formatExplicit,
+    args: c.args,
+    options: { ...c.options, intent: INTENT_SUBSCRIPTION },
+    error: (err) => c.error(err),
+  };
+  return yield* runPayCommand(payContext, inflow, authStorage, apiBaseUrl);
+}
+
+export async function* runFetchCommand(
   c: FetchCommandContext,
   inflow: Inflow,
-  authStorage: AuthStorage,
+  authStorage: MppStorage,
 ): AsyncGenerator<unknown, unknown> {
   assertSessionGuard(c, authStorage, inflow);
 
@@ -851,7 +886,7 @@ async function runInspectCommand(
   return sanitizeDeep(buildInspectNoPaymentFrame(payload as Parameters<typeof buildInspectNoPaymentFrame>[0]));
 }
 
-export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUrl: string) {
+export function createMppCli(inflow: Inflow, authStorage: MppStorage, apiBaseUrl: string) {
   const cli = Cli.create('mpp', {
     description: 'Machine Payments Protocol payment commands',
   });
@@ -867,6 +902,18 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
     },
   });
 
+  cli.command('subscribe', {
+    description:
+      'Subscribe to an MPP-protected resource. Review and approve the recurring terms, then settle the first period.',
+    mcp: mcpTool('mpp_subscribe'),
+    args: subscribeArgs,
+    options: subscribeOptions,
+    outputPolicy: 'agent-only' as const,
+    async *run(c) {
+      return yield* runSubscribeCommand(c, inflow, authStorage, apiBaseUrl);
+    },
+  });
+
   cli.command('status', {
     description: 'Poll the buyer-side state of an in-flight MPP transaction.',
     mcp: mcpTool('mpp_status'),
@@ -879,7 +926,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
   });
 
   cli.command('fetch', {
-    description: 'Fetch an MPP-protected resource for a ready or pending payment transaction.',
+    description: 'Complete a ready or pending MPP payment and fetch the seller resource.',
     mcp: mcpTool('mpp_fetch'),
     args: fetchArgs,
     options: fetchOptions,
@@ -934,6 +981,7 @@ export function createMppCli(inflow: Inflow, authStorage: AuthStorage, apiBaseUr
 
 export const __testing = {
   runPayCommand,
+  runSubscribeCommand,
   runFetchCommand,
   runStatusCommand,
   runCancelCommand,

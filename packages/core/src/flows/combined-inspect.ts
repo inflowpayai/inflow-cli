@@ -3,7 +3,7 @@ import { AepInspectError, type AepOpenApiOperationPolicy, type InspectServiceRes
 import type { ServiceInspection } from '@offering-protocol/agent';
 import { fromFoundationRequirements } from '@inflowpayai/x402-buyer';
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
-import { type DecodedChallenge, summarizeChallenge } from './mpp-decode.js';
+import { type DecodedChallenge, summarizeChallenges } from './mpp-decode.js';
 import { parseMppHeaderFromProbe } from './mpp-inspect.js';
 import { filterPayableChallenges, resolveAcceptPaymentProbeOptions } from './mpp-shared.js';
 import { isSuccessStatus, UNEXPECTED_PROBE_STATUS_CODE } from './x402-shared.js';
@@ -262,7 +262,7 @@ export function buildMppSection(probe: SellerProbeResult): MppSection {
     return { kind: 'none-inflow', methods };
   }
   const realm = supportedChallenges[0]?.realm ?? '';
-  return { kind: 'challenges', realm, challenges: supportedChallenges.map(summarizeChallenge) };
+  return { kind: 'challenges', realm, challenges: summarizeChallenges(supportedChallenges) };
 }
 
 /** Build the x402 section from a 402 probe — decode the `PAYMENT-REQUIRED` header into the buyer-facing accepts. */

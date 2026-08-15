@@ -1,6 +1,6 @@
 import { HEADERS, type MppChallenge, parseChallengeHeaders, readHeaderAll } from '@inflowpayai/mpp';
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
-import { type DecodedChallenge, summarizeChallenge } from './mpp-decode.js';
+import { type DecodedChallenge, summarizeChallenges } from './mpp-decode.js';
 import { PaymentInspectionBlockedError, type PaymentInspectionBlocked } from './payment-fetch.js';
 import {
   buildNoFilteredMatchMessage,
@@ -197,7 +197,7 @@ export async function runMppInspectPipeline(
       url: deps.url,
       method: probeOptions.method,
       realm,
-      challenges: filtered.map(summarizeChallenge),
+      challenges: summarizeChallenges(filtered),
     },
   });
 }

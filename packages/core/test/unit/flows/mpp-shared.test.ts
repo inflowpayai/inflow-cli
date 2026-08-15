@@ -139,8 +139,10 @@ describe('resolveAcceptPaymentProbeOptions', () => {
   it('narrows using either a method or intent filter', () => {
     const outByMethod = resolveAcceptPaymentProbeOptions(baseOptions({}), { paymentMethod: 'inflow' });
     const outByIntent = resolveAcceptPaymentProbeOptions(baseOptions({}), { intent: 'charge' });
-    expect(outByMethod.headers['Accept-Payment']).toBe('inflow/charge');
-    expect(outByIntent.headers['Accept-Payment']).toBe(DEFAULT_ACCEPT_PAYMENT_HEADER);
+    const outBySubscription = resolveAcceptPaymentProbeOptions(baseOptions({}), { intent: 'subscription' });
+    expect(outByMethod.headers['Accept-Payment']).toBe('inflow/charge, inflow/subscription');
+    expect(outByIntent.headers['Accept-Payment']).toBe('inflow/charge, tempo/charge');
+    expect(outBySubscription.headers['Accept-Payment']).toBe('inflow/subscription');
   });
 
   it('narrows to a safe supported pair when both payment method and intent are provided', () => {

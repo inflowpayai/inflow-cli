@@ -182,6 +182,17 @@ export const PayView: React.FC<PayViewProps> = ({
         </Box>
         <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
           <Text>{`transaction: ${created.transactionId}`}</Text>
+          {created.challenge.intent === 'subscription' ? (
+            <>
+              <Text>{`recurring amount: ${created.challenge.amount ?? 'unknown'} ${created.challenge.currency ?? ''}`}</Text>
+              <Text>{`billing period: every ${String(created.challenge.periodCount ?? 1)} ${created.challenge.periodUnit ?? 'unknown'}`}</Text>
+              <Text>{`expires: ${created.challenge.subscriptionExpires ?? 'unknown'}`}</Text>
+              {created.challenge.externalId === undefined ? null : (
+                <Text>{`seller reference: ${created.challenge.externalId}`}</Text>
+              )}
+              <Text>Either participant can cancel immediately.</Text>
+            </>
+          ) : null}
           {created.approvalUrl !== undefined ? (
             <>
               <Text>
@@ -282,10 +293,5 @@ export const PayView: React.FC<PayViewProps> = ({
     );
   }
 
-  return (
-    <Box flexDirection="column">
-      <Text color="red">✗ {phase.code}</Text>
-      <Text color="red">{phase.message}</Text>
-    </Box>
-  );
+  return null;
 };

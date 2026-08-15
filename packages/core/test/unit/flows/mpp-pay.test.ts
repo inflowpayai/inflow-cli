@@ -5,6 +5,7 @@ import {
   MppClient,
   type MppReceipt,
   renderChallengeHeader,
+  subscriptionOptionFingerprint,
 } from '@inflowpayai/mpp';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
@@ -35,6 +36,25 @@ function challenge(method = 'inflow'): MppChallenge {
     intent: 'charge',
     request: encode({ amount: '10', currency: 'USDC', methodDetails: { rail: 'balance' } }),
     expires: '2999-01-01T00:00:00Z',
+  };
+}
+
+function subscriptionChallenge(periodUnit: 'day' | 'month'): MppChallenge {
+  return {
+    id: `subscription-${periodUnit}`,
+    realm: 'mpp.test',
+    method: 'inflow',
+    intent: 'subscription',
+    request: encode({
+      amount: periodUnit === 'day' ? '0.1' : '1',
+      currency: 'USDC',
+      methodDetails: { rail: 'balance' },
+      periodCount: 1,
+      periodUnit,
+      subscriptionExpires: '2999-01-01T00:00:00Z',
+      externalId: `${periodUnit}-plan`,
+    }),
+    expires: '2099-01-01T00:00:00Z',
   };
 }
 
@@ -73,6 +93,40 @@ async function collect(d: MppPayPipelineDeps): Promise<MppPayEvent[]> {
 }
 
 describe('runMppPayPipeline', () => {
+  it('uses fresh buyer authorization for an existing subscription instead of creating a transaction', async () => {
+    const recurring = subscriptionChallenge('month');
+    let createHits = 0;
+    server.use(
+      http.get(SELLER, ({ request }) => {
+        if (request.headers.get('authorization') === 'Payment FRESH')
+          return new HttpResponse('ACCESS', { status: 200 });
+        return new HttpResponse(null, {
+          status: 402,
+          headers: { 'WWW-Authenticate': renderChallengeHeader(recurring) },
+        });
+      }),
+      http.post(`${INFLOW}/v1/transactions/mpp`, () => {
+        createHits += 1;
+        return HttpResponse.json({ state: 'failed' });
+      }),
+    );
+    const subscriptions = {
+      authorize: (subscriptionId: string, received: MppChallenge) => {
+        expect(subscriptionId).toBe('sub-1');
+        expect(received.id).toBe(recurring.id);
+        return Promise.resolve({ credential: 'FRESH', expires: recurring.expires as string });
+      },
+      cancel: () => Promise.resolve(undefined),
+      get: () => Promise.reject(new Error('unused')),
+      list: () => Promise.resolve({ count: 0, data: [], total: 0 }),
+    };
+
+    const events = await collect(deps({ subscriptions, subscriptionId: 'sub-1', intentFilter: 'subscription' }));
+
+    expect(events.at(-1)).toMatchObject({ type: 'replayed', result: { outcome: 'paid', transactionId: 'sub-1' } });
+    expect(createHits).toBe(0);
+  });
+
   it('pays on a ready-on-create transaction and replays for the body', async () => {
     server.use(
       sellerWithChallenge(),
@@ -426,6 +480,86 @@ describe('runMppPayPipeline', () => {
     expect(terminal).toMatchObject({ type: 'errored', code: 'NO_FILTERED_MATCH' });
   });
 
+  it('requires an option id when multiple subscription offers remain', async () => {
+    const headers = new Headers();
+    headers.append('WWW-Authenticate', renderChallengeHeader(subscriptionChallenge('day')));
+    headers.append('WWW-Authenticate', renderChallengeHeader(subscriptionChallenge('month')));
+    const terminal = (
+      await collect(
+        deps({
+          intentFilter: 'subscription',
+          sellerTransport: {
+            request: () => Promise.resolve({ bytes: new Uint8Array(), contentType: undefined, headers, status: 402 }),
+          },
+        }),
+      )
+    ).at(-1);
+
+    expect(terminal).toMatchObject({ type: 'errored', code: 'SUBSCRIPTION_OPTION_AMBIGUOUS' });
+  });
+
+  it('selects the current subscription challenge matching the stable option id', async () => {
+    const daily = subscriptionChallenge('day');
+    const monthly = subscriptionChallenge('month');
+    const headers = new Headers();
+    headers.append('WWW-Authenticate', renderChallengeHeader(daily));
+    headers.append('WWW-Authenticate', renderChallengeHeader(monthly));
+    let selectedId: string | undefined;
+    const client = {
+      createTransaction: ({ challenge: selected }: { challenge: MppChallenge }) => {
+        selectedId = selected.id;
+        return Promise.resolve({ state: 'pending', transactionId: 'tx-selected' });
+      },
+    };
+    const optionId = subscriptionOptionFingerprint(monthly)?.optionId;
+    if (optionId === undefined) throw new Error('Expected a subscription option ID.');
+
+    await collect(
+      deps({
+        client: client as unknown as MppClient,
+        intentFilter: 'subscription',
+        optionIdFilter: optionId,
+        awaitPayment: false,
+        sellerTransport: {
+          request: () => Promise.resolve({ bytes: new Uint8Array(), contentType: undefined, headers, status: 402 }),
+        },
+      }),
+    );
+
+    expect(selectedId).toBe('subscription-month');
+  });
+
+  it('treats duplicate subscription terms as one option and selects the first challenge', async () => {
+    const first = subscriptionChallenge('month');
+    const duplicate = { ...first, id: 'subscription-month-duplicate' };
+    const headers = new Headers();
+    headers.append('WWW-Authenticate', renderChallengeHeader(first));
+    headers.append('WWW-Authenticate', renderChallengeHeader(duplicate));
+    let selectedId: string | undefined;
+    const client = {
+      createTransaction: ({ challenge: selected }: { challenge: MppChallenge }) => {
+        selectedId = selected.id;
+        return Promise.resolve({ state: 'pending', transactionId: 'tx-selected' });
+      },
+    };
+
+    const terminal = (
+      await collect(
+        deps({
+          client: client as unknown as MppClient,
+          intentFilter: 'subscription',
+          awaitPayment: false,
+          sellerTransport: {
+            request: () => Promise.resolve({ bytes: new Uint8Array(), contentType: undefined, headers, status: 402 }),
+          },
+        }),
+      )
+    ).at(-1);
+
+    expect(selectedId).toBe(first.id);
+    expect(terminal).not.toMatchObject({ type: 'errored', code: 'SUBSCRIPTION_OPTION_AMBIGUOUS' });
+  });
+
   it('maps a thrown createTransaction error into a PAYMENT_FAILED frame', async () => {
     server.use(
       sellerWithChallenge(),
@@ -630,11 +764,13 @@ describe('buildSettlement', () => {
   it('projects the populated receipt fields into a compact settlement', () => {
     const receipt: MppReceipt = {
       challengeId: 'chal-1',
+      externalId: 'seller-plan',
       method: 'inflow',
       reference: 'ref-9',
       settlement: { amount: '10.5', currency: 'USDC' },
       status: 'success',
       timestamp: '2025-02-02T00:00:00Z',
+      subscriptionId: 'subscription-id',
     };
     const headers = new Headers({ [HEADERS.PAYMENT_RECEIPT]: encode(receipt) });
     expect(buildSettlement(headers)).toEqual({
@@ -643,6 +779,8 @@ describe('buildSettlement', () => {
       timestamp: '2025-02-02T00:00:00Z',
       amount: '10.5',
       currency: 'USDC',
+      externalId: 'seller-plan',
+      subscriptionId: 'subscription-id',
     });
   });
 

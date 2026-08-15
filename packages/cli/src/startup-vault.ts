@@ -51,9 +51,13 @@ export function shouldStartVaultDaemon(argv: readonly string[], hasDirectApiKey 
   if (group === 'auth') return subcommand === 'login' || subcommand === 'logout';
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
   if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
-  if (group === 'mpp' || group === 'x402') {
-    return !hasDirectApiKey && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
+  if (group === 'mpp') {
+    return (
+      requiresMppLocalState(argv, subcommand) || (!hasDirectApiKey && isOneOf(subcommand, 'pay', 'status', 'supported'))
+    );
   }
+  if (group === 'x402') return !hasDirectApiKey && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
+  if (group === 'subscriptions') return isOneOf(subcommand, 'cancel', 'fetch');
   return false;
 }
 
@@ -65,11 +69,16 @@ export function shouldReconcileVaultDaemon(argv: readonly string[], hasDirectApi
   }
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
   if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
-  if (group === 'mpp' || group === 'x402') {
-    return !hasDirectApiKey && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
+  if (group === 'mpp') {
+    return (
+      requiresMppLocalState(argv, subcommand) || (!hasDirectApiKey && isOneOf(subcommand, 'pay', 'status', 'supported'))
+    );
   }
+  if (group === 'x402') return !hasDirectApiKey && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
+  if (group === 'subscriptions' && isOneOf(subcommand, 'cancel', 'fetch')) return true;
   if (hasDirectApiKey) return false;
   if (group === 'balances' || group === 'deposit-addresses') return subcommand === 'list';
+  if (group === 'subscriptions') return isOneOf(subcommand, 'cancel', 'get', 'list');
   return group === 'user' && subcommand === 'get';
 }
 
@@ -82,16 +91,33 @@ export function shouldUnlockVault(
   if (group === 'auth') return subcommand === 'login';
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
   if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
-  if (group === 'mpp' || group === 'x402') {
+  if (group === 'mpp') {
+    return (
+      requiresMppLocalState(argv, subcommand) ||
+      (options.hasDirectApiKey !== true && isOneOf(subcommand, 'pay', 'status', 'supported'))
+    );
+  }
+  if (group === 'x402') {
     return options.hasDirectApiKey !== true && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
   }
+  if (group === 'subscriptions' && isOneOf(subcommand, 'cancel', 'fetch')) return true;
   if (options.hasDirectApiKey === true) return false;
   if (group === 'balances' || group === 'deposit-addresses') return subcommand === 'list';
+  if (group === 'subscriptions') return isOneOf(subcommand, 'cancel', 'get', 'list');
   return group === 'user' && subcommand === 'get';
 }
 
 function shouldBypassVault(argv: readonly string[]): boolean {
   return argv.includes('--schema') || argv.includes('--help') || argv.includes('-h');
+}
+
+function requiresMppLocalState(argv: readonly string[], subcommand: string | undefined): boolean {
+  if (isOneOf(subcommand, 'fetch', 'subscribe')) return true;
+  if (subcommand !== 'pay') return false;
+  const assigned = argv.find((argument) => argument.startsWith('--intent='));
+  if (assigned !== undefined) return assigned.slice('--intent='.length) === 'subscription';
+  const index = argv.indexOf('--intent');
+  return index >= 0 && argv[index + 1] === 'subscription';
 }
 
 export function shouldConfigureOdpServiceTransport(argv: readonly string[]): boolean {

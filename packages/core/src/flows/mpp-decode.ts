@@ -7,6 +7,8 @@ import {
   type MppCredential,
   type MppReceipt,
   parseChallengeHeader,
+  subscriptionOptionFingerprint,
+  subscriptionOptionFingerprints,
 } from '@inflowpayai/mpp';
 
 /**
@@ -25,10 +27,16 @@ export interface DecodedChallenge {
   recipient?: string;
   rail?: string;
   instrumentId?: string;
+  periodCount?: number;
+  periodUnit?: string;
+  subscriptionExpires?: string;
+  externalId?: string;
   expires?: string;
   description?: string;
   digest?: string;
   opaque?: string;
+  optionId?: string;
+  optionFingerprint?: string;
 }
 
 /**
@@ -61,12 +69,36 @@ export function summarizeChallenge(challenge: MppChallenge): DecodedChallenge {
     if (request.recipient !== undefined) out.recipient = request.recipient;
     if (request.methodDetails?.rail !== undefined) out.rail = request.methodDetails.rail;
     if (request.methodDetails?.instrumentId !== undefined) out.instrumentId = request.methodDetails.instrumentId;
+    if ('periodCount' in request) out.periodCount = request.periodCount;
+    if ('periodUnit' in request) out.periodUnit = request.periodUnit;
+    if ('subscriptionExpires' in request) {
+      out.subscriptionExpires = request.subscriptionExpires;
+    }
+    if ('externalId' in request) out.externalId = request.externalId;
   }
   if (challenge.expires !== undefined) out.expires = challenge.expires;
   if (challenge.description !== undefined) out.description = challenge.description;
   if (challenge.digest !== undefined) out.digest = challenge.digest;
   if (challenge.opaque !== undefined) out.opaque = challenge.opaque;
+  const option = subscriptionOptionFingerprint(challenge);
+  if (option !== undefined) {
+    out.optionId = option.optionId;
+    out.optionFingerprint = option.fingerprint;
+  }
   return out;
+}
+
+export function summarizeChallenges(challenges: readonly MppChallenge[]): DecodedChallenge[] {
+  const options = subscriptionOptionFingerprints(challenges);
+  return challenges.map((challenge, index) => {
+    const summary = summarizeChallenge(challenge);
+    const option = options[index];
+    if (option !== undefined) {
+      summary.optionId = option.optionId;
+      summary.optionFingerprint = option.fingerprint;
+    }
+    return summary;
+  });
 }
 
 /** Tagged decode result for `mpp decode`: a challenge header, a base64url credential, or a base64url receipt. */

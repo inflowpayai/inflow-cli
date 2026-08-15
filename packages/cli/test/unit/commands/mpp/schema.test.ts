@@ -6,6 +6,8 @@ import {
   inspectOptions,
   payOptions,
   statusOptions,
+  subscribeArgs,
+  subscribeOptions,
 } from '../../../../src/commands/mpp/schema.js';
 
 describe('mpp schema', () => {
@@ -64,6 +66,26 @@ describe('mpp schema', () => {
     expect(parsed.intent).toBe('charge');
     expect(parsed.currency).toBe('USDC');
     expect(parsed.rail).toBe('balance');
+  });
+
+  it('subscribe reuses pay args/options but drops the caller-supplied --intent', () => {
+    expect(subscribeArgs.parse({ url: 'https://seller/api' }).url).toBe('https://seller/api');
+    const parsed = subscribeOptions.parse({ paymentMethod: 'inflow', currency: 'USDC', rail: 'balance' });
+    expect(parsed.method).toBe('GET');
+    expect(parsed.showBody).toBe(true);
+    expect(parsed.paymentMethod).toBe('inflow');
+    expect('intent' in parsed).toBe(false);
+    // `intent` is not a recognized key: with the default zod strip it is dropped, not surfaced.
+    const withIntent = subscribeOptions.parse({ intent: 'charge' }) as Record<string, unknown>;
+    expect(withIntent['intent']).toBeUndefined();
+  });
+
+  it('accepts subscription option identifiers and rejects invalid values', () => {
+    expect(Object.keys(subscribeOptions.shape)[0]).toBe('optionId');
+    expect(subscribeOptions.parse({ optionId: 'a84c92d13f6b' }).optionId).toBe('a84c92d13f6b');
+    expect(subscribeOptions.parse({ optionId: 'A'.repeat(64) }).optionId).toBe('A'.repeat(64));
+    expect(subscribeOptions.safeParse({ optionId: 'not-hex' }).success).toBe(false);
+    expect(subscribeOptions.safeParse({ optionId: 'a'.repeat(65) }).success).toBe(false);
   });
 
   it('accepts the same filter flags on inspect', () => {

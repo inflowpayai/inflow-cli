@@ -93,7 +93,7 @@ Before paying, decide which protocol the resource uses. **You do not choose it -
 inflow inspect <url>
 ```
 
-`inflow inspect` probes the URL **once** and decodes both MPP and x402 challenges from the same 402. Read its `detected` array to pick the pay rail:
+`inflow inspect` probes the URL **once** and decodes both MPP and x402 challenges from the same 402. Read its `detected` array to pick the protocol. For MPP, also read each challenge's `intent`: use `mpp subscribe` for `subscription` and `mpp pay` for one-time `charge`.
 
 If `detected` includes `aep` and also reveals a payment protocol, continue with the matching `mpp pay` or `x402 pay`;
 the payment commands perform AEP authentication before creating the payment transaction. If `aep.blocked` is true, AEP
@@ -102,9 +102,9 @@ or ask whether to authenticate before attempting payment.
 
 | `detected` | Pay with |
 | --- | --- |
-| `["mpp"]` | `inflow mpp pay <url>` |
+| `["mpp"]` | `inflow mpp subscribe <url>` for a subscription challenge; otherwise `inflow mpp pay <url>` |
 | `["x402"]` | `inflow x402 pay <url>` |
-| `["mpp", "x402"]` | `inflow mpp pay <url>` - **MPP wins when both are present** |
+| `["mpp", "x402"]` | Use the matching MPP command - **MPP wins when both are present** |
 | `[]` (seller still returned 402) | Not InFlow-payable on this account. Stop and tell the user; check `warnings` for why. |
 
 If `inspect` returns `outcome: "no-payment-required"`, the URL isn't paywalled - there's nothing to pay.
@@ -113,7 +113,7 @@ If `inspect` returns `outcome: "no-payment-required"`, the URL isn't paywalled -
 
 ## Paying a 402 resource
 
-One flow for both protocols. Prerequisite: you are authenticated (see [Authenticate](#authenticate)). First find your protocol's row in the **Protocol deltas** table below - it names the 402 header that selected it, the matching model, the filter flags, and the Fetch command that completes the seller request. Everything else in this section applies to both protocols.
+This section covers one-time MPP charges and x402 payments. MPP subscriptions use [Subscribing to an MPP resource](#subscribing-to-an-mpp-resource). Prerequisite: you are authenticated (see [Authenticate](#authenticate)). First find your protocol's row in the **Protocol deltas** table below - it names the 402 header that selected it, the matching model, the filter flags, and the Fetch command that completes the seller request. Everything else in this section applies to both protocols.
 
 **Sequencing.** Run pre-flight before pay - `pay` fails or double-charges if the pre-flight checks didn't clear. `inspect` and `decode` are read-only and need no auth, so they may run before you authenticate if useful (e.g. sizing up a paywall first). If the seller requires AEP before payment, `pay` authenticates with the Service first, then creates the payment only after the legitimate 402 is available. Do not run a separate `aep grant` just to continue payment.
 
@@ -232,7 +232,7 @@ credentials without exposing either one in JSON output, logs, cache keys, or cha
 | --- | --- |
 | Approval window | 15 minutes from `pay` creating the transaction (`--timeout` overrides the polling deadline) |
 | Polling stop condition | Polling ends at whichever fires first: `--max-attempts` (count, default `0` = unlimited) or `--timeout` (seconds, default `900` = the full 15-min window). The examples use `--interval 5 --max-attempts 180` (= 900 s) so a copied command covers the whole window - `--interval 5 --max-attempts 60` (= 300 s) would stop polling at 5 min, well before approval can land |
-| Credential reuse | One-time. Fetch consumes the credential on the first seller replay - not reusable; a failed seller call requires a new `pay` |
+| Credential reuse | One-time credentials are consumed by seller replay. Existing subscriptions use fresh, short-lived credentials bound to the seller's current challenge. |
 
 ### Worked example (MPP)
 
@@ -278,6 +278,31 @@ Once the result arrives:
 > "Paid 0.10 USDC. Transaction txn_abc. Server returned: 'How to brew coffee - ...'"
 
 **Two-step variant** (host can't block): follow Step 2's two-step path; `x402 fetch` polls, attaches `PAYMENT-SIGNATURE`, and returns the resource body without exposing the encoded payload.
+
+## Subscribing to an MPP resource
+
+Use this flow only when `inflow inspect <url>` shows an MPP challenge with `intent: subscription`. Before initiating it, show the user the recurring amount and currency, billing period, expiration, seller reference when present, resource URL, and settlement rail. Each subscription option includes a stable `option_id` derived from its recurring terms. If multiple options are available, ask the user which one they want and pass that identifier to `mpp subscribe`; never select the first option implicitly.
+
+```bash
+inflow mpp subscribe <url> --option-id <option_id> --interval 5 --max-attempts 180
+```
+
+The user approves the immutable recurring terms. Successful activation settles the first period. Later access uses `subscriptions fetch`, which obtains a fresh credential for the current seller challenge.
+
+If the host cannot wait for approval, omit `--interval`, retain the returned `transaction_id`, and run the returned `_next.command`. `mpp fetch` polls, activates the subscription, and returns the resource. After activation, use `subscriptions fetch <subscription_id> <url>`; the server decides whether the current billing period is already paid or requires one new charge.
+
+Manage the buyer's subscriptions with:
+
+```bash
+inflow subscriptions list
+inflow subscriptions list --status active
+inflow subscriptions get <subscription_id>
+inflow subscriptions fetch <subscription_id> <url>
+inflow subscriptions cancel <subscription_id>
+```
+
+Obtain explicit user confirmation immediately before cancelling a subscription. Cancellation is immediate and does not refund a paid period. A cancelled subscription cannot obtain another access credential.
+Treat `PAST_DUE` as recoverable through a later collection retry; `EXPIRED`, `CANCELLED`, `REVOKED`, and `FAILED` are terminal.
 
 ### MPP errors
 
@@ -337,7 +362,6 @@ This skill covers programmatic HTTP 402 payments (MPP and x402) only. It does NO
 - **Refunds, disputes, chargebacks** - handled out of band via support.
 - **Peer-to-peer transfers** between users or wallets.
 - **FX / currency conversion.** Buyer logic matches the seller's accepted rails against the account's supported assets.
-- **Subscriptions / recurring payments.** Each `pay` is one-shot.
 
 For any of the above, point the user to https://app.inflowpay.ai or support.
 

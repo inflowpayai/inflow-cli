@@ -15,6 +15,7 @@ import type {
   IAuthResource,
   IBalanceResource,
   IDepositAddressResource,
+  ISubscriptionResource,
   IUserResource,
 } from '../resources/interfaces.js';
 import type { Balance, ConfiguredDepositAddress, DepositAddresses, User } from '../types/index.js';
@@ -390,7 +391,11 @@ export function augmentX402(x402Resource: IX402Resource, resolvedApiBaseUrl: str
  *
  * @internal
  */
-export function augmentMpp(mppResource: IMppResource, resolvedApiBaseUrl: string): IMpp {
+export function augmentMpp(
+  mppResource: IMppResource,
+  resolvedApiBaseUrl: string,
+  subscriptions?: ISubscriptionResource,
+): IMpp {
   const augmented = mppResource as IMppResource & Partial<IMpp>;
   augmented.inspect = (input) => wrapEmittingPipeline<MppInspectEvent>((emit) => runMppInspectPipeline(input, emit));
   augmented.supported = async () => runMppSupported({ mpp: mppResource });
@@ -401,6 +406,7 @@ export function augmentMpp(mppResource: IMppResource, resolvedApiBaseUrl: string
         {
           ...input,
           client,
+          ...(subscriptions === undefined ? {} : { subscriptions }),
           apiBaseUrl: input.apiBaseUrl ?? resolvedApiBaseUrl,
         },
         emit,

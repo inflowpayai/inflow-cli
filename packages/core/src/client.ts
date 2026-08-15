@@ -24,8 +24,10 @@ import type {
   IAuthResource,
   IBalanceResource,
   IDepositAddressResource,
+  ISubscriptionResource,
   IUserResource,
 } from './resources/interfaces.js';
+import { SubscriptionResource } from './resources/subscription.js';
 import { UserResource } from './resources/user.js';
 import { createAccessTokenProvider } from './session.js';
 import { sanitizeResource } from './utils/sanitize-proxy.js';
@@ -121,6 +123,7 @@ class MppResource implements IMppResource {
  * - `inflow.user` ({@link IUser}) — `retrieve()` (raw) and `get()` (agent-mode projected).
  * - `inflow.balances` ({@link IBalanceResource}) — `list()`.
  * - `inflow.depositAddresses` ({@link IDepositAddressResource}) — `list()`.
+ * - `inflow.subscriptions` ({@link ISubscriptionResource}) — `authorize()` / `list()` / `get()` / `cancel()`.
  * - `inflow.x402` ({@link IX402}) — `client()` (raw buyer client) + `pay` / `status` / `cancel` / `inspect` / `supported`.
  * - `inflow.mpp` ({@link IMpp}) — `client()` (raw `MppClient`) + `pay` / `status` / `cancel` / `inspect` / `decode` /
  *   `supported`.
@@ -142,6 +145,7 @@ export class Inflow {
   readonly auth: IAuth;
   readonly balances: IBalanceResource;
   readonly depositAddresses: IDepositAddressResource;
+  readonly subscriptions: ISubscriptionResource;
   readonly user: IUser;
   readonly x402: IX402;
   readonly mpp: IMpp;
@@ -179,6 +183,7 @@ export class Inflow {
     this.depositAddresses = sanitizeResource<IDepositAddressResource>(
       new DepositAddressResource(dataOptions, dataConfig),
     );
+    this.subscriptions = sanitizeResource<ISubscriptionResource>(new SubscriptionResource(dataOptions, dataConfig));
 
     const rawUser = sanitizeResource<IUserResource>(new UserResource(dataOptions, dataConfig));
     this.user = augmentUser(rawUser);
@@ -189,7 +194,7 @@ export class Inflow {
     this.x402 = augmentX402(x402Internal, this.resolvedApiBaseUrl);
 
     const mppInternal: IMppResource = new MppResource(this.resolveMppOptions(options, dataOptions, dataConfig.fetch));
-    this.mpp = augmentMpp(mppInternal, this.resolvedApiBaseUrl);
+    this.mpp = augmentMpp(mppInternal, this.resolvedApiBaseUrl, this.subscriptions);
     this.aep = sanitizeResource<IAepResource>(new AepResource());
     this.odp = new OdpResource(dataConfig.environment, dataConfig.fetch);
 

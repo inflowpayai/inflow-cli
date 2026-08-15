@@ -1,4 +1,4 @@
-import { INTENT_CHARGE, METHOD_INFLOW, METHOD_TEMPO, type MppChallenge } from '@inflowpayai/mpp';
+import { INTENT_CHARGE, INTENT_SUBSCRIPTION, METHOD_INFLOW, METHOD_TEMPO, type MppChallenge } from '@inflowpayai/mpp';
 import type { SellerProbeOptions } from '@inflowpayai/x402-buyer/probe';
 import { decodeChallengeRequest } from './mpp-decode.js';
 
@@ -33,6 +33,7 @@ export function filterPayableChallenges(challenges: readonly MppChallenge[]): Mp
 const ACCEPT_PAYMENT_HEADER_NAME = 'accept-payment';
 const SUPPORTED_ACCEPT_PAYMENT_CAPABILITIES = [
   { method: METHOD_INFLOW, intent: INTENT_CHARGE },
+  { method: METHOD_INFLOW, intent: INTENT_SUBSCRIPTION },
   { method: METHOD_TEMPO, intent: INTENT_CHARGE },
 ] as const;
 
