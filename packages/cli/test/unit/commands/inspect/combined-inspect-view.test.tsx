@@ -426,6 +426,7 @@ describe('CombinedInspectView', () => {
     await settle();
     const frame = lastFrame() ?? '';
     expect(frame).toContain('inspection failed (validation_failed)');
+    expect(frame).toContain('invalid ODP document');
     expect(frame).toContain('Payment not required');
     unmount();
   });

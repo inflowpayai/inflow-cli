@@ -214,9 +214,12 @@ const OdpSectionView: React.FC<{ section: OdpSection }> = ({ section }) => {
   }
   if (section.kind === 'error') {
     return (
-      <Text>
-        <Text bold>── ODP ──</Text> <Text color="yellow">{`inspection failed (${section.code})`}</Text>
-      </Text>
+      <Box flexDirection="column">
+        <Text>
+          <Text bold>── ODP ──</Text> <Text color="yellow">{`inspection failed (${section.code})`}</Text>
+        </Text>
+        <Text dimColor>{section.message}</Text>
+      </Box>
     );
   }
   return (
