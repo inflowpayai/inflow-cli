@@ -54,8 +54,8 @@
     "@inflowpayai/x402": "^0.9.0",
     "@inflowpayai/x402-buyer": "^0.8.0",
     "@offering-protocol/agent": "^0.3.0",
-    "@offering-protocol/core": "^0.3.1",
-    "@offering-protocol/directory": "^0.2.3",
+    "@offering-protocol/core": "^0.3.2",
+    "@offering-protocol/directory": "^0.2.4",
     "@x402/core": "^2.22.0"
   },
   "devDependencies": {
@@ -65,8 +65,8 @@
     "@inflowpayai/x402": "^0.9.0",
     "@inflowpayai/x402-buyer": "^0.8.0",
     "@offering-protocol/agent": "^0.3.0",
-    "@offering-protocol/core": "^0.3.1",
-    "@offering-protocol/directory": "^0.2.3",
+    "@offering-protocol/core": "^0.3.2",
+    "@offering-protocol/directory": "^0.2.4",
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^2.1.0",
     "@x402/core": "^2.22.0"

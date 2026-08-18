@@ -38,6 +38,7 @@ const inspection: ServiceInspection = {
   },
   document: {
     description: 'Compute catalog',
+    documentation_url: '/developers/',
     http: { endpoint_base: '/odp' },
     language: 'en',
     localizations: ['en'],
@@ -48,6 +49,9 @@ const inspection: ServiceInspection = {
       enrollment: [{ name: 'aep' }],
       payments: [{ authentication: 'required', name: 'mpp', options: ['inflow', 'tempo'] }],
     },
+    status_url: 'https://status.compute.example/',
+    support_url: '/support/',
+    website_url: '/compute/',
   },
   finalUrl: new URL('https://compute.example/.well-known/odp'),
   freshness: 'fetched',
@@ -264,6 +268,10 @@ describe('ODP Service and Collection commands', () => {
     expect(lastFrame()).toContain('Value');
     expect(lastFrame()).toContain('Compute catalog');
     expect(lastFrame()).toContain('https://compute.example');
+    expect(lastFrame()).toContain('https://compute.example/compute/');
+    expect(lastFrame()).toContain('https://compute.example/developers/');
+    expect(lastFrame()).toContain('https://compute.example/support/');
+    expect(lastFrame()).toContain('https://status.compute.example/');
     expect(lastFrame()).toContain('ODP version');
     expect(lastFrame()).toContain('list-collections');
     expect(lastFrame()).toContain('get-collection (authentication required)');
