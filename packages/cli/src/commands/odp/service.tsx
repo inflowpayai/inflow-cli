@@ -283,6 +283,18 @@ export function OdpDetailsTable({ inspection }: { inspection: ServiceInspection 
     ...detail('Service URL', inspection.serviceOrigin),
     ...detail('Name', document.name),
     ...detail('Description', document.description),
+    ...(document.website_url === undefined
+      ? []
+      : detail('Website', absoluteReference(document.website_url, inspection.serviceOrigin))),
+    ...(document.documentation_url === undefined
+      ? []
+      : detail('Documentation', absoluteReference(document.documentation_url, inspection.serviceOrigin))),
+    ...(document.support_url === undefined
+      ? []
+      : detail('Support', absoluteReference(document.support_url, inspection.serviceOrigin))),
+    ...(document.status_url === undefined
+      ? []
+      : detail('Status', absoluteReference(document.status_url, inspection.serviceOrigin))),
     ...detail('ODP version', document.odp_version),
     ...detail('Language', document.language),
     ...(document.localizations.length === 0 ? [] : detail('Localizations', listed(document.localizations))),
