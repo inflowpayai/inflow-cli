@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
+  AepClaimRequirementsError,
+  AepClaimValuesError,
   AepCommandError,
   AepInspectError,
   AepPendingSignError,
@@ -26,6 +28,7 @@ import {
 import {
   AepFetchError,
   AepStorage,
+  accountUrlFor,
   approvalUrlFor,
   parseHeaderFlags,
   runAepFetch,
@@ -74,7 +77,19 @@ import {
   StatusView,
 } from './views.js';
 
-type ErrorOptions = { code: string; message: string; exitCode?: number; retryable?: boolean };
+type ErrorOptions = {
+  code: string;
+  cta?: { commands: Cli.Cta[]; description?: string };
+  details?: Record<string, unknown>;
+  message: string;
+  exitCode?: number;
+  retryable?: boolean;
+  title?: string;
+};
+type RequirementErrorContext = {
+  accountUrl: string;
+  serviceReference: string;
+};
 type PendingApprovalRenderer = Pick<ReturnType<typeof render>, 'clear' | 'unmount'>;
 type Context = {
   agent: boolean;
@@ -162,16 +177,151 @@ function inspectError(error: unknown): ErrorOptions | undefined {
   return undefined;
 }
 
-function commandError(error: unknown): ErrorOptions {
+const CLAIM_LABELS: Readonly<Record<string, string>> = {
+  'contact.address.primary': 'Primary address',
+  'contact.email': 'Email address',
+  'contact.mobile': 'Mobile phone number',
+  'person.birthdate': 'Birthdate',
+  'person.first_name': 'First name',
+  'person.last_name': 'Last name',
+  'person.username': 'Username',
+};
+
+const CLAIM_PATH_LABELS: Readonly<Record<string, string>> = {
+  'contact.address.primary.city': 'Address city',
+  'contact.address.primary.country': 'Address country',
+  'contact.address.primary.first_name': 'Recipient first name',
+  'contact.address.primary.last_name': 'Recipient last name',
+  'contact.address.primary.line1': 'Address line 1',
+  'contact.address.primary.line2': 'Address line 2',
+  'contact.address.primary.line3': 'Address line 3',
+  'contact.address.primary.postcode': 'Address postcode',
+  'contact.address.primary.region': 'Address region',
+};
+
+function claimLabel(name: string): string {
+  return CLAIM_LABELS[name] ?? name;
+}
+
+function claimPathLabel(path: string, claim: string): string {
+  return CLAIM_PATH_LABELS[path.replace(/^\$\./, '')] ?? claimLabel(claim);
+}
+
+function claimNameFromIssuePath(path: string): string {
+  const normalized = path.startsWith('$.') ? path.slice(2) : path;
+  return (
+    Object.keys(CLAIM_LABELS).find((name) => normalized === name || normalized.startsWith(`${name}.`)) ?? normalized
+  );
+}
+
+function claimRows(claims: ReadonlyArray<{ label: string; name: string }>): string {
+  const width = Math.max(...claims.map((claim) => claim.label.length));
+  return claims.map((claim) => `  ${claim.label.padEnd(width)}  ${claim.name}`).join('\n');
+}
+
+function retryEnrollment(context: RequirementErrorContext | undefined): ErrorOptions['cta'] {
+  if (context === undefined) return undefined;
+  return {
+    commands: [
+      {
+        command: `aep enroll ${shellArg(context.serviceReference)}`,
+        description: 'Retry enrollment',
+      },
+    ],
+    description: 'After updating your account:',
+  };
+}
+
+function unsupportedRequiredClaims(error: AepCommandError): string[] {
+  const unsupported = error.problem?.['unsupported_claims'];
+  if (typeof unsupported !== 'object' || unsupported === null) return [];
+  const required = (unsupported as Record<string, unknown>)['required'];
+  return Array.isArray(required) ? required.filter((claim): claim is string => typeof claim === 'string') : [];
+}
+
+function commandError(error: unknown, context?: RequirementErrorContext): ErrorOptions {
   const inspect = inspectError(error);
   if (inspect !== undefined) return inspect;
   if (error instanceof CliInputError) {
     return { code: error.code, exitCode: 2, message: error.message };
   }
+  if (error instanceof AepClaimRequirementsError) {
+    const missingClaims = error.missingRequiredClaimNames.map((name) => ({ label: claimLabel(name), name }));
+    const cta = retryEnrollment(context);
+    return {
+      code: 'AEP_REQUIREMENTS_UNMET',
+      ...(cta === undefined ? {} : { cta }),
+      details: {
+        missing_claims: missingClaims,
+        reason: 'account_information_missing',
+        ...(context === undefined ? {} : { resolution: { action: 'update_account', url: context.accountUrl } }),
+      },
+      message:
+        `The Service requires information that is not configured in your InFlow account.\n\n` +
+        `Missing information\n${claimRows(missingClaims)}` +
+        (context === undefined ? '' : `\n\nUpdate your account\n  ${context.accountUrl}`),
+      retryable: false,
+      title: 'Enrollment needs account information',
+    };
+  }
+  if (error instanceof AepClaimValuesError) {
+    const cta = retryEnrollment(context);
+    const issues = error.issues.map((issue) => {
+      const claim = claimNameFromIssuePath(issue.path);
+      return {
+        claim,
+        label: claimPathLabel(issue.path, claim),
+        message: issue.message,
+        path: issue.path.replace(/^\$\./, ''),
+      };
+    });
+    const rows = issues
+      .map((issue) => `  ${issue.label}\n  Problem    ${issue.message}\n  AEP field  ${issue.path}`)
+      .join('\n\n');
+    return {
+      code: 'AEP_REQUIREMENTS_UNMET',
+      ...(cta === undefined ? {} : { cta }),
+      details: {
+        issues,
+        reason: 'account_information_invalid',
+        ...(context === undefined ? {} : { resolution: { action: 'update_account', url: context.accountUrl } }),
+      },
+      message:
+        `Some information approved for this Service does not meet the required format.\n\n` +
+        `Information to review\n${rows}` +
+        (context === undefined ? '' : `\n\nReview your account\n  ${context.accountUrl}`),
+      retryable: false,
+      title: 'Enrollment needs corrected account information',
+    };
+  }
   if (error instanceof AepCommandError) {
     const code = error.problem?.code;
-    if (code === 'requirements_unmet')
-      return { code: 'AEP_REQUIREMENTS_UNMET', message: 'The Platform cannot satisfy required Service claims.' };
+    if (code === 'requirements_unmet') {
+      const unsupportedClaims = unsupportedRequiredClaims(error);
+      if (unsupportedClaims.length === 0) {
+        return {
+          code: 'AEP_REQUIREMENTS_UNMET',
+          message: 'The Platform cannot satisfy the required Service claims.',
+          retryable: false,
+        };
+      }
+      const rows = unsupportedClaims.map((claim) => `  ${claim}`).join('\n');
+      return {
+        code: 'AEP_REQUIREMENTS_UNMET',
+        details: {
+          reason: 'unsupported_claims',
+          resolution: { action: 'service_update_required' },
+          unsupported_claims: unsupportedClaims,
+        },
+        message:
+          `This Service requires information that InFlow does not currently support.` +
+          (rows.length === 0 ? '' : `\n\nUnsupported requirements\n${rows}`) +
+          `\n\nChanging your account will not resolve this requirement. ` +
+          `The Service must request supported AEP claims before enrollment can continue.`,
+        retryable: false,
+        title: 'Enrollment requirements are not supported',
+      };
+    }
     if (code === 'authorization_denied')
       return { code: 'AEP_APPROVAL_DENIED', message: 'The InFlow approval was denied.' };
     return { code: typeof code === 'string' ? code : 'AEP_SIGN_FAILED', message: 'The AEP command failed.' };
@@ -484,9 +634,9 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
               <PendingApprovalView
                 approvalId={approvalId}
                 approvalUrl={approvalUrlFor(inflow.resolvedApiBaseUrl, approvalId)}
-                onCancel={() => {
+                onCancel={async () => {
+                  await cancelApproval(inflow, approvalId);
                   controller.abort();
-                  return cancelApproval(inflow, approvalId);
                 }}
               />,
               { exitOnCtrlC: false },
@@ -833,9 +983,9 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
               <PendingApprovalView
                 approvalId={approvalId}
                 approvalUrl={approvalUrlFor(inflow.resolvedApiBaseUrl, approvalId)}
-                onCancel={() => {
+                onCancel={async () => {
+                  await cancelApproval(inflow, approvalId);
                   approvalController.abort();
-                  return cancelApproval(inflow, approvalId);
                 }}
               />,
               { exitOnCtrlC: false },
@@ -892,7 +1042,12 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       return c.error({ code: 'AEP_APPROVAL_DENIED', message: 'The InFlow approval was declined.' });
     if (error instanceof ApprovalTimeoutError)
       return c.error({ code: 'AEP_APPROVAL_TIMEOUT', message: 'The InFlow approval timed out.' });
-    return c.error(commandError(error));
+    return c.error(
+      commandError(error, {
+        accountUrl: accountUrlFor(inflow.resolvedApiBaseUrl),
+        serviceReference: c.args.serviceReference,
+      }),
+    );
   }
 }
 
@@ -1042,9 +1197,9 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
               <PendingApprovalView
                 approvalId={approvalId}
                 approvalUrl={approvalUrlFor(inflow.resolvedApiBaseUrl, approvalId)}
-                onCancel={() => {
+                onCancel={async () => {
+                  await cancelApproval(inflow, approvalId);
                   approvalController.abort();
-                  return cancelApproval(inflow, approvalId);
                 }}
               />,
               { exitOnCtrlC: false },

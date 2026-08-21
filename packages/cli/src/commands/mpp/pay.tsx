@@ -53,7 +53,6 @@ export interface PayViewProps {
   method: string;
   deps: MppPayPipelineDeps;
   onComplete: (final: MppPayPhase) => void;
-  /** Best-effort cancel of the pending approval when the user presses Escape. */
   onCancel?: (approvalId: string) => Promise<unknown> | void;
   authenticationApproval?: AuthenticationApprovalDisplay | undefined;
 }
@@ -63,13 +62,14 @@ export const PayView: React.FC<PayViewProps> = ({
   method,
   deps,
   onComplete,
-  onCancel,
+  onCancel = () => Promise.reject(new Error('Approval cancellation is unavailable.')),
   authenticationApproval,
 }) => {
   const initial: MppPayPhase = { kind: 'probing' };
   const [phase, dispatch] = useReducer(reduceMppPay, initial);
   const [cancelling, setCancelling] = useState(false);
-  const { finish, cancelThenFinish } = useFlowExit(onComplete);
+  const [cancellationFailed, setCancellationFailed] = useState(false);
+  const { finish } = useFlowExit(onComplete);
 
   const created = phase.kind === 'created' ? phase.created : undefined;
   const approvalUrl = created?.approvalUrl;
@@ -83,11 +83,19 @@ export const PayView: React.FC<PayViewProps> = ({
       }
       if (key.escape && approvalId !== undefined) {
         setCancelling(true);
-        cancelThenFinish(() => onCancel?.(approvalId), {
-          kind: 'error',
-          code: 'APPROVAL_CANCELLED',
-          message: `Approval ${approvalId} cancelled.`,
-        });
+        setCancellationFailed(false);
+        void Promise.resolve(onCancel(approvalId)).then(
+          () =>
+            finish({
+              kind: 'error',
+              code: 'APPROVAL_CANCELLED',
+              message: `Approval ${approvalId} cancelled.`,
+            }),
+          () => {
+            setCancelling(false);
+            setCancellationFailed(true);
+          },
+        );
       }
     },
     { isActive: authenticationApproval === undefined && approvalUrl !== undefined && !cancelling },
@@ -211,6 +219,7 @@ export const PayView: React.FC<PayViewProps> = ({
             <Spinner type="dots" /> Waiting for approval...
           </Text>
         </Box>
+        {cancellationFailed && <Text color="red">Unable to cancel approval. Press Escape to retry.</Text>}
       </Box>
     );
   }

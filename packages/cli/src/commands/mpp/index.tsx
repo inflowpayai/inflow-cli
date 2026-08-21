@@ -27,6 +27,7 @@ import { mcpTool } from '../../mcp-metadata.js';
 import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { type AepApprovalDisplay, createAepAwareInspectProbe, createAepAwareSellerTransport } from '../aep/runtime.js';
+import { cancelApproval } from '../approval-cancellation.js';
 import { PaymentFetchView, type PaymentFetchPhase } from '../payment-fetch.js';
 import { useAuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
 import { CancelView } from './cancel.js';
@@ -270,7 +271,10 @@ const PayViewWithAuthentication: React.FC<PayViewWithAuthenticationProps> = ({
 interface FetchViewWithAuthenticationProps {
   authStorage: AuthStorage;
   c: FetchCommandContext;
-  events: (sellerTransport: ReturnType<typeof createSellerTransport>) => AsyncIterable<MppFetchEvent>;
+  events: (
+    sellerTransport: ReturnType<typeof createSellerTransport>,
+    signal: AbortSignal,
+  ) => AsyncIterable<MppFetchEvent>;
   inflow: Inflow;
   onComplete: (phase: PaymentFetchPhase) => void;
   paymentHeader: string;
@@ -291,7 +295,7 @@ const FetchViewWithAuthentication: React.FC<FetchViewWithAuthenticationProps> = 
     () => createSellerTransport(c, inflow, authStorage, approvalDisplay),
     [approvalDisplay, authStorage, c, inflow],
   );
-  const iterable = useMemo(() => () => events(sellerTransport), [events, sellerTransport]);
+  const iterable = useMemo(() => (signal: AbortSignal) => events(sellerTransport, signal), [events, sellerTransport]);
   return (
     <PaymentFetchView
       protocol={protocol}
@@ -496,7 +500,7 @@ export async function* runPayCommand(
         onComplete={(phase) => {
           captured.finalPhase = phase;
         }}
-        onCancel={(approvalId) => inflow.mpp.cancel({ approvalId })}
+        onCancel={(approvalId) => cancelApproval(inflow, approvalId)}
       />,
     );
     if (captured.finalPhase !== null) {
@@ -592,7 +596,7 @@ export async function* runFetchCommand(
         inflow={inflow}
         protocol="MPP"
         paymentHeader="Authorization: Payment"
-        events={(sellerTransport) =>
+        events={(sellerTransport, signal) =>
           inflow.mpp.fetch({
             transactionId: c.args.transactionId,
             url: c.args.resourceUrl,
@@ -602,6 +606,7 @@ export async function* runFetchCommand(
             timeout: c.options.timeout,
             showBody: c.options.showBody,
             sellerTransport,
+            signal,
             ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
           }).events
         }

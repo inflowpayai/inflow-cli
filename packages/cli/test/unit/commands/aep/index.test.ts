@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AepFetchError, AepStorage, MemoryStorage, SecureStorageError } from '@inflowpayai/inflow-core';
-import { AepCommandError, AepInspectError, AepServiceReferenceError } from '@aep-foundation/agent';
+import {
+  AepClaimRequirementsError,
+  AepClaimValuesError,
+  AepCommandError,
+  AepInspectError,
+  AepServiceReferenceError,
+} from '@aep-foundation/agent';
 import type { InspectServiceResult } from '@aep-foundation/agent';
 import type * as InflowCore from '@inflowpayai/inflow-core';
 
@@ -84,6 +90,16 @@ const inspect: InspectServiceResult = {
 };
 
 vi.mock('@aep-foundation/agent', () => {
+  class AepClaimRequirementsError extends Error {
+    constructor(readonly missingRequiredClaimNames: string[]) {
+      super('Required AEP claims are unavailable.');
+    }
+  }
+  class AepClaimValuesError extends Error {
+    constructor(readonly issues: Array<{ path: string; message: string }>) {
+      super('AEP Claim Values failed validation.');
+    }
+  }
   class AepCommandError extends Error {
     problem?: { code: string };
 
@@ -128,6 +144,8 @@ vi.mock('@aep-foundation/agent', () => {
     };
   };
   return {
+    AepClaimRequirementsError,
+    AepClaimValuesError,
     AepCommandError,
     AepInspectError,
     AepPendingSignError,
@@ -364,6 +382,88 @@ describe('aep commands', () => {
       code: 'AEP_INTERNAL_ERROR',
       message: 'The AEP command failed unexpectedly.',
     });
+    const requirementContext = {
+      accountUrl: 'https://app.inflowpay.ai/user/',
+      serviceReference: 'https://service.example',
+    };
+    expect(
+      __testing.commandError(new AepClaimRequirementsError(['contact.address.primary']), requirementContext),
+    ).toEqual({
+      code: 'AEP_REQUIREMENTS_UNMET',
+      cta: {
+        commands: [
+          {
+            command: 'aep enroll https://service.example',
+            description: 'Retry enrollment',
+          },
+        ],
+        description: 'After updating your account:',
+      },
+      details: {
+        missing_claims: [{ label: 'Primary address', name: 'contact.address.primary' }],
+        reason: 'account_information_missing',
+        resolution: { action: 'update_account', url: 'https://app.inflowpay.ai/user/' },
+      },
+      message:
+        'The Service requires information that is not configured in your InFlow account.\n\n' +
+        'Missing information\n' +
+        '  Primary address  contact.address.primary\n\n' +
+        'Update your account\n' +
+        '  https://app.inflowpay.ai/user/',
+      retryable: false,
+      title: 'Enrollment needs account information',
+    });
+    expect(
+      __testing.commandError(
+        new AepClaimValuesError([
+          { path: '$.contact.mobile', message: 'Expected string to match the AEP mobile format.' },
+          { path: '$.contact.address.primary.first_name', message: 'Expected at least 1 character(s).' },
+        ]),
+        requirementContext,
+      ),
+    ).toEqual({
+      code: 'AEP_REQUIREMENTS_UNMET',
+      cta: {
+        commands: [
+          {
+            command: 'aep enroll https://service.example',
+            description: 'Retry enrollment',
+          },
+        ],
+        description: 'After updating your account:',
+      },
+      details: {
+        issues: [
+          {
+            claim: 'contact.mobile',
+            label: 'Mobile phone number',
+            message: 'Expected string to match the AEP mobile format.',
+            path: 'contact.mobile',
+          },
+          {
+            claim: 'contact.address.primary',
+            label: 'Recipient first name',
+            message: 'Expected at least 1 character(s).',
+            path: 'contact.address.primary.first_name',
+          },
+        ],
+        reason: 'account_information_invalid',
+        resolution: { action: 'update_account', url: 'https://app.inflowpay.ai/user/' },
+      },
+      message:
+        'Some information approved for this Service does not meet the required format.\n\n' +
+        'Information to review\n' +
+        '  Mobile phone number\n' +
+        '  Problem    Expected string to match the AEP mobile format.\n' +
+        '  AEP field  contact.mobile\n\n' +
+        '  Recipient first name\n' +
+        '  Problem    Expected at least 1 character(s).\n' +
+        '  AEP field  contact.address.primary.first_name\n\n' +
+        'Review your account\n' +
+        '  https://app.inflowpay.ai/user/',
+      retryable: false,
+      title: 'Enrollment needs corrected account information',
+    });
     expect(__testing.commandError(new TypeError('Invalid AEP Grant response.'))).toEqual({
       code: 'AEP_GRANT_RESPONSE_INVALID',
       message: 'The Service returned an invalid AEP Grant response.',
@@ -391,11 +491,38 @@ describe('aep commands', () => {
           status: 400,
           title: 'Requirements unmet',
           type: 'urn:aep:error:requirements_unmet',
+          unsupported_claims: { required: ['organization.procurement.department'] },
         }),
       ),
     ).toEqual({
       code: 'AEP_REQUIREMENTS_UNMET',
-      message: 'The Platform cannot satisfy required Service claims.',
+      details: {
+        reason: 'unsupported_claims',
+        resolution: { action: 'service_update_required' },
+        unsupported_claims: ['organization.procurement.department'],
+      },
+      message:
+        'This Service requires information that InFlow does not currently support.\n\n' +
+        'Unsupported requirements\n' +
+        '  organization.procurement.department\n\n' +
+        'Changing your account will not resolve this requirement. ' +
+        'The Service must request supported AEP claims before enrollment can continue.',
+      retryable: false,
+      title: 'Enrollment requirements are not supported',
+    });
+    expect(
+      __testing.commandError(
+        new AepCommandError('requirements', 400, {
+          code: 'requirements_unmet',
+          status: 400,
+          title: 'Requirements unmet',
+          type: 'urn:aep:error:requirements_unmet',
+        }),
+      ),
+    ).toEqual({
+      code: 'AEP_REQUIREMENTS_UNMET',
+      message: 'The Platform cannot satisfy the required Service claims.',
+      retryable: false,
     });
     expect(
       __testing.commandError(
@@ -449,7 +576,7 @@ describe('aep commands', () => {
 
     const cancelFetch = vi.fn(() => Promise.reject(new Error('offline')));
     vi.stubGlobal('fetch', cancelFetch);
-    await expect(__testing.cancelApproval(inflow(), 'approval-1')).resolves.toBeUndefined();
+    await expect(__testing.cancelApproval(inflow(), 'approval-1')).rejects.toThrow('offline');
     expect(cancelFetch).toHaveBeenCalledOnce();
 
     const alreadyAborted = new AbortController();

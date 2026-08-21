@@ -17,3 +17,7 @@ export function approvalUrlFor(apiBaseUrl: string, approvalId: string): string {
   const host = dashboardHostFor(apiBaseUrl);
   return `https://${host}/approvals/${approvalId}/view/`;
 }
+
+export function accountUrlFor(apiBaseUrl: string): string {
+  return `https://${dashboardHostFor(apiBaseUrl)}/user/`;
+}

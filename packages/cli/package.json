@@ -43,9 +43,9 @@
     "url": "https://github.com/inflowpayai/inflow-cli/issues"
   },
   "dependencies": {
-    "@aep-foundation/agent": "^0.3.2",
-    "@inflowpayai/mpp": "^0.8.0",
-    "@inflowpayai/mpp-buyer": "^0.7.0",
+    "@aep-foundation/agent": "^0.3.3",
+    "@inflowpayai/mpp": "^0.9.0",
+    "@inflowpayai/mpp-buyer": "^0.7.1",
     "@inflowpayai/x402": "^0.9.0",
     "@inflowpayai/x402-buyer": "^0.8.0",
     "@modelcontextprotocol/server": "2.0.0-alpha.4",

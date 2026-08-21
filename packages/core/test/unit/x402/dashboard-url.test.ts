@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approvalUrlFor, dashboardHostFor } from '../../../src/x402/dashboard-url.js';
+import { accountUrlFor, approvalUrlFor, dashboardHostFor } from '../../../src/x402/dashboard-url.js';
 
 describe('dashboardHostFor', () => {
   it('maps production api host to the dashboard host', () => {
@@ -32,5 +32,15 @@ describe('approvalUrlFor', () => {
 
   it('always ends with /view/ — the dashboard route requires the trailing slash', () => {
     expect(approvalUrlFor('https://api.inflowpay.ai', 'appr_1')).toMatch(/\/approvals\/appr_1\/view\/$/);
+  });
+});
+
+describe('accountUrlFor', () => {
+  it('builds the production account URL', () => {
+    expect(accountUrlFor('https://api.inflowpay.ai')).toBe('https://app.inflowpay.ai/user/');
+  });
+
+  it('builds the sandbox account URL', () => {
+    expect(accountUrlFor('https://sandbox.inflowpay.ai')).toBe('https://sandbox.inflowpay.ai/user/');
   });
 });

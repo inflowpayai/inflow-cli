@@ -14,8 +14,9 @@ if (!Number.isFinite(target) || target < 0 || target > 100) {
 }
 
 const coverage = new Map();
+const branchCoverage = new Map();
 for (const lcovFile of lcovFiles) {
-  readLcov(lcovFile, coverage);
+  readLcov(lcovFile, coverage, branchCoverage);
 }
 
 const changed = changedSourceLines(baseRef);
@@ -33,8 +34,10 @@ for (const [file, lines] of [...changed.entries()].sort()) {
     const hits = fileCoverage.get(line);
     if (hits === undefined) continue;
     executable += 1;
-    if (hits > 0) covered += 1;
-    else missing.push({ file, lines: [line], reason: 'uncovered' });
+    if (hits === 0) missing.push({ file, lines: [line], reason: 'uncovered' });
+    else if (isPartiallyCovered(branchCoverage.get(file)?.get(line)))
+      missing.push({ file, lines: [line], reason: 'partially covered' });
+    else covered += 1;
   }
 }
 
@@ -44,7 +47,9 @@ if (executable === 0 && missing.length === 0) {
 }
 
 const percentage = executable === 0 ? 0 : (covered / executable) * 100;
-process.stdout.write(`Changed-line coverage: ${covered}/${executable} executable changed source lines (${percentage.toFixed(2)}%).\n`);
+process.stdout.write(
+  `Changed-line coverage: ${covered}/${executable} executable changed source lines (${percentage.toFixed(2)}%).\n`,
+);
 
 if (missing.length > 0) {
   process.stdout.write('Uncovered changed lines:\n');
@@ -58,7 +63,7 @@ if (missing.some((item) => item.reason === 'no coverage data') || percentage < t
   process.exit(1);
 }
 
-function readLcov(lcovFile, out) {
+function readLcov(lcovFile, out, partialBranches) {
   const absolute = resolve(repoRoot, lcovFile);
   if (!existsSync(absolute)) {
     throw new Error(`Missing coverage report: ${lcovFile}. Run pnpm test before pnpm coverage:changed.`);
@@ -69,12 +74,28 @@ function readLcov(lcovFile, out) {
     if (line.startsWith('SF:')) {
       current = normalizeSourcePath(packageRoot, line.slice(3));
       out.set(current, new Map());
+      partialBranches.set(current, new Map());
       continue;
     }
-    if (current === undefined || !line.startsWith('DA:')) continue;
-    const [lineNumber, hits] = line.slice(3).split(',');
-    out.get(current)?.set(Number(lineNumber), Number(hits));
+    if (current === undefined) continue;
+    if (line.startsWith('DA:')) {
+      const [lineNumber, hits] = line.slice(3).split(',');
+      out.get(current)?.set(Number(lineNumber), Number(hits));
+      continue;
+    }
+    if (line.startsWith('BRDA:')) {
+      const [lineNumber, , , hits] = line.slice(5).split(',');
+      const branches = partialBranches.get(current);
+      const state = branches.get(Number(lineNumber)) ?? { covered: false, missed: false };
+      if (hits === '-' || Number(hits) === 0) state.missed = true;
+      else state.covered = true;
+      branches.set(Number(lineNumber), state);
+    }
   }
+}
+
+function isPartiallyCovered(state) {
+  return state?.covered === true && state.missed;
 }
 
 function normalizeSourcePath(packageRoot, sourceFile) {
@@ -83,10 +104,14 @@ function normalizeSourcePath(packageRoot, sourceFile) {
 }
 
 function changedSourceLines(ref) {
-  const diff = execFileSync('git', ['diff', '--unified=0', `${ref}...HEAD`, '--', 'packages/cli/src', 'packages/core/src'], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-  });
+  const diff = execFileSync(
+    'git',
+    ['diff', '--unified=0', `${ref}...HEAD`, '--', 'packages/cli/src', 'packages/core/src'],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    },
+  );
   const changedLines = new Map();
   let currentFile;
   for (const line of diff.split('\n')) {

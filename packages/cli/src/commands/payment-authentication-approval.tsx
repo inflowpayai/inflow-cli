@@ -39,6 +39,7 @@ interface AuthenticationApprovalViewProps {
 
 export const AuthenticationApprovalView: React.FC<AuthenticationApprovalViewProps> = ({ approval }) => {
   const [cancelling, setCancelling] = useState(false);
+  const [cancellationFailed, setCancellationFailed] = useState(false);
   useInput(
     (_input, key) => {
       if (key.return) {
@@ -47,7 +48,11 @@ export const AuthenticationApprovalView: React.FC<AuthenticationApprovalViewProp
       }
       if (key.escape) {
         setCancelling(true);
-        void approval.cancel();
+        setCancellationFailed(false);
+        void Promise.resolve(approval.cancel()).catch(() => {
+          setCancelling(false);
+          setCancellationFailed(true);
+        });
       }
     },
     { isActive: !cancelling },
@@ -82,6 +87,7 @@ export const AuthenticationApprovalView: React.FC<AuthenticationApprovalViewProp
           <Spinner type="dots" /> Waiting for authentication approval...
         </Text>
       </Box>
+      {cancellationFailed && <Text color="red">Unable to cancel approval. Press Escape to retry.</Text>}
     </Box>
   );
 };

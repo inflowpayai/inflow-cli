@@ -91,7 +91,27 @@ describe('Login', () => {
     });
     expect(lastFrame()).toContain(sampleRequest.user_code);
     expect(lastFrame()).toContain('Waiting for authorization');
+    expect(lastFrame()).toContain('Press Escape to stop waiting');
     unmount();
+  });
+
+  it('stops an authorization wait on Escape', async () => {
+    const storage = new MemoryStorage();
+    const onComplete = vi.fn();
+    const auth = makeAuthResource({ pollSequence: [null, null, null] });
+    const view = render(
+      <Login
+        auth={augmentAuth(auth.resource, userStub, storage)}
+        clientName="Test"
+        connection={{ environment: 'production' }}
+        onComplete={onComplete}
+      />,
+    );
+
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Waiting for authorization'));
+    view.stdin.write('\u001b');
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+    view.unmount();
   });
 
   it('writes tokens to storage and renders success when the poll yields tokens', async () => {

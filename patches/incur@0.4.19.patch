@@ -1,8 +1,93 @@
+diff --git a/dist/Cli.d.ts b/dist/Cli.d.ts
+index 1d2d12a..36def74 100644
+--- a/dist/Cli.d.ts
++++ b/dist/Cli.d.ts
+@@ -211,9 +211,11 @@ export declare namespace create {
+             error: (options: {
+                 code: string;
+                 cta?: CtaBlock | undefined;
++                details?: unknown;
+                 exitCode?: number | undefined;
+                 message: string;
+                 retryable?: boolean | undefined;
++                title?: string | undefined;
+             }) => never;
+             /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
+             format: Formatter.Format;
+@@ -427,9 +429,11 @@ type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, en
+         error: (options: {
+             code: string;
+             cta?: CtaBlock | undefined;
++            details?: unknown;
+             exitCode?: number | undefined;
+             message: string;
+             retryable?: boolean | undefined;
++            title?: string | undefined;
+         }) => never;
+         /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
+         format: Formatter.Format;
+@@ -452,4 +456,4 @@ type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, en
+         version: string | undefined;
+     }): InferReturn<output> | Promise<InferReturn<output>> | AsyncGenerator<InferReturn<output>, unknown, unknown>;
+ };
+-//# sourceMappingURL=Cli.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=Cli.d.ts.map
 diff --git a/dist/Cli.js b/dist/Cli.js
-index 1824430f9f3ef6281694c173c5ab995f8bc571ad..abecbd1aca63d5542b59e06666ab3f0224149b36 100644
+index 1824430..4f60ed8 100644
 --- a/dist/Cli.js
 +++ b/dist/Cli.js
-@@ -1802,12 +1802,15 @@ function extractBuiltinFlags(argv, options = {}) {
+@@ -1131,8 +1131,10 @@ async function serveImpl(name, commands, argv, options = {}) {
+                         ok: false,
+                         error: {
+                             code: err.code,
++                            ...(err.details !== undefined ? { details: err.details } : undefined),
+                             message: err.message,
+                             ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
++                            ...(err.title !== undefined ? { title: err.title } : undefined),
+                         },
+                         meta: {
+                             command: path,
+@@ -1262,11 +1264,13 @@ async function serveImpl(name, commands, argv, options = {}) {
+             ok: false,
+             error: {
+                 code: result.error.code,
++                ...(result.error.details !== undefined ? { details: result.error.details } : undefined),
+                 message: result.error.message,
+                 ...(result.error.retryable !== undefined
+                     ? { retryable: result.error.retryable }
+                     : undefined),
+                 ...(result.error.fieldErrors ? { fieldErrors: result.error.fieldErrors } : undefined),
++                ...(result.error.title !== undefined ? { title: result.error.title } : undefined),
+             },
+             meta: {
+                 command: path,
+@@ -1561,8 +1565,10 @@ async function executeCommand(path, command, rest, inputOptions, request, start,
+             ok: false,
+             error: {
+                 code: err.code,
++                ...(err.details !== undefined ? { details: err.details } : undefined),
+                 message: err.message,
+                 ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
++                ...(err.title !== undefined ? { title: err.title } : undefined),
+             },
+             meta: meta(formatCtaBlock(options.name ?? path, err.cta)),
+         });
+@@ -1624,11 +1630,13 @@ async function executeCommand(path, command, rest, inputOptions, request, start,
+             ok: false,
+             error: {
+                 code: result.error.code,
++                ...(result.error.details !== undefined ? { details: result.error.details } : undefined),
+                 message: result.error.message,
+                 ...(result.error.retryable !== undefined
+                     ? { retryable: result.error.retryable }
+                     : undefined),
+                 ...(result.error.fieldErrors ? { fieldErrors: result.error.fieldErrors } : undefined),
++                ...(result.error.title !== undefined ? { title: result.error.title } : undefined),
+             },
+             meta: {
+                 command: path,
+@@ -1802,12 +1810,15 @@ function extractBuiltinFlags(argv, options = {}) {
              format = 'json';
              formatExplicit = true;
          }
@@ -22,8 +107,80 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..abecbd1aca63d5542b59e06666ab3f02
              formatExplicit = true;
              i++;
          }
+@@ -2253,6 +2264,8 @@ const toRootAliases = new WeakMap();
+ const sentinel = Symbol.for('incur.sentinel');
+ /** @internal Formats an error for human-readable TTY output. */
+ function formatHumanError(error) {
++    if (error.title !== undefined)
++        return `${error.title}\n\n${error.message}`;
+     const prefix = error.code === 'UNKNOWN' || error.code === 'COMMAND_NOT_FOUND'
+         ? 'Error'
+         : `Error (${error.code})`;
+@@ -2304,14 +2317,16 @@ async function handleStreaming(generator, ctx) {
+                                 ok: false,
+                                 error: {
+                                     code: tagged.code,
++                                    ...(tagged.details !== undefined ? { details: tagged.details } : undefined),
+                                     message: tagged.message,
+                                     ...(tagged.retryable !== undefined
+                                         ? { retryable: tagged.retryable }
+                                         : undefined),
++                                    ...(tagged.title !== undefined ? { title: tagged.title } : undefined),
+                                 },
+                             }));
+                         else
+-                            ctx.writeln(formatHumanError({ code: tagged.code, message: tagged.message }));
++                            ctx.writeln(formatHumanError({ code: tagged.code, message: tagged.message, title: tagged.title }));
+                         ctx.exit(tagged.exitCode ?? 1);
+                         return;
+                     }
+@@ -2330,12 +2345,14 @@ async function handleStreaming(generator, ctx) {
+                         ok: false,
+                         error: {
+                             code: err.code,
++                            ...(err.details !== undefined ? { details: err.details } : undefined),
+                             message: err.message,
+                             ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
++                            ...(err.title !== undefined ? { title: err.title } : undefined),
+                         },
+                     }));
+                 else
+-                    ctx.writeln(formatHumanError({ code: err.code, message: err.message }));
++                    ctx.writeln(formatHumanError({ code: err.code, message: err.message, title: err.title }));
+                 ctx.exit(err.exitCode ?? 1);
+                 return;
+             }
+@@ -2392,8 +2409,10 @@ async function handleStreaming(generator, ctx) {
+                             ok: false,
+                             error: {
+                                 code: tagged.code,
++                                ...(tagged.details !== undefined ? { details: tagged.details } : undefined),
+                                 message: tagged.message,
+                                 ...(tagged.retryable !== undefined ? { retryable: tagged.retryable } : undefined),
++                                ...(tagged.title !== undefined ? { title: tagged.title } : undefined),
+                             },
+                             meta: {
+                                 command: ctx.path,
+@@ -2412,8 +2431,10 @@ async function handleStreaming(generator, ctx) {
+                     ok: false,
+                     error: {
+                         code: err.code,
++                        ...(err.details !== undefined ? { details: err.details } : undefined),
+                         message: err.message,
+                         ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
++                        ...(err.title !== undefined ? { title: err.title } : undefined),
+                     },
+                     meta: {
+                         command: ctx.path,
+@@ -2703,4 +2724,4 @@ function resolveDisplayName(name, aliases) {
+         return basename;
+     return name;
+ }
+-//# sourceMappingURL=Cli.js.map
+\ No newline at end of file
++//# sourceMappingURL=Cli.js.map
 diff --git a/dist/Formatter.js b/dist/Formatter.js
-index 43342243991d9d04ec1b67ae223454bdd0741a82..752bd9f6a0f5522d536c830e4b2c7511bccb5c43 100644
+index 4334224..752bd9f 100644
 --- a/dist/Formatter.js
 +++ b/dist/Formatter.js
 @@ -54,15 +54,22 @@ function table(headers, rows) {
@@ -52,7 +209,7 @@ index 43342243991d9d04ec1b67ae223454bdd0741a82..752bd9f6a0f5522d536c830e4b2c7511
  /** Formats a value as Markdown, recursing into nested objects. */
  function formatMarkdown(value, path = []) {
 diff --git a/dist/Help.d.ts b/dist/Help.d.ts
-index 87bac4745eb88aefdfc8b897fd6cd1f584683163..529b6be4b8032fdf1db90f71f06058dc3d8f64ba 100644
+index 87bac47..529b6be 100644
 --- a/dist/Help.d.ts
 +++ b/dist/Help.d.ts
 @@ -1,5 +1,10 @@
@@ -67,7 +224,7 @@ index 87bac4745eb88aefdfc8b897fd6cd1f584683163..529b6be4b8032fdf1db90f71f06058dc
  export declare function formatRoot(name: string, options?: formatRoot.Options): string;
  export declare namespace formatRoot {
 diff --git a/dist/Help.js b/dist/Help.js
-index ad48d9ada2766ed57ca366a01f38df81f1d3a353..c3f120ed39ff7e82a8b47d1a19fe9b153410612d 100644
+index ad48d9a..c3f120e 100644
 --- a/dist/Help.js
 +++ b/dist/Help.js
 @@ -2,6 +2,11 @@ import { z } from 'zod';
@@ -91,7 +248,7 @@ index ad48d9ada2766ed57ca366a01f38df81f1d3a353..c3f120ed39ff7e82a8b47d1a19fe9b15
              ? [{ flag: `--${configFlag} <path>`, desc: 'Load JSON option defaults from a file' }]
              : []),
 diff --git a/dist/Mcp.js b/dist/Mcp.js
-index d916f16d0d3789a809d7a90d88ed6de7844708fd..ff7dafc4c8933df2d1e22ecda0b462c258b1c8d2 100644
+index d916f16..b0663ff 100644
 --- a/dist/Mcp.js
 +++ b/dist/Mcp.js
 @@ -1,15 +1,13 @@
@@ -133,7 +290,7 @@ index d916f16d0d3789a809d7a90d88ed6de7844708fd..ff7dafc4c8933df2d1e22ecda0b462c2
  /** @internal Executes a tool call and returns a CallToolResult. */
  export async function callTool(tool, params, options = {}) {
      const allMiddleware = [
-@@ -68,8 +51,28 @@ export async function callTool(tool, params, options = {}) {
+@@ -68,8 +51,36 @@ export async function callTool(tool, params, options = {}) {
          const chunks = [];
          const progressToken = options.extra?.mcpReq?._meta?.progressToken;
          let i = 0;
@@ -150,7 +307,15 @@ index d916f16d0d3789a809d7a90d88ed6de7844708fd..ff7dafc4c8933df2d1e22ecda0b462c2
 +                        typeof returned === 'object' &&
 +                        returned[Symbol.for('incur.sentinel')] === 'error') {
 +                        const cta = formatCtaBlock(options.name ?? tool.name, returned.cta);
-+                        const text = returned.message ?? 'Command failed';
++                        const text = returned.details === undefined
++                            ? (returned.message ?? 'Command failed')
++                            : Json.stringify({
++                                code: returned.code,
++                                details: returned.details,
++                                message: returned.message ?? 'Command failed',
++                                ...(returned.retryable === undefined ? {} : { retryable: returned.retryable }),
++                                ...(returned.title === undefined ? {} : { title: returned.title }),
++                            });
 +                        return {
 +                            content: [{ type: 'text', text: cta ? `${text}\n\n${renderCtaText(cta)}` : text }],
 +                            ...(cta ? { _meta: { cta } } : undefined),
@@ -163,7 +328,7 @@ index d916f16d0d3789a809d7a90d88ed6de7844708fd..ff7dafc4c8933df2d1e22ecda0b462c2
                  chunks.push(chunk);
                  if (progressToken !== undefined && options.sendNotification)
                      await options.sendNotification({
-@@ -84,6 +87,14 @@ export async function callTool(tool, params, options = {}) {
+@@ -84,11 +95,19 @@ export async function callTool(tool, params, options = {}) {
                  isError: true,
              };
          }
@@ -178,7 +343,13 @@ index d916f16d0d3789a809d7a90d88ed6de7844708fd..ff7dafc4c8933df2d1e22ecda0b462c2
          return { content: [{ type: 'text', text: Json.stringify(chunks) }] };
      }
      if (!result.ok) {
-@@ -130,6 +141,7 @@ function registerDirectTool(server, tool, options) {
+         const cta = formatCtaBlock(options.name ?? tool.name, result.cta);
+-        const text = result.error.fieldErrors
++        const text = result.error.fieldErrors || result.error.details !== undefined
+             ? JSON.stringify(result.error)
+             : (result.error.message ?? 'Command failed');
+         return {
+@@ -130,6 +149,7 @@ function registerDirectTool(server, tool, options) {
      const hasInput = Object.keys(mergedShape).length > 0;
      server.registerTool(tool.name, {
          ...(tool.description ? { description: tool.description } : undefined),
@@ -186,7 +357,7 @@ index d916f16d0d3789a809d7a90d88ed6de7844708fd..ff7dafc4c8933df2d1e22ecda0b462c2
          ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
          ...(tool.outputSchema
              ? { outputSchema: options.fromJsonSchema(tool.outputSchema) }
-@@ -159,6 +171,7 @@ function registerDiscoveryTools(server, tools, options) {
+@@ -159,6 +179,7 @@ function registerDiscoveryTools(server, tools, options) {
          return toolResult({
              tools: page.map((tool) => ({
                  name: tool.name,
@@ -194,7 +365,7 @@ index d916f16d0d3789a809d7a90d88ed6de7844708fd..ff7dafc4c8933df2d1e22ecda0b462c2
                  ...(tool.description ? { description: tool.description } : undefined),
                  ...(tool.annotations ? { annotations: tool.annotations } : undefined),
              })),
-@@ -177,6 +190,7 @@ function registerDiscoveryTools(server, tools, options) {
+@@ -177,6 +198,7 @@ function registerDiscoveryTools(server, tools, options) {
              return toolError(`Unknown tool: ${params.name}`);
          return toolResult({
              name: tool.name,
@@ -202,7 +373,7 @@ index d916f16d0d3789a809d7a90d88ed6de7844708fd..ff7dafc4c8933df2d1e22ecda0b462c2
              ...(tool.description ? { description: tool.description } : undefined),
              inputSchema: tool.inputSchema,
              ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
-@@ -284,7 +298,8 @@ function toolError(message) {
+@@ -284,7 +306,8 @@ function toolError(message) {
  export function collectTools(commands, prefix, parentMiddlewares = [], filter) {
      const tools = filterTools(collectToolEntries(commands, prefix, parentMiddlewares), filter);
      assertUniqueToolNames(tools);
@@ -212,7 +383,7 @@ index d916f16d0d3789a809d7a90d88ed6de7844708fd..ff7dafc4c8933df2d1e22ecda0b462c2
  }
  function collectToolEntries(commands, prefix, parentMiddlewares = []) {
      const result = [];
-@@ -306,6 +321,7 @@ function collectToolEntries(commands, prefix, parentMiddlewares = []) {
+@@ -306,6 +329,7 @@ function collectToolEntries(commands, prefix, parentMiddlewares = []) {
              const outputSchema = entry.output ? mcpOutputSchema(entry.output) : undefined;
              result.push({
                  name: mcp?.name ?? path.join('_'),
@@ -220,3 +391,107 @@ index d916f16d0d3789a809d7a90d88ed6de7844708fd..ff7dafc4c8933df2d1e22ecda0b462c2
                  description: mcp?.description ?? entry.description,
                  inputSchema: buildToolSchema(entry.args, entry.options),
                  ...(outputSchema ? { outputSchema } : undefined),
+@@ -365,4 +389,4 @@ function buildToolSchema(args, options) {
+         return { type: 'object', properties, required };
+     return { type: 'object', properties };
+ }
+-//# sourceMappingURL=Mcp.js.map
+\ No newline at end of file
++//# sourceMappingURL=Mcp.js.map
+diff --git a/dist/Parser.js b/dist/Parser.js
+index f72f537..e27c5d3 100644
+--- a/dist/Parser.js
++++ b/dist/Parser.js
+@@ -96,8 +96,13 @@ export function parse(argv, options = {}) {
+     }
+     // Assign positionals to args schema keys in order; a final array key collects the rest
+     const rawArgs = {};
++    const argKeys = argsSchema ? Object.keys(argsSchema.shape) : [];
++    const finalKey = argKeys.at(-1);
++    const variadic = argsSchema !== undefined && finalKey !== undefined && isArrayField(finalKey, argsSchema);
++    if (!variadic && positionals.length > argKeys.length)
++        throw new ParseError({ message: `Unexpected argument: ${positionals[argKeys.length]}` });
+     if (argsSchema) {
+-        const keys = Object.keys(argsSchema.shape);
++        const keys = argKeys;
+         for (let j = 0; j < keys.length; j++) {
+             const key = keys[j];
+             if (isArrayField(key, argsSchema)) {
+diff --git a/dist/internal/command.d.ts b/dist/internal/command.d.ts
+index 8adad9d..536e25e 100644
+--- a/dist/internal/command.d.ts
++++ b/dist/internal/command.d.ts
+@@ -60,8 +60,10 @@ export declare namespace execute {
+         ok: false;
+         error: {
+             code: string;
++            details?: unknown;
+             message: string;
+             retryable?: boolean | undefined;
++            title?: string | undefined;
+             fieldErrors?: FieldError[] | undefined;
+         };
+         cta?: CtaBlock | undefined;
+@@ -223,4 +225,4 @@ export declare function findBuiltinSubcommand(builtin: (typeof builtinCommands)[
+ }) | undefined;
+ /** @internal Checks if a token matches a builtin command by name or alias. */
+ export declare function isBuiltin(token: string): boolean;
+-//# sourceMappingURL=command.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=command.d.ts.map
+diff --git a/dist/internal/command.js b/dist/internal/command.js
+index 7011ed7..81121ad 100644
+--- a/dist/internal/command.js
++++ b/dist/internal/command.js
+@@ -104,8 +104,10 @@ export async function execute(command, options) {
+                     ok: false,
+                     error: {
+                         code: err.code,
++                        ...(err.details !== undefined ? { details: err.details } : undefined),
+                         message: err.message,
+                         ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
++                        ...(err.title !== undefined ? { title: err.title } : undefined),
+                     },
+                     ...(err.cta ? { cta: err.cta } : undefined),
+                     ...(err.exitCode !== undefined ? { exitCode: err.exitCode } : undefined),
+@@ -125,8 +127,10 @@ export async function execute(command, options) {
+                     ok: false,
+                     error: {
+                         code: opts.code,
++                        ...(opts.details !== undefined ? { details: opts.details } : undefined),
+                         message: opts.message,
+                         ...(opts.retryable !== undefined ? { retryable: opts.retryable } : undefined),
++                        ...(opts.title !== undefined ? { title: opts.title } : undefined),
+                     },
+                     ...(opts.cta ? { cta: opts.cta } : undefined),
+                     ...(opts.exitCode !== undefined ? { exitCode: opts.exitCode } : undefined),
+@@ -302,4 +306,4 @@ export function findBuiltinSubcommand(builtin, token) {
+ export function isBuiltin(token) {
+     return builtinCommands.some((b) => b.name === token || b.aliases?.includes(token));
+ }
+-//# sourceMappingURL=command.js.map
+\ No newline at end of file
++//# sourceMappingURL=command.js.map
+diff --git a/dist/middleware.d.ts b/dist/middleware.d.ts
+index 18a684c..158cbae 100644
+--- a/dist/middleware.d.ts
++++ b/dist/middleware.d.ts
+@@ -32,9 +32,11 @@ export type Context<vars extends z.ZodObject<any> | undefined = undefined, env e
+     error: (options: {
+         code: string;
+         cta?: CtaBlock | undefined;
++        details?: unknown;
+         exitCode?: number | undefined;
+         message: string;
+         retryable?: boolean | undefined;
++        title?: string | undefined;
+     }) => never;
+     /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
+     format: Formatter.Format;
+@@ -56,4 +58,4 @@ export type Context<vars extends z.ZodObject<any> | undefined = undefined, env e
+ /** Creates a strictly typed middleware handler. Pass the vars schema as a generic for typed `c.set()` and `c.var`, the env schema for typed `c.env`, and the globals schema for typed `c.globals`. */
+ export default function middleware<const vars extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(handler: Handler<vars, env, globals>): Handler<vars, env, globals>;
+ export {};
+-//# sourceMappingURL=middleware.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=middleware.d.ts.map

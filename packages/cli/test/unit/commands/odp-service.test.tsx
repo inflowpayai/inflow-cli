@@ -275,7 +275,7 @@ describe('ODP Service and Collection commands', () => {
     expect(lastFrame()).toContain('ODP version');
     expect(lastFrame()).toContain('list-collections');
     expect(lastFrame()).toContain('get-collection (authentication required)');
-    expect(lastFrame()).toContain('aep');
+    expect(lastFrame()).toContain('AEP');
     expect(lastFrame()).toContain('MPP: InFlow, Tempo (authentication required)');
   });
 
@@ -298,13 +298,33 @@ describe('ODP Service and Collection commands', () => {
     ).toContain('No Collections found');
     const detail = render(
       <CollectionView
-        collection={{ ...collection, description: 'Compute products', web_url: '/collections/compute' }}
+        collection={{
+          ...collection,
+          description: 'Compute products',
+          images: [
+            {
+              alt: 'GPU server rack',
+              height: 800,
+              src: '/images/compute.webp',
+              type: 'image/webp',
+              width: 1200,
+            },
+            { src: 'https://cdn.compute.example/compute-detail.webp' },
+          ],
+          web_url: '/collections/compute',
+        }}
         serviceOrigin="https://compute.example"
       />,
     );
     expect(detail.lastFrame()).toContain('Compute products');
     expect(detail.lastFrame()).toContain('Parent Collections');
     expect(detail.lastFrame()).toContain('https://compute.example/collections/compute');
+    expect(detail.lastFrame()).toContain('Images');
+    expect(detail.lastFrame()).toContain('GPU server rack');
+    expect(detail.lastFrame()).toContain('1200 x 800');
+    expect(detail.lastFrame()).toContain('image/webp');
+    expect(detail.lastFrame()).toContain('https://compute.example/images/compute.webp');
+    expect(detail.lastFrame()).toContain('https://cdn.compute.example/compute-detail.webp');
     expect(detail.lastFrame()).not.toContain('Localizations');
     expect(detail.lastFrame()).not.toContain('ODP version');
   });

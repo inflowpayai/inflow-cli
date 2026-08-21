@@ -39,7 +39,7 @@
     "smoke:macos-packaged-vault": "node scripts/smoke-macos-packaged-vault.mjs",
     "smoke:linux-packaged-vault": "node scripts/smoke-linux-packaged-vault.mjs",
     "smoke:linux-system-vault": "node scripts/smoke-linux-system-vault.mjs",
-    "verify": "node scripts/clean-bundle-artifacts.mjs && pnpm format && pnpm typecheck && pnpm lint && pnpm test && pnpm typedoc && pnpm build",
+    "verify": "node scripts/clean-bundle-artifacts.mjs && pnpm format && pnpm typecheck && pnpm lint && pnpm test && pnpm coverage:changed && pnpm typedoc && pnpm build",
     "dev": "turbo run dev --parallel",
     "test": "node --test scripts/*.test.mjs && turbo run test --concurrency=1",
     "posttest": "node scripts/clean-bundle-artifacts.mjs",

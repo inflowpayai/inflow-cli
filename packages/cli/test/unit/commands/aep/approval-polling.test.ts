@@ -116,15 +116,21 @@ describe('AEP approval polling', () => {
     });
   });
 
-  it('bounds best-effort cancellation requests and ignores their failures', async () => {
+  it('reports cancellation request failures', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
 
-    await expect(cancelApproval(inflow(), 'approval-1')).resolves.toBeUndefined();
+    await expect(cancelApproval(inflow(), 'approval-1')).rejects.toThrow('offline');
 
     expect(fetchSpy).toHaveBeenCalledWith(
       new URL('/v1/approvals/approval-1/cancel', 'https://platform.example'),
       expect.objectContaining({ method: 'POST', signal: expect.any(AbortSignal) as AbortSignal }),
     );
+  });
+
+  it('rejects unsuccessful cancellation responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
+
+    await expect(cancelApproval(inflow(), 'approval-1')).rejects.toThrow('Approval cancellation request failed.');
   });
 
   it('supports completed and cancelled polling delays', async () => {

@@ -1,7 +1,9 @@
 import { Mcp } from 'incur';
 import { describe, expect, it, vi } from 'vitest';
 
-function streamingTool(run: (context: { error: (input: { code: string; message: string }) => never }) => unknown) {
+function streamingTool(
+  run: (context: { error: (input: { code: string; details?: unknown; message: string }) => never }) => unknown,
+) {
   return {
     name: 'streaming_test',
     description: 'Streaming MCP test command',
@@ -23,6 +25,61 @@ describe('MCP streaming command errors', () => {
 
     expect(result).toMatchObject({
       content: [{ type: 'text', text: 'The InFlow vault is locked.' }],
+      isError: true,
+    });
+  });
+
+  it('includes structured details in an MCP tool error', async () => {
+    const result = await Mcp.callTool(
+      streamingTool(({ error }) =>
+        error({
+          code: 'ACTION_REQUIRED',
+          details: { action: 'update_account' },
+          message: 'Account information is required.',
+        }),
+      ),
+      {},
+    );
+
+    expect(result).toMatchObject({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            code: 'ACTION_REQUIRED',
+            details: { action: 'update_account' },
+            message: 'Account information is required.',
+          }),
+        },
+      ],
+      isError: true,
+    });
+  });
+
+  it('includes structured details returned by a streaming MCP tool error', async () => {
+    const result = await Mcp.callTool(
+      streamingTool(async function* ({ error }) {
+        await Promise.resolve();
+        return error({
+          code: 'ACTION_REQUIRED',
+          details: { action: 'update_account' },
+          message: 'Account information is required.',
+        });
+      }),
+      {},
+    );
+
+    expect(result).toMatchObject({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            code: 'ACTION_REQUIRED',
+            details: { action: 'update_account' },
+            message: 'Account information is required.',
+          }),
+        },
+      ],
       isError: true,
     });
   });

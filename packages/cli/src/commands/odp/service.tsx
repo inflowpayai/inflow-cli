@@ -35,11 +35,12 @@ import {
   detail,
   DetailsTable,
   listed,
+  ResourceImages,
   shellQuote,
   summarize,
   type DetailRow,
 } from './presentation.js';
-import { paymentProtocolLabel } from './payments.js';
+import { enrollmentProtocolLabel, paymentProtocolLabel } from './payments.js';
 
 interface CommandContext {
   agent: boolean;
@@ -303,7 +304,7 @@ export function OdpDetailsTable({ inspection }: { inspection: ServiceInspection 
       'Operations',
       listed(capabilities.operations.map(({ authentication, name }) => capabilityLabel(name, authentication))),
     ),
-    ...detail('Enrollment', listed(capabilities.enrollment.map(({ name }) => name))),
+    ...detail('Enrollment', listed(capabilities.enrollment.map(({ name }) => enrollmentProtocolLabel(name)))),
     ...detail(
       'Payments',
       listed(
@@ -400,6 +401,7 @@ export function CollectionView({ collection, serviceOrigin }: { collection: Coll
     <Box flexDirection="column">
       <Text bold>Collection</Text>
       <DetailsTable rows={rows} />
+      <ResourceImages images={collection.images} serviceOrigin={serviceOrigin} />
     </Box>
   );
 }

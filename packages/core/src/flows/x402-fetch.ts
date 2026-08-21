@@ -58,6 +58,7 @@ export interface X402FetchInput {
   showBody: boolean;
   outputFile?: string;
   sellerTransport?: SellerRequestTransport;
+  signal?: AbortSignal;
 }
 
 export interface X402FetchRun {
@@ -107,6 +108,7 @@ async function resolveSigned(input: X402FetchInput): Promise<X402PayloadResponse
     interval: input.interval,
     maxAttempts: input.maxAttempts,
     timeout: input.timeout,
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
   for await (const event of run.events) {
     if (event.type === 'settled') return event.response;

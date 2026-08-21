@@ -25,6 +25,33 @@ async function* eventsFor(final: PaymentFetchPhase): AsyncGenerator<never> {
 }
 
 describe('PaymentFetchView', () => {
+  it('stops a payment wait on Escape and aborts its polling signal', async () => {
+    const onComplete = vi.fn();
+    let pollingSignal: AbortSignal | undefined;
+    async function* waitingEvents(signal: AbortSignal): AsyncGenerator<never> {
+      pollingSignal = signal;
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+    }
+    const view = render(
+      <PaymentFetchView
+        protocol="MPP"
+        transactionId="tx-1"
+        url="https://seller.test/api"
+        method="GET"
+        paymentHeader="Authorization: Payment"
+        events={waitingEvents}
+        onComplete={onComplete}
+      />,
+    );
+
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Press Escape to stop waiting'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    view.stdin.write('\u001b');
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledWith({ kind: 'cancelled' }));
+    expect(pollingSignal?.aborted).toBe(true);
+    view.unmount();
+  });
+
   it('renders completed fetches without credential material', async () => {
     const onComplete = vi.fn();
     const { lastFrame, unmount } = render(

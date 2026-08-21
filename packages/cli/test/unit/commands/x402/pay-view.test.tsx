@@ -73,6 +73,82 @@ afterEach(() => {
 });
 
 describe('PayView', () => {
+  it('waits for remote approval cancellation before completing', async () => {
+    const header = encodePaymentRequiredHeader(paymentRequired());
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('payment required', { status: 402, headers: { 'PAYMENT-REQUIRED': header } }),
+    );
+    const pending = prepared();
+    pending.awaitPayload = () => new Promise<EncodedPayment>(() => undefined);
+    const client = makeClient({ prepareInflowPayment: vi.fn(() => Promise.resolve(pending)) });
+    let completeCancellation: (() => void) | undefined;
+    const onCancel = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          completeCancellation = resolve;
+        }),
+    );
+    const onComplete = vi.fn();
+    const view = render(
+      <PayView
+        url="https://seller/api"
+        method="GET"
+        deps={{
+          client,
+          apiBaseUrl: 'https://api.inflowpay.ai',
+          probeOptions: { method: 'GET', headers: {} },
+          url: 'https://seller/api',
+          signOptions: { timeoutMs: 60_000 },
+          showBody: false,
+        }}
+        onCancel={onCancel}
+        onComplete={onComplete}
+      />,
+    );
+
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Approval required'));
+    view.stdin.write('\u001b');
+    await vi.waitFor(() => expect(onCancel).toHaveBeenCalledWith('appr_1'));
+    expect(onComplete).not.toHaveBeenCalled();
+    completeCancellation?.();
+    await vi.waitFor(() =>
+      expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ code: 'APPROVAL_CANCELLED' })),
+    );
+    view.unmount();
+  });
+
+  it('keeps the approval open when remote cancellation fails', async () => {
+    const header = encodePaymentRequiredHeader(paymentRequired());
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('payment required', { status: 402, headers: { 'PAYMENT-REQUIRED': header } }),
+    );
+    const pending = prepared();
+    pending.awaitPayload = () => new Promise<EncodedPayment>(() => undefined);
+    const onComplete = vi.fn();
+    const view = render(
+      <PayView
+        url="https://seller/api"
+        method="GET"
+        deps={{
+          client: makeClient({ prepareInflowPayment: vi.fn(() => Promise.resolve(pending)) }),
+          apiBaseUrl: 'https://api.inflowpay.ai',
+          probeOptions: { method: 'GET', headers: {} },
+          url: 'https://seller/api',
+          signOptions: { timeoutMs: 60_000 },
+          showBody: false,
+        }}
+        onCancel={() => Promise.reject(new Error('offline'))}
+        onComplete={onComplete}
+      />,
+    );
+
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Approval required'));
+    view.stdin.write('\u001b');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Unable to cancel approval'));
+    expect(onComplete).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('renders the success frame after a complete pay pipeline', async () => {
     const header = encodePaymentRequiredHeader(paymentRequired());
     const fetchSpy = vi.spyOn(globalThis, 'fetch');

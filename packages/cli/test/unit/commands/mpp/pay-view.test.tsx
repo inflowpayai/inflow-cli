@@ -168,6 +168,75 @@ describe('PayView', () => {
     unmount();
   });
 
+  it('waits for remote approval cancellation before completing', async () => {
+    server.use(
+      http.get(
+        SELLER,
+        () =>
+          new HttpResponse(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(challenge()) } }),
+      ),
+      http.post(`${INFLOW}/v1/transactions/mpp`, () =>
+        HttpResponse.json({ state: 'pending', transactionId: 'tx-1', approvalId: 'ap-9', retryAfterSeconds: 5 }),
+      ),
+    );
+    let completeCancellation: (() => void) | undefined;
+    const onCancel = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          completeCancellation = resolve;
+        }),
+    );
+    const onComplete = vi.fn();
+    const view = render(
+      <PayView
+        url={SELLER}
+        method="GET"
+        deps={{ ...deps(), awaitPayment: false }}
+        onCancel={onCancel}
+        onComplete={onComplete}
+      />,
+    );
+
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Approval required'));
+    view.stdin.write('\u001b');
+    await vi.waitFor(() => expect(onCancel).toHaveBeenCalledWith('ap-9'));
+    expect(onComplete).not.toHaveBeenCalled();
+    completeCancellation?.();
+    await vi.waitFor(() =>
+      expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ code: 'APPROVAL_CANCELLED' })),
+    );
+    view.unmount();
+  });
+
+  it('keeps the approval open when remote cancellation fails', async () => {
+    server.use(
+      http.get(
+        SELLER,
+        () =>
+          new HttpResponse(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(challenge()) } }),
+      ),
+      http.post(`${INFLOW}/v1/transactions/mpp`, () =>
+        HttpResponse.json({ state: 'pending', transactionId: 'tx-1', approvalId: 'ap-9', retryAfterSeconds: 5 }),
+      ),
+    );
+    const onComplete = vi.fn();
+    const view = render(
+      <PayView
+        url={SELLER}
+        method="GET"
+        deps={{ ...deps(), awaitPayment: false }}
+        onCancel={() => Promise.reject(new Error('offline'))}
+        onComplete={onComplete}
+      />,
+    );
+
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Approval required'));
+    view.stdin.write('\u001b');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Unable to cancel approval'));
+    expect(onComplete).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('shows all recurring terms while subscription approval is pending', async () => {
     const subscriptionChallenge: MppChallenge = {
       ...challenge(),

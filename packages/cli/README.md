@@ -366,6 +366,13 @@ Enroll returns the complete validated Service response. Status returns `{ servic
 is not enrolled, it returns `{ enrolled: false, service: null, local: { grants: [] } }`. Grant returns `granted`,
 credential metadata, and scopes; revoke returns `revoked` and its single selector field.
 
+When enrollment cannot satisfy required claims, the command exits nonzero with `AEP_REQUIREMENTS_UNMET`. Agent output
+includes `error.details.reason` as `account_information_missing`, `account_information_invalid`, or
+`unsupported_claims`. Missing and invalid account information includes an `update_account` resolution with the
+environment-appropriate InFlow account URL and a retry command. Unsupported claims identify the claim names and use a
+`service_update_required` resolution because editing the account cannot satisfy them. Personal claim values are never
+included in error output.
+
 ## `inspect`
 
 ```bash
