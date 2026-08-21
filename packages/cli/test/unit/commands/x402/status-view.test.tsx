@@ -55,6 +55,25 @@ describe('X402StatusView', () => {
     unmount();
   });
 
+  it('stops polling on Escape', async () => {
+    const onComplete = vi.fn();
+    const result = render(
+      <X402StatusView
+        transactionId="txn_cancel"
+        fetchOnce={() => Promise.resolve({ status: 'INITIATED' })}
+        interval={5}
+        maxAttempts={0}
+        timeout={900}
+        onComplete={onComplete}
+      />,
+    );
+    await vi.waitFor(() => expect(result.lastFrame()).toContain('Press Escape to stop waiting'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    result.stdin.write('\u001b');
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledWith({ kind: 'cancelled' }));
+    result.unmount();
+  });
+
   it('transitions to "Signed" once fetchOnce returns an encoded payload, truncating long previews', async () => {
     const fetchOnce = vi.fn(() => Promise.resolve(signedResponse()));
     const onComplete = vi.fn();

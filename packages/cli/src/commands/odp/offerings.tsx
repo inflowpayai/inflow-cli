@@ -41,6 +41,7 @@ import {
   formatPrice,
   listed,
   pricePreviewDetails,
+  ResourceImages,
   shellQuote,
   summarize,
   type DetailRow,
@@ -451,6 +452,7 @@ export function OfferingView({ offering, serviceOrigin }: { offering: OfferingDe
     <Box flexDirection="column">
       <Text bold>Offering</Text>
       <DetailsTable rows={rows} />
+      <ResourceImages images={offering['images']} serviceOrigin={serviceOrigin} />
       {price.length === 0 ? null : (
         <Box flexDirection="column" marginTop={1}>
           <Text bold>Price Preview</Text>

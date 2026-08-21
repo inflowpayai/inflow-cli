@@ -6,7 +6,7 @@ import type {
   X402FetchRejected,
   X402FetchSuccess,
 } from '@inflowpayai/inflow-core';
-import { Box, Text } from 'ink';
+import { Box, Text, useInput, useStdin } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
@@ -20,6 +20,7 @@ export type PaymentFetchPhase =
   | { kind: 'replaying' }
   | { kind: 'completed'; result: MppFetchSuccess | X402FetchSuccess }
   | { kind: 'rejected'; result: MppFetchRejected | X402FetchRejected }
+  | { kind: 'cancelled' }
   | { kind: 'error'; code: string; message: string; retryable?: boolean };
 
 export interface PaymentFetchViewProps {
@@ -28,7 +29,7 @@ export interface PaymentFetchViewProps {
   url: string;
   method: string;
   paymentHeader: string;
-  events: () => AsyncIterable<MppFetchEvent | X402FetchEvent>;
+  events: (signal: AbortSignal) => AsyncIterable<MppFetchEvent | X402FetchEvent>;
   onComplete: (final: PaymentFetchPhase) => void;
   authenticationApproval?: AuthenticationApprovalDisplay | undefined;
 }
@@ -74,13 +75,28 @@ export const PaymentFetchView: React.FC<PaymentFetchViewProps> = ({
 }) => {
   const [phase, setPhase] = useState<PaymentFetchPhase>({ kind: 'waiting' });
   const cancelledRef = useRef(false);
+  const controllerRef = useRef<AbortController | undefined>(undefined);
   const { finish } = useFlowExit(onComplete);
+  const { isRawModeSupported } = useStdin();
+
+  useInput(
+    (_input, key) => {
+      if (key.escape) {
+        cancelledRef.current = true;
+        controllerRef.current?.abort();
+        finish({ kind: 'cancelled' });
+      }
+    },
+    { isActive: isRawModeSupported === true && authenticationApproval === undefined && phase.kind === 'waiting' },
+  );
 
   useEffect(() => {
+    const controller = new AbortController();
+    controllerRef.current = controller;
     cancelledRef.current = false;
     void (async () => {
       try {
-        for await (const event of events()) {
+        for await (const event of events(controller.signal)) {
           if (cancelledRef.current) return;
           if (event.type === 'replaying') {
             setPhase({ kind: 'replaying' });
@@ -116,6 +132,8 @@ export const PaymentFetchView: React.FC<PaymentFetchViewProps> = ({
     })();
     return () => {
       cancelledRef.current = true;
+      controller.abort();
+      controllerRef.current = undefined;
     };
   }, [events]);
 
@@ -128,10 +146,11 @@ export const PaymentFetchView: React.FC<PaymentFetchViewProps> = ({
       return <AuthenticationApprovalView approval={authenticationApproval} />;
     }
     return (
-      <Box>
+      <Box flexDirection="column">
         <Text color="cyan">
           <Spinner type="dots" /> Waiting for {protocol} payment {transactionId}...
         </Text>
+        <Text dimColor>Press Escape to stop waiting.</Text>
       </Box>
     );
   }
@@ -145,6 +164,8 @@ export const PaymentFetchView: React.FC<PaymentFetchViewProps> = ({
       </Box>
     );
   }
+
+  if (phase.kind === 'cancelled') return <Text dimColor>Stopped waiting for payment.</Text>;
 
   if (phase.kind === 'completed') {
     const { result } = phase;

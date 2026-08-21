@@ -24,10 +24,10 @@ import { createActionsCli } from './actions.js';
 import { executeOdpCommand, odpCommandError } from './command.js';
 import { Continuation, listed, summarize } from './presentation.js';
 import {
+  enrollmentProtocolLabel,
   normalizePaymentFilters,
   paymentNameLabel,
   paymentOptionLabel,
-  paymentProtocolLabel,
   type PaymentFilter,
 } from './payments.js';
 
@@ -94,6 +94,14 @@ async function runDirectorySearch(
   resource: Pick<IOdpResource, 'continueSearchServices' | 'searchServices'>,
   input: SearchInput,
 ): Promise<DirectorySearchPage> {
+  if (input.next === undefined && !hasInitialSearchInput(input)) {
+    return odpCommandError({
+      code: 'ODP_DIRECTORY_SEARCH_INPUT_REQUIRED',
+      exitCode: 2,
+      message:
+        'Provide a query or directory filter.\nUsage: inflow odp directory search [query] [options]\nRun `inflow odp directory search --help` for all options.',
+    });
+  }
   if (input.next !== undefined && hasInitialSearchInput(input)) {
     return odpCommandError({
       code: 'ODP_DIRECTORY_NEXT_CONFLICT',
@@ -111,8 +119,15 @@ async function runDirectorySearch(
     if (error instanceof DirectoryRequestError) {
       return odpCommandError({
         code: 'ODP_DIRECTORY_HTTP_ERROR',
-        message: 'ODP directory search failed.',
+        message: `The directory returned HTTP ${error.status}.`,
         retryable: error.status === 429 || error.status >= 500,
+      });
+    }
+    if (error instanceof Error && error.name === 'OdpValidationError') {
+      return odpCommandError({
+        code: 'ODP_DIRECTORY_RESPONSE_INVALID',
+        message: 'The directory returned Service metadata that does not conform to ODP.',
+        retryable: false,
       });
     }
     return odpCommandError({
@@ -159,8 +174,9 @@ export function SearchView({ page }: { page: DirectorySearchPage }) {
     name: service.name,
     origin: service.service_origin,
     protocols: listed([
-      ...(service.protocols?.enrollment ?? []).map(({ name }) => name),
-      ...(service.protocols?.payments ?? []).map(paymentProtocolLabel),
+      'ODP',
+      ...(service.protocols?.enrollment ?? []).map(({ name }) => enrollmentProtocolLabel(name)),
+      ...(service.protocols?.payments ?? []).map(({ name }) => paymentNameLabel(name)),
     ]),
   }));
   const columns: ReadonlyArray<TableColumn<(typeof rows)[number]>> = [
@@ -171,7 +187,11 @@ export function SearchView({ page }: { page: DirectorySearchPage }) {
   ];
   const facets = [
     ...(page.facets?.keywords ?? []).map(({ count, value }) => ({ count, facet: 'Keyword', value })),
-    ...(page.facets?.enrollment ?? []).map(({ count, value }) => ({ count, facet: 'Enrollment', value: value.name })),
+    ...(page.facets?.enrollment ?? []).map(({ count, value }) => ({
+      count,
+      facet: 'Enrollment',
+      value: enrollmentProtocolLabel(value.name),
+    })),
     ...(page.facets?.operations ?? []).map(({ count, value }) => ({ count, facet: 'Operation', value: value.name })),
     ...(page.facets?.payment_options ?? []).map(({ count, value }) => ({
       count,

@@ -89,6 +89,27 @@ describe('AEP views', () => {
     view.unmount();
   });
 
+  it('continues waiting and permits a retry when cancellation fails', async () => {
+    const onCancel = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(undefined);
+    const view = render(
+      <PendingApprovalView
+        approvalId="approval-1"
+        approvalUrl="https://app.example/approvals/approval-1/view/"
+        onCancel={onCancel}
+      />,
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    view.stdin.write('\u001b');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(view.lastFrame()).toContain('Unable to cancel approval');
+    view.stdin.write('\u001b');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(onCancel).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
   it('presents a missing enrollment as a normal status', () => {
     const view = render(<NotEnrolledView onComplete={() => undefined} serviceDid="did:web:service.example" />);
     expect(view.lastFrame()).toContain('Not enrolled with this Service.');

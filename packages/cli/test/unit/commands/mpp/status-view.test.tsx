@@ -25,6 +25,26 @@ describe('MppStatusView', () => {
     unmount();
   });
 
+  it('stops polling on Escape', async () => {
+    const onComplete = vi.fn();
+    const pending = vi.fn(() => Promise.resolve({ transactionId: 'tx-1', state: 'pending' as const }));
+    const result = render(
+      <MppStatusView
+        transactionId="tx-1"
+        fetchOnce={pending}
+        interval={5}
+        maxAttempts={0}
+        timeout={900}
+        onComplete={onComplete}
+      />,
+    );
+    await vi.waitFor(() => expect(result.lastFrame()).toContain('Press Escape to stop waiting'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    result.stdin.write('\u001b');
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledWith({ kind: 'cancelled' }));
+    result.unmount();
+  });
+
   it('renders Ready with a truncated credential preview', async () => {
     const { lastFrame, unmount } = view(() =>
       Promise.resolve({ transactionId: 'tx-1', state: 'ready', credential: 'c'.repeat(64) }),

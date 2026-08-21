@@ -244,9 +244,9 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
         const approval = {
           approvalId,
           approvalUrl,
-          cancel: () => {
+          cancel: async () => {
+            await cancelApproval(options.inflow, approvalId);
             controller.abort();
-            return cancelApproval(options.inflow, approvalId);
           },
         };
         displayHandled = options.approvalDisplay?.showPendingApproval(approval) === true;

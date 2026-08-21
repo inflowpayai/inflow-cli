@@ -58,6 +58,7 @@ export interface MppFetchInput {
   outputFile?: string;
   sellerTransport?: SellerRequestTransport;
   credential?: string;
+  signal?: AbortSignal;
 }
 
 export interface MppFetchRun {
@@ -98,6 +99,7 @@ async function resolveReady(input: MppFetchInput): Promise<MppTransactionRespons
     interval: input.interval,
     maxAttempts: input.maxAttempts,
     timeout: input.timeout,
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
   for await (const event of run.events) {
     if (event.type === 'ready') return event.response;

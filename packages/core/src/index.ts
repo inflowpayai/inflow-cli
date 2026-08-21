@@ -425,7 +425,7 @@ export {
 } from './flows/user-get.js';
 
 /* x402 helpers + shared codes --------------------------------------------- */
-export { approvalUrlFor, dashboardHostFor } from './x402/dashboard-url.js';
+export { accountUrlFor, approvalUrlFor, dashboardHostFor } from './x402/dashboard-url.js';
 export {
   describeBody,
   type ParsedHeaderFlag,

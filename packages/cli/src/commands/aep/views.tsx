@@ -138,11 +138,16 @@ interface PendingApprovalViewProps {
 
 export const PendingApprovalView: React.FC<PendingApprovalViewProps> = ({ approvalId, approvalUrl, onCancel }) => {
   const [cancelling, setCancelling] = useState(false);
+  const [cancellationFailed, setCancellationFailed] = useState(false);
   useInput((input, key) => {
     if (key.return) openUrl(approvalUrl);
-    if (key.escape || (key.ctrl && input === 'c')) {
+    if (!cancelling && (key.escape || (key.ctrl && input === 'c'))) {
       setCancelling(true);
-      void onCancel();
+      setCancellationFailed(false);
+      void Promise.resolve(onCancel()).catch(() => {
+        setCancelling(false);
+        setCancellationFailed(true);
+      });
     }
   });
   if (cancelling) {
@@ -173,6 +178,7 @@ export const PendingApprovalView: React.FC<PendingApprovalViewProps> = ({ approv
           <Spinner type="dots" /> Waiting for approval...
         </Text>
       </Box>
+      {cancellationFailed && <Text color="red">Unable to cancel approval. Press Escape or Ctrl-C to retry.</Text>}
     </Box>
   );
 };

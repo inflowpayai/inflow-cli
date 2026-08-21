@@ -390,6 +390,16 @@ describe('ODP Offering commands', () => {
           },
           attributes: { image: '/images/a100.png' },
           description: 'On-demand GPU',
+          images: [
+            {
+              alt: 'A100 GPU front view',
+              height: 800,
+              src: '/images/a100-front.webp',
+              type: 'image/webp',
+              width: 1200,
+            },
+            { src: 'https://cdn.example/a100-back.webp' },
+          ],
           odp_version: '1.0',
           price: { amount: '0.014', currency: 'USDC', type: 'fixed' },
         }}
@@ -398,6 +408,12 @@ describe('ODP Offering commands', () => {
     ).lastFrame();
     expect(details).toContain('On-demand GPU');
     expect(details).toContain('https://compute.example/images/a100.png');
+    expect(details).toContain('Images');
+    expect(details).toContain('A100 GPU front view');
+    expect(details).toContain('1200 x 800');
+    expect(details).toContain('image/webp');
+    expect(details).toContain('https://compute.example/images/a100-front.webp');
+    expect(details).toContain('https://cdn.example/a100-back.webp');
     expect(details).toContain('Price Preview');
     expect(details).toContain('fixed - one advertised price');
     expect(details).toContain('Available Actions');

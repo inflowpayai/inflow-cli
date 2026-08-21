@@ -70,6 +70,7 @@ export interface X402StatusRequest {
   interval: number;
   maxAttempts: number;
   timeout: number;
+  signal?: AbortSignal;
 }
 
 export type X402FetchRequest = Omit<X402FetchInput, 'client'>;
@@ -91,6 +92,7 @@ export interface MppStatusRequest {
   interval: number;
   maxAttempts: number;
   timeout: number;
+  signal?: AbortSignal;
 }
 
 export type MppFetchRequest = Omit<MppFetchInput, 'client'>;
@@ -373,6 +375,7 @@ export function augmentX402(x402Resource: IX402Resource, resolvedApiBaseUrl: str
       interval: input.interval,
       maxAttempts: input.maxAttempts,
       timeout: input.timeout,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
   augmented.fetch = (input) => ({
     events: (async function* () {
@@ -421,6 +424,7 @@ export function augmentMpp(
       interval: input.interval,
       maxAttempts: input.maxAttempts,
       timeout: input.timeout,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
   augmented.fetch = (input) => ({
     events: (async function* () {

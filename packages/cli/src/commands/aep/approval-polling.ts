@@ -1,6 +1,6 @@
 import type { Inflow } from '@inflowpayai/inflow-core';
 
-const APPROVAL_CANCEL_TIMEOUT_MILLISECONDS = 5_000;
+export { cancelApproval } from '../approval-cancellation.js';
 
 export class ApprovalCancelledError extends Error {}
 export class ApprovalTimeoutError extends Error {}
@@ -37,19 +37,6 @@ export async function approvalStatusBeforeDeadline(
     if (deadlineSignal.aborted) throw new ApprovalTimeoutError();
     throw cause;
   }
-}
-
-export async function cancelApproval(inflow: Inflow, approvalId: string): Promise<void> {
-  const signal = AbortSignal.timeout(APPROVAL_CANCEL_TIMEOUT_MILLISECONDS);
-  await withAbortSignal(inflow.platformAuthenticationHeaders(), signal)
-    .then((headers) =>
-      fetch(new URL(`/v1/approvals/${approvalId}/cancel`, inflow.resolvedApiBaseUrl), {
-        headers,
-        method: 'POST',
-        signal,
-      }),
-    )
-    .catch(() => undefined);
 }
 
 export async function approvalSleep(

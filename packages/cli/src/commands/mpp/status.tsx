@@ -1,12 +1,14 @@
 import { type MppStatusPhase, reduceMppStatus, runMppStatus, TERMINAL_STATES } from '@inflowpayai/inflow-core';
 import type { MppTransactionResponse } from '@inflowpayai/mpp';
-import { Box, Text } from 'ink';
+import { Box, Text, useInput, useStdin } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
 
 export { TERMINAL_STATES };
+
+export type MppStatusViewPhase = MppStatusPhase | { kind: 'cancelled' };
 
 export interface MppStatusProps {
   transactionId: string;
@@ -14,7 +16,7 @@ export interface MppStatusProps {
   interval: number;
   maxAttempts: number;
   timeout: number;
-  onComplete: (final: MppStatusPhase) => void;
+  onComplete: (final: MppStatusViewPhase) => void;
 }
 
 export const MppStatusView: React.FC<MppStatusProps> = ({
@@ -27,10 +29,24 @@ export const MppStatusView: React.FC<MppStatusProps> = ({
 }) => {
   const initial: MppStatusPhase = { kind: 'polling' };
   const [phase, dispatch] = useReducer(reduceMppStatus, initial);
+  const controllerRef = useRef<AbortController | undefined>(undefined);
   const { finish } = useFlowExit(onComplete);
+  const { isRawModeSupported } = useStdin();
+
+  useInput(
+    (_input, key) => {
+      if (key.escape) {
+        controllerRef.current?.abort();
+        finish({ kind: 'cancelled' });
+      }
+    },
+    { isActive: isRawModeSupported === true && phase.kind === 'polling' },
+  );
 
   useEffect(() => {
-    const run = runMppStatus({ fetchOnce, interval, maxAttempts, timeout });
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const run = runMppStatus({ fetchOnce, interval, maxAttempts, timeout, signal: controller.signal });
     const state = { cancelled: false };
     void (async () => {
       for await (const event of run.events) {
@@ -40,6 +56,8 @@ export const MppStatusView: React.FC<MppStatusProps> = ({
     })();
     return () => {
       state.cancelled = true;
+      controller.abort();
+      controllerRef.current = undefined;
     };
   }, [fetchOnce, interval, maxAttempts, timeout]);
 
@@ -62,6 +80,7 @@ export const MppStatusView: React.FC<MppStatusProps> = ({
         <Text color="cyan">
           <Spinner type="dots" /> Polling transaction {transactionId} (state: {stateText})...
         </Text>
+        <Text dimColor>Press Escape to stop waiting.</Text>
       </Box>
     );
   }

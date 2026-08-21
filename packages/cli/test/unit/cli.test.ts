@@ -364,6 +364,13 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(stdout).toContain(description);
     });
 
+    it('odp directory search without input prints command help', async () => {
+      const { exitCode, stdout, stderr } = await run(['odp', 'directory', 'search']);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('Usage: inflow odp directory search [query] [options]');
+      expect(stderr).toBe('');
+    });
+
     it('subscriptions help describes the buyer-facing actions', async () => {
       const { exitCode, stdout } = await run(['subscriptions']);
       expect(exitCode).toBe(0);

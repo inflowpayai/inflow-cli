@@ -119,4 +119,20 @@ describe('runMppStatus', () => {
     const events = await drain(runMppStatus({ fetchOnce, interval: 0.01, maxAttempts: 5, timeout: 30 }).events);
     expect(events.at(-1)).toEqual({ type: 'crashed', message: 'plain-string-failure' });
   });
+
+  it('aborts the polling delay when its signal is cancelled', async () => {
+    const controller = new AbortController();
+    const fetchOnce = vi.fn().mockResolvedValue(tx({ state: 'pending' }));
+    const iterator = runMppStatus({
+      fetchOnce,
+      interval: 60,
+      maxAttempts: 0,
+      timeout: 900,
+      signal: controller.signal,
+    }).events[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'snapshot' } });
+    controller.abort();
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'crashed', message: 'Poll aborted.' } });
+  });
 });

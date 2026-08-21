@@ -6,13 +6,15 @@ import {
   type X402StatusPhase,
 } from '@inflowpayai/inflow-core';
 import type { X402PayloadResponse } from '@inflowpayai/x402-buyer';
-import { Box, Text } from 'ink';
+import { Box, Text, useInput, useStdin } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
 
 export { classifyPayloadResponse, TERMINAL_FAILURE_STATUSES };
+
+export type X402StatusViewPhase = X402StatusPhase | { kind: 'cancelled' };
 
 export interface X402StatusProps {
   transactionId: string;
@@ -20,7 +22,7 @@ export interface X402StatusProps {
   interval: number;
   maxAttempts: number;
   timeout: number;
-  onComplete: (final: X402StatusPhase) => void;
+  onComplete: (final: X402StatusViewPhase) => void;
 }
 
 export const X402StatusView: React.FC<X402StatusProps> = ({
@@ -33,10 +35,24 @@ export const X402StatusView: React.FC<X402StatusProps> = ({
 }) => {
   const initial: X402StatusPhase = { kind: 'polling' };
   const [phase, dispatch] = useReducer(reduceX402Status, initial);
+  const controllerRef = useRef<AbortController | undefined>(undefined);
   const { finish } = useFlowExit(onComplete);
+  const { isRawModeSupported } = useStdin();
+
+  useInput(
+    (_input, key) => {
+      if (key.escape) {
+        controllerRef.current?.abort();
+        finish({ kind: 'cancelled' });
+      }
+    },
+    { isActive: isRawModeSupported === true && phase.kind === 'polling' },
+  );
 
   useEffect(() => {
-    const run = runX402Status({ fetchOnce, interval, maxAttempts, timeout });
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const run = runX402Status({ fetchOnce, interval, maxAttempts, timeout, signal: controller.signal });
     const state = { cancelled: false };
     void (async () => {
       for await (const event of run.events) {
@@ -46,6 +62,8 @@ export const X402StatusView: React.FC<X402StatusProps> = ({
     })();
     return () => {
       state.cancelled = true;
+      controller.abort();
+      controllerRef.current = undefined;
     };
   }, [fetchOnce, interval, maxAttempts, timeout]);
 
@@ -62,6 +80,7 @@ export const X402StatusView: React.FC<X402StatusProps> = ({
         <Text color="cyan">
           <Spinner type="dots" /> Polling transaction {transactionId} (status: {statusText})...
         </Text>
+        <Text dimColor>Press Escape to stop waiting.</Text>
       </Box>
     );
   }

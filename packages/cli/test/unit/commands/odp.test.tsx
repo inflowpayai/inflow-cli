@@ -103,6 +103,72 @@ describe('ODP directory commands', () => {
     ).rejects.toMatchObject({ detail: { code: 'ODP_DIRECTORY_NEXT_CONFLICT', exitCode: 2 } });
   });
 
+  it('prints directory search usage when no search input is provided', async () => {
+    try {
+      await __testing.runDirectorySearch({ continueSearchServices: vi.fn(), searchServices: vi.fn() }, emptyInput);
+      throw new Error('Expected an empty directory search to fail.');
+    } catch (caught) {
+      expect(caught).toBeInstanceOf(OdpCommandError);
+      if (caught instanceof OdpCommandError) {
+        expect(caught.detail.code).toBe('ODP_DIRECTORY_SEARCH_INPUT_REQUIRED');
+        expect(caught.detail.exitCode).toBe(2);
+        expect(caught.detail.message).toContain('Usage: inflow odp directory search [query] [options]');
+      }
+    }
+  });
+
+  it('identifies an invalid ODP directory response', async () => {
+    const failure = new Error('Invalid ODP Service Document');
+    failure.name = 'OdpValidationError';
+
+    await expect(
+      __testing.runDirectorySearch(
+        {
+          continueSearchServices: vi.fn(),
+          searchServices: vi.fn(() => ({
+            items: failingSequence().items,
+            pages: {
+              async *[Symbol.asyncIterator]() {
+                await Promise.resolve();
+                throw failure;
+              },
+            },
+          })),
+        },
+        { ...emptyInput, query: 'plants' },
+      ),
+    ).rejects.toMatchObject({
+      detail: {
+        code: 'ODP_DIRECTORY_RESPONSE_INVALID',
+        message: 'The directory returned Service metadata that does not conform to ODP.',
+      },
+    });
+  });
+
+  it('reports the directory HTTP status for search failures', async () => {
+    const failure = new DirectoryRequestError(503, 'private directory failure', new Headers());
+    const resource = {
+      continueSearchServices: vi.fn(),
+      searchServices: vi.fn(() => ({
+        items: failingSequence().items,
+        pages: {
+          async *[Symbol.asyncIterator]() {
+            await Promise.resolve();
+            throw failure;
+          },
+        },
+      })),
+    };
+
+    await expect(__testing.runDirectorySearch(resource, { ...emptyInput, query: 'plants' })).rejects.toMatchObject({
+      detail: {
+        code: 'ODP_DIRECTORY_HTTP_ERROR',
+        message: 'The directory returned HTTP 503.',
+        retryable: true,
+      },
+    });
+  });
+
   it('returns keyword suggestions in the stable items envelope', async () => {
     const suggestServices = vi.fn(() => Promise.resolve(['gpu', 'gpu compute']));
 
@@ -138,6 +204,7 @@ describe('ODP directory commands', () => {
       name: 'Compute',
       operations: [{ authentication: 'not-required', name: 'list-offerings' }],
       protocols: {
+        enrollment: [{ name: 'aep' }],
         payments: [{ authentication: 'not-required', name: 'mpp', options: ['inflow', 'solana'] }],
       },
       service_origin: 'https://compute.example',
@@ -146,6 +213,7 @@ describe('ODP directory commands', () => {
       <SearchView
         page={{
           facets: {
+            enrollment: [{ count: 8, value: { name: 'aep' } }],
             keywords: [{ count: 12, value: 'gpu' }],
             payment_options: [{ count: 4, value: { name: 'mpp', option: 'inflow' } }],
             payments: [{ count: 6, value: { authentication: 'not-required', name: 'mpp' } }],
@@ -156,20 +224,27 @@ describe('ODP directory commands', () => {
       />,
     );
     expect(search.lastFrame()).toContain('Compute catalog');
+    expect(search.lastFrame()).toContain('ODP, AEP, MPP');
     expect(search.lastFrame()).toContain('Available Filters');
     expect(search.lastFrame()).toContain('Matching Services');
-    expect(search.lastFrame()).toContain('MPP: InFlow, Solana');
+    expect(search.lastFrame()).not.toContain('aep');
     expect(search.lastFrame()).toContain('Payment Option');
+    expect(search.lastFrame()).toContain('Enrollment');
+    expect(search.lastFrame()).toContain('AEP');
     expect(search.lastFrame()).toContain('MPP: InFlow');
     expect(search.lastFrame()).toContain('Use these values with --keyword');
     expect(search.lastFrame()).toContain("inflow odp directory search --next '/v1/services/search?cursor=next'");
     expect(render(<SearchView page={{ items: [] }} />).lastFrame()).toContain('No Services found');
     expect(render(<SuggestView items={['gpu']} />).lastFrame()).toContain('gpu');
     expect(render(<SuggestView items={[]} />).lastFrame()).toContain('No keyword suggestions found');
+
+    const protocolsOnly = render(<SearchView page={{ items: [service] }} />).lastFrame();
+    expect(protocolsOnly).not.toContain('InFlow');
+    expect(protocolsOnly).not.toContain('Solana');
   });
 
   it.each([
-    ['search', ['search', '--format', 'json'], '"items"'],
+    ['search', ['search', 'plants', '--format', 'json'], '"items"'],
     ['suggest', ['suggest', 'gp', '--format', 'json'], 'gpu'],
   ] as const)('dispatches directory %s successfully', async (_name, argv, expected) => {
     const output: string[] = [];
@@ -190,8 +265,29 @@ describe('ODP directory commands', () => {
     expect(output.join('')).toContain(expected);
   });
 
+  it('rejects an unexpected directory search positional argument', async () => {
+    const output: string[] = [];
+    const exit = vi.fn();
+    const searchServices = vi.fn(() => sequence({ items: [] }));
+
+    await createDirectoryCli({
+      continueSearchServices: vi.fn(),
+      searchServices,
+      suggestServices: vi.fn(),
+    }).serve(['search', 'query', 'plants'], {
+      exit,
+      stdout(chunk) {
+        output.push(chunk);
+      },
+    });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(output.join('')).toContain('Unexpected argument: plants');
+    expect(searchServices).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ['search', ['search'], 'ODP_DIRECTORY_SEARCH_FAILED'],
+    ['search', ['search', 'plants'], 'ODP_DIRECTORY_SEARCH_FAILED'],
     ['suggest', ['suggest', 'gp'], 'ODP_DIRECTORY_SUGGEST_FAILED'],
   ] as const)('returns a stable directory %s failure', async (_name, argv, code) => {
     const output: string[] = [];

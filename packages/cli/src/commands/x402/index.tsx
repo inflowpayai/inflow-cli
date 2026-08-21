@@ -26,6 +26,7 @@ import { mcpTool } from '../../mcp-metadata.js';
 import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { type AepApprovalDisplay, createAepAwareInspectProbe, createAepAwareSellerTransport } from '../aep/runtime.js';
+import { cancelApproval } from '../approval-cancellation.js';
 import { PaymentFetchView, type PaymentFetchPhase } from '../payment-fetch.js';
 import { useAuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
 import { CancelView } from './cancel.js';
@@ -265,7 +266,10 @@ const PayViewWithAuthentication: React.FC<PayViewWithAuthenticationProps> = ({
 interface FetchViewWithAuthenticationProps {
   authStorage: AuthStorage;
   c: FetchCommandContext;
-  events: (sellerTransport: ReturnType<typeof createSellerTransport>) => AsyncIterable<X402FetchEvent>;
+  events: (
+    sellerTransport: ReturnType<typeof createSellerTransport>,
+    signal: AbortSignal,
+  ) => AsyncIterable<X402FetchEvent>;
   inflow: Inflow;
   onComplete: (phase: PaymentFetchPhase) => void;
   paymentHeader: string;
@@ -286,7 +290,7 @@ const FetchViewWithAuthentication: React.FC<FetchViewWithAuthenticationProps> = 
     () => createSellerTransport(c, inflow, authStorage, approvalDisplay),
     [approvalDisplay, authStorage, c, inflow],
   );
-  const iterable = useMemo(() => () => events(sellerTransport), [events, sellerTransport]);
+  const iterable = useMemo(() => (signal: AbortSignal) => events(sellerTransport, signal), [events, sellerTransport]);
   return (
     <PaymentFetchView
       protocol={protocol}
@@ -458,7 +462,7 @@ async function* runPayCommand(
         onComplete={(phase) => {
           captured.finalPhase = phase;
         }}
-        onCancel={(approvalId) => inflow.x402.cancel({ approvalId })}
+        onCancel={(approvalId) => cancelApproval(inflow, approvalId)}
       />,
     );
     if (captured.finalPhase !== null) {
@@ -533,7 +537,7 @@ async function* runFetchCommand(
         inflow={inflow}
         protocol="x402"
         paymentHeader="PAYMENT-SIGNATURE"
-        events={(sellerTransport) =>
+        events={(sellerTransport, signal) =>
           inflow.x402.fetch({
             transactionId: c.args.transactionId,
             url: c.args.resourceUrl,
@@ -543,6 +547,7 @@ async function* runFetchCommand(
             timeout: c.options.timeout,
             showBody: c.options.showBody,
             sellerTransport,
+            signal,
             ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
           }).events
         }

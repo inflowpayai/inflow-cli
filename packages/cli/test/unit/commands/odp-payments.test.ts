@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { directorySearchOptions, offeringDiscoverOptions } from '../../../src/commands/odp/schema.js';
 import {
+  enrollmentProtocolLabel,
   normalizePaymentFilters,
   paymentOptionLabel,
   paymentProtocolLabel,
@@ -27,6 +28,7 @@ describe('ODP payment filters', () => {
   });
 
   it('uses human-readable protocol and option labels', () => {
+    expect(enrollmentProtocolLabel('aep')).toBe('AEP');
     expect(paymentOptionLabel('inflow')).toBe('InFlow');
     expect(paymentProtocolLabel({ name: 'mpp', options: ['inflow', 'tempo'] })).toBe('MPP: InFlow, Tempo');
   });

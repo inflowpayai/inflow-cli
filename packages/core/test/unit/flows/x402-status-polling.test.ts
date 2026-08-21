@@ -55,4 +55,20 @@ describe('runX402Status — polling paths', () => {
       expect(terminal.response).toBe(pending);
     }
   });
+
+  it('aborts the polling delay when its signal is cancelled', async () => {
+    const controller = new AbortController();
+    const fetchOnce = vi.fn<() => Promise<X402PayloadResponse>>().mockResolvedValue(pending);
+    const iterator = runX402Status({
+      fetchOnce,
+      interval: 60,
+      maxAttempts: 0,
+      timeout: 900,
+      signal: controller.signal,
+    }).events[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'snapshot' } });
+    controller.abort();
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'crashed', message: 'Poll aborted.' } });
+  });
 });

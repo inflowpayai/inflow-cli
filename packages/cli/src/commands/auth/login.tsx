@@ -1,8 +1,8 @@
 import { type AuthLoginPhase, type ConnectionSettings, type IAuth, reduceAuthLogin } from '@inflowpayai/inflow-core';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useInput, useStdin } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { openUrl } from '../../utils/open-url.js';
 
@@ -17,15 +17,21 @@ export interface LoginProps {
 export const Login: React.FC<LoginProps> = ({ auth, clientName, connection, priorRefreshToken, onComplete }) => {
   const initialPhase: AuthLoginPhase = { kind: 'init' };
   const [phase, dispatch] = useReducer(reduceAuthLogin, initialPhase);
+  const cancelRef = useRef<(() => void) | undefined>();
   const { finish } = useFlowExit(onComplete);
+  const { isRawModeSupported } = useStdin();
 
   useInput(
     (_input, key) => {
       if (key.return && phase.kind === 'awaiting') {
         openUrl(phase.req.verification_url_complete);
       }
+      if (key.escape && phase.kind === 'awaiting') {
+        cancelRef.current?.();
+        finish();
+      }
     },
-    { isActive: phase.kind === 'awaiting' },
+    { isActive: isRawModeSupported === true && phase.kind === 'awaiting' },
   );
 
   useEffect(() => {
@@ -34,6 +40,7 @@ export const Login: React.FC<LoginProps> = ({ auth, clientName, connection, prio
       connection,
       ...(priorRefreshToken !== undefined ? { priorRefreshToken } : {}),
     });
+    cancelRef.current = () => run.cancel();
 
     const state = { cancelled: false };
     void (async () => {
@@ -46,6 +53,7 @@ export const Login: React.FC<LoginProps> = ({ auth, clientName, connection, prio
     return () => {
       state.cancelled = true;
       run.cancel();
+      cancelRef.current = undefined;
     };
   }, [auth, clientName, connection, priorRefreshToken]);
 
@@ -114,6 +122,7 @@ export const Login: React.FC<LoginProps> = ({ auth, clientName, connection, prio
           </Text>
         </Text>
         <Text dimColor>Press Enter to open in browser.</Text>
+        <Text dimColor>Press Escape to stop waiting.</Text>
         <Text>
           {'Enter phrase: '}
           <Text bold color="yellow">

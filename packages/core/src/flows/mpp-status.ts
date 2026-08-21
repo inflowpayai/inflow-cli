@@ -57,6 +57,7 @@ export interface MppStatusInput {
   maxAttempts: number;
   /** Wall-clock timeout in seconds. Pass `0` for no timeout. */
   timeout: number;
+  signal?: AbortSignal;
 }
 
 export interface MppStatusRun {
@@ -77,6 +78,7 @@ export function runMppStatus(input: MppStatusInput): MppStatusRun {
         interval: input.interval,
         maxAttempts: input.maxAttempts,
         timeout: input.timeout,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
       for await (const outcome of generator) {
         if (!outcome.terminal) {

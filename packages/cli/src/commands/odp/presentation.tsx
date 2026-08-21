@@ -1,6 +1,7 @@
 import type { TerseOffering } from '@inflowpayai/inflow-core';
 import { Box, Text } from 'ink';
 import React from 'react';
+import { z } from 'zod';
 import { Table, type TableColumn } from '../../utils/table.js';
 
 export interface DetailRow {
@@ -15,6 +16,55 @@ const DETAIL_COLUMNS: ReadonlyArray<TableColumn<DetailRow>> = [
 
 export function DetailsTable({ rows }: { rows: DetailRow[] }) {
   return <Table columns={DETAIL_COLUMNS} rows={rows} />;
+}
+
+const resourceImagesSchema = z.array(
+  z.object({
+    alt: z.string().optional(),
+    height: z.number().optional(),
+    src: z.string(),
+    type: z.string().optional(),
+    width: z.number().optional(),
+  }),
+);
+
+interface ImageRow {
+  alt: string;
+  dimensions: string;
+  role: string;
+  type: string;
+  url: string;
+}
+
+const IMAGE_COLUMNS: ReadonlyArray<TableColumn<ImageRow>> = [
+  { header: 'Role', cell: (row) => row.role },
+  { header: 'Alt text', cell: (row) => row.alt },
+  { header: 'Dimensions', cell: (row) => row.dimensions },
+  { header: 'Type', cell: (row) => row.type },
+  { header: 'URL', cell: (row) => row.url },
+];
+
+export function ResourceImages({ images, serviceOrigin }: { images: unknown; serviceOrigin: string }) {
+  const parsed = resourceImagesSchema.safeParse(images);
+  if (!parsed.success || parsed.data.length === 0) return null;
+  const rows: ImageRow[] = parsed.data.map((image, index) => ({
+    alt: image.alt ?? '',
+    dimensions:
+      image.width === undefined
+        ? image.height === undefined
+          ? ''
+          : `? x ${String(image.height)}`
+        : `${String(image.width)} x ${image.height === undefined ? '?' : String(image.height)}`,
+    role: index === 0 ? 'Primary' : 'Gallery',
+    type: image.type ?? '',
+    url: absoluteReference(image.src, serviceOrigin),
+  }));
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text bold>Images</Text>
+      <Table columns={IMAGE_COLUMNS} rows={rows} />
+    </Box>
+  );
 }
 
 export function detail(field: string, value: string, width = 72): DetailRow[] {

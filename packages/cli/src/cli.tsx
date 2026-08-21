@@ -170,6 +170,7 @@ async function main(): Promise<void> {
   const apiKeyFromFlag = extractFlag('--api-key');
   const verbose = extractBooleanFlag('--verbose');
   normalizeFormatAssignments(process.argv);
+  showDirectorySearchHelpForEmptyInput(process.argv);
   const isAgent = isAgentInvocation(process.argv, process.stdout.isTTY);
   const vaultOptions: LocalVaultDaemonClientOptions = { buildId: cliBuildId, cliVersion };
   const apiKeyFromEnv = process.env['INFLOW_API_KEY'];
@@ -348,6 +349,13 @@ async function main(): Promise<void> {
   cli.command('inspect', createInspectCommand(inflow, authStorage));
 
   await cli.serve();
+}
+
+function showDirectorySearchHelpForEmptyInput(argv: string[]): void {
+  const command = argv.slice(2);
+  if (command.length === 3 && command[0] === 'odp' && command[1] === 'directory' && command[2] === 'search') {
+    argv.push('--help');
+  }
 }
 
 function extractHiddenDaemonMode(): string | undefined {

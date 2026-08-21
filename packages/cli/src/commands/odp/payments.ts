@@ -6,6 +6,7 @@ import {
 } from '@inflowpayai/inflow-core';
 
 type PaymentName = PaymentProtocol['name'];
+type EnrollmentName = NonNullable<DirectoryServiceFilters['enrollment']>[number]['name'];
 export type PaymentFilter = PaymentName | `${PaymentName}:${PaymentOption}`;
 
 const OPTION_LABELS: Record<PaymentOption, string> = {
@@ -27,12 +28,20 @@ const OPTION_LABELS: Record<PaymentOption, string> = {
   ton: 'TON',
 };
 
+const ENROLLMENT_LABELS: Record<EnrollmentName, string> = {
+  aep: 'AEP',
+};
+
 export const PAYMENT_FILTERS: readonly PaymentFilter[] = Object.freeze([
   'mpp',
   'x402',
   ...PAYMENT_OPTIONS.map((option): PaymentFilter => `mpp:${option}`),
   ...PAYMENT_OPTIONS.map((option): PaymentFilter => `x402:${option}`),
 ]);
+
+export function enrollmentProtocolLabel(name: EnrollmentName): string {
+  return ENROLLMENT_LABELS[name];
+}
 
 export function normalizePaymentFilters(
   values: readonly PaymentFilter[],

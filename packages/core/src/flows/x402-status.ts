@@ -66,6 +66,7 @@ export interface X402StatusInput {
   maxAttempts: number;
   /** Wall-clock timeout in seconds. Pass `0` for no timeout. */
   timeout: number;
+  signal?: AbortSignal;
 }
 
 export interface X402StatusRun {
@@ -89,6 +90,7 @@ export function runX402Status(input: X402StatusInput): X402StatusRun {
         interval: input.interval,
         maxAttempts: input.maxAttempts,
         timeout: input.timeout,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
       for await (const outcome of generator) {
         if (!outcome.terminal) {
