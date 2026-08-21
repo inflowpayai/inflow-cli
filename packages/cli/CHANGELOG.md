@@ -1,5 +1,31 @@
 # @inflowpayai/inflow
 
+## 0.12.1
+
+### Patch Changes
+
+- [#117](https://github.com/inflowpayai/inflow-cli/pull/117)
+  [`697155d`](https://github.com/inflowpayai/inflow-cli/commit/697155dbd27cbca033f3cd5a4df7d19091c950d4) Thanks
+  [@nkavian](https://github.com/nkavian)! - Display advertised Service website, documentation, support, and status links
+  during ODP inspection.
+
+- [#118](https://github.com/inflowpayai/inflow-cli/pull/118)
+  [`636ecde`](https://github.com/inflowpayai/inflow-cli/commit/636ecded235218e37d7bf1d2cc2038b46d6e7c76) Thanks
+  [@nkavian](https://github.com/nkavian)! - Make interactive authorization and payment waits stoppable with Escape, and
+  complete remote approval cancellation before ending the command.
+
+- [#118](https://github.com/inflowpayai/inflow-cli/pull/118)
+  [`636ecde`](https://github.com/inflowpayai/inflow-cli/commit/636ecded235218e37d7bf1d2cc2038b46d6e7c76) Thanks
+  [@nkavian](https://github.com/nkavian)! - Show Collection and Offering images in their full human-readable details.
+  Show directory search help when no search input is provided, reject extra positional arguments, distinguish invalid
+  directory responses from request failures, keep payment options out of the directory's protocol summary, and report
+  missing, malformed, or unsupported AEP claims with structured remediation details that identify individual address
+  fields.
+
+- [#115](https://github.com/inflowpayai/inflow-cli/pull/115)
+  [`d62b052`](https://github.com/inflowpayai/inflow-cli/commit/d62b052788d886e1f3a8aeb6b9f50d617b3e9b86) Thanks
+  [@nkavian](https://github.com/nkavian)! - Show the actionable ODP error message in combined human inspection output.
+
 ## 0.12.0
 
 ### Minor Changes
