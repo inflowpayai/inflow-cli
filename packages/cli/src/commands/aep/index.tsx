@@ -45,6 +45,7 @@ import { assertSessionGuard } from '../../utils/assert-session.js';
 import { persistedAepPublicDocumentCache } from '../../utils/aep-public-document-cache.js';
 import { mcpTool } from '../../mcp-metadata.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
+import { ProgressView } from '../../utils/progress-view.js';
 import { shellArg } from '../../utils/payment-fetch-command.js';
 import {
   enrollOptions,
@@ -90,7 +91,8 @@ type RequirementErrorContext = {
   accountUrl: string;
   serviceReference: string;
 };
-type PendingApprovalRenderer = Pick<ReturnType<typeof render>, 'clear' | 'unmount'>;
+type AepRenderer = Pick<ReturnType<typeof render>, 'clear' | 'unmount'>;
+type AepProgressRenderer = Pick<ReturnType<typeof render>, 'clear' | 'rerender' | 'unmount'>;
 type Context = {
   agent: boolean;
   formatExplicit: boolean;
@@ -99,10 +101,21 @@ type Context = {
   error(error: ErrorOptions): never;
 };
 
-function closePendingApprovalView(view: PendingApprovalRenderer | undefined): void {
+function closeAepRenderer(view: AepRenderer | undefined): void {
   if (view === undefined) return;
   view.clear();
   view.unmount();
+}
+
+function updateAepProgress(view: AepProgressRenderer | undefined, message: string): void {
+  view?.rerender(<ProgressView message={message} />);
+}
+
+function startAepProgress(
+  c: Pick<Context, 'agent' | 'formatExplicit'>,
+  message: string,
+): AepProgressRenderer | undefined {
+  return c.agent || c.formatExplicit ? undefined : render(<ProgressView message={message} />);
 }
 
 function paymentRequiredFrame(
@@ -597,7 +610,7 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
     });
   }
   const controller = new AbortController();
-  let waitingView: PendingApprovalRenderer | undefined;
+  let waitingView: AepRenderer | undefined;
   const publicDocumentCache = persistedAepPublicDocumentCache(authStorage);
   const platform = provider(inflow, publicDocumentCache);
   const storage = lazyStores(inflow, authStorage);
@@ -685,7 +698,7 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
       timeoutMs: options.timeout * 1000,
       url: c.args.resourceUrl,
     });
-    closePendingApprovalView(waitingView);
+    closeAepRenderer(waitingView);
     waitingView = undefined;
     const paymentRequired = paymentRequiredFrame(result.paymentRequired, result.finalUrl);
     const frame = sanitizeDeep({
@@ -736,7 +749,7 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
       frame,
     );
   } catch (error) {
-    closePendingApprovalView(waitingView);
+    closeAepRenderer(waitingView);
     if (
       error instanceof MissingIdentityError ||
       (error instanceof AepCommandError &&
@@ -902,7 +915,8 @@ async function runInspect(c: Context, inflow: Inflow, authStorage?: AuthStorage)
 
 async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): Promise<Record<string, unknown>> {
   assertSessionGuard(c, authStorage, inflow);
-  let waitingView: PendingApprovalRenderer | undefined;
+  let waitingView: AepRenderer | undefined;
+  let progressView: AepProgressRenderer | undefined;
   const approvalController = new AbortController();
   try {
     const options = c.options as { approvalId?: string; interval?: number; maxAttempts: number; timeout: number };
@@ -910,9 +924,12 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       throw new CliInputError('AEP_INTERNAL_ERROR', 'Approval interval must be positive.');
     if (options.timeout <= 0 || options.timeout > 900)
       throw new CliInputError('AEP_INTERNAL_ERROR', 'Approval timeout must be between 1 and 900 seconds.');
+    progressView = startAepProgress(c, 'Connecting to InFlow...');
     const publicDocumentCache = persistedAepPublicDocumentCache(authStorage);
     const aepStorage = await stores(inflow, authStorage);
+    updateAepProgress(progressView, 'Inspecting AEP Service...');
     const inspect = await inspected(inflow, c.args.serviceReference, 30, publicDocumentCache);
+    updateAepProgress(progressView, 'Preparing agent identity...');
     const identityStore = aepStorage.identities();
     const identityProvider = provider(inflow, publicDocumentCache);
     await aepStorage.credentials().listCredentials(inspect.document.service.did);
@@ -928,6 +945,7 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
     let recoveredStaleIdentity = false;
     for (;;) {
       try {
+        updateAepProgress(progressView, 'Checking enrollment status...');
         const assertion = await directAssertion(inflow, identity, inspect, 'status', publicDocumentCache);
         const status = await statusService({
           agentDid: identity.agentDid,
@@ -935,6 +953,8 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
           inspect,
           serviceUrl: c.args.serviceReference,
         });
+        closeAepRenderer(progressView);
+        progressView = undefined;
         return present(
           c,
           <EnrollView
@@ -948,6 +968,7 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
         if (!(error instanceof AepCommandError)) throw error;
         if (error.problem?.code === 'not_recognized') break;
         if (error.problem?.code !== 'agent_identity_not_found' || recoveredStaleIdentity) throw error;
+        updateAepProgress(progressView, 'Refreshing agent identity...');
         identity = await identityProvider.getOrCreateIdentity({
           inspect: inspect.document,
           serviceDid: inspect.document.service.did,
@@ -964,6 +985,7 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
     };
     let signed: { assertion: string; context: Record<string, unknown> };
     try {
+      updateAepProgress(progressView, 'Creating approval request...');
       signed = await approvedAssertion(
         inflow,
         identity,
@@ -979,6 +1001,8 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
         publicDocumentCache,
         (approvalId) => {
           if (!c.agent && !c.formatExplicit) {
+            closeAepRenderer(progressView);
+            progressView = undefined;
             waitingView = render(
               <PendingApprovalView
                 approvalId={approvalId}
@@ -995,6 +1019,8 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       );
     } catch (error) {
       if (error instanceof PendingAepApproval) {
+        closeAepRenderer(progressView);
+        progressView = undefined;
         return present(
           c,
           <PendingApprovalView
@@ -1011,8 +1037,9 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       }
       throw error;
     }
-    closePendingApprovalView(waitingView);
+    closeAepRenderer(waitingView);
     waitingView = undefined;
+    progressView = startAepProgress(c, 'Completing enrollment...');
     const approvedClaims = signed.context['approved_claims'];
     const response = await enrollService({
       agentDid: identity.agentDid,
@@ -1025,6 +1052,8 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       inspect,
       serviceUrl: c.args.serviceReference,
     });
+    closeAepRenderer(progressView);
+    progressView = undefined;
     return present(
       c,
       <EnrollView
@@ -1035,7 +1064,8 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       sanitizeDeep(response.body),
     );
   } catch (error) {
-    closePendingApprovalView(waitingView);
+    closeAepRenderer(waitingView);
+    closeAepRenderer(progressView);
     if (error instanceof ApprovalCancelledError)
       return c.error({ code: 'APPROVAL_CANCELLED', message: 'The AEP approval was cancelled.' });
     if (error instanceof ApprovalDeniedError)
@@ -1118,7 +1148,7 @@ async function runStatus(c: Context, inflow: Inflow, authStorage: AuthStorage): 
 
 async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): Promise<Record<string, unknown>> {
   assertSessionGuard(c, authStorage, inflow);
-  let waitingView: PendingApprovalRenderer | undefined;
+  let waitingView: AepRenderer | undefined;
   const approvalController = new AbortController();
   try {
     const options = c.options as {
@@ -1226,7 +1256,7 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
       }
       throw error;
     }
-    closePendingApprovalView(waitingView);
+    closeAepRenderer(waitingView);
     waitingView = undefined;
     const response = await grantService({
       agentDid: identity.agentDid,
@@ -1264,7 +1294,7 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
       frame,
     );
   } catch (error) {
-    closePendingApprovalView(waitingView);
+    closeAepRenderer(waitingView);
     if (error instanceof ApprovalCancelledError)
       return c.error({ code: 'APPROVAL_CANCELLED', message: 'The AEP approval was cancelled.' });
     if (error instanceof ApprovalDeniedError)
@@ -1381,7 +1411,7 @@ export const __testing = {
   approvalSleep,
   approvalStatus,
   cancelApproval,
-  closePendingApprovalView,
+  closeAepRenderer,
   commandError,
   inspected,
   paymentRequiredFrame,
