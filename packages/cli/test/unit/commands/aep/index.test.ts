@@ -555,8 +555,8 @@ describe('aep commands', () => {
 
     const clear = vi.fn();
     const unmount = vi.fn();
-    __testing.closePendingApprovalView(undefined);
-    __testing.closePendingApprovalView({ clear, unmount });
+    __testing.closeAepRenderer(undefined);
+    __testing.closeAepRenderer({ clear, unmount });
     expect(clear).toHaveBeenCalledOnce();
     expect(unmount).toHaveBeenCalledOnce();
 
