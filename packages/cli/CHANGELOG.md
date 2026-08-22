@@ -1,5 +1,13 @@
 # @inflowpayai/inflow
 
+## 0.12.2
+
+### Patch Changes
+
+- [#119](https://github.com/inflowpayai/inflow-cli/pull/119)
+  [`6596cfa`](https://github.com/inflowpayai/inflow-cli/commit/6596cfacdc09aa8d602fd3d610f0b9e8f711418f) Thanks
+  [@nkavian](https://github.com/nkavian)! - Show live progress while preparing an interactive AEP enrollment.
+
 ## 0.12.1
 
 ### Patch Changes
