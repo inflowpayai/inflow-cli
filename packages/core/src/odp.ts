@@ -53,6 +53,7 @@ export type {
 export type {
   Collection,
   FilterDefinition,
+  McpEndpoint,
   Offering,
   OfferingPage,
   PageEnvelope,

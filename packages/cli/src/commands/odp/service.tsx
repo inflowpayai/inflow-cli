@@ -278,6 +278,20 @@ function capabilityLabel(name: string, authentication: string): string {
   return `${name} (${requirement})`;
 }
 
+interface McpEndpointRow {
+  description: string;
+  name: string;
+  type: string;
+  url: string;
+}
+
+const MCP_ENDPOINT_COLUMNS: ReadonlyArray<TableColumn<McpEndpointRow>> = [
+  { header: 'Name', cell: (row) => row.name },
+  { header: 'Type', cell: (row) => row.type },
+  { header: 'URL', cell: (row) => row.url },
+  { header: 'Description', cell: (row) => row.description },
+];
+
 export function OdpDetailsTable({ inspection }: { inspection: ServiceInspection }) {
   const { capabilities, document } = inspection;
   const rows: DetailRow[] = [
@@ -312,7 +326,23 @@ export function OdpDetailsTable({ inspection }: { inspection: ServiceInspection 
       ),
     ),
   ];
-  return <DetailsTable rows={rows} />;
+  const mcpEndpoints = (document.mcp ?? []).map((endpoint) => ({
+    description: endpoint.description ?? '—',
+    name: endpoint.name ?? '—',
+    type: 'Streamable HTTP',
+    url: absoluteReference(endpoint.url, inspection.serviceOrigin),
+  }));
+  return (
+    <Box flexDirection="column">
+      <DetailsTable rows={rows} />
+      {mcpEndpoints.length === 0 ? null : (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>MCP endpoints</Text>
+          <Table columns={MCP_ENDPOINT_COLUMNS} rows={mcpEndpoints} />
+        </Box>
+      )}
+    </Box>
+  );
 }
 
 export function InspectionView({ inspection }: { inspection: ServiceInspection }) {

@@ -21,7 +21,7 @@ minimumReleaseAgeExclude:
   - '@aep-foundation/core@0.5.0'
   - '@aep-foundation/platform@0.2.3'
   - '@offering-protocol/agent@0.3.0'
-  - '@offering-protocol/core@0.3.3'
+  - '@offering-protocol/core@0.3.4'
   - '@offering-protocol/directory@0.2.4'
 
 auto-install-peers: true

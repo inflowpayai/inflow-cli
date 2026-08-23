@@ -42,6 +42,15 @@ const inspection: ServiceInspection = {
     http: { endpoint_base: '/odp' },
     language: 'en',
     localizations: ['en'],
+    mcp: [
+      {
+        description: 'Browse the compute catalog.',
+        name: 'Catalog',
+        type: 'streamable-http',
+        url: '/mcp',
+      },
+      { type: 'streamable-http', url: 'https://automation.compute.example/mcp' },
+    ],
     name: 'Compute',
     odp_version: '1.0',
     operations,
@@ -126,7 +135,7 @@ describe('ODP Service and Collection commands', () => {
       },
     );
 
-    expect(output.join('')).toContain('Compute catalog');
+    expect(JSON.parse(output.join(''))).toMatchObject({ document: { mcp: inspection.document.mcp } });
   });
 
   it('returns a stable Service inspection failure', async () => {
@@ -277,6 +286,12 @@ describe('ODP Service and Collection commands', () => {
     expect(lastFrame()).toContain('get-collection (authentication required)');
     expect(lastFrame()).toContain('AEP');
     expect(lastFrame()).toContain('MPP: InFlow, Tempo (authentication required)');
+    expect(lastFrame()).toContain('MCP endpoints');
+    expect(lastFrame()).toContain('Catalog');
+    expect(lastFrame()).toContain('Streamable HTTP');
+    expect(lastFrame()).toContain('https://compute.example/mcp');
+    expect(lastFrame()).toContain('https://automation.compute.example/mcp');
+    expect(lastFrame()).toContain('Browse the compute catalog.');
   });
 
   it('renders Collection pages and full Collection details for interactive terminals', () => {
