@@ -31,6 +31,14 @@ const odpInspect = {
     http: { endpoint_base: '/odp' },
     language: 'en',
     localizations: ['en'],
+    mcp: [
+      {
+        description: 'Browse the example catalog.',
+        name: 'Catalog',
+        type: 'streamable-http',
+        url: '/mcp',
+      },
+    ],
     name: 'Example',
     odp_version: '1.0',
     operations: [
@@ -139,7 +147,10 @@ describe('buildCombinedFrame', () => {
     expect(frame['detected']).toEqual(['odp', 'aep']);
     expect(frame['odp']).toMatchObject({
       available: true,
-      inspect: { service_origin: 'https://seller.test' },
+      inspect: {
+        document: { mcp: odpInspect.document.mcp },
+        service_origin: 'https://seller.test',
+      },
     });
     expect(frame['aep']).toMatchObject({
       required: true,
@@ -471,6 +482,13 @@ describe('runCombinedInspectCommand (agent path)', () => {
     } satisfies CombinedInspectNoPayment);
 
     expect(frame['detected']).toEqual(['odp', 'aep']);
+    expect(frame['odp']).toMatchObject({
+      available: true,
+      inspect: {
+        document: { mcp: odpInspect.document.mcp },
+        service_origin: 'https://seller.test',
+      },
+    });
     expect(frame['aep']).toMatchObject({
       required: false,
       source: 'anonymous_probe',

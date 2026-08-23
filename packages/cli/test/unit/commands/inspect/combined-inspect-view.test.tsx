@@ -22,6 +22,14 @@ const odpInspect = {
     http: { endpoint_base: '/odp' },
     language: 'en',
     localizations: ['en'],
+    mcp: [
+      {
+        description: 'Browse the plant catalog.',
+        name: 'Storefront',
+        type: 'streamable-http',
+        url: '/mcp',
+      },
+    ],
     name: 'Indica Flowers',
     odp_version: '1.0',
     operations: [{ authentication: 'not-required', name: 'list-offerings' }],
@@ -364,6 +372,8 @@ describe('CombinedInspectView', () => {
     expect(frame).toContain('Supported');
     expect(frame).toContain('Payment not required');
     expect(frame).toContain('ODP, HTTP 200');
+    expect(frame).toContain('MCP endpoints');
+    expect(frame).toContain('https://seller.test/mcp');
     unmount();
   });
 
