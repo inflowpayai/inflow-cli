@@ -117,7 +117,7 @@ function changedSourceLines(ref) {
   for (const line of diff.split('\n')) {
     if (line.startsWith('+++ b/')) {
       const file = line.slice('+++ b/'.length);
-      currentFile = excludedSources.has(file) ? undefined : file;
+      currentFile = !excludedSources.has(file) && /\.[cm]?[jt]sx?$/.test(file) ? file : undefined;
       continue;
     }
     if (currentFile === undefined || !line.startsWith('@@')) continue;
