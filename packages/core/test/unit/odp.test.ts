@@ -31,6 +31,7 @@ describe('Inflow.odp', () => {
         Response.json({
           items: [
             {
+              service_id: 'eb825701-7eab-42a4-ad1f-c73c7f163c8c',
               service_origin: 'https://compute.example',
               name: '\u001b[31mCompute\u001b[0m',
               description: 'Compute catalog',
@@ -52,6 +53,7 @@ describe('Inflow.odp', () => {
 
     expect(calls[0]?.url).toBe('https://sandbox.inflowpay.ai/v1/services/search');
     expect(services[0]?.name).toBe('Compute');
+    expect(services[0]?.['service_id']).toBe('eb825701-7eab-42a4-ad1f-c73c7f163c8c');
     expect(inflow.odp.environment).toBe('sandbox');
   });
 
