@@ -11,6 +11,10 @@ Every command supports a TTY rendering (Ink) and an agent rendering via `--forma
 view is what you get by default in an interactive terminal; the structured formats are what an AI assistant or pipeline
 should request.
 
+Use `inflow inspect <url>` when the protocol is unknown. Use the dedicated `odp`, `aep`, `mpp`, or `x402` command after
+inspection identifies the next step. Read-only discovery and inspection commands work without a buyer login; enrollment,
+credential management, and payment commands use the authenticated InFlow account and encrypted vault.
+
 For host-specific skill and MCP installation, see the repository's
 [surface install and testing guide](https://github.com/inflowpayai/inflow-cli/blob/main/docs/development/surfaces-and-testing.md).
 
@@ -85,7 +89,7 @@ These flags are pre-extracted from `process.argv` before subcommand dispatch, so
 | `--environment <production\|sandbox>`        | `INFLOW_ENVIRONMENT`   | Selects the public environment. Defaults to `production`.                                                                                                                                                                                                                          |
 | `--format <json\|toon\|yaml\|md\|jsonl>`     | —                      | Agent rendering. Default is TTY (Ink).                                                                                                                                                                                                                                             |
 | `--sandbox`                                  | —                      | Shorthand for `--environment sandbox`.                                                                                                                                                                                                                                             |
-| `--skill [name]`                             | —                      | Print a bundled skill body to stdout and exit. Available skills are `agentic-enrollment` and `agentic-payments`; the default is `agentic-payments`. No frontmatter. Use for piping into a system prompt on MCP hosts that don't natively load skills.                              |
+| `--skill [name]`                             | —                      | Print a bundled skill body to stdout and exit. Available skills are `agentic-discovery`, `agentic-enrollment`, and `agentic-payments`; the default is `agentic-payments`. No frontmatter. Use for piping into a system prompt on MCP hosts that don't natively load skills.        |
 | `--verbose`                                  | —                      | Log every HTTP request/response to stderr.                                                                                                                                                                                                                                         |
 | —                                            | `INFLOW_HTTP_PROXY`    | Route every outbound HTTP request through this proxy URL. Requires the optional `undici` peer (`npm install undici`); the SDK throws `InflowConfigurationError` at first request when the env var is set but `undici` is missing. Ignored when the caller passes a custom `fetch`. |
 

@@ -127,12 +127,29 @@ The PIN or passphrase is read only from the terminal. It is not an MCP argument,
 variable, or structured agent input. `inflow vault status`, `inflow vault lock`, and `inflow vault policy` do not
 require the unlock factor.
 
-### Use with agents
+## Agent Skills
 
-Install the `agentic-enrollment` and `agentic-payments` skills into a skills-aware agent:
+The repository publishes three installable agent skills:
+
+| Skill                                                                                   | Use it to                                                                         |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [`agentic-discovery`](https://www.skills.sh/inflowpayai/inflow-cli/agentic-discovery)   | Find Services and Offerings, browse Collections, and resolve Actions through ODP. |
+| [`agentic-enrollment`](https://www.skills.sh/inflowpayai/inflow-cli/agentic-enrollment) | Enroll with AEP Services and manage Service credentials.                          |
+| [`agentic-payments`](https://www.skills.sh/inflowpayai/inflow-cli/agentic-payments)     | Inspect and pay MPP- or x402-protected endpoints.                                 |
+
+Install all three through the [Skills CLI](https://www.skills.sh/inflowpayai/inflow-cli):
 
 ```bash
 npx skills add inflowpayai/inflow-cli
+```
+
+The InFlow binary embeds the same playbooks. `--skill` prints a playbook for an agent host that cannot install skills
+directly; it does not install the skill:
+
+```bash
+inflow --skill agentic-discovery
+inflow --skill agentic-enrollment
+inflow --skill agentic-payments
 ```
 
 The repo also ships as an installable plugin (skill + MCP server bundled) for plugin-aware hosts:
@@ -152,6 +169,32 @@ The repo also ships as an installable plugin (skill + MCP server bundled) for pl
 
 In every case the plugin bundles the skill and the `inflow` MCP server (`.mcp.json`). The default MCP entry runs
 `inflow --mcp`; install the signed native binary before using the MCP server.
+
+## First Agentic Commerce Flow
+
+Use a standard InFlow account for buyer-side CLI workflows. A Service operator accepting payments needs a separate
+Seller account and the corresponding [Node.js seller SDK](https://github.com/inflowpayai/inflow-node).
+
+```bash
+# Human-controlled setup
+inflow vault unlock
+inflow auth login
+
+# Discover and inspect a Service
+inflow odp directory search plants
+inflow inspect https://service.example
+
+# Establish access when the Service requires enrollment
+inflow aep enroll https://service.example
+
+# Inspect and pay the protected endpoint selected from an ODP Action
+inflow mpp inspect https://service.example/actions/purchase
+inflow mpp pay https://service.example/actions/purchase
+```
+
+The three protocol layers are composable rather than mandatory on every request. ODP identifies Services, Offerings, and
+executable Actions. AEP establishes Service access when required. MPP or x402 completes payment when the selected
+endpoint returns a payment challenge. Start with `inflow inspect` when the required layers are not yet known.
 
 ## Security and local data
 
@@ -220,6 +263,13 @@ and recovery procedures.
   `inflow.x402`, `inflow.mpp`) carrying both protocol primitives and the command-shaped operations, plus the helpers
   (sanitization, polling, seller-probe) that make both work. Workspace-internal today; see
   [`packages/core/examples/`](./packages/core/examples/) for runnable scripts.
+
+## Documentation Map
+
+- [CLI command reference](./packages/cli/README.md) - commands, flags, output contracts, and errors.
+- [Headless client](./packages/core/README.md) - the programmatic surface used by the CLI.
+- [Agent surfaces](./docs/development/surfaces-and-testing.md) - skill, plugin, and MCP setup.
+- [Native release guide](./docs/development/native-release.md) - platform installers, signing, and release recovery.
 
 ## Repository
 
