@@ -4,6 +4,10 @@ Headless InFlow client. Same surface the CLI uses, with no Ink, no React, no com
 
 Workspace-internal: not currently published to npm. Imported by `@inflowpayai/inflow` (the CLI) via the pnpm workspace.
 
+Use this package when developing the InFlow CLI itself or embedding its headless flows inside this workspace. External
+applications should use the signed `inflow` binary or its MCP server; this package has no independent npm compatibility
+promise while it remains private.
+
 ## What's in here
 
 The package exposes three things:
@@ -103,6 +107,10 @@ For a deeper walk-through see `examples/` (programmatic login + balances; progra
   reads transparently refresh. This is the CLI's mode.
 - None of the above — anonymous. The data resources construct but fail at request time. Useful when only `inflow.auth.*`
   is needed.
+
+Seller SDK credentials are a separate concern. A Seller API key is required by the seller configuration endpoints in
+`inflow-node`; a Developer account key does not authorize those endpoints. The headless CLI client primarily models
+buyer authentication and should not be used as a replacement seller SDK.
 
 ## Network
 
