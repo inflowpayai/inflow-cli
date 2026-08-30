@@ -23,6 +23,7 @@ export interface InflowOptions {
   apiBaseUrl?: string;
   authBaseUrl?: string;
   logger?: InflowSdkLogger;
+  capabilitiesMaxAgeMs?: number;
 }
 
 export interface ResolvedInflowSdkConfig {

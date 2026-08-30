@@ -2,6 +2,7 @@ import {
   MemoryStorage,
   type CombinedInspectNoPayment,
   type CombinedInspectResult,
+  type ITapResource,
   type ServiceInspection,
 } from '@inflowpayai/inflow-core';
 import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
@@ -25,6 +26,7 @@ const odpInspect = {
       { authentication: 'not-required', name: 'list-offerings' },
     ],
     payments: [],
+    trust: [],
   },
   document: {
     description: 'Example products',
@@ -365,7 +367,15 @@ describe('buildCombinedFrame', () => {
 describe('runCombinedInspectCommand (agent path)', () => {
   it('registers the top-level Inspect command metadata', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
-    const command = createInspectCommand({} as never, new MemoryStorage());
+    const command = createInspectCommand(
+      {
+        aep: { inspect: vi.fn().mockRejectedValue(new Error('AEP absent')) },
+        capabilities: { has: vi.fn().mockResolvedValue(false) },
+        odp: { inspect: vi.fn().mockRejectedValue(new Error('ODP absent')) },
+        tap: { sign: vi.fn() },
+      } as never,
+      new MemoryStorage(),
+    );
     expect(command.description).toBe('Inspect a URL for agent discovery, enrollment, and payment capabilities');
     expect(command.outputPolicy).toBe('agent-only');
     expect(command.examples).toHaveLength(2);
@@ -383,6 +393,58 @@ describe('runCombinedInspectCommand (agent path)', () => {
     expect(frame?.['detected']).toEqual(['mpp', 'x402']);
     expect((frame?.['mpp'] as unknown[]).length).toBe(1);
     expect((frame?.['x402'] as unknown[]).length).toBe(1);
+  });
+
+  it('signs the primary combined-inspection request', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+    const has = vi.fn().mockResolvedValue(true);
+    const sign = vi.fn<ITapResource['sign']>().mockResolvedValue({
+      created: 1,
+      expires: 301,
+      keyid: 'key',
+      nonce: 'nonce',
+      signature: 'sig2=:value:',
+      signatureInput: 'sig2=("@method")',
+    });
+
+    await runCombinedInspectCommand(
+      ctx(),
+      {
+        aep: { inspect: vi.fn().mockRejectedValue(new Error('AEP absent')) },
+        capabilities: { has },
+        tap: { sign },
+      } as never,
+      undefined,
+      { inspect: vi.fn().mockRejectedValue(new Error('ODP absent')) },
+    );
+
+    expect(has).toHaveBeenCalled();
+    const signOptions = sign.mock.calls[0]?.[1];
+    expect(signOptions?.signal).toBeInstanceOf(AbortSignal);
+    expect(sign).toHaveBeenCalledWith({ method: 'GET', operation: 'odp.browse', targetUrl: URL }, signOptions);
+    expect(new Headers(fetchSpy.mock.calls[0]?.[1]?.headers).get('Signature')).toBe('sig2=:value:');
+  });
+
+  it('sends POST inspection data with an inferred JSON content type', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+
+    await runCombinedInspectCommand(
+      {
+        ...ctx(),
+        options: { data: '{"query":"gpu"}', header: [], method: 'POST' },
+      },
+      {
+        aep: { inspect: vi.fn().mockRejectedValue(new Error('AEP absent')) },
+        capabilities: { has: vi.fn().mockResolvedValue(false) },
+        tap: { sign: vi.fn() },
+      } as never,
+      undefined,
+      { inspect: vi.fn().mockRejectedValue(new Error('ODP absent')) },
+    );
+
+    const [, init] = fetchSpy.mock.calls[0] ?? [];
+    expect(Buffer.from(init?.body as Uint8Array).toString()).toBe('{"query":"gpu"}');
+    expect(new Headers(init?.headers).get('Content-Type')).toBe('application/json');
   });
 
   it('returns OpenAPI AEP policy without probing the protected resource', async () => {
@@ -427,7 +489,11 @@ describe('runCombinedInspectCommand (agent path)', () => {
 
     const frame = await runCombinedInspectCommand(
       ctx(),
-      { aep: { inspect: vi.fn().mockResolvedValue(inspect) } } as never,
+      {
+        aep: { inspect: vi.fn().mockResolvedValue(inspect) },
+        capabilities: { has: vi.fn().mockResolvedValue(false) },
+        tap: { sign: vi.fn() },
+      } as never,
       new MemoryStorage(),
     );
 

@@ -30,12 +30,14 @@ import {
   AepStorage,
   accountUrlFor,
   approvalUrlFor,
+  createTapFetch,
   parseHeaderFlags,
   runAepFetch,
   SecureStorageError,
   type AepStateStorage,
   type AuthStorage,
   type Inflow,
+  type TapOperation,
   sanitizeDeep,
 } from '@inflowpayai/inflow-core';
 import { Cli } from 'incur';
@@ -362,15 +364,21 @@ async function inspected(
   reference: string,
   timeout: number,
   publicDocumentCache?: AepPublicDocumentCache,
+  fetch?: typeof globalThis.fetch,
 ): Promise<InspectServiceResult> {
   if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 300) {
     throw new RangeError('Inspect timeout must be between 1 and 300 seconds.');
   }
   return inflow.aep.inspect({
+    ...(fetch === undefined ? {} : { fetch }),
     serviceUrl: reference,
     signal: AbortSignal.timeout(timeout * 1000),
     ...(publicDocumentCache === undefined ? {} : { publicDocumentCache }),
   });
+}
+
+function tapTransport(inflow: Inflow, operation: TapOperation): typeof globalThis.fetch {
+  return createTapFetch({ capabilities: inflow.capabilities, operation, tap: inflow.tap });
 }
 
 async function existingIdentity(storage: AepStorage, inspect: InspectServiceResult): Promise<AgentServiceIdentity> {
@@ -615,9 +623,12 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
   const platform = provider(inflow, publicDocumentCache);
   const storage = lazyStores(inflow, authStorage);
   try {
+    const method = options.method.toUpperCase();
+    const fetch = tapTransport(inflow, method === 'GET' || method === 'HEAD' ? 'aep.inspect' : 'aep.mutate');
     const result = await runAepFetch({
       agentOptions: {
         credentialStore: storage.credentials,
+        fetch,
         identityProvider: {
           getOrCreateIdentity: async (input) => {
             const recovered = await platform.findIdentityByServiceDid(input.serviceDid);
@@ -812,7 +823,8 @@ async function runInspect(c: Context, inflow: Inflow, authStorage?: AuthStorage)
     const options = c.options as { data?: string; header?: string[]; method?: string; timeout: number };
     const timeout = options.timeout;
     const cache = authStorage === undefined ? undefined : persistedAepPublicDocumentCache(authStorage);
-    const result = await inspected(inflow, c.args.serviceReference, timeout, cache);
+    const fetch = tapTransport(inflow, 'aep.inspect');
+    const result = await inspected(inflow, c.args.serviceReference, timeout, cache, fetch);
     let resourceAuthentication = 'Not checked';
     let openApiPolicy: OpenApiPolicy | undefined;
     let resourceAuthenticationFrame: Record<string, unknown> = { result: 'not-checked', source: 'not_checked' };
@@ -828,6 +840,7 @@ async function runInspect(c: Context, inflow: Inflow, authStorage?: AuthStorage)
         : `https://${c.args.serviceReference}`;
       try {
         openApiPolicy = await inspectOpenApiPolicy({
+          fetch,
           inspect: result,
           method: options.method ?? 'GET',
           ...(cache === undefined ? {} : { publicDocumentCache: cache }),
@@ -846,6 +859,7 @@ async function runInspect(c: Context, inflow: Inflow, authStorage?: AuthStorage)
         };
       } else {
         const probe = await probeProtectedResource({
+          fetch,
           ...(options.data === undefined ? {} : { body: options.data }),
           headers,
           method: options.method ?? 'GET',
@@ -927,8 +941,10 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
     progressView = startAepProgress(c, 'Connecting to InFlow...');
     const publicDocumentCache = persistedAepPublicDocumentCache(authStorage);
     const aepStorage = await stores(inflow, authStorage);
+    const inspectFetch = tapTransport(inflow, 'aep.inspect');
+    const mutateFetch = tapTransport(inflow, 'aep.mutate');
     updateAepProgress(progressView, 'Inspecting AEP Service...');
-    const inspect = await inspected(inflow, c.args.serviceReference, 30, publicDocumentCache);
+    const inspect = await inspected(inflow, c.args.serviceReference, 30, publicDocumentCache, inspectFetch);
     updateAepProgress(progressView, 'Preparing agent identity...');
     const identityStore = aepStorage.identities();
     const identityProvider = provider(inflow, publicDocumentCache);
@@ -950,6 +966,7 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
         const status = await statusService({
           agentDid: identity.agentDid,
           clientAssertion: assertion,
+          fetch: inspectFetch,
           inspect,
           serviceUrl: c.args.serviceReference,
         });
@@ -1048,6 +1065,7 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
           ? (approvedClaims as Record<string, unknown>)
           : {},
       clientAssertion: signed.assertion,
+      fetch: mutateFetch,
       idempotencyKey: randomUUID(),
       inspect,
       serviceUrl: c.args.serviceReference,
@@ -1086,7 +1104,8 @@ async function runStatus(c: Context, inflow: Inflow, authStorage: AuthStorage): 
   try {
     const aepStorage = await stores(inflow, authStorage);
     const publicDocumentCache = persistedAepPublicDocumentCache(authStorage);
-    const inspect = await inspected(inflow, c.args.serviceReference, 30, publicDocumentCache);
+    const fetch = tapTransport(inflow, 'aep.inspect');
+    const inspect = await inspected(inflow, c.args.serviceReference, 30, publicDocumentCache, fetch);
     const identity = await aepStorage.identities().findByServiceDid(inspect.document.service.did);
     if (identity === undefined) {
       const frame = { enrolled: false, local: { grants: [] }, service: null };
@@ -1100,6 +1119,7 @@ async function runStatus(c: Context, inflow: Inflow, authStorage: AuthStorage): 
     const response = await statusService({
       agentDid: identity.agentDid,
       clientAssertion: assertion,
+      fetch,
       inspect,
       serviceUrl: c.args.serviceReference,
     });
@@ -1149,6 +1169,7 @@ async function runStatus(c: Context, inflow: Inflow, authStorage: AuthStorage): 
 async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): Promise<Record<string, unknown>> {
   assertSessionGuard(c, authStorage, inflow);
   let waitingView: AepRenderer | undefined;
+  let progressView: AepProgressRenderer | undefined;
   const approvalController = new AbortController();
   try {
     const options = c.options as {
@@ -1163,11 +1184,17 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
       throw new CliInputError('AEP_INTERNAL_ERROR', 'Approval interval must be positive.');
     if (timeout <= 0 || timeout > 900)
       throw new CliInputError('AEP_INTERNAL_ERROR', 'Approval timeout must be between 1 and 900 seconds.');
+    progressView = startAepProgress(c, 'Connecting to InFlow...');
     const aepStorage = await stores(inflow, authStorage);
     const publicDocumentCache = persistedAepPublicDocumentCache(authStorage);
-    const inspect = await inspected(inflow, c.args.serviceReference, 30, publicDocumentCache);
+    const inspectFetch = tapTransport(inflow, 'aep.inspect');
+    const mutateFetch = tapTransport(inflow, 'aep.mutate');
+    updateAepProgress(progressView, 'Inspecting AEP Service...');
+    const inspect = await inspected(inflow, c.args.serviceReference, 30, publicDocumentCache, inspectFetch);
     const advertisedGrantTypes = inspect.document.commands.grant_types ?? [];
     if (options.grantType === undefined && advertisedGrantTypes.length === 0) {
+      closeAepRenderer(progressView);
+      progressView = undefined;
       const frame = { authentication: 'aep-jwt', grant_available: false, granted: false };
       return present(c, <GrantUnavailableView onComplete={() => undefined} />, frame);
     }
@@ -1180,6 +1207,8 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
     const identityStore = aepStorage.identities();
     const identity = await identityStore.findByServiceDid(inspect.document.service.did);
     if (identity === undefined) {
+      closeAepRenderer(progressView);
+      progressView = undefined;
       return present(c, <NotEnrolledView onComplete={() => undefined} serviceDid={inspect.document.service.did} />, {
         enrolled: false,
         granted: false,
@@ -1187,15 +1216,19 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
       });
     }
     try {
+      updateAepProgress(progressView, 'Checking enrollment status...');
       const statusAssertion = await directAssertion(inflow, identity, inspect, 'status', publicDocumentCache);
       await statusService({
         agentDid: identity.agentDid,
         clientAssertion: statusAssertion,
+        fetch: inspectFetch,
         inspect,
         serviceUrl: c.args.serviceReference,
       });
     } catch (error) {
       if (!(error instanceof AepCommandError) || error.problem?.code !== 'not_recognized') throw error;
+      closeAepRenderer(progressView);
+      progressView = undefined;
       return present(c, <NotEnrolledView onComplete={() => undefined} serviceDid={inspect.document.service.did} />, {
         enrolled: false,
         granted: false,
@@ -1205,6 +1238,7 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
     const scopes = [...new Set(options.scope)];
     let signed: { assertion: string; context: Record<string, unknown> };
     try {
+      updateAepProgress(progressView, 'Creating approval request...');
       signed = await approvedAssertion(
         inflow,
         identity,
@@ -1223,6 +1257,8 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
         publicDocumentCache,
         (approvalId) => {
           if (!c.agent && !c.formatExplicit) {
+            closeAepRenderer(progressView);
+            progressView = undefined;
             waitingView = render(
               <PendingApprovalView
                 approvalId={approvalId}
@@ -1239,6 +1275,8 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
       );
     } catch (error) {
       if (error instanceof PendingAepApproval) {
+        closeAepRenderer(progressView);
+        progressView = undefined;
         return present(
           c,
           <PendingApprovalView
@@ -1258,9 +1296,11 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
     }
     closeAepRenderer(waitingView);
     waitingView = undefined;
+    progressView = startAepProgress(c, 'Requesting Service credential...');
     const response = await grantService({
       agentDid: identity.agentDid,
       clientAssertion: signed.assertion,
+      fetch: mutateFetch,
       grantType,
       idempotencyKey: randomUUID(),
       inspect,
@@ -1273,6 +1313,8 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
       serviceUrl: c.args.serviceReference,
     });
     await aepStorage.credentials().saveCredential(record);
+    closeAepRenderer(progressView);
+    progressView = undefined;
     const frame = sanitizeDeep({
       credential_id: record.credentialId,
       expires_at: record.expiresAt,
@@ -1295,6 +1337,7 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
     );
   } catch (error) {
     closeAepRenderer(waitingView);
+    closeAepRenderer(progressView);
     if (error instanceof ApprovalCancelledError)
       return c.error({ code: 'APPROVAL_CANCELLED', message: 'The AEP approval was cancelled.' });
     if (error instanceof ApprovalDeniedError)
@@ -1313,12 +1356,15 @@ async function runRevoke(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       throw new CliInputError('AEP_INTERNAL_ERROR', 'Use either credential id or grant type, not both.');
     const aepStorage = await stores(inflow, authStorage);
     const publicDocumentCache = persistedAepPublicDocumentCache(authStorage);
-    const inspect = await inspected(inflow, c.args.serviceReference, 30, publicDocumentCache);
+    const inspectFetch = tapTransport(inflow, 'aep.inspect');
+    const mutateFetch = tapTransport(inflow, 'aep.mutate');
+    const inspect = await inspected(inflow, c.args.serviceReference, 30, publicDocumentCache, inspectFetch);
     const identity = await existingIdentity(aepStorage, inspect);
     const assertion = await directAssertion(inflow, identity, inspect, 'revoke', publicDocumentCache);
     const base = {
       agentDid: identity.agentDid,
       clientAssertion: assertion,
+      fetch: mutateFetch,
       idempotencyKey: randomUUID(),
       inspect,
       serviceUrl: c.args.serviceReference,

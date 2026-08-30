@@ -1,4 +1,4 @@
-import type { AuthStorage } from '@inflowpayai/inflow-core';
+import type { AuthStorage, ICliCapabilitiesResource } from '@inflowpayai/inflow-core';
 import { Inflow, InflowApiError, MemoryStorage } from '@inflowpayai/inflow-core';
 import { encode, type MppChallenge, type MppClient, renderChallengeHeader } from '@inflowpayai/mpp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -55,6 +55,7 @@ function authed(
     expires_at: Date.now() + 3600 * 1000,
   });
   const inflow = new Inflow({ authStorage: storage, environment: 'sandbox', cliClientId: 'test' });
+  vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as ICliCapabilitiesResource, 'has').mockResolvedValue(false);
   (inflow.mpp as unknown as { cachedClient: Promise<MppClient> }).cachedClient = Promise.resolve(client);
   (inflow.mpp as unknown as { cachedMethod: { cancelApproval: typeof cancelApproval } }).cachedMethod = {
     cancelApproval,
@@ -234,6 +235,48 @@ describe('mpp agent runners', () => {
     expect(frames.at(-1)).toMatchObject({ outcome: 'paid', transaction_id: 'tx-1', credential: 'CRED' });
   });
 
+  it('signs the exact MPP probe and paid replay and carries probe evidence into transaction creation', async () => {
+    const createTransaction = vi.fn((_body: { tapEvidenceId?: string }) =>
+      Promise.resolve({ state: 'ready' as const, transactionId: 'tx-tap', credential: 'CRED' }),
+    );
+    const { inflow, storage } = authed(makeClient({ createTransaction }));
+    vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as ICliCapabilitiesResource, 'has').mockResolvedValue(true);
+    const sign = vi.spyOn(inflow.tap, 'sign').mockImplementation((request) =>
+      Promise.resolve({
+        created: 1,
+        expires: 2,
+        keyid: 'key',
+        nonce: request.operation,
+        signature: `sig=:${request.operation}:`,
+        signatureInput: `sig=("@method");keyid="key"`,
+        ...(request.operation === 'mpp.inspect' ? { tapEvidenceId: '00000000-0000-0000-0000-000000000123' } : {}),
+      }),
+    );
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(challenge402())
+      .mockResolvedValueOnce(new Response('paid', { status: 200 }));
+    const ctx = agentCtx(
+      { url: SELLER },
+      { method: 'GET', header: [], interval: 5, maxAttempts: 0, timeout: 900, showBody: true },
+    );
+
+    const frames = await drain(runPayCommand(ctx as never, inflow, storage, 'https://api.test'));
+
+    expect(frames.at(-1)).toMatchObject({ outcome: 'paid', transaction_id: 'tx-tap' });
+    expect(createTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ tapEvidenceId: '00000000-0000-0000-0000-000000000123' }),
+    );
+    expect(sign.mock.calls.map(([request]) => [request.operation, request.targetUrl, request.transactionId])).toEqual([
+      ['mpp.inspect', SELLER, undefined],
+      ['mpp.payment', SELLER, 'tx-tap'],
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetch.mock.calls) {
+      expect(new Headers(init?.headers).has('Signature')).toBe(true);
+    }
+  });
+
   it('runSubscribeCommand drives a subscription challenge to a paid frame with intent subscription', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     fetchSpy.mockResolvedValueOnce(challenge402('subscription'));
@@ -384,6 +427,38 @@ describe('mpp agent runners', () => {
     };
     const out = (await runInspectCommand(ctx as never)) as Record<string, unknown>;
     expect(out['outcome']).toBe('challenges');
+  });
+
+  it('runInspectCommand signs its merchant probe as MPP inspection', async () => {
+    const { inflow, storage } = authed(makeClient());
+    vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as ICliCapabilitiesResource, 'has').mockResolvedValue(true);
+    const sign = vi.spyOn(inflow.tap, 'sign').mockResolvedValue({
+      created: 1,
+      expires: 2,
+      keyid: 'key',
+      nonce: 'nonce',
+      signature: 'sig=:value:',
+      signatureInput: 'sig=("@method");keyid="key"',
+      tapEvidenceId: '00000000-0000-0000-0000-000000000123',
+    });
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      return Promise.resolve(url.includes('/.well-known/aep') ? new Response(null, { status: 404 }) : challenge402());
+    });
+    const ctx = agentCtx({ url: SELLER }, { method: 'GET', header: [] });
+
+    const out = await runInspectCommand(ctx, inflow, storage);
+
+    expect(out?.['outcome']).toBe('challenges');
+    expect(sign).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'GET', operation: 'mpp.inspect', targetUrl: SELLER }),
+      expect.any(Object),
+    );
+    const sellerCall = fetch.mock.calls.find(([input]) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      return url === SELLER;
+    });
+    expect(new Headers(sellerCall?.[1]?.headers).has('Signature')).toBe(true);
   });
 
   it('runInspectCommand returns the no-payment frame on a 2xx probe', async () => {

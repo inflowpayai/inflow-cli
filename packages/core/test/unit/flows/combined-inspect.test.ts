@@ -73,6 +73,7 @@ const odpInspect = {
       { authentication: 'not-required', name: 'list-offerings' },
     ],
     payments: [],
+    trust: [],
   },
   document: {
     description: 'Example products',
@@ -133,6 +134,35 @@ describe('runCombinedInspectPipeline', () => {
     expect(events[0]?.type).toBe('no-payment');
     if (events[0]?.type === 'no-payment')
       expect(events[0].result.odp).toEqual({ kind: 'service', inspect: odpInspect });
+  });
+
+  it('uses an injected exact-request probe', async () => {
+    const probe = vi.fn().mockResolvedValue({
+      bytes: new Uint8Array(),
+      contentType: undefined,
+      headers: new Headers(),
+      status: 200,
+    });
+    const events: CombinedInspectEvent[] = [];
+
+    await runCombinedInspectPipeline(
+      {
+        probe,
+        probeOptions: { method: 'POST', headers: { Accept: 'application/json' }, data: '{"query":"gpu"}' },
+        url: URL,
+      },
+      (event) => events.push(event),
+    );
+
+    expect(probe).toHaveBeenCalledWith(URL, {
+      data: '{"query":"gpu"}',
+      headers: {
+        Accept: 'application/json',
+        'Accept-Payment': 'inflow/charge, inflow/subscription, tempo/charge',
+      },
+      method: 'POST',
+    });
+    expect(events[0]?.type).toBe('no-payment');
   });
 
   it('blocks definitive OpenAPI AEP policy without probing the resource when no credential is available', async () => {

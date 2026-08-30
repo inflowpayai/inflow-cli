@@ -10,6 +10,8 @@ import {
   readHeaderAll,
   SCHEME_PAYMENT,
   decodeReceipt,
+  decodeCredential,
+  CREDENTIAL_TRANSACTION_ID,
   subscriptionOptionFingerprints,
 } from '@inflowpayai/mpp';
 import type { SellerProbeOptions } from '@inflowpayai/x402-buyer/probe';
@@ -361,6 +363,7 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
     const options: InflowPaymentOptions = deps.instrumentId !== undefined ? { instrumentId: deps.instrumentId } : {};
 
     let created: MppTransactionResponse;
+    let paymentTransactionId: string | undefined;
     try {
       if (deps.subscriptionId !== undefined) {
         if (deps.subscriptions === undefined) throw new Error('Subscription authorization resource is unavailable.');
@@ -386,8 +389,19 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
           credential: authorization.credential,
           expires: authorization.expires,
         };
+        const credential = decodeCredential(authorization.credential);
+        const transactionId = credential.payload[CREDENTIAL_TRANSACTION_ID];
+        if (typeof transactionId !== 'string' || transactionId.length === 0) {
+          throw new Error('Subscription credential did not include a transaction id.');
+        }
+        paymentTransactionId = transactionId;
       } else {
-        created = await deps.client.createTransaction({ challenge, options });
+        created = await deps.client.createTransaction({
+          challenge,
+          options,
+          ...(probe.tapEvidenceId === undefined ? {} : { tapEvidenceId: probe.tapEvidenceId }),
+        });
+        paymentTransactionId = created.transactionId;
       }
     } catch (err) {
       const mapped = mapMppError(err);
@@ -459,6 +473,7 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
       headers: probeOptions.headers,
       additionalAuthenticationHeaders: { [HEADERS.AUTHORIZATION]: `${SCHEME_PAYMENT} ${credential}` },
       ...(probeOptions.data !== undefined ? { data: probeOptions.data } : {}),
+      ...(paymentTransactionId === undefined ? {} : { transactionId: paymentTransactionId }),
     });
     const attachment = await buildBodyAttachment(replay.bytes, deps.showBody, deps.outputFile);
 

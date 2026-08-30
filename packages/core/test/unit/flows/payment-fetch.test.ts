@@ -83,6 +83,7 @@ describe('payment fetch replay safety', () => {
       additionalAuthenticationHeaders: { Authorization: 'Payment CRED' },
       headers: {},
       method: 'GET',
+      transactionId: 'tx-1',
       url: 'https://seller.test/api',
     });
     expect(events.at(-1)).toMatchObject({ type: 'replayed', result: { body: 'paid' } });

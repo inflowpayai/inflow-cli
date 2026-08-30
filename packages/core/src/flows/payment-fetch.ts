@@ -43,6 +43,7 @@ export interface PaymentReplayInput {
   showBody: boolean;
   outputFile?: string;
   sellerTransport?: SellerRequestTransport;
+  transactionId?: string;
 }
 
 export interface PaymentReplayResult extends BodyAttachment {
@@ -58,11 +59,14 @@ export interface SellerRequestInput {
   headers: Record<string, string>;
   data?: string;
   additionalAuthenticationHeaders?: Record<string, string>;
+  transactionId?: string;
 }
 
 export interface SellerRequestTransport {
-  request(input: SellerRequestInput): Promise<SellerProbeResult>;
+  request(input: SellerRequestInput): Promise<SellerRequestResult>;
 }
+
+export type SellerRequestResult = SellerProbeResult & { tapEvidenceId?: string };
 
 function withoutHeader(headers: Record<string, string>, headerName: string): Record<string, string> {
   const blocked = headerName.toLowerCase();
@@ -86,7 +90,7 @@ export const defaultSellerRequestTransport: SellerRequestTransport = {
 export async function sellerRequest(
   transport: SellerRequestTransport | undefined,
   input: SellerRequestInput,
-): Promise<SellerProbeResult> {
+): Promise<SellerRequestResult> {
   return (transport ?? defaultSellerRequestTransport).request(input);
 }
 
@@ -100,6 +104,7 @@ export async function replayPaymentRequest(input: PaymentReplayInput): Promise<P
       method: input.method,
       headers: withoutHeader(input.headers, input.paymentHeaderName),
       ...(input.data !== undefined ? { data: input.data } : {}),
+      ...(input.transactionId !== undefined ? { transactionId: input.transactionId } : {}),
       url: input.url,
     };
     result = await sellerRequest(input.sellerTransport, options);

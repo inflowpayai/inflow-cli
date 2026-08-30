@@ -10,6 +10,51 @@ import type {
   User,
 } from '../types/index.js';
 
+export interface CliCapabilities {
+  features: readonly string[];
+  minimumSupportedVersion: string;
+}
+
+export interface ICliCapabilitiesResource {
+  get(options?: { signal?: AbortSignal }): Promise<CliCapabilities>;
+  has(feature: string, options?: { signal?: AbortSignal }): Promise<boolean>;
+}
+
+export type TapOperation =
+  'aep.inspect' | 'aep.mutate' | 'mpp.inspect' | 'mpp.payment' | 'odp.browse' | 'x402.inspect' | 'x402.payment';
+
+export interface TapSignatureRequest {
+  contentDigest?: string;
+  contentType?: string;
+  method: string;
+  operation: TapOperation;
+  prepare?: boolean;
+  serviceId?: string;
+  targetUrl: string;
+  transactionId?: string;
+}
+
+export interface TapSignatureResponse {
+  created: number;
+  expires: number;
+  keyid: string;
+  nonce: string;
+  signature?: string;
+  signatureInput?: string;
+  signingRequestId?: string;
+  tapEvidenceId?: string;
+}
+
+export interface ITapResource {
+  finalize(
+    signingRequestId: string,
+    contentDigest: string,
+    contentType: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<TapSignatureResponse>;
+  sign(request: TapSignatureRequest, options?: { signal?: AbortSignal }): Promise<TapSignatureResponse>;
+}
+
 export interface IAuthResource {
   initiateDeviceAuth(clientName?: string): Promise<DeviceAuthRequest>;
   pollDeviceAuth(deviceCode: string): Promise<AuthTokens | null>;

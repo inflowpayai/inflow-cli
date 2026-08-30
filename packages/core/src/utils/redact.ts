@@ -14,6 +14,9 @@ export const REDACTED_BODY_FIELDS = new Set([
   'code_verifier',
   'cvc',
   'number',
+  'signature',
+  'signingRequestId',
+  'tapEvidenceId',
 ]);
 
 /** @internal */

@@ -12,10 +12,12 @@ import {
   type MppPayResultNoPayment,
   type MppPayResultRejected,
   type MppPayResultSuccess,
+  createTapFetch,
   parseHeaderFlags,
   runMppStatus,
   sanitizeDeep,
   type SellerProbeOptions,
+  type SellerRequestTransport,
 } from '@inflowpayai/inflow-core';
 import { INTENT_SUBSCRIPTION, type MppSupportedResponse, type MppTransactionResponse } from '@inflowpayai/mpp';
 import { Cli } from 'incur';
@@ -26,7 +28,11 @@ import { authenticatedApiError } from '../../utils/api-error.js';
 import { mcpTool } from '../../mcp-metadata.js';
 import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
-import { type AepApprovalDisplay, createAepAwareInspectProbe, createAepAwareSellerTransport } from '../aep/runtime.js';
+import {
+  type AepApprovalDisplay,
+  createAepAwareInspectProbe,
+  createTapAepAwareSellerTransport,
+} from '../aep/runtime.js';
 import { cancelApproval } from '../approval-cancellation.js';
 import { PaymentFetchView, type PaymentFetchPhase } from '../payment-fetch.js';
 import { useAuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
@@ -208,12 +214,14 @@ function createSellerTransport(
   inflow: Inflow,
   authStorage: AuthStorage,
   approvalDisplay?: AepApprovalDisplay,
-) {
-  return createAepAwareSellerTransport({
+): SellerRequestTransport {
+  return createTapAepAwareSellerTransport({
     ...(approvalDisplay === undefined ? {} : { approvalDisplay }),
     authStorage,
     context: c,
     inflow,
+    inspectionOperation: 'mpp.inspect',
+    paymentOperation: 'mpp.payment',
     timeout: c.options.timeout,
     ...(c.options.interval > 0 ? { interval: c.options.interval } : {}),
   });
@@ -828,7 +836,24 @@ async function runInspectCommand(
     probeOptions,
     ...(inflow === undefined || authStorage === undefined
       ? {}
-      : { probe: createAepAwareInspectProbe({ authStorage, context: c, inflow, timeout: 30 }) }),
+      : {
+          probe: createAepAwareInspectProbe({
+            aepReadFetch: createTapFetch({
+              capabilities: inflow.capabilities,
+              operation: 'aep.inspect',
+              tap: inflow.tap,
+            }),
+            authStorage,
+            context: c,
+            fetch: createTapFetch({
+              capabilities: inflow.capabilities,
+              operation: 'mpp.inspect',
+              tap: inflow.tap,
+            }),
+            inflow,
+            timeout: 30,
+          }),
+        }),
     url: c.args.url,
     ...(c.options.paymentMethod !== undefined ? { paymentMethodFilter: c.options.paymentMethod } : {}),
     ...(c.options.intent !== undefined ? { intentFilter: c.options.intent } : {}),

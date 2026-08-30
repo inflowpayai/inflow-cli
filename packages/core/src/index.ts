@@ -113,6 +113,15 @@ export type {
   SubscriptionListOptions,
   IUserResource,
 } from './resources/interfaces.js';
+export {
+  createTapFetch,
+  createTapRequestTransport,
+  type TapFetchOptions,
+  type TapHttpRequest,
+  type TapHttpResponse,
+  type TapRequestTransport,
+  type TapRequestTransportOptions,
+} from './tap-request.js';
 
 /* Raw resource classes (for advanced consumers constructing resources by hand) */
 export { AuthResource } from './resources/auth.js';
@@ -326,6 +335,7 @@ export {
   type PaymentReplayResult,
   SellerAuthenticationError,
   type SellerRequestInput,
+  type SellerRequestResult,
   type SellerRequestTransport,
   defaultSellerRequestTransport,
   replayPaymentRequest,
@@ -403,6 +413,14 @@ export {
 } from './flows/mpp-status.js';
 export { runMppCancel, type MppCancelInput, type MppCancelResult } from './flows/mpp-cancel.js';
 export { runMppSupported, type MppSupportedInput } from './flows/mpp-supported.js';
+export type {
+  CliCapabilities,
+  ICliCapabilitiesResource,
+  ITapResource,
+  TapOperation,
+  TapSignatureRequest,
+  TapSignatureResponse,
+} from './resources/interfaces.js';
 export {
   filterPayableChallenges,
   INVALID_402_CODE as MPP_INVALID_402_CODE,

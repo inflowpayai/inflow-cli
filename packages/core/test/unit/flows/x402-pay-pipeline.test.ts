@@ -223,6 +223,31 @@ describe('runPayPipeline — full lifecycle', () => {
     expect(signOptions).toEqual({});
   });
 
+  it('passes TAP evidence from the seller probe into transaction creation', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        bytes: new Uint8Array(),
+        contentType: undefined,
+        headers: new Headers({ [HEADERS.PAYMENT_REQUIRED]: encodePaymentRequiredHeader(paymentRequired()) }),
+        status: 402,
+        tapEvidenceId: 'tap-evidence',
+      })
+      .mockResolvedValueOnce({
+        bytes: new Uint8Array(Buffer.from('paid')),
+        contentType: 'text/plain',
+        headers: new Headers(),
+        status: 200,
+      });
+    const client = payingClient() as { prepareInflowPayment: ReturnType<typeof vi.fn> };
+
+    await collect(deps({ client: client as never, sellerTransport: { request } }));
+
+    expect(client.prepareInflowPayment.mock.calls[0]?.[2]).toEqual({
+      transactionRequestExtensions: { tapEvidenceId: 'tap-evidence' },
+    });
+  });
+
   it('emits rejected when the seller answers the replay with a non-2xx status', async () => {
     mockSeller({ paidStatus: 402, paidBody: 'still want money' });
     const events = await collect(deps());

@@ -1,5 +1,5 @@
 import { inspectOpenApiPolicy } from '@aep-foundation/agent';
-import { sellerProbe } from '@inflowpayai/x402-buyer/probe';
+import type { SellerProbeOptions, SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import {
   type CombinedInspectNoPayment,
   type CombinedInspectPhase,
@@ -8,10 +8,11 @@ import {
   type AepSection,
   type AuthStorage,
   type Inflow,
+  type IOdpResource,
+  createTapFetch,
   parseHeaderFlags,
   runCombinedInspectPipeline,
   sanitizeDeep,
-  type SellerProbeOptions,
 } from '@inflowpayai/inflow-core';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { mcpTool } from '../../mcp-metadata.js';
@@ -247,7 +248,16 @@ export async function runCombinedInspectCommand(
   c: InspectCommandContext,
   inflow?: Inflow,
   authStorage?: AuthStorage,
+  odpResource?: Pick<IOdpResource, 'inspect'>,
 ): Promise<Record<string, unknown> | undefined> {
+  const aepFetch =
+    inflow === undefined
+      ? undefined
+      : createTapFetch({ capabilities: inflow.capabilities, operation: 'aep.inspect', tap: inflow.tap });
+  const probeFetch =
+    inflow === undefined
+      ? undefined
+      : createTapFetch({ capabilities: inflow.capabilities, operation: 'odp.browse', tap: inflow.tap });
   const probeHeaders = parseHeaderFlagsOrFail(c, c.options.header);
   const probeOptions: SellerProbeOptions = {
     method: c.options.method,
@@ -258,9 +268,31 @@ export async function runCombinedInspectCommand(
     ...(inflow === undefined
       ? {}
       : {
-          inspectOdp: (serviceUrl: string) => inflow.odp.inspect({ serviceUrl, signal: AbortSignal.timeout(30_000) }),
+          inspectOdp: (serviceUrl: string) =>
+            (odpResource ?? inflow.odp).inspect({ serviceUrl, signal: AbortSignal.timeout(30_000) }),
         }),
     probeOptions,
+    ...(probeFetch === undefined
+      ? {}
+      : {
+          probe: async (url: string, options: SellerProbeOptions): Promise<SellerProbeResult> => {
+            const headers = new Headers(options.headers);
+            if (options.data !== undefined && !headers.has('Content-Type')) {
+              headers.set('Content-Type', 'application/json');
+            }
+            const response = await probeFetch(url, {
+              ...(options.data === undefined ? {} : { body: options.data }),
+              headers,
+              method: options.method,
+            });
+            return {
+              bytes: new Uint8Array(await response.arrayBuffer()),
+              contentType: response.headers.get('content-type') ?? undefined,
+              headers: response.headers,
+              status: response.status,
+            };
+          },
+        }),
     url: c.args.url,
     ...(inflow === undefined
       ? {}
@@ -269,6 +301,7 @@ export async function runCombinedInspectCommand(
             const publicDocumentCache =
               authStorage === undefined ? undefined : persistedAepPublicDocumentCache(authStorage);
             return inflow.aep.inspect({
+              ...(aepFetch === undefined ? {} : { fetch: aepFetch }),
               serviceUrl,
               signal: AbortSignal.timeout(30_000),
               ...(publicDocumentCache === undefined ? {} : { publicDocumentCache }),
@@ -278,6 +311,7 @@ export async function runCombinedInspectCommand(
             const publicDocumentCache =
               authStorage === undefined ? undefined : persistedAepPublicDocumentCache(authStorage);
             return inspectOpenApiPolicy({
+              ...(aepFetch === undefined ? {} : { fetch: aepFetch }),
               inspect,
               method: input.method,
               ...(publicDocumentCache === undefined ? {} : { publicDocumentCache }),
@@ -298,11 +332,22 @@ export async function runCombinedInspectCommand(
                 inspect,
               );
               if (headers === undefined) return undefined;
-              return sellerProbe(input.url, {
+              if (aepFetch === undefined) return undefined;
+              const requestHeaders = new Headers({ ...input.headers, ...headers });
+              if (input.data !== undefined && !requestHeaders.has('Content-Type')) {
+                requestHeaders.set('Content-Type', 'application/json');
+              }
+              const response = await aepFetch(input.url, {
+                ...(input.data === undefined ? {} : { body: input.data }),
+                headers: requestHeaders,
                 method: input.method,
-                headers: { ...input.headers, ...headers },
-                ...(input.data === undefined ? {} : { data: input.data }),
               });
+              return {
+                bytes: new Uint8Array(await response.arrayBuffer()),
+                contentType: response.headers.get('content-type') ?? undefined,
+                headers: response.headers,
+                status: response.status,
+              };
             } catch {
               return undefined;
             }
@@ -358,7 +403,11 @@ export async function runCombinedInspectCommand(
   return sanitizeDeep(buildNoPaymentFrame(payload as CombinedInspectNoPayment));
 }
 
-export function createInspectCommand(inflow: Inflow, authStorage?: AuthStorage): InspectCommandDefinition {
+export function createInspectCommand(
+  inflow: Inflow,
+  authStorage?: AuthStorage,
+  odpResource?: Pick<IOdpResource, 'inspect'>,
+): InspectCommandDefinition {
   return {
     description: 'Inspect a URL for agent discovery, enrollment, and payment capabilities',
     mcp: mcpTool('inspect'),
@@ -377,7 +426,7 @@ export function createInspectCommand(inflow: Inflow, authStorage?: AuthStorage):
       },
     ],
     async run(c: InspectCommandContext) {
-      return runCombinedInspectCommand(c, inflow, authStorage);
+      return runCombinedInspectCommand(c, inflow, authStorage, odpResource);
     },
   };
 }

@@ -74,6 +74,7 @@ export interface OdpInspectOptions extends Omit<InspectServiceOptions, 'fetch'> 
 
 export interface OdpServiceTransportOptions {
   cachePartition?: string;
+  inspectionTransport?: typeof globalThis.fetch;
   transport: typeof globalThis.fetch;
 }
 
@@ -94,6 +95,7 @@ export class OdpResource implements IOdpResource {
   private readonly agent: OdpAgent;
   private readonly transport: typeof globalThis.fetch;
   private readonly serviceTransport: typeof globalThis.fetch;
+  private readonly inspectionTransport: typeof globalThis.fetch;
   private readonly serviceCachePartition: string | undefined;
 
   constructor(
@@ -104,6 +106,7 @@ export class OdpResource implements IOdpResource {
     this.environment = environment;
     this.transport = transport;
     this.serviceTransport = serviceOptions?.transport ?? transport;
+    this.inspectionTransport = serviceOptions?.inspectionTransport ?? transport;
     this.serviceCachePartition = serviceOptions?.cachePartition;
     this.directory = createDirectoryClient({ environment, transport });
     this.agent = createOdpAgent({
@@ -111,6 +114,7 @@ export class OdpResource implements IOdpResource {
       directoryTransport: transport,
       serviceClient: (service) =>
         createOdpServiceClient({
+          inspectionTransport: this.inspectionTransport,
           serviceUrl: service.service_origin,
           transport: this.serviceTransport,
           ...(this.serviceCachePartition === undefined ? {} : { cachePartition: this.serviceCachePartition }),
@@ -136,7 +140,7 @@ export class OdpResource implements IOdpResource {
   }
 
   inspect(options: OdpInspectOptions): Promise<ServiceInspection> {
-    return inspectService({ ...options, fetch: options.fetch ?? this.transport }).then(sanitizeDeep);
+    return inspectService({ ...options, fetch: options.fetch ?? this.inspectionTransport }).then(sanitizeDeep);
   }
 
   service(options: OdpServiceOptions): OdpServiceClient {
@@ -144,6 +148,7 @@ export class OdpResource implements IOdpResource {
     return sanitizeServiceClient(
       createOdpServiceClient({
         ...options,
+        inspectionTransport: options.inspectionTransport ?? this.inspectionTransport,
         transport: options.transport ?? this.serviceTransport,
         ...(usesConfiguredTransport && options.cachePartition === undefined && this.serviceCachePartition !== undefined
           ? { cachePartition: this.serviceCachePartition }

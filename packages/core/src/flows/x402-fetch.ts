@@ -174,6 +174,7 @@ export function runX402Fetch(input: X402FetchInput): X402FetchRun {
         showBody: input.showBody,
         ...(input.outputFile !== undefined ? { outputFile: input.outputFile } : {}),
         ...(input.sellerTransport !== undefined ? { sellerTransport: input.sellerTransport } : {}),
+        transactionId: input.transactionId,
       });
     } catch (err) {
       if (err instanceof SellerAuthenticationError) {

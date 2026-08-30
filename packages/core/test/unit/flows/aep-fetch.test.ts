@@ -61,6 +61,7 @@ function requestUrl(input: Parameters<typeof fetch>[0]): string {
 
 async function seedPublicDocuments(publicDocumentCache: AepPublicDocumentCache, methods: string[]): Promise<void> {
   const cachedAt = new Date().toISOString();
+  const grantTypes = methods.filter((method) => method !== 'aep-jwt');
   await publicDocumentCache.set({
     cacheControl: 'max-age=300',
     cachedAt,
@@ -71,8 +72,12 @@ async function seedPublicDocuments(publicDocumentCache: AepPublicDocumentCache, 
       authentication: { methods },
       bindings: { supported: ['http'] },
       claims: { optional: [], preferred: [], required: [] },
-      commands: { grant_types: methods, supported: ['inspect', 'grant', 'status'] },
-      core: { signing_algorithms: ['ES256'] },
+      commands: {
+        grant_types: grantTypes,
+        supported: grantTypes.length === 0 ? ['inspect', 'status'] : ['enroll', 'grant', 'inspect', 'revoke', 'status'],
+      },
+      core: { signing_algorithms: ['EdDSA', 'ES256'] },
+      extensions: { supported: [] },
       http: {
         endpoint_base: '/aep',
         openapi: { path_matching: { trailing_slash: 'strict' }, url: '/openapi.json' },
@@ -103,13 +108,13 @@ describe('runAepFetch OpenAPI path', () => {
   it('sends exactly one protected-resource request when fresh OpenAPI policy is definitive', async () => {
     const publicDocumentCache = createAepPublicDocumentCache(new MemoryStorage());
     await seedPublicDocuments(publicDocumentCache, ['aep-jwt']);
-    const targetCalls: RequestInit[] = [];
+    const targetCalls: Request[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = requestUrl(input);
       if (url !== RESOURCE_URL) {
         return Promise.reject(new Error(`Unexpected fetch: ${url}`));
       }
-      targetCalls.push(init ?? {});
+      targetCalls.push(new Request(input, init));
       return Promise.resolve(
         new Response(JSON.stringify({ ok: true }), {
           headers: { 'content-type': 'application/json' },
@@ -134,12 +139,12 @@ describe('runAepFetch OpenAPI path', () => {
     });
 
     expect(targetCalls).toHaveLength(1);
-    expect(new Headers(targetCalls[0]?.headers).get('authorization')).not.toBeNull();
     expect(result.authentication).toMatchObject({
       method: 'aep-jwt',
       operation: 'authenticate',
       outcome: 'authenticated',
     });
+    expect(targetCalls[0]?.headers.get('authorization')).not.toBeNull();
     expect(result.body).toBe('{"ok":true}');
   });
 
@@ -192,10 +197,10 @@ describe('runAepFetch OpenAPI path', () => {
       serviceDid: SERVICE_DID,
     };
     await credentialStore.saveCredential(credential);
-    const targetCalls: RequestInit[] = [];
+    const targetCalls: Request[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       if (requestUrl(input) !== RESOURCE_URL) return Promise.reject(new Error('Unexpected fetch.'));
-      targetCalls.push(init ?? {});
+      targetCalls.push(new Request(input, init));
       return Promise.resolve(new Response(null, { status: 204 }));
     });
 
@@ -213,13 +218,13 @@ describe('runAepFetch OpenAPI path', () => {
       url: RESOURCE_URL,
     });
 
-    expect(new Headers(targetCalls[0]?.headers).get('authorization')).toBe('Bearer access-token');
     expect(result.authentication).toMatchObject({
       credentialId: 'cred-1',
       grantType: 'oauth-bearer',
       method: 'credential',
       outcome: 'authenticated',
     });
+    expect(targetCalls[0]?.headers.get('authorization')).toBe('Bearer access-token');
   });
 
   it('reports payment protocols when AEP authentication reaches a payment 402', async () => {

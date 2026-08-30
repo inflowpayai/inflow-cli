@@ -1,0 +1,99 @@
+{
+  "profile": "inflow-tap-1",
+  "testKey": {
+    "warning": "TEST KEY ONLY",
+    "algorithm": "ed25519",
+    "keyid": "inflow-test-ed25519-2026",
+    "privateSeedHex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+    "publicKeyHex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+  },
+  "positive": [
+    {
+      "id": "browse-no-query",
+      "request": {
+        "method": "GET",
+        "authority": "merchant.example",
+        "path": "/catalog",
+        "query": "?"
+      },
+      "signatureParameters": {
+        "created": 1787666400,
+        "expires": 1787666700,
+        "keyid": "inflow-test-ed25519-2026",
+        "alg": "ed25519",
+        "nonce": "AAECAwQFBgcICQoLDA0ODw",
+        "tag": "agent-browser-auth"
+      },
+      "coveredComponents": ["@method", "@authority", "@path", "@query"],
+      "signatureInput": "sig2=(\"@method\" \"@authority\" \"@path\" \"@query\");created=1787666400;expires=1787666700;keyid=\"inflow-test-ed25519-2026\";alg=\"ed25519\";nonce=\"AAECAwQFBgcICQoLDA0ODw\";tag=\"agent-browser-auth\"",
+      "signatureBase": "\"@method\": GET\n\"@authority\": merchant.example\n\"@path\": /catalog\n\"@query\": ?\n\"@signature-params\": (\"@method\" \"@authority\" \"@path\" \"@query\");created=1787666400;expires=1787666700;keyid=\"inflow-test-ed25519-2026\";alg=\"ed25519\";nonce=\"AAECAwQFBgcICQoLDA0ODw\";tag=\"agent-browser-auth\"",
+      "signature": "sig2=:evpFJGBQRbwJ0/Fd44H1s6J8pAkCUhozrMVKjoK+tjhBGNz0dtoLikZfK4hHJGAkgKnTVs7e0fGd+FvV7nCtDw==:"
+    },
+    {
+      "id": "browse-raw-query",
+      "request": {
+        "method": "GET",
+        "authority": "merchant.example",
+        "path": "/search",
+        "query": "?q=red%20shoes&category=mens&category=sale"
+      },
+      "signatureParameters": {
+        "created": 1787666460,
+        "expires": 1787666760,
+        "keyid": "inflow-test-ed25519-2026",
+        "alg": "ed25519",
+        "nonce": "EBESExQVFhcYGRobHB0eHw",
+        "tag": "agent-browser-auth"
+      },
+      "coveredComponents": ["@method", "@authority", "@path", "@query"],
+      "signatureInput": "sig2=(\"@method\" \"@authority\" \"@path\" \"@query\");created=1787666460;expires=1787666760;keyid=\"inflow-test-ed25519-2026\";alg=\"ed25519\";nonce=\"EBESExQVFhcYGRobHB0eHw\";tag=\"agent-browser-auth\"",
+      "signatureBase": "\"@method\": GET\n\"@authority\": merchant.example\n\"@path\": /search\n\"@query\": ?q=red%20shoes&category=mens&category=sale\n\"@signature-params\": (\"@method\" \"@authority\" \"@path\" \"@query\");created=1787666460;expires=1787666760;keyid=\"inflow-test-ed25519-2026\";alg=\"ed25519\";nonce=\"EBESExQVFhcYGRobHB0eHw\";tag=\"agent-browser-auth\"",
+      "signature": "sig2=:X/Q9W+EorWVBS7XMiGTvvPdoBP+N3A3B5ZVKqmUGm36JKIc+FfAcaYN0I8fdQdvRjnn9F076y+LwT8uw8JknDw==:"
+    },
+    {
+      "id": "browse-visa-alg-casing",
+      "request": {
+        "method": "GET",
+        "authority": "merchant.example",
+        "path": "/visa-compatible",
+        "query": "?"
+      },
+      "signatureParameters": {
+        "created": 1787666580,
+        "expires": 1787666880,
+        "keyid": "inflow-test-ed25519-2026",
+        "alg": "Ed25519",
+        "nonce": "MDEyMzQ1Njc4OTo7PD0-Pw",
+        "tag": "agent-browser-auth"
+      },
+      "coveredComponents": ["@method", "@authority", "@path", "@query"],
+      "signatureInput": "sig2=(\"@method\" \"@authority\" \"@path\" \"@query\");created=1787666580;expires=1787666880;keyid=\"inflow-test-ed25519-2026\";alg=\"Ed25519\";nonce=\"MDEyMzQ1Njc4OTo7PD0-Pw\";tag=\"agent-browser-auth\"",
+      "signatureBase": "\"@method\": GET\n\"@authority\": merchant.example\n\"@path\": /visa-compatible\n\"@query\": ?\n\"@signature-params\": (\"@method\" \"@authority\" \"@path\" \"@query\");created=1787666580;expires=1787666880;keyid=\"inflow-test-ed25519-2026\";alg=\"Ed25519\";nonce=\"MDEyMzQ1Njc4OTo7PD0-Pw\";tag=\"agent-browser-auth\"",
+      "signature": "sig2=:+wjHEfDktkpougVtFpBdPRH0SS6Q1GcbKxzocijkDvtg4Epq13VGXB7yjdbgyYwkESJRUfxrdPnXwD4ROnQcAQ==:"
+    },
+    {
+      "id": "payment-json-body",
+      "request": {
+        "method": "POST",
+        "authority": "payments.merchant.example",
+        "path": "/checkout",
+        "query": "?currency=USD",
+        "contentType": "application/json",
+        "contentDigest": "sha-256=:LWqb01Z0Us8FC1trSlbP9S0Vb77srCVhdJ007LFTXwg=:",
+        "bodyBase64": "eyJhbW91bnQiOiIxLjAwIiwiY3VycmVuY3kiOiJVU0QifQ=="
+      },
+      "signatureParameters": {
+        "created": 1787666520,
+        "expires": 1787666820,
+        "keyid": "inflow-test-ed25519-2026",
+        "alg": "ed25519",
+        "nonce": "ICEiIyQlJicoKSorLC0uLw",
+        "tag": "agent-payer-auth"
+      },
+      "coveredComponents": ["@method", "@authority", "@path", "@query", "content-digest", "content-type"],
+      "signatureInput": "sig2=(\"@method\" \"@authority\" \"@path\" \"@query\" \"content-digest\" \"content-type\");created=1787666520;expires=1787666820;keyid=\"inflow-test-ed25519-2026\";alg=\"ed25519\";nonce=\"ICEiIyQlJicoKSorLC0uLw\";tag=\"agent-payer-auth\"",
+      "signatureBase": "\"@method\": POST\n\"@authority\": payments.merchant.example\n\"@path\": /checkout\n\"@query\": ?currency=USD\n\"content-digest\": sha-256=:LWqb01Z0Us8FC1trSlbP9S0Vb77srCVhdJ007LFTXwg=:\n\"content-type\": application/json\n\"@signature-params\": (\"@method\" \"@authority\" \"@path\" \"@query\" \"content-digest\" \"content-type\");created=1787666520;expires=1787666820;keyid=\"inflow-test-ed25519-2026\";alg=\"ed25519\";nonce=\"ICEiIyQlJicoKSorLC0uLw\";tag=\"agent-payer-auth\"",
+      "signature": "sig2=:nP0YCOlkbbMaos/oQ0M2RAR0X20QoZZFMnd3/v6jOaGiOEMl5bmhI1jgXQ84MhtVxsoehse4jpskrsac4czxDw==:"
+    }
+  ]
+}

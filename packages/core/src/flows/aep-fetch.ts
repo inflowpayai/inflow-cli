@@ -68,6 +68,7 @@ export async function runAepFetch(input: AepFetchInput): Promise<AepFetchResult>
     agent,
     ...(input.body === undefined ? {} : { body: input.body }),
     ...(input.credentialId === undefined ? {} : { credentialId: input.credentialId }),
+    ...(input.agentOptions.fetch === undefined ? {} : { fetch: input.agentOptions.fetch }),
     ...(input.grantType === undefined ? {} : { grantType: input.grantType }),
     ...(input.headers === undefined ? {} : { headers: input.headers }),
     ...(input.maxRedirects === undefined ? {} : { maxRedirects: input.maxRedirects }),

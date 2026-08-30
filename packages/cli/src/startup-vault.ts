@@ -123,7 +123,9 @@ function requiresMppLocalState(argv: readonly string[], subcommand: string | und
 export function shouldConfigureOdpServiceTransport(argv: readonly string[]): boolean {
   if (shouldBypassVault(argv)) return false;
   const [group, subgroup, command] = commandPath(argv, 3);
+  if (group === 'inspect') return subgroup !== undefined;
   if (group !== 'odp' || command === undefined) return false;
+  if (subgroup === 'inspect') return true;
   if (subgroup === 'actions') return command === 'resolve';
   if (subgroup === 'collections') return isOneOf(command, 'get', 'list', 'search');
   if (subgroup === 'offerings') return isOneOf(command, 'discover', 'get', 'list', 'search');
