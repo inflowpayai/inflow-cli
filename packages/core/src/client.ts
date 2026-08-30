@@ -26,8 +26,12 @@ import type {
   IDepositAddressResource,
   ISubscriptionResource,
   IUserResource,
+  ICliCapabilitiesResource,
+  ITapResource,
 } from './resources/interfaces.js';
+import { CliCapabilitiesResource } from './resources/cli-capabilities.js';
 import { SubscriptionResource } from './resources/subscription.js';
+import { TapResource } from './resources/tap.js';
 import { UserResource } from './resources/user.js';
 import { createAccessTokenProvider } from './session.js';
 import { sanitizeResource } from './utils/sanitize-proxy.js';
@@ -147,6 +151,8 @@ export class Inflow {
   readonly depositAddresses: IDepositAddressResource;
   readonly subscriptions: ISubscriptionResource;
   readonly user: IUser;
+  readonly capabilities: ICliCapabilitiesResource;
+  readonly tap: ITapResource;
   readonly x402: IX402;
   readonly mpp: IMpp;
   readonly aep: IAepResource;
@@ -178,6 +184,10 @@ export class Inflow {
     const dataOptions = this.resolveDataOptions(options, rawAuth);
     const dataConfig = dataOptions === options ? authConfig : resolveInflowSdkConfig(dataOptions);
     this.platformApi = new InflowApiClient(dataConfig, this.resolvedApiBaseUrl);
+    this.capabilities = sanitizeResource<ICliCapabilitiesResource>(
+      new CliCapabilitiesResource(this.platformApi, options.capabilitiesMaxAgeMs ?? Number.POSITIVE_INFINITY),
+    );
+    this.tap = sanitizeResource<ITapResource>(new TapResource(this.platformApi));
 
     this.balances = sanitizeResource<IBalanceResource>(new BalanceResource(dataOptions, dataConfig));
     this.depositAddresses = sanitizeResource<IDepositAddressResource>(

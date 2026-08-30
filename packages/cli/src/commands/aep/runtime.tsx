@@ -18,6 +18,8 @@ import {
 import {
   AepStorage,
   approvalUrlFor,
+  createTapFetch,
+  createTapRequestTransport,
   PaymentInspectionBlockedError,
   SecureStorageError,
   SellerAuthenticationError,
@@ -26,6 +28,7 @@ import {
   type Inflow,
   type SellerRequestInput,
   type SellerRequestTransport,
+  type TapOperation,
 } from '@inflowpayai/inflow-core';
 import type { SellerProbeOptions, SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { render } from 'ink';
@@ -51,9 +54,12 @@ export type AepRuntimeContext = {
 };
 
 export interface AepRuntimeOptions {
+  aepReadFetch?: typeof globalThis.fetch;
+  aepWriteFetch?: typeof globalThis.fetch;
   approvalDisplay?: AepApprovalDisplay;
   authStorage: AuthStorage;
   context: AepRuntimeContext;
+  fetch?: typeof globalThis.fetch;
   inflow: Inflow;
   interval?: number;
   maxRedirects?: number;
@@ -202,6 +208,9 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
   let waitingView: PendingApprovalRenderer | undefined;
   return {
     credentialStore: storage.credentials,
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    ...(options.aepReadFetch === undefined ? {} : { readFetch: options.aepReadFetch }),
+    ...(options.aepWriteFetch === undefined ? {} : { writeFetch: options.aepWriteFetch }),
     /* v8 ignore start -- Platform identity provider wiring is covered by AEP command tests with the command-level mock. */
     identityProvider: {
       getOrCreateIdentity: async (input) => {
@@ -310,6 +319,7 @@ export function createAepAwareFetch(options: AepRuntimeOptions): typeof globalTh
       agent,
       ...(init?.body === undefined ? {} : { body: init.body }),
       carrier: 'dedicated',
+      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       headers: request.headers,
       maxRedirects: options.maxRedirects ?? 5,
       method: request.method,
@@ -361,13 +371,14 @@ export function createAepAwareSellerTransport(options: AepRuntimeOptions): Selle
       const headers = requestHeaders(input.headers, input.data);
       const probe = await probeProtectedResource({
         ...(input.data === undefined ? {} : { body: input.data }),
+        ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
         headers,
         method: input.method,
         url: input.url,
       });
       if (probe.classification !== 'aep-challenge') {
         if (input.additionalAuthenticationHeaders !== undefined && probe.response.status === 402) {
-          const retry = await fetch(input.url, {
+          const retry = await (options.fetch ?? globalThis.fetch)(input.url, {
             ...(input.data === undefined ? {} : { body: input.data }),
             headers: { ...headers, ...input.additionalAuthenticationHeaders },
             method: input.method,
@@ -381,6 +392,7 @@ export function createAepAwareSellerTransport(options: AepRuntimeOptions): Selle
         response = await fetchProtectedResource({
           agent,
           carrier: 'dedicated',
+          ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
           ...(input.additionalAuthenticationHeaders === undefined
             ? {}
             : { additionalAuthenticationHeaders: input.additionalAuthenticationHeaders }),
@@ -401,10 +413,81 @@ export function createAepAwareSellerTransport(options: AepRuntimeOptions): Selle
   };
 }
 
+export function createTapAepAwareSellerTransport(
+  options: AepRuntimeOptions & { inspectionOperation: TapOperation; paymentOperation: TapOperation },
+): SellerRequestTransport {
+  let activeRequest: SellerRequestInput | undefined;
+  const evidence = { tapEvidenceId: undefined as string | undefined };
+  const currentTapEvidenceId = () => evidence.tapEvidenceId;
+  const tapTransport = createTapRequestTransport({
+    capabilities: options.inflow.capabilities,
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    followRedirects: false,
+    tap: options.inflow.tap,
+  });
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const body =
+      typeof init?.body === 'string'
+        ? init.body
+        : request.body === null
+          ? undefined
+          : new Uint8Array(await request.clone().arrayBuffer());
+    const operation =
+      activeRequest?.transactionId === undefined ? options.inspectionOperation : options.paymentOperation;
+    const result = await tapTransport.request({
+      ...(body === undefined ? {} : { body }),
+      headers: request.headers,
+      method: request.method,
+      operation,
+      signal: request.signal,
+      ...(activeRequest?.transactionId === undefined ? {} : { transactionId: activeRequest.transactionId }),
+      url: request.url,
+    });
+    if (
+      activeRequest !== undefined &&
+      request.method === activeRequest.method &&
+      request.url === new URL(activeRequest.url).toString()
+    ) {
+      evidence.tapEvidenceId = result.tapEvidenceId;
+    }
+    return result.response;
+  };
+  const transport = createAepAwareSellerTransport({
+    ...options,
+    aepReadFetch: createTapFetch({
+      capabilities: options.inflow.capabilities,
+      operation: 'aep.inspect',
+      tap: options.inflow.tap,
+    }),
+    aepWriteFetch: createTapFetch({
+      capabilities: options.inflow.capabilities,
+      operation: 'aep.mutate',
+      tap: options.inflow.tap,
+    }),
+    fetch,
+  });
+  return {
+    request: async (input) => {
+      activeRequest = input;
+      evidence.tapEvidenceId = undefined;
+      try {
+        const result = await transport.request(input);
+        const tapEvidenceId = currentTapEvidenceId();
+        return tapEvidenceId === undefined ? result : { ...result, tapEvidenceId };
+      } finally {
+        activeRequest = undefined;
+      }
+    },
+  };
+}
+
 export function createAepAwareInspectProbe(
   options: AepRuntimeOptions,
 ): (url: string, probeOptions: SellerProbeOptions) => Promise<SellerProbeResult> {
   const publicDocumentCache = persistedAepPublicDocumentCache(options.authStorage);
+  const aepFetch = options.aepReadFetch ?? options.fetch ?? globalThis.fetch;
+  const resourceFetch = options.fetch ?? globalThis.fetch;
   return async (url, probeOptions) => {
     assertProbeAepHeaderAvailable(probeOptions);
     const headers = requestHeaders(probeOptions.headers, probeOptions.data);
@@ -432,7 +515,7 @@ export function createAepAwareInspectProbe(
           serviceUrl,
         });
       }
-      const response = await fetch(url, {
+      const response = await resourceFetch(url, {
         ...(probeOptions.data === undefined ? {} : { body: probeOptions.data }),
         headers: { ...headers, ...authenticationHeaders },
         method: probeOptions.method,
@@ -453,10 +536,12 @@ export function createAepAwareInspectProbe(
 
     try {
       const inspected = await inspectService({
+        fetch: aepFetch,
         ...(publicDocumentCache === undefined ? {} : { publicDocumentCache }),
         serviceUrl: new URL(url).origin,
       });
       const policy = await inspectOpenApiPolicy({
+        fetch: aepFetch,
         inspect: inspected,
         method: probeOptions.method,
         ...(publicDocumentCache === undefined ? {} : { publicDocumentCache }),
@@ -469,6 +554,7 @@ export function createAepAwareInspectProbe(
 
     const probe = await probeProtectedResource({
       ...(probeOptions.data === undefined ? {} : { body: probeOptions.data }),
+      fetch: resourceFetch,
       headers,
       method: probeOptions.method,
       url,
@@ -477,6 +563,7 @@ export function createAepAwareInspectProbe(
       return responseToSellerResult(probe.response);
     }
     const inspected = await inspectService({
+      fetch: aepFetch,
       ...(publicDocumentCache === undefined ? {} : { publicDocumentCache }),
       serviceUrl: probe.challenge.inspect,
     });

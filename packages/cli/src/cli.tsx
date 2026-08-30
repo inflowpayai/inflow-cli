@@ -2,6 +2,7 @@ import process from 'node:process';
 import { isMainThread, workerData } from 'node:worker_threads';
 import {
   type AuthStorage,
+  createTapFetch,
   Inflow,
   runLinuxTransferredVaultService,
   runLinuxVaultBroker,
@@ -259,6 +260,7 @@ async function main(): Promise<void> {
     ...(apiBaseUrl !== undefined ? { apiBaseUrl } : {}),
     ...(authBaseUrl !== undefined ? { authBaseUrl } : {}),
     cliClientId,
+    capabilitiesMaxAgeMs: process.argv.includes('--mcp') ? 5 * 60 * 1000 : Number.POSITIVE_INFINITY,
     ...(apiKey !== undefined ? { apiKey } : {}),
   });
 
@@ -329,9 +331,25 @@ async function main(): Promise<void> {
   let odp = inflow.odp;
   if (shouldConfigureOdpServiceTransport(process.argv)) {
     const cachePartition = await aepCachePartition(authStorage, inflow);
+    const tapFetch = createTapFetch({
+      capabilities: inflow.capabilities,
+      operation: 'odp.browse',
+      tap: inflow.tap,
+    });
     odp = inflow.odp.withServiceTransport({
       ...(cachePartition === undefined ? {} : { cachePartition }),
+      inspectionTransport: tapFetch,
       transport: createAepAwareFetch({
+        aepReadFetch: createTapFetch({
+          capabilities: inflow.capabilities,
+          operation: 'aep.inspect',
+          tap: inflow.tap,
+        }),
+        aepWriteFetch: createTapFetch({
+          capabilities: inflow.capabilities,
+          operation: 'aep.mutate',
+          tap: inflow.tap,
+        }),
         authStorage,
         context: {
           agent: isAgent,
@@ -340,13 +358,14 @@ async function main(): Promise<void> {
           },
           formatExplicit: process.argv.includes('--format'),
         },
+        fetch: tapFetch,
         inflow,
         timeout: 900,
       }),
     });
   }
   cli.command(createOdpCli(odp));
-  cli.command('inspect', createInspectCommand(inflow, authStorage));
+  cli.command('inspect', createInspectCommand(inflow, authStorage, odp));
 
   await cli.serve();
 }

@@ -1,0 +1,144 @@
+{
+  "profile": "inflow-tap-1",
+  "negative": [
+    {
+      "id": "method-mutated",
+      "source": "payment-json-body",
+      "mutation": {
+        "request.method": "PUT"
+      },
+      "expectedError": "SIGNATURE_INVALID"
+    },
+    {
+      "id": "authority-mutated",
+      "source": "browse-no-query",
+      "mutation": {
+        "request.authority": "attacker.example"
+      },
+      "expectedError": "SIGNATURE_INVALID"
+    },
+    {
+      "id": "path-mutated",
+      "source": "browse-no-query",
+      "mutation": {
+        "request.path": "/checkout"
+      },
+      "expectedError": "SIGNATURE_INVALID"
+    },
+    {
+      "id": "query-reordered",
+      "source": "browse-raw-query",
+      "mutation": {
+        "request.query": "?category=mens&category=sale&q=red%20shoes"
+      },
+      "expectedError": "SIGNATURE_INVALID"
+    },
+    {
+      "id": "query-added-to-absent-query",
+      "source": "browse-no-query",
+      "mutation": {
+        "request.query": "?page=1"
+      },
+      "expectedError": "SIGNATURE_INVALID"
+    },
+    {
+      "id": "body-whitespace-mutated",
+      "source": "payment-json-body",
+      "mutation": {
+        "request.bodyUtf8": "{\"amount\": \"1.00\",\"currency\":\"USD\"}"
+      },
+      "expectedError": "CONTENT_DIGEST_INVALID"
+    },
+    {
+      "id": "content-type-mutated",
+      "source": "payment-json-body",
+      "mutation": {
+        "request.contentType": "application/json; charset=utf-8"
+      },
+      "expectedError": "SIGNATURE_INVALID"
+    },
+    {
+      "id": "covered-component-missing",
+      "source": "payment-json-body",
+      "mutation": {
+        "removeCoveredComponent": "content-digest"
+      },
+      "expectedError": "SIGNATURE_INPUT_INVALID"
+    },
+    {
+      "id": "created-in-future",
+      "source": "browse-no-query",
+      "verificationTime": 1787666399,
+      "expectedError": "SIGNATURE_NOT_YET_VALID"
+    },
+    {
+      "id": "expired",
+      "source": "browse-no-query",
+      "verificationTime": 1787666701,
+      "expectedError": "SIGNATURE_EXPIRED"
+    },
+    {
+      "id": "expires-at-verification-time",
+      "source": "browse-no-query",
+      "verificationTime": 1787666700,
+      "expectedError": "SIGNATURE_EXPIRED"
+    },
+    {
+      "id": "lifetime-over-eight-minutes",
+      "source": "browse-no-query",
+      "mutation": {
+        "signatureParameters.expires": 1787666881
+      },
+      "expectedError": "SIGNATURE_LIFETIME_INVALID"
+    },
+    {
+      "id": "nonce-replayed",
+      "source": "browse-no-query",
+      "precondition": {
+        "verifiedNonce": ["inflow-test-ed25519-2026", "AAECAwQFBgcICQoLDA0ODw"]
+      },
+      "verificationTime": 1787666500,
+      "expectedError": "NONCE_REPLAYED"
+    },
+    {
+      "id": "key-unknown",
+      "source": "browse-no-query",
+      "mutation": {
+        "signatureParameters.keyid": "unknown-key"
+      },
+      "expectedError": "KEY_NOT_FOUND"
+    },
+    {
+      "id": "algorithm-casing-unsupported",
+      "source": "browse-no-query",
+      "mutation": {
+        "signatureParameters.alg": "ED25519"
+      },
+      "expectedError": "SIGNATURE_INPUT_INVALID"
+    },
+    {
+      "id": "tag-invalid",
+      "source": "browse-no-query",
+      "mutation": {
+        "signatureParameters.tag": "unknown-intent"
+      },
+      "expectedError": "SIGNATURE_INPUT_INVALID"
+    },
+    {
+      "id": "signature-bytes-mutated",
+      "source": "browse-no-query",
+      "mutation": {
+        "signature": "sig2=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==:"
+      },
+      "expectedError": "SIGNATURE_INVALID"
+    },
+    {
+      "id": "redirect-signature-reused",
+      "source": "browse-no-query",
+      "mutation": {
+        "request.path": "/catalog/redirected"
+      },
+      "expectedError": "SIGNATURE_INVALID"
+    }
+  ]
+}

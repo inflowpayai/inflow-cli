@@ -1,4 +1,4 @@
-import type { AuthStorage } from '@inflowpayai/inflow-core';
+import type { AuthStorage, ICliCapabilitiesResource } from '@inflowpayai/inflow-core';
 import { Inflow, InflowApiError, MemoryStorage } from '@inflowpayai/inflow-core';
 import {
   X402AdapterRoutingError,
@@ -110,6 +110,7 @@ function authedResources(client: X402InflowClient): {
     environment: 'sandbox',
     cliClientId: 'test',
   });
+  vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as ICliCapabilitiesResource, 'has').mockResolvedValue(false);
   (inflow.x402 as unknown as { cached: Promise<X402InflowClient> }).cached = Promise.resolve(client);
   return { inflow, storage };
 }
@@ -312,6 +313,49 @@ describe('runPayCommand (agent mode)', () => {
     expect(final.response_status).toBe(200);
   });
 
+  it('signs the exact x402 probe and paid replay and carries probe evidence into transaction creation', async () => {
+    const prepareInflowPayment = vi.fn(() => Promise.resolve(makePrepared()));
+    const { inflow, storage } = authedResources(makeClient({ prepareInflowPayment }));
+    vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as ICliCapabilitiesResource, 'has').mockResolvedValue(true);
+    const sign = vi.spyOn(inflow.tap, 'sign').mockImplementation((request) =>
+      Promise.resolve({
+        created: 1,
+        expires: 2,
+        keyid: 'key',
+        nonce: request.operation,
+        signature: `sig=:${request.operation}:`,
+        signatureInput: `sig=("@method");keyid="key"`,
+        ...(request.operation === 'x402.inspect' ? { tapEvidenceId: '00000000-0000-0000-0000-000000000123' } : {}),
+      }),
+    );
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response('payment required', {
+          status: 402,
+          headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(makePaymentRequired()) },
+        }),
+      )
+      .mockResolvedValueOnce(new Response('paid', { status: 200 }));
+    const ctx = agentContext(
+      { url: 'https://seller/api' },
+      { method: 'GET', header: [], interval: 1, maxAttempts: 0, timeout: 900, showBody: true },
+    );
+
+    await drain(runPayCommand(ctx, inflow, storage, 'https://api.inflowpay.ai'));
+
+    expect(prepareInflowPayment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        transactionRequestExtensions: { tapEvidenceId: '00000000-0000-0000-0000-000000000123' },
+      }),
+    );
+    expect(sign.mock.calls.map(([request]) => [request.operation, request.targetUrl, request.transactionId])).toEqual([
+      ['x402.inspect', 'https://seller/api', undefined],
+      ['x402.payment', 'https://seller/api', 'txn_1'],
+    ]);
+  });
+
   it('runFetchCommand fetches a signed transaction without preparing a new payment or exposing encoded payload', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
@@ -345,6 +389,15 @@ describe('runPayCommand (agent mode)', () => {
       },
     );
     const { inflow, storage } = authedResources(client);
+    vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as ICliCapabilitiesResource, 'has').mockResolvedValue(true);
+    const sign = vi.spyOn(inflow.tap, 'sign').mockResolvedValue({
+      created: 1,
+      expires: 2,
+      keyid: 'key',
+      nonce: 'nonce',
+      signature: 'sig=:value:',
+      signatureInput: 'sig=("@method");keyid="key"',
+    });
 
     const frames = await drain(runFetchCommand(ctx as never, inflow, storage));
 
@@ -360,6 +413,16 @@ describe('runPayCommand (agent mode)', () => {
     expect(frames.at(-1)).not.toHaveProperty('encoded_payload');
     const [, init] = fetchSpy.mock.calls.at(-1) ?? [];
     expect(new Headers(init?.headers).get('PAYMENT-SIGNATURE')).toBe('ENC');
+    expect(new Headers(init?.headers).has('Signature')).toBe(true);
+    expect(sign).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'GET',
+        operation: 'x402.payment',
+        targetUrl: 'https://seller/api',
+        transactionId: 'txn_1',
+      }),
+      expect.any(Object),
+    );
   });
 
   it('runFetchCommand renders the human fetch path for signed transactions', async () => {
@@ -666,6 +729,45 @@ describe('runPayCommand (agent mode)', () => {
     );
     await expect(runInspectCommand(ctx)).rejects.toThrow();
     expect(ctx.error).toHaveBeenCalledWith(expect.objectContaining({ code: 'INVALID_HEADER' }));
+  });
+
+  it('runInspectCommand signs its merchant probe as x402 inspection', async () => {
+    const { inflow, storage } = authedResources(makeClient());
+    vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as ICliCapabilitiesResource, 'has').mockResolvedValue(true);
+    const sign = vi.spyOn(inflow.tap, 'sign').mockResolvedValue({
+      created: 1,
+      expires: 2,
+      keyid: 'key',
+      nonce: 'nonce',
+      signature: 'sig=:value:',
+      signatureInput: 'sig=("@method");keyid="key"',
+      tapEvidenceId: '00000000-0000-0000-0000-000000000123',
+    });
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      return Promise.resolve(
+        url.includes('/.well-known/aep')
+          ? new Response(null, { status: 404 })
+          : new Response('payment required', {
+              status: 402,
+              headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(makePaymentRequired()) },
+            }),
+      );
+    });
+    const ctx = agentContext({ url: 'https://seller/api' }, { method: 'GET', header: [] });
+
+    const out = await runInspectCommand(ctx, inflow, storage);
+
+    expect(out?.['outcome']).toBe('accepts');
+    expect(sign).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'GET', operation: 'x402.inspect', targetUrl: 'https://seller/api' }),
+      expect.any(Object),
+    );
+    const sellerCall = fetch.mock.calls.find(([input]) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      return url === 'https://seller/api';
+    });
+    expect(new Headers(sellerCall?.[1]?.headers).has('Signature')).toBe(true);
   });
 
   it('emits INVALID_402 when the seller returns 402 without a PAYMENT-REQUIRED header', async () => {

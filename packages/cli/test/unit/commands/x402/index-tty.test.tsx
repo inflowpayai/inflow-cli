@@ -93,6 +93,9 @@ function authedResources(client: X402InflowClient): { inflow: Inflow; storage: A
     expires_at: Date.now() + 3600 * 1000,
   });
   const inflow = new Inflow({ authStorage: storage, environment: 'sandbox', cliClientId: 'test' });
+  vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as { has: () => Promise<boolean> }, 'has').mockResolvedValue(
+    false,
+  );
   (inflow.x402 as unknown as { cached: Promise<X402InflowClient> }).cached = Promise.resolve(client);
   return { inflow, storage };
 }

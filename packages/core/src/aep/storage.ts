@@ -211,9 +211,8 @@ export class AepStorage {
             document,
             inspectUrl,
             commandUrl: (command) => {
-              const base = document.http.endpoint_base.endsWith('/')
-                ? document.http.endpoint_base
-                : `${document.http.endpoint_base}/`;
+              const endpointBase = document.http.endpoint_base ?? '/aep/';
+              const base = endpointBase.endsWith('/') ? endpointBase : `${endpointBase}/`;
               return new URL(`${base}${command}`, serviceUrl);
             },
             ...(persisted.cacheControl === undefined ? {} : { cacheControl: persisted.cacheControl }),

@@ -141,6 +141,7 @@ export interface CombinedInspectPipelineDeps {
     inspect: InspectServiceResult,
     input: SellerProbeOptions & { url: string },
   ) => Promise<SellerProbeResult | undefined>;
+  probe?: (url: string, options: SellerProbeOptions) => Promise<SellerProbeResult>;
   probeOptions: SellerProbeOptions;
   url: string;
 }
@@ -326,7 +327,7 @@ export async function runCombinedInspectPipeline(
 
   let probe: SellerProbeResult;
   try {
-    probe = await sellerProbe(deps.url, resolvedProbeOptions);
+    probe = await (deps.probe ?? sellerProbe)(deps.url, resolvedProbeOptions);
   } catch (err) {
     emit({ type: 'errored', code: 'INSPECT_FAILED', message: err instanceof Error ? err.message : String(err) });
     return;

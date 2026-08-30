@@ -41,6 +41,9 @@ function authed(client: MppClient): { inflow: Inflow; storage: AuthStorage } {
     expires_at: Date.now() + 3600 * 1000,
   });
   const inflow = new Inflow({ authStorage: storage, environment: 'sandbox', cliClientId: 'test' });
+  vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as { has: () => Promise<boolean> }, 'has').mockResolvedValue(
+    false,
+  );
   (inflow.mpp as unknown as { cachedClient: Promise<MppClient> }).cachedClient = Promise.resolve(client);
   (inflow.mpp as unknown as { cachedMethod: { cancelApproval: () => Promise<void> } }).cachedMethod = {
     cancelApproval: vi.fn(() => Promise.resolve(undefined)),

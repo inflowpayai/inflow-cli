@@ -6,7 +6,13 @@ import {
   type PagedSubscriptions,
   type Subscription,
 } from '@inflowpayai/inflow-core';
-import { encode, encodeCredential, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
+import {
+  CREDENTIAL_TRANSACTION_ID,
+  encode,
+  encodeCredential,
+  type MppChallenge,
+  renderChallengeHeader,
+} from '@inflowpayai/mpp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing, createSubscriptionsCli } from '../../../../src/commands/subscriptions/index.js';
 
@@ -84,12 +90,16 @@ function dependencies(overrides: Partial<ISubscriptionResource> = {}) {
     list,
     ...overrides,
   };
+  const inflow = new Inflow({ authStorage, environment: 'sandbox', cliClientId: 'test' });
+  vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as { has: () => Promise<boolean> }, 'has').mockResolvedValue(
+    false,
+  );
   return {
     authStorage,
     authorize,
     cancel,
     get,
-    inflow: new Inflow({ authStorage, environment: 'sandbox', cliClientId: 'test' }),
+    inflow,
     list,
     subscriptions,
   };
@@ -232,7 +242,7 @@ describe('subscription command runners', () => {
     const challenge = subscriptionChallengeValue();
     const freshCredential = encodeCredential({
       challenge,
-      payload: { authorizationId: 'fresh-authorization' },
+      payload: { authorizationId: 'fresh-authorization', [CREDENTIAL_TRANSACTION_ID]: 'activation-transaction-id' },
       source: 'did:inflow:buyer',
     });
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {

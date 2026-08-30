@@ -2,6 +2,7 @@ import { chmodSync, writeFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import {
   type AuthStorage,
+  createTapFetch,
   type Inflow,
   parseHeaderFlags,
   type PayEvent,
@@ -11,6 +12,7 @@ import {
   type PayResultSuccess,
   sanitizeDeep,
   type SellerProbeOptions,
+  type SellerRequestTransport,
   type X402FetchEvent,
   type X402FetchRejected,
   type X402FetchSuccess,
@@ -25,7 +27,11 @@ import { authenticatedApiError } from '../../utils/api-error.js';
 import { mcpTool } from '../../mcp-metadata.js';
 import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
-import { type AepApprovalDisplay, createAepAwareInspectProbe, createAepAwareSellerTransport } from '../aep/runtime.js';
+import {
+  type AepApprovalDisplay,
+  createAepAwareInspectProbe,
+  createTapAepAwareSellerTransport,
+} from '../aep/runtime.js';
 import { cancelApproval } from '../approval-cancellation.js';
 import { PaymentFetchView, type PaymentFetchPhase } from '../payment-fetch.js';
 import { useAuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
@@ -205,12 +211,14 @@ function createSellerTransport(
   inflow: Inflow,
   authStorage: AuthStorage,
   approvalDisplay?: AepApprovalDisplay,
-) {
-  return createAepAwareSellerTransport({
+): SellerRequestTransport {
+  return createTapAepAwareSellerTransport({
     ...(approvalDisplay === undefined ? {} : { approvalDisplay }),
     authStorage,
     context: c,
     inflow,
+    inspectionOperation: 'x402.inspect',
+    paymentOperation: 'x402.payment',
     timeout: c.options.timeout,
     ...(c.options.interval > 0 ? { interval: c.options.interval } : {}),
   });
@@ -784,7 +792,24 @@ async function runInspectCommand(
     probeOptions,
     ...(inflow === undefined || authStorage === undefined
       ? {}
-      : { probe: createAepAwareInspectProbe({ authStorage, context: c, inflow, timeout: 30 }) }),
+      : {
+          probe: createAepAwareInspectProbe({
+            aepReadFetch: createTapFetch({
+              capabilities: inflow.capabilities,
+              operation: 'aep.inspect',
+              tap: inflow.tap,
+            }),
+            authStorage,
+            context: c,
+            fetch: createTapFetch({
+              capabilities: inflow.capabilities,
+              operation: 'x402.inspect',
+              tap: inflow.tap,
+            }),
+            inflow,
+            timeout: 30,
+          }),
+        }),
     url: c.args.url,
     ...(c.options.scheme !== undefined ? { schemeFilter: c.options.scheme } : {}),
     ...(c.options.network !== undefined ? { networkFilter: c.options.network } : {}),

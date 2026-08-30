@@ -24,6 +24,7 @@ const inspection: ServiceInspection = {
     enrollment: [],
     operations: [{ authentication: 'not-required', name: 'get-offering' }],
     payments: [],
+    trust: [],
   },
   document: {
     description: 'Data catalog',

@@ -377,4 +377,34 @@ describe('InflowApiClient — verbose logging', () => {
     expect(joined).not.toContain('secret-device-code');
     expect(joined).toContain('<redacted>');
   });
+
+  it('redacts TAP authorization material from verbose responses', async () => {
+    const { fetch } = makeFetchRecorder([
+      {
+        status: 200,
+        bodyJson: {
+          signature: 'secret-signature',
+          signatureInput: 'public-signature-input',
+          signingRequestId: 'secret-request-id',
+          tapEvidenceId: 'secret-evidence-id',
+        },
+      },
+    ]);
+    const lines: string[] = [];
+    const c = makeConfig({
+      fetch,
+      apiBaseUrl: 'https://api.test',
+      verbose: true,
+      logger: { debug: (message) => lines.push(message) },
+    });
+    const client = new InflowApiClient(c, c.apiBaseUrl);
+
+    await client.get('/v1/tap/signatures');
+
+    const joined = lines.join('\n');
+    expect(joined).not.toContain('secret-signature');
+    expect(joined).not.toContain('secret-request-id');
+    expect(joined).not.toContain('secret-evidence-id');
+    expect(joined).toContain('public-signature-input');
+  });
 });

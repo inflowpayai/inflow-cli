@@ -18,6 +18,7 @@ import {
   createAepAwareInspectProbe,
   createAepAwareSellerTransport,
   createCliAepAgentOptions,
+  createTapAepAwareSellerTransport,
   mapAepRuntimeError,
   storedAepCredentialAuthenticationHeaders,
 } from '../../../../src/commands/aep/runtime.js';
@@ -28,7 +29,8 @@ const INSPECT_DOCUMENT = {
   bindings: { supported: ['http'] },
   claims: { optional: [], preferred: [], required: [] },
   commands: { grant_types: ['oauth-bearer'], supported: ['inspect', 'enroll', 'grant', 'revoke', 'status'] },
-  core: { signing_algorithms: ['ES256'] },
+  core: { signing_algorithms: ['EdDSA', 'ES256'] },
+  extensions: { supported: [] },
   http: { endpoint_base: '/aep', openapi: { path_matching: { trailing_slash: 'strict' }, url: '/openapi.json' } },
   identity: { methods: ['did:web'] },
   service: { did: 'did:web:seller.test' },
@@ -115,6 +117,42 @@ afterEach(() => {
 });
 
 describe('AEP-aware seller transport', () => {
+  it('leaves redirect acceptance to the AEP transport after signing one request attempt', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(new Response(null, { headers: { Location: 'https://other.test/resource' }, status: 307 }));
+    const sign = vi.fn().mockResolvedValue({
+      created: 1,
+      expires: 301,
+      keyid: 'key',
+      nonce: 'nonce',
+      signature: 'sig2=:value:',
+      signatureInput: 'sig2=("@method")',
+    });
+    const transport = createTapAepAwareSellerTransport({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      fetch,
+      inflow: {
+        capabilities: { has: vi.fn().mockResolvedValue(true) },
+        tap: { sign },
+      } as never,
+      inspectionOperation: 'mpp.inspect',
+      paymentOperation: 'mpp.payment',
+      timeout: 30,
+    });
+
+    const result = await transport.request({
+      headers: {},
+      method: 'GET',
+      url: 'https://seller.test/resource',
+    });
+
+    expect(result.status).toBe(307);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(sign).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves ordinary non-AEP seller responses without attaching payment headers', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
@@ -661,6 +699,19 @@ describe('CLI AEP approval resolver', () => {
       pending: { platformContext: { approval_id: 'approval-1' }, retryAfterSeconds: 0.001, status: 'pending' },
     };
   }
+
+  it('passes the configured request transport to the AEP agent', () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const options = createCliAepAgentOptions({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      fetch,
+      inflow: inflow(),
+      timeout: 1,
+    });
+
+    expect(options.fetch).toBe(fetch);
+  });
 
   it('continues signing once Platform approval is approved', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ status: 'APPROVED' }));

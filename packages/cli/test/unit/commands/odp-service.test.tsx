@@ -35,6 +35,7 @@ const inspection: ServiceInspection = {
     enrollment: [{ name: 'aep' }],
     operations,
     payments: [{ authentication: 'required', name: 'mpp', options: ['inflow', 'tempo'] }],
+    trust: [],
   },
   document: {
     description: 'Compute catalog',

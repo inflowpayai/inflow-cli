@@ -95,16 +95,14 @@ async function collect(d: MppPayPipelineDeps): Promise<MppPayEvent[]> {
 describe('runMppPayPipeline', () => {
   it('uses fresh buyer authorization for an existing subscription instead of creating a transaction', async () => {
     const recurring = subscriptionChallenge('month');
+    const freshCredential = encode({
+      challenge: recurring,
+      payload: { transactionId: 'tx-subscription' },
+      source: 'did:inflow:buyer',
+    });
     let createHits = 0;
+    let replayTransactionId: string | undefined;
     server.use(
-      http.get(SELLER, ({ request }) => {
-        if (request.headers.get('authorization') === 'Payment FRESH')
-          return new HttpResponse('ACCESS', { status: 200 });
-        return new HttpResponse(null, {
-          status: 402,
-          headers: { 'WWW-Authenticate': renderChallengeHeader(recurring) },
-        });
-      }),
       http.post(`${INFLOW}/v1/transactions/mpp`, () => {
         createHits += 1;
         return HttpResponse.json({ state: 'failed' });
@@ -114,16 +112,43 @@ describe('runMppPayPipeline', () => {
       authorize: (subscriptionId: string, received: MppChallenge) => {
         expect(subscriptionId).toBe('sub-1');
         expect(received.id).toBe(recurring.id);
-        return Promise.resolve({ credential: 'FRESH', expires: recurring.expires as string });
+        return Promise.resolve({ credential: freshCredential, expires: recurring.expires as string });
       },
       cancel: () => Promise.resolve(undefined),
       get: () => Promise.reject(new Error('unused')),
       list: () => Promise.resolve({ count: 0, data: [], total: 0 }),
     };
 
-    const events = await collect(deps({ subscriptions, subscriptionId: 'sub-1', intentFilter: 'subscription' }));
+    const events = await collect(
+      deps({
+        subscriptions,
+        subscriptionId: 'sub-1',
+        intentFilter: 'subscription',
+        sellerTransport: {
+          request: (input) => {
+            if (input.additionalAuthenticationHeaders !== undefined) {
+              expect(input.additionalAuthenticationHeaders).toEqual({ Authorization: `Payment ${freshCredential}` });
+              replayTransactionId = input.transactionId;
+              return Promise.resolve({
+                bytes: new Uint8Array(Buffer.from('ACCESS')),
+                contentType: 'text/plain',
+                headers: new Headers(),
+                status: 200,
+              });
+            }
+            return Promise.resolve({
+              bytes: new Uint8Array(),
+              contentType: undefined,
+              headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(recurring) }),
+              status: 402,
+            });
+          },
+        },
+      }),
+    );
 
     expect(events.at(-1)).toMatchObject({ type: 'replayed', result: { outcome: 'paid', transactionId: 'sub-1' } });
+    expect(replayTransactionId).toBe('tx-subscription');
     expect(createHits).toBe(0);
   });
 
@@ -151,11 +176,13 @@ describe('runMppPayPipeline', () => {
       additionalAuthenticationHeaders?: Record<string, string>;
       headers: Record<string, string>;
       method: string;
+      transactionId?: string;
       url: string;
     }) => {
       order.push(input.additionalAuthenticationHeaders === undefined ? 'aep-then-payment-challenge' : 'paid-replay');
       if (input.additionalAuthenticationHeaders !== undefined) {
         expect(input.additionalAuthenticationHeaders).toEqual({ Authorization: 'Payment CRED-ORDER' });
+        expect(input.transactionId).toBe('tx-order');
         return Promise.resolve({
           bytes: new Uint8Array(Buffer.from('paid')),
           contentType: 'text/plain',
@@ -168,11 +195,13 @@ describe('runMppPayPipeline', () => {
         contentType: undefined,
         headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(challenge()) }),
         status: 402,
+        tapEvidenceId: '00000000-0000-0000-0000-000000000123',
       });
     };
     const client = {
-      createTransaction: () => {
+      createTransaction: (body: { tapEvidenceId?: string }) => {
         order.push('payment-created');
+        expect(body.tapEvidenceId).toBe('00000000-0000-0000-0000-000000000123');
         return Promise.resolve({ state: 'ready', credential: 'CRED-ORDER', transactionId: 'tx-order' });
       },
     };

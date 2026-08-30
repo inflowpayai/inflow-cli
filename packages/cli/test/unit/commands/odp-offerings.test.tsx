@@ -49,7 +49,7 @@ const operations = [
   { authentication: 'not-required', name: 'search-offerings' },
 ] satisfies ServiceInspection['capabilities']['operations'];
 const inspection: ServiceInspection = {
-  capabilities: { enrollment: [], operations, payments: [] },
+  capabilities: { enrollment: [], operations, payments: [], trust: [] },
   document: {
     description: 'Compute catalog',
     http: { endpoint_base: '/odp' },

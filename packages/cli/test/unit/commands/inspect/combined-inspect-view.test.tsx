@@ -16,6 +16,7 @@ const odpInspect = {
       { authentication: 'required', name: 'mpp' },
       { authentication: 'required', name: 'x402' },
     ],
+    trust: [],
   },
   document: {
     description: 'Plant store',

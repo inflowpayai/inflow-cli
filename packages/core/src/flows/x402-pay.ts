@@ -415,7 +415,17 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
     let prepared: PreparedPayment;
     try {
       const signingContext = buildSigningContext(decoded);
-      prepared = await deps.client.prepareInflowPayment(requirement, signingContext, deps.signOptions);
+      prepared = await deps.client.prepareInflowPayment(requirement, signingContext, {
+        ...deps.signOptions,
+        ...(probe.tapEvidenceId === undefined
+          ? {}
+          : {
+              transactionRequestExtensions: {
+                ...deps.signOptions.transactionRequestExtensions,
+                tapEvidenceId: probe.tapEvidenceId,
+              },
+            }),
+      });
     } catch (err) {
       const mapped = mapSdkError(err);
       emit({ type: 'errored', code: mapped.code, message: mapped.message });
@@ -450,6 +460,7 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
       headers: deps.probeOptions.headers,
       additionalAuthenticationHeaders: { [HEADERS.PAYMENT_SIGNATURE]: encoded.encodedPayload },
       ...(deps.probeOptions.data !== undefined ? { data: deps.probeOptions.data } : {}),
+      transactionId: prepared.transactionId,
     });
     const attachment = await buildBodyAttachment(replay.bytes, deps.showBody, deps.outputFile);
 
