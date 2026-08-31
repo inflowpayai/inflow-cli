@@ -374,6 +374,7 @@ export function createSubscriptionsCli(subscriptions: ISubscriptionResource, aut
 
 export const __testing = {
   billingFrequency,
+  commandError,
   runCancel,
   runFetch,
   runGet,

@@ -248,6 +248,26 @@ describe('subscription command runners', () => {
     });
   });
 
+  it('maps expired subscription API sessions to the shared authentication error', async () => {
+    const apiError = new InflowApiError('Unauthorized', { status: 401 });
+    const deps = dependencies({ get: vi.fn(() => Promise.reject(apiError)) });
+    const ctx = context({}, { subscriptionId: 'subscription-id' });
+
+    await expect(__testing.runGet(ctx, deps)).rejects.toThrow('NOT_AUTHENTICATED');
+    expect(ctx.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'NOT_AUTHENTICATED',
+      }),
+    );
+  });
+
+  it('maps non-Error failures to the command-specific fallback code', () => {
+    expect(__testing.commandError('connection closed', 'SUBSCRIPTION_GET_FAILED')).toEqual({
+      code: 'SUBSCRIPTION_GET_FAILED',
+      message: 'connection closed',
+    });
+  });
+
   it('fails closed when fresh subscription authorization is rejected', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
