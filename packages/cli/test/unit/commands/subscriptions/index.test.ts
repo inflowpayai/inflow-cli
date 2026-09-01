@@ -1,6 +1,7 @@
 import {
   type AuthTokens,
   Inflow,
+  InflowApiError,
   type ISubscriptionResource,
   MemoryStorage,
   type PagedSubscriptions,
@@ -186,6 +187,85 @@ describe('subscription command runners', () => {
       subscription,
     );
     expect(deps.get).toHaveBeenCalledWith('subscription-id');
+  });
+
+  it('preserves the server error code in structured subscription errors', async () => {
+    const apiError = new InflowApiError('Failed to get subscription (404): The specified subscription is not found.', {
+      code: 'SUBSCRIPTION_NOT_FOUND',
+      status: 404,
+    });
+    const deps = dependencies({ get: vi.fn(() => Promise.reject(apiError)) });
+    const ctx = context({}, { subscriptionId: 'missing-subscription' });
+
+    await expect(__testing.runGet(ctx, deps)).rejects.toThrow('SUBSCRIPTION_NOT_FOUND');
+    expect(ctx.error).toHaveBeenCalledWith({
+      code: 'SUBSCRIPTION_NOT_FOUND',
+      details: { status: 404 },
+      message: 'Failed to get subscription (404): The specified subscription is not found.',
+    });
+  });
+
+  it('preserves server error codes when listing subscriptions', async () => {
+    const apiError = new InflowApiError('Subscriptions are temporarily unavailable.', {
+      code: 'SUBSCRIPTION_LIST_UNAVAILABLE',
+      status: 503,
+    });
+    const deps = dependencies({ list: vi.fn(() => Promise.reject(apiError)) });
+    const ctx = context({ descending: true, limit: 10, offset: 0 }, {});
+
+    await expect(__testing.runList(ctx, deps)).rejects.toThrow('SUBSCRIPTION_LIST_UNAVAILABLE');
+    expect(ctx.error).toHaveBeenCalledWith({
+      code: 'SUBSCRIPTION_LIST_UNAVAILABLE',
+      details: { status: 503 },
+      message: 'Subscriptions are temporarily unavailable.',
+    });
+  });
+
+  it('preserves server error codes when cancelling subscriptions', async () => {
+    const apiError = new InflowApiError('The subscription cannot be cancelled.', {
+      code: 'SUBSCRIPTION_NOT_CANCELLABLE',
+      status: 409,
+    });
+    const deps = dependencies({ cancel: vi.fn(() => Promise.reject(apiError)) });
+    const ctx = context({}, { subscriptionId: 'subscription-id' });
+
+    await expect(__testing.runCancel(ctx, deps)).rejects.toThrow('SUBSCRIPTION_NOT_CANCELLABLE');
+    expect(ctx.error).toHaveBeenCalledWith({
+      code: 'SUBSCRIPTION_NOT_CANCELLABLE',
+      details: { status: 409 },
+      message: 'The subscription cannot be cancelled.',
+    });
+  });
+
+  it('maps non-API failures to the command-specific fallback code', async () => {
+    const deps = dependencies({ get: vi.fn(() => Promise.reject(new Error('connection closed'))) });
+    const ctx = context({}, { subscriptionId: 'subscription-id' });
+
+    await expect(__testing.runGet(ctx, deps)).rejects.toThrow('SUBSCRIPTION_GET_FAILED');
+    expect(ctx.error).toHaveBeenCalledWith({
+      code: 'SUBSCRIPTION_GET_FAILED',
+      message: 'connection closed',
+    });
+  });
+
+  it('maps expired subscription API sessions to the shared authentication error', async () => {
+    const apiError = new InflowApiError('Unauthorized', { status: 401 });
+    const deps = dependencies({ get: vi.fn(() => Promise.reject(apiError)) });
+    const ctx = context({}, { subscriptionId: 'subscription-id' });
+
+    await expect(__testing.runGet(ctx, deps)).rejects.toThrow('NOT_AUTHENTICATED');
+    expect(ctx.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'NOT_AUTHENTICATED',
+      }),
+    );
+  });
+
+  it('maps non-Error failures to the command-specific fallback code', () => {
+    expect(__testing.commandError('connection closed', 'SUBSCRIPTION_GET_FAILED')).toEqual({
+      code: 'SUBSCRIPTION_GET_FAILED',
+      message: 'connection closed',
+    });
   });
 
   it('fails closed when fresh subscription authorization is rejected', async () => {

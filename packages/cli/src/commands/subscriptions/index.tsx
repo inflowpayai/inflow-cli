@@ -1,6 +1,7 @@
 import {
   type AuthStorage,
   type Inflow,
+  InflowApiError,
   type ISubscriptionResource,
   type PagedSubscriptions,
   sanitizeDeep,
@@ -25,7 +26,14 @@ import { listOptions, subscriptionFetchArgs, subscriptionIdArgs } from './schema
 interface CommandContext {
   agent: boolean;
   formatExplicit: boolean;
-  error: (error: { code: string; message: string }) => never;
+  error: (error: CommandError) => never;
+}
+
+interface CommandError {
+  code: string;
+  message: string;
+  cta?: { commands: { command: string; description: string }[] };
+  details?: unknown;
 }
 
 interface Dependencies {
@@ -57,6 +65,15 @@ const DETAIL_COLUMNS: ReadonlyArray<TableColumn<DetailRow>> = [
   { header: 'Field', cell: (row) => row.field },
   { header: 'Value', cell: (row) => row.value },
 ];
+
+function commandError(error: unknown, fallbackCode: string): CommandError {
+  const authenticated = authenticatedApiError(error);
+  if (authenticated !== undefined) return authenticated;
+  if (error instanceof InflowApiError) {
+    return { code: error.code, details: { status: error.status }, message: error.message };
+  }
+  return { code: fallbackCode, message: error instanceof Error ? error.message : String(error) };
+}
 
 function billingFrequency(subscription: Subscription): string {
   const unit = subscription.periodUnit.toLowerCase();
@@ -213,9 +230,7 @@ async function runList(
     }
     return sanitizeDeep(await load());
   } catch (error) {
-    const mapped = authenticatedApiError(error);
-    if (mapped !== undefined) return c.error(mapped);
-    throw error;
+    return c.error(commandError(error, 'SUBSCRIPTION_LIST_FAILED'));
   }
 }
 
@@ -286,9 +301,7 @@ async function runGet(
     }
     return sanitizeDeep(await load());
   } catch (error) {
-    const mapped = authenticatedApiError(error);
-    if (mapped !== undefined) return c.error(mapped);
-    throw error;
+    return c.error(commandError(error, 'SUBSCRIPTION_GET_FAILED'));
   }
 }
 
@@ -317,9 +330,7 @@ async function runCancel(
       await cancel();
     }
   } catch (error) {
-    const mapped = authenticatedApiError(error);
-    if (mapped !== undefined) return c.error(mapped);
-    throw error;
+    return c.error(commandError(error, 'SUBSCRIPTION_CANCEL_FAILED'));
   }
   return { cancelled: true, subscription_id: c.args.subscriptionId };
 }
@@ -363,6 +374,7 @@ export function createSubscriptionsCli(subscriptions: ISubscriptionResource, aut
 
 export const __testing = {
   billingFrequency,
+  commandError,
   runCancel,
   runFetch,
   runGet,
