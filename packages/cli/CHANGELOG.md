@@ -1,5 +1,31 @@
 # @inflowpayai/inflow
 
+## 0.12.2
+
+### Patch Changes
+
+- [#119](https://github.com/inflowpayai/inflow-cli/pull/119)
+  [`6596cfa`](https://github.com/inflowpayai/inflow-cli/commit/6596cfacdc09aa8d602fd3d610f0b9e8f711418f) Thanks
+  [@nkavian](https://github.com/nkavian)! - Show live progress while preparing an interactive AEP enrollment.
+
+- [#122](https://github.com/inflowpayai/inflow-cli/pull/122)
+  [`cbe67d5`](https://github.com/inflowpayai/inflow-cli/commit/cbe67d53204fd8fbf4600cf3dd4f04c2a4d09f55) Thanks
+  [@nkavian](https://github.com/nkavian)! - Display ODP-advertised MCP endpoints during Service inspection.
+
+- [#129](https://github.com/inflowpayai/inflow-cli/pull/129)
+  [`37b7786`](https://github.com/inflowpayai/inflow-cli/commit/37b778646c5f5d83401dec355c0724964b1288bf) Thanks
+  [@mnebliienko](https://github.com/mnebliienko)! - Preserve stable error codes in subscription MCP tool failures.
+
+- [#123](https://github.com/inflowpayai/inflow-cli/pull/123)
+  [`fb43b07`](https://github.com/inflowpayai/inflow-cli/commit/fb43b07d85cfaf60abc8676a1ebc94c5076fb82d) Thanks
+  [@nkavian](https://github.com/nkavian)! - Update Offering Discovery Protocol support for payment origin declarations
+  and preserve Service identifiers in directory results.
+
+- [#127](https://github.com/inflowpayai/inflow-cli/pull/127)
+  [`c5c30e0`](https://github.com/inflowpayai/inflow-cli/commit/c5c30e0e40e38ef5a97bba3808b8b85416feabae) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add capability-aware Trusted Agent Protocol request signing and
+  redirect-safe transport support.
+
 ## 0.12.1
 
 ### Patch Changes
