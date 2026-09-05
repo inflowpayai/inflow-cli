@@ -63,7 +63,7 @@ describe('vault startup decisions', () => {
   it.each([
     ['auth login', ['auth', 'login'], true],
     ['auth logout', ['auth', 'logout'], true],
-    ['auth status', ['auth', 'status'], false],
+    ['auth status', ['auth', 'status'], true],
     ['aep enroll', ['aep', 'enroll'], true],
     ['aep fetch', ['aep', 'fetch'], true],
     ['aep grant', ['aep', 'grant'], true],
@@ -91,6 +91,7 @@ describe('vault startup decisions', () => {
     ['subscriptions list', ['subscriptions', 'list'], false],
     ['subscriptions fetch', ['subscriptions', 'fetch', 'id', 'https://seller.test'], true],
     ['user get', ['user', 'get'], false],
+    ['vault status', ['vault', 'status'], true],
     ['vault unlock', ['vault', 'unlock'], false],
     ['top inspect', ['inspect'], false],
   ] as const)('starts daemon for %s when required', (_label, args, expected) => {
@@ -184,6 +185,7 @@ describe('vault startup decisions', () => {
 
   it('bypasses vault credentials that a direct InFlow API key replaces', () => {
     expect(shouldStartVaultDaemon(argv('mpp', 'pay'), true)).toBe(false);
+    expect(shouldStartVaultDaemon(argv('auth', 'status'), true)).toBe(false);
     expect(shouldReconcileVaultDaemon(argv('balances', 'list'), true)).toBe(false);
     expect(shouldReconcileVaultDaemon(argv('auth', 'status'), true)).toBe(false);
     expect(shouldUnlockVault(argv('x402', 'fetch'), { hasDirectApiKey: true })).toBe(false);

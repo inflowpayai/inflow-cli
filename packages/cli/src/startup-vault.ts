@@ -48,7 +48,10 @@ export function normalizeFormatAssignments(argv: string[]): void {
 export function shouldStartVaultDaemon(argv: readonly string[], hasDirectApiKey = false): boolean {
   if (shouldBypassVault(argv)) return false;
   const [group, subcommand] = commandPath(argv);
-  if (group === 'auth') return subcommand === 'login' || subcommand === 'logout';
+  if (group === 'auth') {
+    return isOneOf(subcommand, 'login', 'logout') || (!hasDirectApiKey && subcommand === 'status');
+  }
+  if (group === 'vault') return subcommand === 'status';
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
   if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
   if (group === 'mpp') {
