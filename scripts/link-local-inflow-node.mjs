@@ -18,7 +18,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { setAllowUnusedPatches } from './local-link-workspace.mjs';
+import { replaceManagedOverrides, setAllowUnusedPatches } from './local-link-workspace.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WORKSPACE_YAML = path.join(REPO_ROOT, 'pnpm-workspace.yaml');
@@ -33,9 +33,6 @@ const AEP_LINKED = [
 const ODP_LINKED = ['@offering-protocol/agent', '@offering-protocol/core', '@offering-protocol/directory'];
 const LINKED = [...INFLOW_LINKED, ...AEP_LINKED, ...ODP_LINKED];
 const INFLOW_NODE_AEP_LINKED = ['@aep-foundation/core', '@aep-foundation/express', '@aep-foundation/service'];
-
-const BEGIN_MARK = '# >>> link-local-inflow-node:overrides';
-const END_MARK = '# <<< link-local-inflow-node:overrides';
 
 function resolveInflowNodePath() {
   const fromEnv = process.env.INFLOW_NODE_PATH;
@@ -89,32 +86,30 @@ async function assertCheckout(checkoutPath, packages, checkoutName) {
   }
 }
 
-function buildOverridesBlock(workspaceRoot, inflowNodePath, aepNodePath, odpNodePath, packages) {
-  const lines = [BEGIN_MARK, 'overrides:'];
+function buildOverrides(workspaceRoot, inflowNodePath, aepNodePath, odpNodePath, packages) {
+  const entries = [];
   for (const name of packages.inflow) {
     const sub = name.split('/')[1];
     const rel = path.relative(workspaceRoot, path.join(inflowNodePath, 'packages', sub));
-    lines.push(`  '${name}': link:${rel}`);
+    entries.push([name, `link:${rel}`]);
   }
   for (const name of packages.aep) {
     const rel = path.relative(workspaceRoot, path.join(aepNodePath, aepPackageDirectory(name)));
-    lines.push(`  '${name}': link:${rel}`);
+    entries.push([name, `link:${rel}`]);
   }
   for (const name of packages.odp) {
     const sub = name.split('/')[1];
     const rel = path.relative(workspaceRoot, path.join(odpNodePath, 'packages', sub));
-    lines.push(`  '${name}': link:${rel}`);
+    entries.push([name, `link:${rel}`]);
   }
-  lines.push(END_MARK);
-  return lines.join('\n');
+  return entries;
 }
 
 async function writeOverrides(workspaceRoot, inflowNodePath, aepNodePath, odpNodePath, packages) {
   const workspaceYaml = path.join(workspaceRoot, 'pnpm-workspace.yaml');
   const existing = await fs.readFile(workspaceYaml, 'utf-8');
-  const stripped = stripExistingBlock(existing);
-  const block = buildOverridesBlock(workspaceRoot, inflowNodePath, aepNodePath, odpNodePath, packages);
-  const next = stripped.endsWith('\n') ? `${stripped}${block}\n` : `${stripped}\n${block}\n`;
+  const entries = buildOverrides(workspaceRoot, inflowNodePath, aepNodePath, odpNodePath, packages);
+  const next = replaceManagedOverrides(existing, entries);
 
   if (next !== existing) await fs.writeFile(workspaceYaml, next, 'utf-8');
   return next !== existing;
@@ -123,18 +118,6 @@ async function writeOverrides(workspaceRoot, inflowNodePath, aepNodePath, odpNod
 function aepPackageDirectory(name) {
   const sub = name.split('/')[1];
   return sub === 'express' ? path.join('packages', 'adapters', sub) : path.join('packages', sub);
-}
-
-function stripExistingBlock(yaml) {
-  // Removes both our managed block and any pre-existing `overrides:` line
-  // owned by a human edit. We rewrite the block on every run; humans who
-  // need other overrides should keep them outside our markers.
-  const re = new RegExp(`\\n?${escapeRe(BEGIN_MARK)}[\\s\\S]*?${escapeRe(END_MARK)}\\n?`, 'g');
-  return yaml.replace(re, '\n');
-}
-
-function escapeRe(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 async function clearLocalPackageReferences(workspaceRoot, packages) {

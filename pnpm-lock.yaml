@@ -82,8 +82,8 @@ importers:
   packages/cli:
     dependencies:
       '@aep-foundation/agent':
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: ^0.5.0
+        version: 0.5.0
       '@inflowpayai/mpp':
         specifier: ^0.10.0
         version: 0.10.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.0(typescript@5.9.3)(zod@4.4.3)))
@@ -91,11 +91,11 @@ importers:
         specifier: ^0.7.2
         version: 0.7.2(mppx@0.8.19(typescript@5.9.3)(viem@2.56.0(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/x402':
-        specifier: ^0.9.0
-        version: 0.9.0(@x402/core@2.22.0)
+        specifier: ^0.9.1
+        version: 0.9.1(@x402/core@2.22.0)
       '@inflowpayai/x402-buyer':
-        specifier: ^0.9.0
-        version: 0.9.0(@x402/core@2.22.0)
+        specifier: ^0.9.1
+        version: 0.9.1(@x402/core@2.22.0)
       '@modelcontextprotocol/server':
         specifier: 2.0.0-alpha.4
         version: 2.0.0-alpha.4
@@ -153,8 +153,8 @@ importers:
         version: 7.18.2
     devDependencies:
       '@aep-foundation/agent':
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: ^0.5.0
+        version: 0.5.0
       '@inflowpayai/mpp':
         specifier: ^0.10.0
         version: 0.10.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.0(typescript@5.9.3)(zod@4.4.3)))
@@ -162,17 +162,17 @@ importers:
         specifier: ^0.7.2
         version: 0.7.2(mppx@0.8.19(typescript@5.9.3)(viem@2.56.0(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/x402':
-        specifier: ^0.9.0
-        version: 0.9.0(@x402/core@2.22.0)
+        specifier: ^0.9.1
+        version: 0.9.1(@x402/core@2.22.0)
       '@inflowpayai/x402-buyer':
-        specifier: ^0.9.0
-        version: 0.9.0(@x402/core@2.22.0)
+        specifier: ^0.9.1
+        version: 0.9.1(@x402/core@2.22.0)
       '@offering-protocol/agent':
-        specifier: ^0.4.0
-        version: 0.4.0(@types/json-schema@7.0.15)
+        specifier: ^0.4.2
+        version: 0.4.2(@types/json-schema@7.0.15)
       '@offering-protocol/core':
-        specifier: ^0.3.6
-        version: 0.3.6
+        specifier: ^0.3.7
+        version: 0.3.7
       '@offering-protocol/directory':
         specifier: ^0.2.5
         version: 0.2.5
@@ -191,16 +191,12 @@ packages:
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
-  '@aep-foundation/agent@0.4.0':
-    resolution: {integrity: sha512-yqwi+7BuyjKfGr91N1ZJ/Yc4dIlMAX3LsYAg0lAOG1in7HOfk2VyCLoZiUsaDSwPxxroLmlQX/Sh+3XgPJfzjg==}
+  '@aep-foundation/agent@0.5.0':
+    resolution: {integrity: sha512-1RwxahB78YHfnIbwIEkimNH+9uPAL+y0akI05cuhbP/Vb+AGXHALirF2PSobe6M/+bSq5cY5crJ4luXBiTOWDA==}
     engines: {node: '>=22.0.0'}
 
-  '@aep-foundation/core@0.5.1':
-    resolution: {integrity: sha512-cYUcd2DSC1E9hlGweVUunauFDt5mkCtNdSh55CvFzSCr6vq2HkWuKQYkcfYJoiO8Ttb+sN03xXBko2mIqO1Hiw==}
-    engines: {node: '>=22.0.0'}
-
-  '@aep-foundation/platform@0.2.5':
-    resolution: {integrity: sha512-HcHNYe5MEXHohxDcS6YjtI3ZeEakanV3Atb9h8uD4oNIldfvyObwCTGaKe7GD0SkDVd6Alwygs45vU+QWnsQYg==}
+  '@aep-foundation/core@0.6.0':
+    resolution: {integrity: sha512-s2AXdQ5IAyz1w8BKoihOqy+m8LDSMr53Jv1gKoRDoUYoFqbVLHDPzfhjYVcgjgpxwtn7oy0DEMl19kWiG9zUOg==}
     engines: {node: '>=22.0.0'}
 
   '@alcalzone/ansi-tokenize@0.1.3':
@@ -866,14 +862,14 @@ packages:
     peerDependencies:
       mppx: ^0.8.17
 
-  '@inflowpayai/x402-buyer@0.9.0':
-    resolution: {integrity: sha512-quDKGkqwPjtW4twakI9VrQCnMPPTLm4Ipifv93XRfPJQai7ip17JSWykZDRm05EpLh3jrbRzRA+wQ8HH67DcuA==}
+  '@inflowpayai/x402-buyer@0.9.1':
+    resolution: {integrity: sha512-/qLvNj2Umx7ue51iK3VVPGxWwr1CLF/837SwBW3UmKnQGcUpc7lvrp5jkIch9mm2x6rOH0pvutWljV9MQ90DHA==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@x402/core': ^2.22.0
 
-  '@inflowpayai/x402@0.9.0':
-    resolution: {integrity: sha512-yuRqE+iAvi5hXx1Yxtp1T5AfkmUUAQ06AS0Z4Vx26XlBY4DwkQDp/qWCIzixQBzNRm5UeIxri0GdoCMeir0xqg==}
+  '@inflowpayai/x402@0.9.1':
+    resolution: {integrity: sha512-3sA9bMKvoTSrFBaZC/jIo/k/9ff4uy0NAsCR8iAwnZ0wdseDFEXx4+zqMl1g+xhIUBX1uW9sWSdOnwPD2zytfQ==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@x402/core': ^2.22.0
@@ -1082,12 +1078,12 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@offering-protocol/agent@0.4.0':
-    resolution: {integrity: sha512-fQleoZPl2Pb0YzJAdQz3fl1RMNfvlkYIUvXSuJSd5F7hwwm8V7+U54OY0N7PhVTSWlx7J61xUyHK+bXKE7ekqg==}
+  '@offering-protocol/agent@0.4.2':
+    resolution: {integrity: sha512-XlSo+pqfwdLJuHq0I3ZDC5nZvyYMss3mo2mvhC/tsqesFcayPmuhoLDfDaRy4XnTmWYVrjdwvU6OI0dTfQWTig==}
     engines: {node: '>=22.0.0'}
 
-  '@offering-protocol/core@0.3.6':
-    resolution: {integrity: sha512-yr4rCZyDFzdecRm/iVbWqOZU/FkChVNN//NjvfTgwgF59MF6tYR4TZa5z5A7WpC34rFtEf4+xoK/Ks+obLNaTQ==}
+  '@offering-protocol/core@0.3.7':
+    resolution: {integrity: sha512-yfYQUIzZctnZQTlXr2BZdEhGlurzf023eDpg52le/GlMsqoqPSokaqPe4r4mq3c2bzaAsH9wrI1Ojaai37Hqcg==}
     engines: {node: '>=22.0.0'}
 
   '@offering-protocol/directory@0.2.5':
@@ -3154,18 +3150,13 @@ snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@aep-foundation/agent@0.4.0':
+  '@aep-foundation/agent@0.5.0':
     dependencies:
-      '@aep-foundation/core': 0.5.1
-      '@aep-foundation/platform': 0.2.5
+      '@aep-foundation/core': 0.6.0
 
-  '@aep-foundation/core@0.5.1':
+  '@aep-foundation/core@0.6.0':
     dependencies:
       jose: 6.2.10
-
-  '@aep-foundation/platform@0.2.5':
-    dependencies:
-      '@aep-foundation/core': 0.5.1
 
   '@alcalzone/ansi-tokenize@0.1.3':
     dependencies:
@@ -3718,13 +3709,13 @@ snapshots:
     dependencies:
       mppx: 0.8.19(typescript@5.9.3)(viem@2.56.0(typescript@5.9.3)(zod@4.4.3))
 
-  '@inflowpayai/x402-buyer@0.9.0(@x402/core@2.22.0)':
+  '@inflowpayai/x402-buyer@0.9.1(@x402/core@2.22.0)':
     dependencies:
-      '@inflowpayai/x402': 0.9.0(@x402/core@2.22.0)
+      '@inflowpayai/x402': 0.9.1(@x402/core@2.22.0)
       '@x402/core': 2.22.0
       bs58: 6.0.0
 
-  '@inflowpayai/x402@0.9.0(@x402/core@2.22.0)':
+  '@inflowpayai/x402@0.9.1(@x402/core@2.22.0)':
     dependencies:
       '@x402/core': 2.22.0
 
@@ -3907,12 +3898,12 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.3
 
-  '@offering-protocol/agent@0.4.0(@types/json-schema@7.0.15)':
+  '@offering-protocol/agent@0.4.2(@types/json-schema@7.0.15)':
     dependencies:
       '@apidevtools/json-schema-ref-parser': 15.5.2(patch_hash=11973baa1c73bf2ee8c372f559f79dd0641b1f9e5b8e9967a0f7b1b0bea38a23)(@types/json-schema@7.0.15)
       '@hyperjump/browser': 1.5.0
       '@hyperjump/json-schema': 1.17.8(@hyperjump/browser@1.5.0)
-      '@offering-protocol/core': 0.3.6
+      '@offering-protocol/core': 0.3.7
       '@offering-protocol/directory': 0.2.5
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
@@ -3922,7 +3913,7 @@ snapshots:
     transitivePeerDependencies:
       - '@types/json-schema'
 
-  '@offering-protocol/core@0.3.6':
+  '@offering-protocol/core@0.3.7':
     dependencies:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
@@ -3930,7 +3921,7 @@ snapshots:
 
   '@offering-protocol/directory@0.2.5':
     dependencies:
-      '@offering-protocol/core': 0.3.6
+      '@offering-protocol/core': 0.3.7
 
   '@open-draft/deferred-promise@2.2.0': {}
 

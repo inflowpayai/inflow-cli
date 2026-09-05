@@ -1,5 +1,5 @@
 import type { AuthStorage, ICliCapabilitiesResource } from '@inflowpayai/inflow-core';
-import { Inflow, InflowApiError, MemoryStorage } from '@inflowpayai/inflow-core';
+import { Inflow, InflowApiError, MemoryStorage, SecureStorageError } from '@inflowpayai/inflow-core';
 import { encode, type MppChallenge, type MppClient, renderChallengeHeader } from '@inflowpayai/mpp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing, createMppCli } from '../../../../src/commands/mpp/index.js';
@@ -149,6 +149,16 @@ describe('mpp agent runners', () => {
     const ctx = agentCtxReturningError({ approvalId: 'ap-1' }, {});
     const out = await runCancelCommand(ctx, inflow, storage);
     expect(out).toMatchObject({ code: 'NOT_AUTHENTICATED' });
+  });
+
+  it('runCancelCommand reports a locked vault in agent mode', async () => {
+    const cancelApproval = vi.fn(() =>
+      Promise.reject(new SecureStorageError('vault_locked', 'The InFlow vault is locked.')),
+    );
+    const { inflow, storage } = authed(makeClient(), cancelApproval);
+    const ctx = agentCtxReturningError({ approvalId: 'ap-1' }, {});
+    const out = await runCancelCommand(ctx, inflow, storage);
+    expect(out).toMatchObject({ code: 'VAULT_LOCKED' });
   });
 
   it('runCancelCommand rethrows non-authentication failures', async () => {

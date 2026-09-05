@@ -20,7 +20,7 @@ minimumReleaseAgeExclude:
   - '@aep-foundation/agent@0.4.0'
   - '@aep-foundation/core@0.5.1'
   - '@aep-foundation/platform@0.2.5'
-  - '@offering-protocol/agent@0.4.1'
+  - '@offering-protocol/agent@0.4.2'
   - '@offering-protocol/core@0.3.7'
   - '@offering-protocol/directory@0.2.5'
 
