@@ -94,6 +94,56 @@ export async function sendVaultIpcRequest(
   });
 }
 
+export function inspectVaultSocketPeer(
+  socketPath: string,
+  peerVerifier: VaultSocketPeerVerifier,
+): Promise<VaultSocketPeer> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(socketPath);
+    let settled = false;
+    const settle = (result: { cause: unknown } | { peer: VaultSocketPeer }): void => {
+      if (settled) return;
+      settled = true;
+      socket.removeAllListeners();
+      void closeVaultSocket(socket).then(() => {
+        if ('cause' in result) {
+          reject(normalizePeerInspectionFailure(result.cause));
+        } else resolve(result.peer);
+      });
+    };
+    socket.setTimeout(250, () => {
+      settle({
+        cause: new SecureStorageError('secure_storage_unavailable', 'The InFlow vault daemon is unavailable.'),
+      });
+    });
+    socket.once('error', (cause) => {
+      settle({ cause });
+    });
+    socket.once('connect', () => {
+      Promise.resolve()
+        .then(() => peerVerifier(socket))
+        .then(
+          (peer) => settle({ peer }),
+          (cause: unknown) => settle({ cause }),
+        );
+    });
+  });
+}
+
+function normalizePeerInspectionFailure(cause: unknown): Error {
+  return cause instanceof Error
+    ? cause
+    : new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+}
+
+function closeVaultSocket(socket: Socket): Promise<void> {
+  if (socket.closed) return Promise.resolve();
+  return new Promise((resolve) => {
+    socket.once('close', resolve);
+    socket.destroy();
+  });
+}
+
 function connectAndVerify(socket: Socket, peerVerifier: VaultSocketPeerVerifier | undefined): Promise<void> {
   return new Promise((resolve, reject) => {
     const onConnect = (): void => {
@@ -282,7 +332,7 @@ async function prepareSocketPath(socketPath: string): Promise<void> {
     if (existing.isSymbolicLink() || existing.isDirectory()) {
       throw new SecureStorageError('secure_storage_invalid_path', 'The vault socket path is unsafe.');
     }
-    if (existing.isSocket() && (await isReachableSocket(socketPath))) {
+    if (existing.isSocket() && (await isReachableVaultSocket(socketPath))) {
       throw new SecureStorageError('secure_storage_unavailable', 'The InFlow vault daemon is already running.');
     }
     await rm(socketPath, { force: true });
@@ -292,7 +342,7 @@ async function prepareSocketPath(socketPath: string): Promise<void> {
   }
 }
 
-function isReachableSocket(socketPath: string): Promise<boolean> {
+export function isReachableVaultSocket(socketPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = createConnection(socketPath);
     let settled = false;
@@ -346,3 +396,5 @@ function isMissingFileError(cause: unknown): boolean {
     typeof cause === 'object' && cause !== null && 'code' in cause && (cause as { code?: unknown }).code === 'ENOENT'
   );
 }
+
+export const __testing = { closeVaultSocket, normalizePeerInspectionFailure };

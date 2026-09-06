@@ -213,6 +213,7 @@ export {
   type VaultSocketServer,
 } from './secure-storage/vault-socket.js';
 export { type VaultSocketPeer, type VaultSocketPeerVerifier } from './secure-storage/vault-peer-verifier.js';
+export { shutdownUnverifiedLocalVaultDaemon } from './secure-storage/vault-peer-recovery.js';
 export {
   type VaultIpcError,
   type VaultIpcMessage,

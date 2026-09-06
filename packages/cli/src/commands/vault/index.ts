@@ -7,6 +7,7 @@ import process from 'node:process';
 import {
   LocalVaultClient,
   removeVaultLocalState,
+  shutdownUnverifiedLocalVaultDaemon,
   type LocalVaultDaemonInfo,
   SecureStorageError,
   type VaultLockState,
@@ -50,6 +51,11 @@ type ResetVaultDeps = {
   now: () => number;
   removeLocalState: (paths: ReturnType<typeof vaultFilePaths>) => Promise<void>;
   sleep: (milliseconds: number) => Promise<void>;
+};
+type ReadVaultStatusDeps = {
+  client: Pick<LocalVaultClient, 'status'>;
+  recoverPeerFailure: (cause: unknown, options: LocalVaultDaemonClientOptions) => Promise<void>;
+  sidecarExists: (path: string) => Promise<boolean>;
 };
 
 type VaultStatusFrame = {
@@ -373,6 +379,7 @@ async function resetLocalVaultWithDeps(options: LocalVaultDaemonClientOptions, d
   const daemon = await existingDaemonState(options, deps.client, deps.executablePath);
   if (daemon === 'compatible') {
     await deps.client.reset();
+    await waitForDaemonShutdown(deps);
     return;
   }
   if (daemon === 'incompatible') await shutdownReachableDaemon(deps);
@@ -401,6 +408,10 @@ async function shutdownReachableDaemon(deps: ResetVaultDeps): Promise<void> {
     if (isVaultDaemonUnavailable(cause)) return;
     throw cause;
   }
+  await waitForDaemonShutdown(deps);
+}
+
+async function waitForDaemonShutdown(deps: ResetVaultDeps): Promise<void> {
   const deadline = deps.now() + 2_000;
   while (deps.now() < deadline) {
     try {
@@ -417,15 +428,29 @@ async function shutdownReachableDaemon(deps: ResetVaultDeps): Promise<void> {
 export async function readVaultStatusWithoutStarting(
   options: LocalVaultDaemonClientOptions = {},
 ): Promise<VaultStatus> {
-  const client = new LocalVaultClient(options);
+  return readVaultStatusWithoutStartingWithDeps(options, {
+    client: new LocalVaultClient(options),
+    recoverPeerFailure: recoverVaultPeerVerificationFailure,
+    sidecarExists: vaultSidecarExists,
+  });
+}
+
+async function readVaultStatusWithoutStartingWithDeps(
+  options: LocalVaultDaemonClientOptions,
+  deps: ReadVaultStatusDeps,
+): Promise<VaultStatus> {
   try {
-    return await client.status();
+    return await deps.client.status();
   } catch (cause) {
-    if (!isVaultDaemonUnavailable(cause)) throw cause;
+    if (isVaultPeerRecoveryTrigger(cause)) {
+      await deps.recoverPeerFailure(cause, options);
+    } else if (!isVaultDaemonUnavailable(cause)) {
+      throw cause;
+    }
   }
   return {
     daemonRunning: false,
-    lockState: (await vaultSidecarExists(vaultFilePaths(options.rootDirectory).sidecar)) ? 'locked' : 'not_initialized',
+    lockState: (await deps.sidecarExists(vaultFilePaths(options.rootDirectory).sidecar)) ? 'locked' : 'not_initialized',
   };
 }
 
@@ -442,7 +467,11 @@ async function vaultSidecarExists(path: string): Promise<boolean> {
 /* v8 ignore start */
 export async function ensureLocalVaultDaemon(options: LocalVaultDaemonClientOptions = {}): Promise<LocalVaultClient> {
   const client = new LocalVaultClient(options);
-  if (await canUseDaemon(client, options)) return client;
+  try {
+    if (await canUseDaemon(client, options)) return client;
+  } catch (cause) {
+    await recoverVaultPeerVerificationFailure(cause, options);
+  }
   if (options.rootDirectory === undefined && (usesLinuxVaultService() || process.platform === 'win32')) {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
@@ -665,6 +694,26 @@ function isVaultDaemonUnavailable(cause: unknown): boolean {
   return cause.code === 'ECONNREFUSED' || cause.code === 'EINVAL' || cause.code === 'ENOENT';
 }
 
+function isVaultPeerRecoveryTrigger(cause: unknown, platform: NodeJS.Platform = process.platform): boolean {
+  if (cause instanceof SecureStorageError) {
+    return cause.secureStorageCode === 'secure_storage_peer_verification_failed';
+  }
+  return platform === 'darwin' && hasErrorCode(cause) && (cause.code === 'EPIPE' || cause.code === 'ECONNRESET');
+}
+
+async function recoverVaultPeerVerificationFailure(
+  cause: unknown,
+  options: LocalVaultDaemonClientOptions,
+  recover: typeof shutdownUnverifiedLocalVaultDaemon = shutdownUnverifiedLocalVaultDaemon,
+): Promise<void> {
+  if (!isVaultPeerRecoveryTrigger(cause)) throw cause;
+  try {
+    await recover(options.rootDirectory);
+  } catch {
+    throw cause;
+  }
+}
+
 function isMissingPath(cause: unknown): boolean {
   return hasErrorCode(cause) && cause.code === 'ENOENT';
 }
@@ -684,11 +733,15 @@ export const __testing = {
   ensureLocalVaultUnlockedWithDeps,
   isCompatibleDaemon,
   isVaultDaemonUnavailable,
+  isVaultPeerRecoveryTrigger,
   mapSecureStorageError,
   mapVaultUnlockError,
   parsePolicySetOptions,
   readVaultStatusWithoutStarting,
+  readVaultStatusWithoutStartingWithDeps,
+  recoverVaultPeerVerificationFailure,
   renderPolicy,
   resetLocalVaultWithDeps,
   shutdownReachableDaemon,
+  waitForDaemonShutdown,
 };

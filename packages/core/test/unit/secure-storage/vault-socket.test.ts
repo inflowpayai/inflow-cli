@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { createConnection, createServer, type Socket } from 'node:net';
+import { createConnection, createServer, Socket } from 'node:net';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,9 @@ import type {
 } from '../../../src/secure-storage/vault-backend.js';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import {
+  __testing,
+  inspectVaultSocketPeer,
+  isReachableVaultSocket,
   sendVaultIpcRequest,
   startVaultSocketServer,
   type VaultSocketServer,
@@ -441,6 +444,75 @@ describe('vault socket transport', () => {
     await expect(sendVaultIpcRequest(socketPath, request('vault.status'))).rejects.toMatchObject({
       secureStorageCode: 'secure_storage_corrupt',
     });
+  });
+
+  it('inspects a connected peer and reports socket reachability', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'run', 'vault.sock');
+    servers.push(await startVaultSocketServer({ backend: new SocketVaultBackend(), socketPath }));
+    const peer = { path: '/old/inflow', pid: 123, uid: 501 };
+    const verifier = vi.fn(() => peer);
+
+    await expect(isReachableVaultSocket(socketPath)).resolves.toBe(true);
+    await expect(inspectVaultSocketPeer(socketPath, verifier)).resolves.toEqual(peer);
+    expect(verifier).toHaveBeenCalledOnce();
+
+    await servers.pop()?.close();
+    await expect(isReachableVaultSocket(socketPath)).resolves.toBe(false);
+  });
+
+  it('waits for an inspection connection to close and handles an already closed socket', async () => {
+    const socket = new Socket();
+    const events: string[] = [];
+    socket.once('close', () => events.push('close'));
+
+    await __testing.closeVaultSocket(socket).then(() => events.push('resolved'));
+    expect(socket.closed).toBe(true);
+    expect(events).toEqual(['close', 'resolved']);
+    await expect(__testing.closeVaultSocket(socket)).resolves.toBeUndefined();
+  });
+
+  it('propagates peer inspection failures', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'run', 'vault.sock');
+    servers.push(await startVaultSocketServer({ backend: new SocketVaultBackend(), socketPath }));
+
+    await expect(
+      inspectVaultSocketPeer(socketPath, () => {
+        throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+      }),
+    ).rejects.toMatchObject({ secureStorageCode: 'secure_storage_peer_verification_failed' });
+  });
+
+  it('normalizes non-error peer inspection failures', () => {
+    expect(__testing.normalizePeerInspectionFailure('invalid peer')).toMatchObject({
+      secureStorageCode: 'secure_storage_peer_verification_failed',
+    });
+    const cause = new Error('inspection failed');
+    expect(__testing.normalizePeerInspectionFailure(cause)).toBe(cause);
+  });
+
+  it('times out peer inspection and ignores its later result', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'run', 'vault.sock');
+    servers.push(await startVaultSocketServer({ backend: new SocketVaultBackend(), socketPath }));
+    let resolvePeer: ((peer: { path: string; pid: number; uid: number }) => void) | undefined;
+    const verifier = new Promise<{ path: string; pid: number; uid: number }>((resolve) => {
+      resolvePeer = resolve;
+    });
+
+    await expect(inspectVaultSocketPeer(socketPath, () => verifier)).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_unavailable',
+    });
+    resolvePeer?.({ path: '/old/inflow', pid: 123, uid: 501 });
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  it('reports an unavailable socket during peer inspection', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'missing.sock');
+
+    await expect(inspectVaultSocketPeer(socketPath, vi.fn())).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('rejects truncated socket responses', async () => {
