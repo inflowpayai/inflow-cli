@@ -461,8 +461,8 @@ The `x402` command group drives the buyer-side of the [x402 protocol](https://x4
 `@inflowpayai/x402-buyer`'s two-phase signing flow with both TTY and agent renderings.
 
 InFlow treasury payments cannot authorize Permit2. `inspect`, `x402 inspect`, and `x402 pay` exclude `upto` offers and
-offers declaring `extra.assetTransferMethod: "permit2"`, including `exact` offers. Explicit filters cannot select
-these offers. `x402 decode` preserves the raw header for diagnostics.
+offers declaring `extra.assetTransferMethod: "permit2"`, including `exact` offers. Explicit filters cannot select these
+offers. `x402 decode` preserves the raw header for diagnostics.
 
 ### `x402 pay`
 
