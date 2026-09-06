@@ -155,6 +155,9 @@ export class LocalVaultClient {
             request,
             createClientPeerVerifier(this.socketPath, this.rootDirectory),
           );
+    if (!response.ok && response.error.code === 'secure_storage_peer_verification_failed') {
+      throw new SecureStorageError(codeFromResponse(response.error.code), response.error.message);
+    }
     if (response.id !== request.id) {
       throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC response is malformed.');
     }

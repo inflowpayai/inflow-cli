@@ -91,6 +91,24 @@ export function createVaultSocketPeerVerifier(
   };
 }
 
+export function createSameUserVaultSocketPeerVerifier(
+  options: VaultPeerVerifierOptions = {},
+  dependencies: VaultPeerVerifierDependencies = defaultPeerVerifierDependencies,
+): VaultSocketPeerVerifier {
+  const config = createVaultPeerVerificationConfig(options, dependencies);
+  verifyVaultPeerVerificationConfig(config, dependencies);
+  const native = dependencies.loadNativeModule(config.nativeModulePath);
+
+  return (socket) => {
+    const peer = native.peerInfo(socketFileDescriptor(socket));
+    const currentUserId = dependencies.currentUserId();
+    if (currentUserId === undefined || peer.uid !== currentUserId) {
+      throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+    }
+    return peer;
+  };
+}
+
 export function verifyTransferredVaultSocketPeer(socket: Socket, attestedPeer: VaultSocketPeer): VaultSocketPeer {
   const config = createVaultPeerVerificationConfig();
   verifyVaultPeerVerificationConfig(config);

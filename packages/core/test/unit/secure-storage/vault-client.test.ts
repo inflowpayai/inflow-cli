@@ -121,6 +121,26 @@ describe('LocalVaultClient', () => {
     });
   });
 
+  it('accepts a pre-request peer-verification rejection without trusting other mismatched errors', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
+    let peerRejection = true;
+    await listenWithResponder(tmpDir, () => ({
+      error: peerRejection
+        ? { code: 'secure_storage_peer_verification_failed', message: 'Vault peer verification failed.' }
+        : { code: 'secure_storage_unavailable', message: 'Unavailable.' },
+      id: 'unknown',
+      ok: false,
+      version: 1,
+    }));
+    const client = new LocalVaultClient({ rootDirectory: tmpDir });
+
+    await expect(client.status()).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_peer_verification_failed',
+    });
+    peerRejection = false;
+    await expect(client.status()).rejects.toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
+  });
+
   it('sends lifecycle and policy update requests', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
     const methods: string[] = [];

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import {
   __testing,
+  createSameUserVaultSocketPeerVerifier,
   createVaultSocketPeerVerifier,
   shouldRequireVaultPeerVerification,
   socketFileDescriptor,
@@ -83,6 +84,38 @@ describe('vault peer verifier', () => {
       uid: 501,
     });
     expect(verified).toEqual([{ path: '/Applications/InFlow.app/Contents/MacOS/inflow', teamId: 'B96U57DTR2' }]);
+  });
+
+  it('allows shutdown inspection for a same-user peer without trusting its executable', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const verifySignature = vi.fn();
+    const verifier = createSameUserVaultSocketPeerVerifier(
+      { nativeModulePath: '/native/vault_peer_darwin.node' },
+      dependencies({
+        currentUserId: 501,
+        peer: { path: '/different/inflow', pid: 123, uid: 501 },
+        realpaths: new Map(),
+        verifySignature,
+      }),
+    );
+
+    expect(verifier(socketWithFd(42))).toEqual({ path: '/different/inflow', pid: 123, uid: 501 });
+    expect(verifySignature).not.toHaveBeenCalled();
+  });
+
+  it('refuses shutdown inspection for a different or unavailable user identity', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    for (const currentUserId of [501, undefined]) {
+      const verifier = createSameUserVaultSocketPeerVerifier(
+        { nativeModulePath: '/native/vault_peer_darwin.node' },
+        dependencies({
+          currentUserId,
+          peer: { path: '/different/inflow', pid: 123, uid: 502 },
+          realpaths: new Map(),
+        }),
+      );
+      expect(() => verifier(socketWithFd(42))).toThrow('Vault peer verification failed.');
+    }
   });
 
   it('accepts an explicit expected Team ID for tests and future packaging variants', () => {

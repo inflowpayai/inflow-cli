@@ -164,6 +164,36 @@ describe('vault command runners', () => {
     });
   });
 
+  it('recovers peer-verification failures before reporting local status', async () => {
+    const cause = new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+    const recoverPeerFailure = vi.fn(() => Promise.resolve());
+    await expect(
+      __testing.readVaultStatusWithoutStartingWithDeps(
+        { rootDirectory: '/vault' },
+        {
+          client: { status: vi.fn(() => Promise.reject(cause)) },
+          recoverPeerFailure,
+          sidecarExists: vi.fn(() => Promise.resolve(true)),
+        },
+      ),
+    ).resolves.toEqual({ daemonRunning: false, lockState: 'locked' });
+    expect(recoverPeerFailure).toHaveBeenCalledWith(cause, { rootDirectory: '/vault' });
+  });
+
+  it('propagates unexpected status discovery failures', async () => {
+    const cause = new Error('status failed');
+    await expect(
+      __testing.readVaultStatusWithoutStartingWithDeps(
+        {},
+        {
+          client: { status: vi.fn(() => Promise.reject(cause)) },
+          recoverPeerFailure: vi.fn(() => Promise.resolve()),
+          sidecarExists: vi.fn(() => Promise.resolve(false)),
+        },
+      ),
+    ).rejects.toBe(cause);
+  });
+
   it('reports unlocked status for agent unlock when the vault is already unlocked', async () => {
     const harness = deps();
     harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'unlocked' });
@@ -424,6 +454,11 @@ describe('vault command runners', () => {
 
   it('resets through a compatible daemon without deleting underneath it', async () => {
     const harness = resetDeps();
+    harness.client.status
+      .mockResolvedValueOnce({ daemonRunning: true, lockState: 'unlocked' })
+      .mockRejectedValueOnce(
+        new SecureStorageError('secure_storage_unavailable', 'The InFlow vault daemon is unavailable.'),
+      );
 
     await expect(
       __testing.resetLocalVaultWithDeps({ buildId: 'build-1', cliVersion: '0.9.0' }, harness),
@@ -739,6 +774,37 @@ describe('vault command runners', () => {
     expect(__testing.isVaultDaemonUnavailable({ code: 'EACCES' })).toBe(false);
     expect(__testing.isVaultDaemonUnavailable(new Error('other'))).toBe(false);
     expect(__testing.isVaultDaemonUnavailable(new SecureStorageError('secure_storage_corrupt', 'corrupt'))).toBe(false);
+  });
+
+  it('recovers only peer-verification failures', async () => {
+    const cause = new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+    const recover = vi.fn(() => Promise.resolve());
+
+    await expect(__testing.recoverVaultPeerVerificationFailure(cause, {}, recover)).resolves.toBeUndefined();
+    expect(recover).toHaveBeenCalledWith(undefined);
+
+    const other = new SecureStorageError('secure_storage_unavailable', 'unavailable');
+    await expect(__testing.recoverVaultPeerVerificationFailure(other, {}, recover)).rejects.toBe(other);
+    expect(recover).toHaveBeenCalledOnce();
+  });
+
+  it('recognizes macOS peer rejection transport errors as recovery triggers', () => {
+    const brokenPipe = Object.assign(new Error('closed'), { code: 'EPIPE' });
+    expect(__testing.isVaultPeerRecoveryTrigger(brokenPipe, 'darwin')).toBe(true);
+    expect(__testing.isVaultPeerRecoveryTrigger(brokenPipe, 'linux')).toBe(false);
+    expect(
+      __testing.isVaultPeerRecoveryTrigger(Object.assign(new Error('reset'), { code: 'ECONNRESET' }), 'darwin'),
+    ).toBe(true);
+    expect(__testing.isVaultPeerRecoveryTrigger(Object.assign(new Error('denied'), { code: 'EACCES' }), 'darwin')).toBe(
+      false,
+    );
+  });
+
+  it('preserves the original peer-verification error when recovery is refused', async () => {
+    const cause = new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+    const recover = vi.fn(() => Promise.reject(new Error('unsafe recovery')));
+
+    await expect(__testing.recoverVaultPeerVerificationFailure(cause, {}, recover)).rejects.toBe(cause);
   });
 
   it('registers the visible vault command surface', () => {

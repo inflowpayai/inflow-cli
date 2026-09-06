@@ -2,7 +2,7 @@ import { spawn, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
   isNpmShimAgentMode,
   renderNpmShimAgentPayload,
@@ -16,6 +16,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(__dirname, '../../');
 const DIST_CLI = resolve(PACKAGE_ROOT, 'dist/cli.js');
 const DIST_NPM_SHIM = resolve(PACKAGE_ROOT, 'dist/npm-shim.js');
+const TEST_HOME = mkdtempSync('/tmp/inflow-cli-tests-');
+const TEST_ENV = { ...process.env, HOME: TEST_HOME, NO_UPDATE_NOTIFIER: '1' };
 const PKG_VERSION: string = (
   JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'package.json'), 'utf-8')) as { version: string }
 ).version;
@@ -197,12 +199,27 @@ function runScript(script: string, args: string[], options: RunOptions = {}): Pr
   });
 }
 
+async function resetTestVault(env: NodeJS.ProcessEnv): Promise<void> {
+  const result = await run(['vault', 'reset', '--force', '--format', 'json'], { env });
+  if (result.exitCode !== 0) {
+    throw new Error(`Test vault cleanup failed: ${result.stderr || result.stdout}`);
+  }
+}
+
+afterAll(async () => {
+  try {
+    if (existsSync(DIST_CLI)) await resetTestVault(TEST_ENV);
+  } finally {
+    rmSync(TEST_HOME, { force: true, recursive: true });
+  }
+});
+
 describe.skipIf(!existsSync(DIST_NPM_SHIM))(
   'published npm shim (requires `pnpm --filter @inflowpayai/inflow build` first)',
   () => {
     it('prints the signed-native install message for humans and exits non-zero', async () => {
       const { exitCode, stdout, stderr } = await runScript(DIST_NPM_SHIM, ['--help'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV },
       });
       expect(exitCode).toBe(1);
       expect(stdout).toBe('');
@@ -213,7 +230,7 @@ describe.skipIf(!existsSync(DIST_NPM_SHIM))(
 
     it('prints a stable JSON envelope for agent-mode invocations', async () => {
       const { exitCode, stdout, stderr } = await runScript(DIST_NPM_SHIM, ['--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(1);
       expect(stderr).toBe('');
@@ -228,7 +245,7 @@ describe.skipIf(!existsSync(DIST_NPM_SHIM))(
 
     it('blocks the legacy npm MCP command path before any credential store can be opened', async () => {
       const { exitCode, stdout, stderr } = await runScript(DIST_NPM_SHIM, ['--mcp'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(1);
       expect(stderr).toBe('');
@@ -392,7 +409,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('does not dispatch the internal user command', async () => {
       const { exitCode, stdout, stderr } = await run(['user', 'get', '--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).not.toBe(0);
       expect(`${stdout}${stderr}`).not.toContain('"userId"');
@@ -400,7 +417,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('rejects invalid hidden daemon modes before command registration', async () => {
       const { exitCode, stderr } = await run(['--daemon', 'nope'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(2);
       expect(stderr).toContain('Unknown daemon mode: nope');
@@ -414,7 +431,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('rejects an invalid --environment with exit code 2 and a stderr note', async () => {
       const { exitCode, stderr } = await run(['--environment', 'staging', '--help'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(2);
       expect(stderr).toContain(
@@ -425,7 +442,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
     it('rejects an invalid INFLOW_ENVIRONMENT env value with exit code 2', async () => {
       const { exitCode, stderr } = await run(['--help'], {
         env: {
-          ...process.env,
+          ...TEST_ENV,
           INFLOW_ENVIRONMENT: 'foo',
           NO_UPDATE_NOTIFIER: '1',
         },
@@ -438,21 +455,21 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('strips --auth + path before incur sees them', async () => {
       const { exitCode } = await run(['--auth', '/tmp/inflow-test-auth.json', '--help'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
     });
 
     it('strips --sandbox before incur sees it', async () => {
       const { exitCode } = await run(['--sandbox', '--help'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
     });
 
     it('strips --api-key + value before incur sees them', async () => {
       const { exitCode } = await run(['--api-key', 'inflow_test_key', '--help'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
     });
@@ -471,7 +488,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
           'json',
         ],
         {
-          env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+          env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
         },
       );
       expect(exitCode).toBe(0);
@@ -482,14 +499,16 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('auth status uses platform-local vault storage on cold start', async () => {
       const root = mkdtempSync('/tmp/inflow-home-');
+      const env = { ...TEST_ENV, HOME: root, NO_UPDATE_NOTIFIER: '1' };
       try {
         const { exitCode, stdout } = await run(['auth', 'status', '--format', 'json'], {
-          env: { ...process.env, HOME: root, NO_UPDATE_NOTIFIER: '1' },
+          env,
         });
         expect(exitCode).toBe(0);
         const frames = JSON.parse(stdout) as { authenticated?: boolean }[];
         expect(frames[0]?.authenticated).toBe(false);
       } finally {
+        await resetTestVault(env);
         rmSync(root, { force: true, recursive: true });
       }
     });
@@ -502,7 +521,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
       ];
       for (const args of cases) {
         const { exitCode, stdout } = await run([...args, '--format', 'json'], {
-          env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+          env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
         });
         expect(exitCode).toBe(0);
         const frames = JSON.parse(stdout) as { credentials_path?: string }[];
@@ -522,7 +541,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
           'json',
         ],
         {
-          env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+          env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
         },
       );
       expect(exitCode).toBe(0);
@@ -532,7 +551,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('rejects invalid boolean global flag assignments before command dispatch', async () => {
       const { exitCode, stderr } = await run(['--verbose=maybe', '--help'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(2);
       expect(stderr).toContain("Invalid --verbose value: maybe. Expected 'true' or 'false'.");
@@ -540,7 +559,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('reports a missing --format value before command dispatch', async () => {
       const { exitCode, stdout } = await run(['auth', 'status', '--format'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(1);
       expect(stdout).toContain('Missing value for flag: --format');
@@ -548,13 +567,15 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('accepts an assigned output format', async () => {
       const root = mkdtempSync('/tmp/inflow-format-assignment-');
+      const env = { ...TEST_ENV, HOME: root, NO_UPDATE_NOTIFIER: '1' };
       try {
         const { exitCode, stdout } = await run(['auth', 'status', '--format=json'], {
-          env: { ...process.env, HOME: root, NO_UPDATE_NOTIFIER: '1' },
+          env,
         });
         expect(exitCode).toBe(0);
         expect(JSON.parse(stdout)).toEqual(expect.any(Array));
       } finally {
+        await resetTestVault(env);
         rmSync(root, { force: true, recursive: true });
       }
     });
@@ -563,7 +584,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
       const { exitCode, stdout } = await run(
         ['--auth', `/tmp/inflow-test-md-${String(process.pid)}.json`, 'auth', 'status', '--format', 'md'],
         {
-          env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+          env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
         },
       );
       expect(exitCode).toBe(0);
@@ -583,7 +604,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('--skill prints the bundled SKILL.md body without YAML frontmatter', async () => {
       const { exitCode, stdout, stderr } = await run(['--skill'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       expect(stderr).toBe('');
@@ -595,7 +616,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
     });
 
     it('--skill <name> and --skill=<name> match the default --skill output', async () => {
-      const env = { ...process.env, NO_UPDATE_NOTIFIER: '1' };
+      const env = { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' };
       const bare = await run(['--skill'], { env });
       const named = await run(['--skill', 'agentic-payments'], { env });
       const assigned = await run(['--skill=agentic-payments'], { env });
@@ -607,7 +628,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('--skill agentic-enrollment prints the enrollment playbook without frontmatter', async () => {
       const { exitCode, stdout, stderr } = await run(['--skill', 'agentic-enrollment'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       expect(stderr).toBe('');
@@ -618,7 +639,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('--skill agentic-discovery prints the discovery playbook without frontmatter', async () => {
       const { exitCode, stdout, stderr } = await run(['--skill', 'agentic-discovery'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       expect(stderr).toBe('');
@@ -629,7 +650,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('--skill with an unknown name exits 1 and lists the available skills on stderr', async () => {
       const { exitCode, stdout, stderr } = await run(['--skill', 'no-such-skill'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(1);
       expect(stdout).toBe('');
@@ -641,7 +662,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('--bootstrap prints the agent setup guide and exits 0', async () => {
       const { exitCode, stdout, stderr } = await run(['--bootstrap'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       expect(stderr).toBe('');
@@ -652,7 +673,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it.each(['--llms', '--llms-full'] as const)('%s omits the user command', async (flag) => {
       const { exitCode, stdout } = await run([flag, '--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       const manifest = JSON.parse(stdout) as { commands: { name: string }[] };
@@ -662,7 +683,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('--llms manifest lists the balances list command', async () => {
       const { exitCode, stdout } = await run(['--llms', '--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       const manifest = JSON.parse(stdout) as {
@@ -675,7 +696,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('--llms manifest lists the deposit-addresses list command', async () => {
       const { exitCode, stdout } = await run(['--llms', '--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       const manifest = JSON.parse(stdout) as {
@@ -688,7 +709,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('--llms manifest contains the ODP command descriptions', async () => {
       const { exitCode, stdout } = await run(['--llms', '--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       const manifest = JSON.parse(stdout) as {
@@ -713,7 +734,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it.each(['--llms', '--llms-full'] as const)('%s lists every AEP command', async (flag) => {
       const { exitCode, stdout } = await run([flag, '--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       const manifest = JSON.parse(stdout) as { commands: { name: string }[] };
@@ -723,7 +744,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it.each(['--llms', '--llms-full'] as const)('%s lists every vault command', async (flag) => {
       const { exitCode, stdout } = await run([flag, '--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       const manifest = JSON.parse(stdout) as { commands: { name: string }[] };
@@ -733,7 +754,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('balances list --schema returns an empty-properties JSON Schema', async () => {
       const { exitCode, stdout } = await run(['balances', 'list', '--schema', '--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       const parsed = JSON.parse(stdout) as {
@@ -745,7 +766,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it('deposit-addresses list --schema returns an empty-properties JSON Schema', async () => {
       const { exitCode, stdout } = await run(['deposit-addresses', 'list', '--schema', '--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(exitCode).toBe(0);
       const parsed = JSON.parse(stdout) as {
@@ -757,7 +778,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
 
     it.each(CLI_SCHEMA_COMMANDS)('%s exposes a JSON Schema without starting runtime work', async (command) => {
       const { exitCode, stdout, stderr } = await run([...command.split(' '), '--schema', '--format', 'json'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
       });
       expect(stderr).toBe('');
       expect(exitCode).toBe(0);
@@ -783,7 +804,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
           params: {},
         }) + '\n';
       const { exitCode, stdout } = await run(['--mcp'], {
-        env: { ...process.env, NO_UPDATE_NOTIFIER: '1' },
+        env: { ...TEST_ENV, NO_UPDATE_NOTIFIER: '1' },
         stdin: request,
       });
       expect(exitCode).toBe(0);
@@ -888,7 +909,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
         .join('\n');
       try {
         const { exitCode, stdout } = await run(['--mcp'], {
-          env: { ...process.env, HOME: root, NO_UPDATE_NOTIFIER: '1' },
+          env: { ...TEST_ENV, HOME: root, NO_UPDATE_NOTIFIER: '1' },
           stdin: `${request}\n`,
         });
         expect(exitCode).toBe(0);

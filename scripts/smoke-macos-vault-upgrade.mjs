@@ -8,8 +8,9 @@ import { join, resolve } from 'node:path';
 const previousApp = requiredPath('INFLOW_PREVIOUS_PACKAGED_APP');
 const currentApp = requiredPath('INFLOW_CURRENT_PACKAGED_APP');
 const testHome = mkdtempSync('/private/tmp/ifv-transition-');
-const installedApp = join(testHome, 'Applications/InFlow.app');
-const executable = join(installedApp, 'Contents/MacOS/inflow');
+const previousInstalledApp = join(testHome, 'Applications/previous/InFlow.app');
+const currentInstalledApp = join(testHome, 'Applications/current/InFlow.app');
+let executable = join(previousInstalledApp, 'Contents/MacOS/inflow');
 const vaultRoot = join(testHome, 'Library/Application Support/InFlow');
 const socketPath = join(vaultRoot, 'run/vault.sock');
 const passphrase = `transition-passphrase-${process.pid}`;
@@ -23,7 +24,8 @@ const environment = {
 let server;
 try {
   requireDistinctSignedApps();
-  installApp(previousApp);
+  installApp(previousApp, previousInstalledApp);
+  installApp(currentApp, currentInstalledApp);
   const endpoint = await startUserServer();
 
   await runPty([executable, 'vault', 'unlock'], passphrase, 'Vault initialized and unlocked.');
@@ -34,7 +36,7 @@ try {
   await expectAuthenticated();
   const previousPid = packagedDaemonPid();
 
-  installApp(currentApp);
+  executable = join(currentInstalledApp, 'Contents/MacOS/inflow');
   await expectFailure([executable, 'auth', 'status', '--format', 'json'], 'The InFlow vault is locked.');
   await waitFor(() => !processExists(previousPid), 'The previous daemon remained alive after upgrade.');
   const currentPid = packagedDaemonPid();
@@ -43,7 +45,7 @@ try {
   await expectLockUnlock();
   assertSecretsAbsentFromVaultFiles();
 
-  installApp(previousApp);
+  executable = join(previousInstalledApp, 'Contents/MacOS/inflow');
   await expectJson([executable, 'vault', 'lock', '--format', 'json'], { locked: true });
   await waitFor(() => !processExists(currentPid), 'The current daemon remained alive after downgrade.');
   const downgradedPid = packagedDaemonPid();
@@ -51,7 +53,7 @@ try {
   await expectAuthenticated();
   await expectLockUnlock();
 
-  installApp(currentApp);
+  executable = join(currentInstalledApp, 'Contents/MacOS/inflow');
   await expectFailure([executable, 'auth', 'status', '--format', 'json'], 'The InFlow vault is locked.');
   await waitFor(() => !processExists(downgradedPid), 'The downgraded daemon remained alive after re-upgrade.');
   const finalPid = packagedDaemonPid();
@@ -86,9 +88,9 @@ function requireDistinctSignedApps() {
   }
 }
 
-function installApp(source) {
-  rmSync(installedApp, { force: true, recursive: true });
-  const result = spawnSync('/usr/bin/ditto', [source, installedApp], { encoding: 'utf8' });
+function installApp(source, destination) {
+  rmSync(destination, { force: true, recursive: true });
+  const result = spawnSync('/usr/bin/ditto', [source, destination], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(`Could not install ${source}: ${result.stderr}`);
 }
 
