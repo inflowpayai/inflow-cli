@@ -1,5 +1,45 @@
 # @inflowpayai/inflow
 
+## 0.12.2
+
+### Patch Changes
+
+- [#131](https://github.com/inflowpayai/inflow-cli/pull/131)
+  [`a408315`](https://github.com/inflowpayai/inflow-cli/commit/a4083152fcae20427926122e08e3d171c2f9dc39) Thanks
+  [@nkavian](https://github.com/nkavian)! - Start the local vault daemon for vault status and interactive authentication
+  status. Report an unauthenticated agent status without starting a vault that has not been initialized.
+
+- [#119](https://github.com/inflowpayai/inflow-cli/pull/119)
+  [`6596cfa`](https://github.com/inflowpayai/inflow-cli/commit/6596cfacdc09aa8d602fd3d610f0b9e8f711418f) Thanks
+  [@nkavian](https://github.com/nkavian)! - Show live progress while preparing an interactive AEP enrollment.
+
+- [#132](https://github.com/inflowpayai/inflow-cli/pull/132)
+  [`9a676dd`](https://github.com/inflowpayai/inflow-cli/commit/9a676dd4fd9ae59a0f12e67a6b3e4566758a5744) Thanks
+  [@nkavian](https://github.com/nkavian)! - Update the AEP, ODP, and InFlow SDK dependencies.
+
+- [#122](https://github.com/inflowpayai/inflow-cli/pull/122)
+  [`cbe67d5`](https://github.com/inflowpayai/inflow-cli/commit/cbe67d53204fd8fbf4600cf3dd4f04c2a4d09f55) Thanks
+  [@nkavian](https://github.com/nkavian)! - Display ODP-advertised MCP endpoints during Service inspection.
+
+- [#129](https://github.com/inflowpayai/inflow-cli/pull/129)
+  [`37b7786`](https://github.com/inflowpayai/inflow-cli/commit/37b778646c5f5d83401dec355c0724964b1288bf) Thanks
+  [@mnebliienko](https://github.com/mnebliienko)! - Preserve stable error codes in subscription MCP tool failures.
+
+- [#123](https://github.com/inflowpayai/inflow-cli/pull/123)
+  [`fb43b07`](https://github.com/inflowpayai/inflow-cli/commit/fb43b07d85cfaf60abc8676a1ebc94c5076fb82d) Thanks
+  [@nkavian](https://github.com/nkavian)! - Update Offering Discovery Protocol support for payment origin declarations
+  and preserve Service identifiers in directory results.
+
+- [#127](https://github.com/inflowpayai/inflow-cli/pull/127)
+  [`c5c30e0`](https://github.com/inflowpayai/inflow-cli/commit/c5c30e0e40e38ef5a97bba3808b8b85416feabae) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add capability-aware Trusted Agent Protocol request signing and
+  redirect-safe transport support.
+
+- [#132](https://github.com/inflowpayai/inflow-cli/pull/132)
+  [`9a676dd`](https://github.com/inflowpayai/inflow-cli/commit/9a676dd4fd9ae59a0f12e67a6b3e4566758a5744) Thanks
+  [@nkavian](https://github.com/nkavian)! - Prompt interactive users to unlock the vault before authentication status,
+  combined inspection, and payment cancellation commands.
+
 ## 0.12.1
 
 ### Patch Changes
