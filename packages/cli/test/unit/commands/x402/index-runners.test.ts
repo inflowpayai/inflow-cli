@@ -1,5 +1,5 @@
 import type { AuthStorage, ICliCapabilitiesResource } from '@inflowpayai/inflow-core';
-import { Inflow, InflowApiError, MemoryStorage } from '@inflowpayai/inflow-core';
+import { Inflow, InflowApiError, MemoryStorage, SecureStorageError } from '@inflowpayai/inflow-core';
 import {
   X402AdapterRoutingError,
   X402ApprovalFailedError,
@@ -1047,6 +1047,18 @@ describe('runCancelCommand', () => {
     const { inflow, storage } = authedResources(client);
     const result = await runCancelCommand(ctx, inflow, storage);
     expect(result).toMatchObject({ code: 'NOT_AUTHENTICATED' });
+  });
+
+  it('reports a locked vault in agent mode', async () => {
+    const client = makeClient({
+      cancelApproval: vi.fn(() =>
+        Promise.reject(new SecureStorageError('vault_locked', 'The InFlow vault is locked.')),
+      ),
+    });
+    const ctx = agentContextReturningError({ approvalId: 'appr_1' }, {});
+    const { inflow, storage } = authedResources(client);
+    const result = await runCancelCommand(ctx, inflow, storage);
+    expect(result).toMatchObject({ code: 'VAULT_LOCKED' });
   });
 
   it('rethrows non-authentication failures', async () => {

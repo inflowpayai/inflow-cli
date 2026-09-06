@@ -1376,8 +1376,22 @@ async function runRevoke(c: Context, inflow: Inflow, authStorage: AuthStorage): 
           ? { grantType: options.grantType as string }
           : { credentialId: options.credentialId };
     if ('allGrantTypes' in selector) await revokeService({ ...base, allGrantTypes: true });
-    else if ('credentialId' in selector) await revokeService({ ...base, credentialId: selector.credentialId });
-    else await revokeService({ ...base, grantType: selector.grantType });
+    else if ('credentialId' in selector) {
+      const credential = await aepStorage
+        .credentials()
+        .findCredential(inspect.document.service.did, selector.credentialId);
+      if (credential === undefined) {
+        throw new CliInputError(
+          'AEP_CREDENTIAL_NOT_FOUND',
+          `No stored AEP credential exists with identifier ${selector.credentialId}.`,
+        );
+      }
+      await revokeService({
+        ...base,
+        credentialId: selector.credentialId,
+        grantType: credential.grantType,
+      });
+    } else await revokeService({ ...base, grantType: selector.grantType });
     aepStorage.deleteCredentials(inspect.document.service.did, selector);
     const frame = sanitizeDeep({
       revoked: true,

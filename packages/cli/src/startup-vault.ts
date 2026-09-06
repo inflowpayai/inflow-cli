@@ -45,21 +45,33 @@ export function normalizeFormatAssignments(argv: string[]): void {
   }
 }
 
-export function shouldStartVaultDaemon(argv: readonly string[], hasDirectApiKey = false): boolean {
+export function shouldStartVaultDaemon(
+  argv: readonly string[],
+  options: { hasDirectApiKey?: boolean; hasInitializedVault?: boolean; isAgent?: boolean } = {},
+): boolean {
   if (shouldBypassVault(argv)) return false;
   const [group, subcommand] = commandPath(argv);
   if (group === 'auth') {
-    return isOneOf(subcommand, 'login', 'logout') || (!hasDirectApiKey && subcommand === 'status');
+    return (
+      isOneOf(subcommand, 'login', 'logout') ||
+      (options.hasDirectApiKey !== true &&
+        subcommand === 'status' &&
+        (options.isAgent !== true || options.hasInitializedVault !== false))
+    );
   }
   if (group === 'vault') return subcommand === 'status';
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
+  if (group === 'inspect') return shouldConfigureOdpServiceTransport(argv);
   if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
   if (group === 'mpp') {
     return (
-      requiresMppLocalState(argv, subcommand) || (!hasDirectApiKey && isOneOf(subcommand, 'pay', 'status', 'supported'))
+      requiresMppLocalState(argv, subcommand) ||
+      (options.hasDirectApiKey !== true && isOneOf(subcommand, 'cancel', 'pay', 'status', 'supported'))
     );
   }
-  if (group === 'x402') return !hasDirectApiKey && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
+  if (group === 'x402') {
+    return options.hasDirectApiKey !== true && isOneOf(subcommand, 'cancel', 'fetch', 'pay', 'status', 'supported');
+  }
   if (group === 'subscriptions') return isOneOf(subcommand, 'cancel', 'fetch');
   return false;
 }
@@ -71,13 +83,15 @@ export function shouldReconcileVaultDaemon(argv: readonly string[], hasDirectApi
     return isOneOf(subcommand, 'login', 'logout') || (!hasDirectApiKey && subcommand === 'status');
   }
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
+  if (group === 'inspect') return shouldConfigureOdpServiceTransport(argv);
   if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
   if (group === 'mpp') {
     return (
-      requiresMppLocalState(argv, subcommand) || (!hasDirectApiKey && isOneOf(subcommand, 'pay', 'status', 'supported'))
+      requiresMppLocalState(argv, subcommand) ||
+      (!hasDirectApiKey && isOneOf(subcommand, 'cancel', 'pay', 'status', 'supported'))
     );
   }
-  if (group === 'x402') return !hasDirectApiKey && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
+  if (group === 'x402') return !hasDirectApiKey && isOneOf(subcommand, 'cancel', 'fetch', 'pay', 'status', 'supported');
   if (group === 'subscriptions' && isOneOf(subcommand, 'cancel', 'fetch')) return true;
   if (hasDirectApiKey) return false;
   if (group === 'balances' || group === 'deposit-addresses') return subcommand === 'list';
@@ -91,17 +105,20 @@ export function shouldUnlockVault(
 ): boolean {
   if (options.isAgent === true || shouldBypassVault(argv)) return false;
   const [group, subcommand] = commandPath(argv);
-  if (group === 'auth') return subcommand === 'login';
+  if (group === 'auth') {
+    return subcommand === 'login' || (options.hasDirectApiKey !== true && subcommand === 'status');
+  }
   if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
+  if (group === 'inspect') return shouldConfigureOdpServiceTransport(argv);
   if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
   if (group === 'mpp') {
     return (
       requiresMppLocalState(argv, subcommand) ||
-      (options.hasDirectApiKey !== true && isOneOf(subcommand, 'pay', 'status', 'supported'))
+      (options.hasDirectApiKey !== true && isOneOf(subcommand, 'cancel', 'pay', 'status', 'supported'))
     );
   }
   if (group === 'x402') {
-    return options.hasDirectApiKey !== true && isOneOf(subcommand, 'fetch', 'pay', 'status', 'supported');
+    return options.hasDirectApiKey !== true && isOneOf(subcommand, 'cancel', 'fetch', 'pay', 'status', 'supported');
   }
   if (group === 'subscriptions' && isOneOf(subcommand, 'cancel', 'fetch')) return true;
   if (options.hasDirectApiKey === true) return false;

@@ -13,7 +13,12 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { setAllowUnusedPatches } from './local-link-workspace.mjs';
+import {
+  managedOverrides,
+  removeManagedOverrides,
+  replaceManagedOverrides,
+  setAllowUnusedPatches,
+} from './local-link-workspace.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_PKG_JSON = path.join(REPO_ROOT, 'package.json');
@@ -38,13 +43,6 @@ const UNPUBLISHED = [];
 const LINKED = [...PUBLISHED, ...UNPUBLISHED];
 const INFLOW_NODE_AEP_LINKED = ['@aep-foundation/core', '@aep-foundation/express', '@aep-foundation/service'];
 
-const BEGIN_MARK = '# >>> link-local-inflow-node:overrides';
-const END_MARK = '# <<< link-local-inflow-node:overrides';
-
-function escapeRe(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: 'inherit', cwd: REPO_ROOT, ...opts });
@@ -67,8 +65,7 @@ async function removeInflowNodeOverrides() {
   const inflowNodePath = resolveInflowNodePath();
   const workspaceYaml = path.join(inflowNodePath, 'pnpm-workspace.yaml');
   const existing = await fs.readFile(workspaceYaml, 'utf-8');
-  const blockRe = new RegExp(`\\n?${escapeRe(BEGIN_MARK)}[\\s\\S]*?${escapeRe(END_MARK)}\\n?`);
-  const next = existing.replace(blockRe, '\n').replace(/\n{3,}/g, '\n\n');
+  const next = removeManagedOverrides(existing);
   if (next !== existing) await fs.writeFile(workspaceYaml, next, 'utf-8');
   const packageJson = path.join(inflowNodePath, 'package.json');
   const manifest = JSON.parse(await fs.readFile(packageJson, 'utf-8'));
@@ -94,30 +91,27 @@ async function removeInflowNodeOverrides() {
  */
 async function revertWorkspaceYaml() {
   const existing = await fs.readFile(WORKSPACE_YAML, 'utf-8');
-  const blockRe = new RegExp(`\\n?${escapeRe(BEGIN_MARK)}([\\s\\S]*?)${escapeRe(END_MARK)}\\n?`);
-  const match = existing.match(blockRe);
-  if (match === null) {
+  const entries = managedOverrides(existing);
+  if (entries.size === 0) {
     return { changed: false, reverted: [], kept: [] };
   }
 
   const reverted = [];
-  const keptLines = [];
+  const keptEntries = [];
   const kept = [];
-  for (const line of match[1].split('\n')) {
-    const entry = line.match(/^\s*'(@[^']+)':/);
-    if (entry === null) continue; // skip the `overrides:` header and blank lines
-    const name = entry[1];
+  for (const [name, value] of entries) {
     if (UNPUBLISHED.includes(name)) {
-      keptLines.push(`  ${line.trim()}`);
+      keptEntries.push([name, value]);
       kept.push(name);
     } else {
       reverted.push(name);
     }
   }
 
-  const replacement =
-    keptLines.length > 0 ? `\n${[BEGIN_MARK, 'overrides:', ...keptLines, END_MARK].join('\n')}\n` : '\n';
-  const next = existing.replace(blockRe, replacement).replace(/\n{3,}/g, '\n\n');
+  const next =
+    keptEntries.length > 0
+      ? replaceManagedOverrides(existing, keptEntries)
+      : removeManagedOverrides(existing);
 
   if (next !== existing) {
     await fs.writeFile(WORKSPACE_YAML, next, 'utf-8');

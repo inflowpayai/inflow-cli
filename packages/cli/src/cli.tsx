@@ -176,11 +176,13 @@ async function main(): Promise<void> {
   const vaultOptions: LocalVaultDaemonClientOptions = { buildId: cliBuildId, cliVersion };
   const apiKeyFromEnv = process.env['INFLOW_API_KEY'];
   const hasDirectApiKey = (apiKeyFromFlag?.length ?? 0) > 0 || (apiKeyFromEnv?.length ?? 0) > 0;
+  let hasInitializedVault = true;
   if (shouldReconcileVaultDaemon(process.argv, hasDirectApiKey)) {
     const status = await readVaultStatusWithoutStarting(vaultOptions);
+    hasInitializedVault = status.lockState !== 'not_initialized';
     if (status.daemonRunning) await ensureLocalVaultDaemon(vaultOptions);
   }
-  if (shouldStartVaultDaemon(process.argv, hasDirectApiKey)) {
+  if (shouldStartVaultDaemon(process.argv, { hasDirectApiKey, hasInitializedVault, isAgent })) {
     await ensureLocalVaultDaemon(vaultOptions);
   }
   if (shouldUnlockVault(process.argv, { hasDirectApiKey, isAgent })) {

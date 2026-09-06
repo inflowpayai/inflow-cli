@@ -1205,8 +1205,32 @@ describe('aep commands', () => {
       userId: 'user-1',
     });
     await persisted.identities().saveIdentity(identity);
+    if ('credentialId' in options) {
+      await persisted.credentials().saveCredential({
+        credential: { credential_id: options.credentialId },
+        credentialId: options.credentialId,
+        expiresAt: '2999-01-01T00:00:00.000Z',
+        grantType: 'oauth-bearer',
+        issuedAt: '2026-01-01T00:00:00.000Z',
+        serviceDid: identity.serviceDid,
+      });
+    }
 
     await expect(__testing.runRevoke(context(options), inflow(), storage)).resolves.toEqual(expected);
+  });
+
+  it('rejects per-credential Revoke when the credential is not stored locally', async () => {
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const persisted = new AepStorage(storage, {
+      platformOrigin: 'https://platform.example',
+      userId: 'user-1',
+    });
+    await persisted.identities().saveIdentity(identity);
+
+    await expect(
+      __testing.runRevoke(context({ credentialId: 'credential-missing' }), inflow(), storage),
+    ).rejects.toThrow('AEP_CREDENTIAL_NOT_FOUND');
   });
 
   it('checks Status and skips approval when enrolling an existing identity', async () => {
