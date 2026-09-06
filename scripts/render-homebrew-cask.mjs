@@ -39,8 +39,7 @@ function renderCask({ arm64Checksum, caskUrl, version, x64Checksum }) {
   sha256 arm:   "${arm64Checksum}",
          intel: "${x64Checksum}"
 
-  url "${escapeRuby(caskUrl)}",
-      verified: "github.com/inflowpayai/inflow-cli/"
+  url "${escapeRuby(caskUrl)}"
   name "InFlow"
   desc "Agent enrollment and agentic payments from your machine"
   homepage "https://inflowcli.ai"
