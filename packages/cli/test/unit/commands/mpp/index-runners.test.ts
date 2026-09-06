@@ -245,6 +245,37 @@ describe('mpp agent runners', () => {
     expect(frames.at(-1)).toMatchObject({ outcome: 'paid', transaction_id: 'tx-1', credential: 'CRED' });
   });
 
+  it('runPayCommand reports an unknown outcome when the credential-bearing replay transport fails', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(challenge402())
+      .mockResolvedValueOnce(challenge402())
+      .mockRejectedValueOnce(new Error('connection reset'));
+    const client = makeClient({
+      createTransaction: vi.fn(() =>
+        Promise.resolve({
+          state: 'ready',
+          credential: 'CRED',
+          transactionId: 'tx-1',
+        }),
+      ) as MppClient['createTransaction'],
+    });
+    const { inflow, storage } = authed(client);
+    const ctx = agentCtx(
+      { url: SELLER },
+      { method: 'GET', header: [], interval: 5, maxAttempts: 0, timeout: 900, showBody: true },
+    );
+
+    await expect(drain(runPayCommand(ctx as never, inflow, storage, 'https://app'))).rejects.toThrow();
+    expect(ctx.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'PAYMENT_REPLAY_OUTCOME_UNKNOWN',
+        message: expect.stringContaining('do not automatically replay') as string,
+      }),
+    );
+    expect(new Headers(fetchSpy.mock.calls[2]?.[1]?.headers).get('Authorization')).toBe('Payment CRED');
+  });
+
   it('signs the exact MPP probe and paid replay and carries probe evidence into transaction creation', async () => {
     const createTransaction = vi.fn((_body: { tapEvidenceId?: string }) =>
       Promise.resolve({ state: 'ready' as const, transactionId: 'tx-tap', credential: 'CRED' }),

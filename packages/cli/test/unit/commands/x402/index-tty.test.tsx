@@ -192,6 +192,28 @@ describe('x402 TTY runners (renderInkUntilExit paths)', () => {
     );
   });
 
+  it('runPayCommand reports an unknown outcome when the signed replay transport fails', async () => {
+    const header = encodePaymentRequiredHeader(makePaymentRequired());
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('payment required', { status: 402, headers: { 'PAYMENT-REQUIRED': header } }))
+      .mockResolvedValueOnce(new Response('payment required', { status: 402, headers: { 'PAYMENT-REQUIRED': header } }))
+      .mockRejectedValueOnce(new Error('connection reset'));
+    const { inflow, storage } = authedResources(makeClient());
+    const ctx = ttyCtx({ url: 'https://seller/api' }, PAY_OPTIONS);
+
+    await expect(drain(runPayCommand(ctx as never, inflow, storage, 'https://api.inflowpay.ai'))).rejects.toThrow(
+      'c.error: PAYMENT_REPLAY_OUTCOME_UNKNOWN',
+    );
+    expect(ctx.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'PAYMENT_REPLAY_OUTCOME_UNKNOWN',
+        message: expect.stringContaining('do not automatically replay') as string,
+      }),
+    );
+    expect(new Headers(fetchSpy.mock.calls[2]?.[1]?.headers).get('PAYMENT-SIGNATURE')).toBe('enc');
+  });
+
   it('runPayCommand forwards a pipeline error phase to c.error', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('not found', { status: 404 }));
     const { inflow, storage } = authedResources(makeClient());

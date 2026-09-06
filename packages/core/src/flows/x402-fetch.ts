@@ -1,11 +1,12 @@
 import { HEADERS } from '@inflowpayai/x402';
 import type { InflowClient as X402InflowClient, X402PayloadResponse } from '@inflowpayai/x402-buyer';
 import type { SellerProbeOptions } from '@inflowpayai/x402-buyer/probe';
-import { buildSettledMeta, type PaySettledMeta } from './x402-pay.js';
+import { buildSettledMeta, mapSdkError, type PaySettledMeta } from './x402-pay.js';
 import { classifyPayloadResponse, runX402Status } from './x402-status.js';
 import {
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+  PaymentReplayOutcomeUnknownError,
   replayPaymentRequest,
   SellerAuthenticationError,
   type SellerRequestTransport,
@@ -186,11 +187,16 @@ export function runX402Fetch(input: X402FetchInput): X402FetchRun {
         };
         return;
       }
-      yield {
-        type: 'errored',
-        code: PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
-        message: PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
-      };
+      if (err instanceof PaymentReplayOutcomeUnknownError) {
+        yield {
+          type: 'errored',
+          code: PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
+          message: PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+        };
+        return;
+      }
+      const mapped = mapSdkError(err);
+      yield { type: 'errored', code: mapped.code, message: mapped.message };
       return;
     }
 

@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   encode,
   HEADERS,
@@ -18,6 +21,7 @@ import {
   reduceMppPay,
   runMppPayPipeline,
 } from '../../../src/flows/mpp-pay.js';
+import { PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE, SellerAuthenticationError } from '../../../src/flows/payment-fetch.js';
 import { DEFAULT_ACCEPT_PAYMENT_HEADER } from '../../../src/flows/mpp-shared.js';
 
 const SELLER = 'https://seller.test/api';
@@ -595,6 +599,100 @@ describe('runMppPayPipeline', () => {
       http.post(`${INFLOW}/v1/transactions/mpp`, () => new HttpResponse('nope', { status: 500 })),
     );
     const terminal = (await collect(deps())).at(-1);
+    expect(terminal).toMatchObject({ type: 'errored', code: 'PAYMENT_FAILED' });
+  });
+
+  it('reports an unknown outcome when the credential-bearing replay transport fails', async () => {
+    const requests: Array<{
+      additionalAuthenticationHeaders?: Record<string, string>;
+      headers: Record<string, string>;
+      transactionId?: string;
+    }> = [];
+    server.use(
+      http.post(`${INFLOW}/v1/transactions/mpp`, () =>
+        HttpResponse.json({ state: 'ready', credential: 'CRED-UNKNOWN', transactionId: 'tx-unknown' }),
+      ),
+    );
+    const terminal = (
+      await collect(
+        deps({
+          probeOptions: { method: 'GET', headers: { Authorization: 'Bearer caller', 'X-Test': 'yes' } },
+          sellerTransport: {
+            request: (input) => {
+              requests.push(input);
+              if (requests.length === 1) {
+                return Promise.resolve({
+                  bytes: new Uint8Array(),
+                  contentType: undefined,
+                  headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(challenge()) }),
+                  status: 402,
+                });
+              }
+              return Promise.reject(new Error('connection reset'));
+            },
+          },
+        }),
+      )
+    ).at(-1);
+
+    expect(terminal).toEqual({
+      type: 'errored',
+      code: 'PAYMENT_REPLAY_OUTCOME_UNKNOWN',
+      message: PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+    });
+    expect(requests[1]).toMatchObject({
+      additionalAuthenticationHeaders: { Authorization: 'Payment CRED-UNKNOWN' },
+      headers: { 'X-Test': 'yes' },
+      transactionId: 'tx-unknown',
+    });
+  });
+
+  it('preserves seller authentication failures during the credential-bearing replay', async () => {
+    let requestCount = 0;
+    server.use(
+      http.post(`${INFLOW}/v1/transactions/mpp`, () =>
+        HttpResponse.json({ state: 'ready', credential: 'CRED-AUTH', transactionId: 'tx-auth' }),
+      ),
+    );
+    const terminal = (
+      await collect(
+        deps({
+          sellerTransport: {
+            request: () => {
+              requestCount += 1;
+              if (requestCount === 1) {
+                return Promise.resolve({
+                  bytes: new Uint8Array(),
+                  contentType: undefined,
+                  headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(challenge()) }),
+                  status: 402,
+                });
+              }
+              return Promise.reject(new SellerAuthenticationError('AEP_APPROVAL_DENIED', 'The approval was denied.'));
+            },
+          },
+        }),
+      )
+    ).at(-1);
+
+    expect(terminal).toEqual({
+      type: 'errored',
+      code: 'AEP_APPROVAL_DENIED',
+      message: 'The approval was denied.',
+    });
+  });
+
+  it('reports a local output-file failure as PAYMENT_FAILED after a successful seller replay', async () => {
+    const missingDirectory = await mkdtemp(join(tmpdir(), 'missing-mpp-output-'));
+    await rm(missingDirectory, { recursive: true });
+    server.use(
+      sellerWithChallenge(),
+      http.post(`${INFLOW}/v1/transactions/mpp`, () =>
+        HttpResponse.json({ state: 'ready', credential: 'CRED-OUTPUT' }),
+      ),
+    );
+    const terminal = (await collect(deps({ outputFile: join(missingDirectory, 'response.txt') }))).at(-1);
+
     expect(terminal).toMatchObject({ type: 'errored', code: 'PAYMENT_FAILED' });
   });
 

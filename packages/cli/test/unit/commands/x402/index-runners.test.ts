@@ -313,6 +313,29 @@ describe('runPayCommand (agent mode)', () => {
     expect(final.response_status).toBe(200);
   });
 
+  it('reports an unknown outcome when the signed replay transport fails', async () => {
+    const header = encodePaymentRequiredHeader(makePaymentRequired());
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('payment required', { status: 402, headers: { 'PAYMENT-REQUIRED': header } }))
+      .mockResolvedValueOnce(new Response('payment required', { status: 402, headers: { 'PAYMENT-REQUIRED': header } }))
+      .mockRejectedValueOnce(new Error('connection reset'));
+    const ctx = agentContext(
+      { url: 'https://seller/api' },
+      { method: 'GET', header: [], interval: 1, maxAttempts: 0, timeout: 900, showBody: false },
+    );
+    const { inflow, storage } = authedResources(makeClient());
+
+    await expect(drain(runPayCommand(ctx, inflow, storage, 'https://api.inflowpay.ai'))).rejects.toThrow();
+    expect(ctx.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'PAYMENT_REPLAY_OUTCOME_UNKNOWN',
+        message: expect.stringContaining('do not automatically replay') as string,
+      }),
+    );
+    expect(new Headers(fetchSpy.mock.calls[2]?.[1]?.headers).get('PAYMENT-SIGNATURE')).toBe('enc');
+  });
+
   it('signs the exact x402 probe and paid replay and carries probe evidence into transaction creation', async () => {
     const prepareInflowPayment = vi.fn(() => Promise.resolve(makePrepared()));
     const { inflow, storage } = authedResources(makeClient({ prepareInflowPayment }));

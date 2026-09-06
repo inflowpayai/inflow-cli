@@ -18,7 +18,15 @@ import type { SellerProbeOptions } from '@inflowpayai/x402-buyer/probe';
 import { userFacingApiError } from './api-error.js';
 import { pollAsync } from '../utils/async-poll.js';
 import { approvalUrlFor } from '../x402/dashboard-url.js';
-import { SellerAuthenticationError, sellerRequest, type SellerRequestTransport } from './payment-fetch.js';
+import {
+  PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
+  PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+  PaymentReplayOutcomeUnknownError,
+  replayPaymentRequest,
+  SellerAuthenticationError,
+  sellerRequest,
+  type SellerRequestTransport,
+} from './payment-fetch.js';
 import { type DecodedChallenge, summarizeChallenge } from './mpp-decode.js';
 import { buildBodyAttachment } from './x402-pay.js';
 import {
@@ -467,17 +475,44 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
     }
 
     const credential = resolved.credential;
-    const replay = await sellerRequest(deps.sellerTransport, {
-      url: deps.url,
-      method: probeOptions.method,
-      headers: probeOptions.headers,
-      additionalAuthenticationHeaders: { [HEADERS.AUTHORIZATION]: `${SCHEME_PAYMENT} ${credential}` },
-      ...(probeOptions.data !== undefined ? { data: probeOptions.data } : {}),
-      ...(paymentTransactionId === undefined ? {} : { transactionId: paymentTransactionId }),
-    });
-    const attachment = await buildBodyAttachment(replay.bytes, deps.showBody, deps.outputFile);
+    let replay;
+    try {
+      replay = await replayPaymentRequest({
+        url: deps.url,
+        method: probeOptions.method,
+        headers: probeOptions.headers,
+        ...(probeOptions.data !== undefined ? { data: probeOptions.data } : {}),
+        paymentHeaderName: HEADERS.AUTHORIZATION,
+        paymentHeaderValue: `${SCHEME_PAYMENT} ${credential}`,
+        showBody: deps.showBody,
+        ...(deps.outputFile !== undefined ? { outputFile: deps.outputFile } : {}),
+        ...(deps.sellerTransport !== undefined ? { sellerTransport: deps.sellerTransport } : {}),
+        ...(paymentTransactionId === undefined ? {} : { transactionId: paymentTransactionId }),
+      });
+    } catch (err) {
+      if (err instanceof SellerAuthenticationError) {
+        emit({ type: 'errored', code: err.code, message: err.message });
+        return;
+      }
+      if (err instanceof PaymentReplayOutcomeUnknownError) {
+        emit({
+          type: 'errored',
+          code: PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
+          message: PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+        });
+        return;
+      }
+      throw err;
+    }
+    const {
+      contentType: replayContentType,
+      headers: replayHeaders,
+      status: replayStatus,
+      success: replaySucceeded,
+      ...attachment
+    } = replay;
 
-    if (!isSuccessStatus(replay.status)) {
+    if (!replaySucceeded) {
       emit({
         type: 'rejected',
         result: {
@@ -486,15 +521,15 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
           method: probeOptions.method,
           transactionId: createdFrame.transactionId,
           challengeId: challenge.id,
-          responseStatus: replay.status,
-          responseContentType: replay.contentType,
+          responseStatus: replayStatus,
+          responseContentType: replayContentType,
           ...attachment,
         },
       });
       return;
     }
 
-    const settled = buildSettlement(replay.headers);
+    const settled = buildSettlement(replayHeaders);
     emit({
       type: 'replayed',
       result: {
@@ -505,8 +540,8 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
         challengeId: challenge.id,
         intent: challenge.intent,
         credential,
-        responseStatus: replay.status,
-        responseContentType: replay.contentType,
+        responseStatus: replayStatus,
+        responseContentType: replayContentType,
         ...(settled !== undefined ? { settled } : {}),
         ...attachment,
       },
