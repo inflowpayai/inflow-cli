@@ -118,6 +118,39 @@ describe('mpp TTY runners (renderInkUntilExit paths)', () => {
     );
   });
 
+  it('runPayCommand reports an unknown outcome when the credential-bearing replay transport fails', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(challenge402())
+      .mockResolvedValueOnce(challenge402())
+      .mockRejectedValueOnce(new Error('connection reset'));
+    const client = makeClient({
+      createTransaction: vi.fn(() =>
+        Promise.resolve({
+          state: 'ready',
+          credential: 'CRED',
+          transactionId: 'tx-1',
+        }),
+      ) as MppClient['createTransaction'],
+    });
+    const { inflow, storage } = authed(client);
+    const ctx = ttyCtx(
+      { url: SELLER },
+      { method: 'GET', header: [], interval: 5, maxAttempts: 0, timeout: 900, showBody: true },
+    );
+
+    await expect(drain(runPayCommand(ctx as never, inflow, storage, 'https://app'))).rejects.toThrow(
+      'c.error: PAYMENT_REPLAY_OUTCOME_UNKNOWN',
+    );
+    expect(ctx.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'PAYMENT_REPLAY_OUTCOME_UNKNOWN',
+        message: expect.stringContaining('do not automatically replay') as string,
+      }),
+    );
+    expect(new Headers(fetchSpy.mock.calls[2]?.[1]?.headers).get('Authorization')).toBe('Payment CRED');
+  });
+
   it('runPayCommand calls c.error when the pipeline errors (no supported MPP challenge)', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(challenge402('other'));
     const { inflow, storage } = authed(makeClient());

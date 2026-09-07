@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { MppClient } from '@inflowpayai/mpp';
 import type { InflowClient as X402InflowClient } from '@inflowpayai/x402-buyer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -225,6 +228,73 @@ describe('payment fetch replay safety', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(rejected.at(-1)).toMatchObject({ type: 'rejected', result: { outcome: 'seller-rejected' } });
     expect(unknown.at(-1)).toMatchObject({ type: 'errored', code: 'PAYMENT_REPLAY_OUTCOME_UNKNOWN' });
+  });
+
+  it('reports an unknown outcome when an MPP credential-bearing replay transport fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('socket closed'));
+
+    const events = await drain(
+      runMppFetch({
+        client: mppClient({ transactionId: 'tx-1', state: 'ready', credential: 'CRED' }),
+        transactionId: 'tx-1',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: false,
+      }).events,
+    );
+
+    expect(events.at(-1)).toMatchObject({ type: 'errored', code: 'PAYMENT_REPLAY_OUTCOME_UNKNOWN' });
+  });
+
+  it('does not classify x402 local output-file failure as an unknown seller outcome', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('paid', { status: 200 }));
+    const missingDirectory = await mkdtemp(join(tmpdir(), 'missing-x402-fetch-output-'));
+    await rm(missingDirectory, { recursive: true });
+
+    const events = await drain(
+      runX402Fetch({
+        client: x402Client({
+          status: 'APPROVED',
+          encodedPayload: 'ENC',
+          paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
+        }),
+        transactionId: 'txn-1',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: false,
+        outputFile: join(missingDirectory, 'response.txt'),
+      }).events,
+    );
+
+    expect(events.at(-1)).toMatchObject({ type: 'errored', code: 'PAYMENT_FAILED' });
+  });
+
+  it('does not classify MPP local output-file failure as an unknown seller outcome', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('paid', { status: 200 }));
+    const missingDirectory = await mkdtemp(join(tmpdir(), 'missing-mpp-fetch-output-'));
+    await rm(missingDirectory, { recursive: true });
+
+    const events = await drain(
+      runMppFetch({
+        client: mppClient({ transactionId: 'tx-1', state: 'ready', credential: 'CRED' }),
+        transactionId: 'tx-1',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 900,
+        showBody: false,
+        outputFile: join(missingDirectory, 'response.txt'),
+      }).events,
+    );
+
+    expect(events.at(-1)).toMatchObject({ type: 'errored', code: 'PAYMENT_FAILED' });
   });
 
   it('polls pending transactions to ready before replaying', async () => {

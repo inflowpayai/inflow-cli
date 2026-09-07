@@ -16,6 +16,7 @@ import {
   reducePay,
   runPayPipeline,
 } from '../../../src/flows/x402-pay.js';
+import { PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE, SellerAuthenticationError } from '../../../src/flows/payment-fetch.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -355,6 +356,67 @@ describe('runPayPipeline — full lifecycle', () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
     const events = await collect(deps());
     expect(events).toEqual([{ type: 'errored', code: 'PAYMENT_FAILED', message: 'network down' }]);
+  });
+
+  it('reports an unknown outcome when the signed replay transport fails', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        bytes: new Uint8Array(),
+        contentType: undefined,
+        headers: new Headers({ [HEADERS.PAYMENT_REQUIRED]: encodePaymentRequiredHeader(paymentRequired()) }),
+        status: 402,
+      })
+      .mockRejectedValueOnce(new Error('connection reset'));
+
+    const events = await collect(
+      deps({
+        probeOptions: { method: 'POST', headers: {}, data: '{"item":"plant"}' },
+        sellerTransport: { request },
+      }),
+    );
+
+    expect(events.map((event) => event.type)).toEqual(['decoded', 'matched', 'prepared', 'awaited', 'errored']);
+    expect(events.at(-1)).toEqual({
+      type: 'errored',
+      code: 'PAYMENT_REPLAY_OUTCOME_UNKNOWN',
+      message: PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+    });
+    expect(request.mock.calls[1]?.[0]).toMatchObject({
+      additionalAuthenticationHeaders: { [HEADERS.PAYMENT_SIGNATURE]: 'ENC-PAYLOAD' },
+      data: '{"item":"plant"}',
+      transactionId: 'tx-1',
+    });
+  });
+
+  it('preserves seller authentication failures during the signed replay', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        bytes: new Uint8Array(),
+        contentType: undefined,
+        headers: new Headers({ [HEADERS.PAYMENT_REQUIRED]: encodePaymentRequiredHeader(paymentRequired()) }),
+        status: 402,
+      })
+      .mockRejectedValueOnce(new SellerAuthenticationError('AEP_APPROVAL_DENIED', 'The approval was denied.'));
+
+    const events = await collect(deps({ sellerTransport: { request } }));
+
+    expect(events.at(-1)).toEqual({
+      type: 'errored',
+      code: 'AEP_APPROVAL_DENIED',
+      message: 'The approval was denied.',
+    });
+  });
+
+  it('reports a local output-file failure as PAYMENT_FAILED after a successful seller replay', async () => {
+    mockSeller();
+    const missingDirectory = await mkdtemp(join(tmpdir(), 'missing-x402-output-'));
+    await rm(missingDirectory, { recursive: true });
+
+    const events = await collect(deps({ outputFile: join(missingDirectory, 'response.txt') }));
+
+    expect(events.at(-1)).toMatchObject({ type: 'errored', code: 'PAYMENT_FAILED' });
   });
 });
 

@@ -17,7 +17,15 @@ import type { PaymentRequired } from '@x402/core/types';
 import { approvalUrlFor } from '../x402/dashboard-url.js';
 import { describeBody, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { userFacingApiError } from './api-error.js';
-import { SellerAuthenticationError, sellerRequest, type SellerRequestTransport } from './payment-fetch.js';
+import {
+  PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
+  PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+  PaymentReplayOutcomeUnknownError,
+  replayPaymentRequest,
+  SellerAuthenticationError,
+  sellerRequest,
+  type SellerRequestTransport,
+} from './payment-fetch.js';
 import { type DecodedHeader } from './x402-decode.js';
 import {
   type AcceptsFilters,
@@ -454,17 +462,44 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
       network: requirement.network,
     });
 
-    const replay = await sellerRequest(deps.sellerTransport, {
-      url: deps.url,
-      method: deps.probeOptions.method,
-      headers: deps.probeOptions.headers,
-      additionalAuthenticationHeaders: { [HEADERS.PAYMENT_SIGNATURE]: encoded.encodedPayload },
-      ...(deps.probeOptions.data !== undefined ? { data: deps.probeOptions.data } : {}),
-      transactionId: prepared.transactionId,
-    });
-    const attachment = await buildBodyAttachment(replay.bytes, deps.showBody, deps.outputFile);
+    let replay;
+    try {
+      replay = await replayPaymentRequest({
+        url: deps.url,
+        method: deps.probeOptions.method,
+        headers: deps.probeOptions.headers,
+        ...(deps.probeOptions.data !== undefined ? { data: deps.probeOptions.data } : {}),
+        paymentHeaderName: HEADERS.PAYMENT_SIGNATURE,
+        paymentHeaderValue: encoded.encodedPayload,
+        showBody: deps.showBody,
+        ...(deps.outputFile !== undefined ? { outputFile: deps.outputFile } : {}),
+        ...(deps.sellerTransport !== undefined ? { sellerTransport: deps.sellerTransport } : {}),
+        transactionId: prepared.transactionId,
+      });
+    } catch (err) {
+      if (err instanceof SellerAuthenticationError) {
+        emit({ type: 'errored', code: err.code, message: err.message });
+        return;
+      }
+      if (err instanceof PaymentReplayOutcomeUnknownError) {
+        emit({
+          type: 'errored',
+          code: PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
+          message: PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+        });
+        return;
+      }
+      throw err;
+    }
+    const {
+      contentType: replayContentType,
+      headers: replayHeaders,
+      status: replayStatus,
+      success: replaySucceeded,
+      ...attachment
+    } = replay;
 
-    if (!isSuccessStatus(replay.status)) {
+    if (!replaySucceeded) {
       const rejected: PayResultReplayRejected = {
         outcome: 'replay-rejected',
         url: deps.url,
@@ -474,15 +509,15 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
         approvalUrl,
         scheme: requirement.scheme,
         network: requirement.network,
-        responseStatus: replay.status,
-        responseContentType: replay.contentType,
+        responseStatus: replayStatus,
+        responseContentType: replayContentType,
         ...attachment,
       };
       emit({ type: 'rejected', result: rejected });
       return;
     }
 
-    const settled = buildSettledMeta(replay.headers);
+    const settled = buildSettledMeta(replayHeaders);
     const success: PayResultSuccess = {
       outcome: 'paid',
       url: deps.url,
@@ -493,8 +528,8 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
       scheme: requirement.scheme,
       network: requirement.network,
       encodedPayload: encoded.encodedPayload,
-      responseStatus: replay.status,
-      responseContentType: replay.contentType,
+      responseStatus: replayStatus,
+      responseContentType: replayContentType,
       ...(settled !== undefined ? { settled } : {}),
       ...attachment,
     };

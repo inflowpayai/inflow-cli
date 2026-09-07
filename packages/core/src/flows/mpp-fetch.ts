@@ -1,9 +1,10 @@
 import { HEADERS, type MppClient, type MppTransactionResponse, SCHEME_PAYMENT } from '@inflowpayai/mpp';
-import { buildSettlement, type MppPaySettlement } from './mpp-pay.js';
+import { buildSettlement, mapMppError, type MppPaySettlement } from './mpp-pay.js';
 import { runMppStatus } from './mpp-status.js';
 import {
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+  PaymentReplayOutcomeUnknownError,
   replayPaymentRequest,
   SellerAuthenticationError,
   type SellerRequestTransport,
@@ -184,11 +185,16 @@ export function runMppFetch(input: MppFetchInput): MppFetchRun {
         };
         return;
       }
-      yield {
-        type: 'errored',
-        code: PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
-        message: PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
-      };
+      if (err instanceof PaymentReplayOutcomeUnknownError) {
+        yield {
+          type: 'errored',
+          code: PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
+          message: PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
+        };
+        return;
+      }
+      const mapped = mapMppError(err);
+      yield { type: 'errored', code: mapped.code, message: mapped.message };
       return;
     }
 

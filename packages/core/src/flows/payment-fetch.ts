@@ -6,6 +6,13 @@ export const PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE = 'PAYMENT_REPLAY_OUTCOME_UNKNO
 export const PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE =
   'The seller request failed after the payment credential was attached. The seller might have received or consumed the credential; do not automatically replay this request.';
 
+export class PaymentReplayOutcomeUnknownError extends Error {
+  constructor(cause: unknown) {
+    super(PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE, { cause });
+    this.name = 'PaymentReplayOutcomeUnknownError';
+  }
+}
+
 export class SellerAuthenticationError extends Error {
   constructor(
     readonly code: string,
@@ -110,7 +117,7 @@ export async function replayPaymentRequest(input: PaymentReplayInput): Promise<P
     result = await sellerRequest(input.sellerTransport, options);
   } catch (err) {
     if (err instanceof SellerAuthenticationError) throw err;
-    throw new Error(PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE, { cause: err });
+    throw new PaymentReplayOutcomeUnknownError(err);
   }
   const attachment = await buildBodyAttachment(result.bytes, input.showBody, input.outputFile);
   return {
