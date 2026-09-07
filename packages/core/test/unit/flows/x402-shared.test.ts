@@ -1,6 +1,12 @@
 import type { PaymentRequired } from '@x402/core/types';
+import { decodePaymentRequiredHeader } from '@x402/core/http';
 import { describe, expect, it } from 'vitest';
-import { buildNoFilteredMatchMessage, filterAccepts, isSuccessStatus } from '../../../src/flows/x402-shared.js';
+import {
+  buildNoFilteredMatchMessage,
+  excludePermit2Accepts,
+  filterAccepts,
+  isSuccessStatus,
+} from '../../../src/flows/x402-shared.js';
 
 const sample: PaymentRequired = {
   x402Version: 2,
@@ -30,6 +36,58 @@ const sample: PaymentRequired = {
     },
   ],
 } as unknown as PaymentRequired;
+
+describe('excludePermit2Accepts', () => {
+  const exact = {
+    scheme: 'exact',
+    network: 'eip155:8453',
+    payTo: '0xpayee',
+    maxTimeoutSeconds: 60,
+    asset: '0xasset',
+    amount: '100',
+    extra: {},
+  } satisfies PaymentRequired['accepts'][number];
+
+  it.each([undefined, null])('preserves an offer whose decoded extras are %s', (extra) => {
+    const decoded = decodePaymentRequiredHeader(
+      Buffer.from(JSON.stringify({ ...sample, accepts: [{ ...exact, extra }] })).toString('base64'),
+    );
+    expect(excludePermit2Accepts(decoded)).toEqual(decoded);
+  });
+
+  it('drops exact Permit2 and upto offers while preserving other offers and signing context', () => {
+    const retained: PaymentRequired['accepts'] = [
+      exact,
+      { ...exact, extra: { assetTransferMethod: 'eip3009', permit2Proxy: 'irrelevant' } },
+      { ...exact, network: 'solana:devnet', extra: { assetTransferMethod: 'solana' } },
+      ...sample.accepts,
+    ];
+    const decoded: PaymentRequired = {
+      ...sample,
+      accepts: [
+        { ...exact, extra: { assetTransferMethod: 'permit2' } },
+        ...retained,
+        { ...exact, scheme: 'upto' },
+        { ...exact, scheme: 'upto', extra: { assetTransferMethod: 'permit2' } },
+      ],
+      extensions: { retained: true },
+      error: 'Payment required',
+    };
+    const out = excludePermit2Accepts(decoded);
+    expect(out).toEqual({ ...decoded, accepts: retained });
+    expect(out.resource).toBe(decoded.resource);
+    expect(out.extensions).toBe(decoded.extensions);
+    expect(out.accepts[0]).toBe(exact);
+    expect(decoded.accepts).toHaveLength(retained.length + 3);
+  });
+
+  it('leaves no available option when every offer requires Permit2', () => {
+    const decoded = excludePermit2Accepts({ ...sample, accepts: [{ ...exact, scheme: 'upto' }] });
+    expect(decoded.accepts).toEqual([]);
+    expect(filterAccepts(decoded, { scheme: 'upto' }).accepts).toEqual([]);
+    expect(buildNoFilteredMatchMessage(decoded, { scheme: 'exact' })).toContain('Available: (none)');
+  });
+});
 
 describe('filterAccepts', () => {
   it('returns the input unchanged when no filter is set', () => {

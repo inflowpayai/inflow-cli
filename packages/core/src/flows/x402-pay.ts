@@ -30,6 +30,7 @@ import { type DecodedHeader } from './x402-decode.js';
 import {
   type AcceptsFilters,
   buildNoFilteredMatchMessage,
+  excludePermit2Accepts,
   filterAccepts,
   INVALID_402_CODE,
   isSuccessStatus,
@@ -378,7 +379,7 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
 
     let decoded: PaymentRequired;
     try {
-      decoded = decodePaymentRequiredHeader(headerValue);
+      decoded = excludePermit2Accepts(decodePaymentRequiredHeader(headerValue));
     } catch (err) {
       emit({
         type: 'errored',

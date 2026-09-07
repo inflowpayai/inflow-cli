@@ -9,6 +9,7 @@ import {
   reduceX402Inspect,
   runInspectPipeline,
 } from '../../../src/flows/x402-inspect.js';
+import { buildX402Section } from '../../../src/flows/combined-inspect.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -57,6 +58,50 @@ async function collect(deps: Parameters<typeof runInspectPipeline>[0]): Promise<
 }
 
 describe('runInspectPipeline — accepts decoding', () => {
+  it('excludes Permit2 from both inspection surfaces while retaining other offers', async () => {
+    const decoded = paymentRequired();
+    const exact = decoded.accepts.find((entry) => entry.scheme === 'exact');
+    if (exact === undefined) throw new Error('Missing exact fixture');
+    const header = encodePaymentRequiredHeader({
+      ...decoded,
+      accepts: [
+        { ...exact, extra: { assetTransferMethod: 'permit2' } },
+        { ...exact, scheme: 'upto' },
+        ...decoded.accepts,
+      ],
+    });
+    mock402(header);
+    const events = await collect({ url: SELLER, probeOptions: { method: 'GET', headers: {} } });
+    expect(events[0]).toMatchObject({ type: 'accepts', result: { accepts: decoded.accepts } });
+    expect(
+      buildX402Section({
+        status: 402,
+        headers: new Headers({ [HEADERS.PAYMENT_REQUIRED]: header }),
+        bytes: new Uint8Array(),
+        contentType: undefined,
+      }),
+    ).toMatchObject({ kind: 'accepts', accepts: decoded.accepts });
+  });
+
+  it('cannot expose a Permit2 offer through an explicit scheme filter or the available-options hint', async () => {
+    const decoded = paymentRequired();
+    const header = encodePaymentRequiredHeader({
+      ...decoded,
+      accepts: decoded.accepts.map((entry) => ({ ...entry, extra: { assetTransferMethod: 'permit2' } })),
+    });
+    mock402(header);
+    const events = await collect({
+      url: SELLER,
+      probeOptions: { method: 'GET', headers: {} },
+      schemeFilter: 'exact',
+    });
+    expect(events[0]).toEqual({
+      type: 'errored',
+      code: 'NO_FILTERED_MATCH',
+      message: 'Seller has no accepts[] entry matching --scheme=exact. Available: (none).',
+    });
+  });
+
   it('emits the decoded accepts list with resource, version and extensions', async () => {
     mock402();
     const events = await collect({ url: SELLER, probeOptions: { method: 'GET', headers: {} } });

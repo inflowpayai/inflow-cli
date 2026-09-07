@@ -22,6 +22,7 @@ vi.setConfig({ testTimeout: 15_000 });
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cliBin = resolvePath(here, '../../dist/cli.js');
+const packagedExecutable = process.env['INFLOW_SMOKE_EXECUTABLE'];
 
 let authDir = '';
 let authFile = '';
@@ -32,7 +33,10 @@ beforeAll(() => {
 });
 afterAll(async () => {
   if (authDir.length > 0) {
-    await run(['vault', 'reset', '--force', '--format', 'json']);
+    // The installed Linux vault belongs to the operating-system user, not the temporary home directory.
+    if (process.platform !== 'linux' || packagedExecutable === undefined) {
+      await run(['vault', 'reset', '--force', '--format', 'json']);
+    }
     rmSync(authDir, { recursive: true, force: true });
   }
 });
@@ -58,10 +62,14 @@ function run(args: string[], env: NodeJS.ProcessEnv = {}): Promise<RunResult> {
       XDG_DATA_HOME: join(authDir, '.local', 'share'),
       ...env,
     };
-    const child = spawn(process.execPath, [cliBin, ...args], {
-      env: childEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const child = spawn(
+      packagedExecutable ?? process.execPath,
+      packagedExecutable === undefined ? [cliBin, ...args] : args,
+      {
+        env: childEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk: Buffer) => {
@@ -270,6 +278,176 @@ describe('cli smoke', () => {
         expect(result.exitCode).toBe(1);
         expect(`${result.stdout}${result.stderr}`).toContain('NO_FILTERED_MATCH');
         expect(result.stdout.trim()).not.toBe('[]');
+      },
+    );
+  });
+
+  describe('x402 Permit2 offer filtering', () => {
+    const exact = {
+      scheme: 'exact',
+      network: 'eip155:84532',
+      amount: '500',
+      payTo: '0x0000000000000000000000000000000000000001',
+      maxTimeoutSeconds: 60,
+      asset: '0x0000000000000000000000000000000000000002',
+      extra: { assetTransferMethod: 'eip3009' },
+    } satisfies PaymentRequired['accepts'][number];
+    const permit2 = { ...exact, extra: { assetTransferMethod: 'permit2' } };
+    const upto = { ...exact, scheme: 'upto', extra: {} };
+    const solana = {
+      ...exact,
+      network: 'solana:devnet',
+      asset: 'mint',
+      extra: { assetTransferMethod: 'solana' },
+    } satisfies PaymentRequired['accepts'][number];
+    const balance = {
+      ...exact,
+      scheme: 'balance',
+      network: 'inflow:1',
+      asset: 'USDC',
+      extra: {},
+    } satisfies PaymentRequired['accepts'][number];
+
+    for (const command of [['x402', 'inspect'], ['inspect']]) {
+      // Combined inspection uses the credential vault; Linux exercises it through the installed system package.
+      it.skipIf(command.length === 1 && process.platform === 'linux' && packagedExecutable === undefined).each([
+        {
+          name: 'mixed',
+          offers: [permit2, upto, exact, solana, balance],
+          retained: [exact, solana, balance],
+          mpp: false,
+        },
+        { name: 'Permit2-only', offers: [permit2, upto], retained: [], mpp: false },
+        { name: 'Permit2-only with MPP', offers: [permit2, upto], retained: [], mpp: true },
+      ])(`filters $name offers with ${command.join(' ')}`, async ({ offers, retained, mpp }) => {
+        const header = encodePaymentRequiredHeader({
+          x402Version: 2,
+          resource: { url: 'https://seller.test/api' },
+          accepts: offers,
+        });
+        await withSeller(
+          (req, res) => {
+            if (req.url !== '/paywalled') {
+              res.writeHead(404);
+              res.end();
+              return;
+            }
+            res.writeHead(402, {
+              'PAYMENT-REQUIRED': header,
+              ...(mpp
+                ? {
+                    'WWW-Authenticate': renderChallengeHeader({
+                      id: 'test-mpp',
+                      realm: 'test',
+                      method: 'inflow',
+                      intent: 'charge',
+                      request: encode({ amount: '10', currency: 'USDC', methodDetails: { rail: 'balance' } }),
+                    }),
+                  }
+                : {}),
+            });
+            res.end('payment required');
+          },
+          async (url) => {
+            const result = await run([...command, url, '--format', 'json']);
+            expect(result.exitCode, `${command.join(' ')}\n${result.stdout}\n${result.stderr}`).toBe(0);
+            const parsed = parseAgentJson(result.stdout);
+            const frame: unknown = Array.isArray(parsed) ? parsed[0] : parsed;
+            const expected = retained.map(({ scheme, network, asset }) => ({ scheme, network, asset }));
+            expect(frame).toMatchObject(command.length === 2 ? { accepts: expected } : { x402: expected });
+            if (command.length === 1) {
+              expect(frame).toMatchObject({
+                detected: [...(mpp ? ['mpp'] : []), ...(retained.length === 0 ? [] : ['x402'])],
+              });
+            }
+            const decoded = await run(['x402', 'decode', header, '--format', 'json']);
+            expect(decoded.exitCode).toBe(0);
+            expect(decoded.stdout).toContain('permit2');
+            expect(decoded.stdout).toContain('upto');
+          },
+        );
+      });
+    }
+
+    it.each([
+      { name: 'Permit2-only', offers: [permit2, upto], scheme: undefined, selected: undefined },
+      { name: 'explicit Permit2 exact', offers: [permit2], scheme: 'exact', selected: undefined },
+      { name: 'explicit upto', offers: [upto, exact], scheme: 'upto', selected: undefined },
+      { name: 'mixed exact', offers: [permit2, upto, exact], scheme: 'exact', selected: exact },
+      { name: 'mixed Solana', offers: [permit2, upto, solana], scheme: undefined, selected: solana },
+      { name: 'mixed balance', offers: [permit2, upto, balance], scheme: undefined, selected: balance },
+    ])(
+      'handles $name offers with the real buyer selection and transaction request',
+      async ({ offers, scheme, selected }) => {
+        const submitted: unknown[] = [];
+        const header = encodePaymentRequiredHeader({
+          x402Version: 2,
+          resource: { url: 'https://seller.test/api' },
+          accepts: offers,
+        });
+        await withSeller(
+          (req, res) => {
+            if (req.url === '/v1/transactions/x402-supported') {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  kinds: offers.map(({ scheme: offerScheme, network }) => ({
+                    scheme: offerScheme,
+                    network,
+                    x402Version: 2,
+                  })),
+                }),
+              );
+            } else if (req.url === '/v1/transactions/x402' && req.method === 'POST') {
+              let body = '';
+              req.on('data', (chunk: Buffer) => {
+                body += chunk.toString('utf-8');
+              });
+              req.on('end', () => {
+                submitted.push(JSON.parse(body));
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify({
+                    transactionId: 'test-transaction',
+                    approvalId: 'test-approval',
+                    approvalStatus: 'PENDING',
+                  }),
+                );
+              });
+            } else if (req.url === '/paywalled') {
+              res.writeHead(402, { 'PAYMENT-REQUIRED': header });
+              res.end('payment required');
+            } else {
+              res.writeHead(404);
+              res.end();
+            }
+          },
+          async (url) => {
+            const result = await run(
+              [
+                'x402',
+                'pay',
+                url,
+                ...(scheme === undefined ? [] : ['--scheme', scheme]),
+                '--format',
+                'json',
+                '--interval',
+                '0',
+              ],
+              { INFLOW_API_KEY: 'test-api-key', INFLOW_BASE_URL: new URL(url).origin },
+            );
+            expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(selected === undefined ? 1 : 0);
+            if (selected === undefined) {
+              expect(submitted).toEqual([]);
+              expect(`${result.stdout}${result.stderr}`).toContain(
+                scheme === undefined ? 'NO_INFLOW_MATCH' : 'NO_FILTERED_MATCH',
+              );
+            } else {
+              expect(submitted).toEqual([expect.objectContaining({ accept: selected })]);
+              expect(result.stdout).toContain('test-approval');
+            }
+          },
+        );
       },
     );
   });

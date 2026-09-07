@@ -1,4 +1,4 @@
-import { EXTRA_KEYS } from '@inflowpayai/x402';
+import { ASSET_TRANSFER_METHODS, EXTRA_KEYS } from '@inflowpayai/x402';
 import type { PaymentRequired } from '@x402/core/types';
 
 /** Error code emitted when a seller returns 402 but omits the PAYMENT-REQUIRED header. */
@@ -36,6 +36,20 @@ export interface AcceptsFilters {
   network?: string;
   asset?: string;
   assetName?: string;
+}
+
+/** @internal */
+export function excludePermit2Accepts(decoded: PaymentRequired): PaymentRequired {
+  return {
+    ...decoded,
+    accepts: decoded.accepts.filter(
+      // The foundation codec decodes unvalidated seller JSON, which can omit extra.
+      (entry) =>
+        entry.scheme !== 'upto' &&
+        (entry as { extra?: Record<string, unknown> | null }).extra?.[EXTRA_KEYS.ASSET_TRANSFER_METHOD] !==
+          ASSET_TRANSFER_METHODS.PERMIT2,
+    ),
+  };
 }
 
 function extractAssetName(entry: PaymentRequired['accepts'][number]): string | undefined {
