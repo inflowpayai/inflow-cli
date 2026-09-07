@@ -1,5 +1,19 @@
 # @inflowpayai/inflow
 
+## 0.12.3
+
+### Patch Changes
+
+- [#134](https://github.com/inflowpayai/inflow-cli/pull/134)
+  [`326aecc`](https://github.com/inflowpayai/inflow-cli/commit/326aecc0034835c2e00540d78927a6d0d59dd5e8) Thanks
+  [@nkavian](https://github.com/nkavian)! - Recover safely when a local vault daemon was started by another InFlow CLI
+  installation.
+
+- [#137](https://github.com/inflowpayai/inflow-cli/pull/137)
+  [`74fce4c`](https://github.com/inflowpayai/inflow-cli/commit/74fce4cccb2930c91746498f107b5900f604549c) Thanks
+  [@nkavian](https://github.com/nkavian)! - Distinguish uncertain MPP and x402 payment replay outcomes from failures
+  that happen before replay or while saving the seller response locally.
+
 ## 0.12.2
 
 ### Patch Changes
