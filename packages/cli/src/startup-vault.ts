@@ -148,7 +148,7 @@ export function shouldConfigureOdpServiceTransport(argv: readonly string[]): boo
   if (subgroup === 'inspect') return true;
   if (subgroup === 'actions') return command === 'resolve';
   if (subgroup === 'collections') return isOneOf(command, 'get', 'list', 'search');
-  if (subgroup === 'offerings') return isOneOf(command, 'discover', 'get', 'list', 'search');
+  if (subgroup === 'offerings') return isOneOf(command, 'capabilities', 'discover', 'get', 'list', 'search');
   return false;
 }
 

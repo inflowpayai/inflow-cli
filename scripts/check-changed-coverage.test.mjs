@@ -90,6 +90,28 @@ test('matches Codecov partial-line coverage when a covered line has an uncovered
   assert.match(output, /packages\/core\/src\/existing\.ts:1 \(partially covered\)/);
 });
 
+for (const hits of ['0', '-']) {
+  test(`rejects an executed line whose only recorded branch has ${hits} hits`, async (t) => {
+    const root = await createRepository(t);
+    const baseRef = git(root, 'rev-parse', 'HEAD');
+    await writeFile(join(root, 'packages/core/src/existing.ts'), 'export const value = 2;\n');
+    await writeCoverage(root, 'existing.ts', [16], [`BRDA:1,129,0,${hits}`]);
+
+    const output = checkFailure(root, baseRef);
+    assert.match(output, /Changed-line coverage: 0\/1 executable changed source lines \(0\.00%\)\./);
+    assert.match(output, /packages\/core\/src\/existing\.ts:1 \(partially covered\)/);
+  });
+}
+
+test('accepts an executed line whose recorded branches are all covered', async (t) => {
+  const root = await createRepository(t);
+  const baseRef = git(root, 'rev-parse', 'HEAD');
+  await writeFile(join(root, 'packages/core/src/existing.ts'), 'export const value = 2;\n');
+  await writeCoverage(root, 'existing.ts', [16], ['BRDA:1,129,0,1']);
+
+  assert.match(check(root, baseRef), /Changed-line coverage: 1\/1 executable changed source lines \(100\.00%\)\./);
+});
+
 test('rejects an uncovered changed executable line', async (t) => {
   const root = await createRepository(t);
   const baseRef = git(root, 'rev-parse', 'HEAD');

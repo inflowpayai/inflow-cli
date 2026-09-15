@@ -86,6 +86,7 @@ describe('vault startup decisions', () => {
     ['odp actions resolve', ['odp', 'actions', 'resolve', 'https://service.test', 'offering-1', 'action-1'], true],
     ['odp collections list', ['odp', 'collections', 'list', 'https://service.test'], true],
     ['odp offerings discover', ['odp', 'offerings', 'discover'], true],
+    ['odp offerings capabilities', ['odp', 'offerings', 'capabilities', 'https://service.test'], true],
     ['odp directory', ['odp', 'directory'], false],
     ['odp inspect', ['odp', 'inspect'], false],
     ['balances list', ['balances', 'list'], false],
@@ -114,6 +115,7 @@ describe('vault startup decisions', () => {
     ['x402 cancel', ['x402', 'cancel'], true],
     ['aep inspect', ['aep', 'inspect'], false],
     ['odp offerings list', ['odp', 'offerings', 'list', 'https://service.test'], true],
+    ['odp offerings capabilities', ['odp', 'offerings', 'capabilities', 'https://service.test'], true],
     ['odp directory', ['odp', 'directory'], false],
     ['odp inspect', ['odp', 'inspect'], false],
     ['vault unlock', ['vault', 'unlock'], false],
@@ -151,6 +153,7 @@ describe('vault startup decisions', () => {
     ['odp actions resolve', ['odp', 'actions', 'resolve', 'https://service.test', 'offering-1', 'action-1'], true],
     ['odp collections search', ['odp', 'collections', 'search', 'https://service.test'], true],
     ['odp offerings get', ['odp', 'offerings', 'get', 'https://service.test', 'offering-1'], true],
+    ['odp offerings capabilities', ['odp', 'offerings', 'capabilities', 'https://service.test'], true],
     ['odp directory', ['odp', 'directory'], false],
     ['odp inspect', ['odp', 'inspect'], false],
     ['balances list', ['balances', 'list'], true],
@@ -254,6 +257,7 @@ describe('vault startup decisions', () => {
     ['collections search', ['odp', 'collections', 'search', 'https://service.test']],
     ['collections get', ['odp', 'collections', 'get', 'https://service.test', 'collection-1']],
     ['offerings list', ['odp', 'offerings', 'list', 'https://service.test']],
+    ['offerings capabilities', ['odp', 'offerings', 'capabilities', 'https://service.test']],
     ['offerings search', ['odp', 'offerings', 'search', 'https://service.test']],
     ['offerings get', ['odp', 'offerings', 'get', 'https://service.test', 'offering-1']],
     ['offerings discover', ['odp', 'offerings', 'discover']],
@@ -269,6 +273,7 @@ describe('vault startup decisions', () => {
 
   it('does not configure authenticated service access for an unknown ODP command path', () => {
     expect(shouldConfigureOdpServiceTransport(argv('odp', 'collections', 'unknown'))).toBe(false);
+    expect(shouldConfigureOdpServiceTransport(argv('odp', 'unknown', 'list'))).toBe(false);
   });
 
   it('does not prompt agents or MCP callers before command handling', () => {
@@ -280,5 +285,8 @@ describe('vault startup decisions', () => {
     expect(shouldUnlockVault(argv('--mcp'), { isAgent: true })).toBe(false);
     expect(shouldUnlockVault(argv('mpp', 'pay', 'https://seller.test'), { isAgent: true })).toBe(false);
     expect(shouldUnlockVault(argv('x402', 'cancel'), { isAgent: true })).toBe(false);
+    expect(shouldUnlockVault(argv('odp', 'offerings', 'capabilities', 'https://service.test'), { isAgent: true })).toBe(
+      false,
+    );
   });
 });
