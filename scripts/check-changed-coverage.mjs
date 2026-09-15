@@ -112,16 +112,15 @@ function readLcov(lcovFile, out, partialBranches) {
     if (line.startsWith('BRDA:')) {
       const [lineNumber, , , hits] = line.slice(5).split(',');
       const branches = partialBranches.get(current);
-      const state = branches.get(Number(lineNumber)) ?? { covered: false, missed: false };
+      const state = branches.get(Number(lineNumber)) ?? { missed: false };
       if (hits === '-' || Number(hits) === 0) state.missed = true;
-      else state.covered = true;
       branches.set(Number(lineNumber), state);
     }
   }
 }
 
 function isPartiallyCovered(state) {
-  return state?.covered === true && state.missed;
+  return state?.missed === true;
 }
 
 function normalizeSourcePath(packageRoot, sourceFile) {
