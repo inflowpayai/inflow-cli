@@ -123,6 +123,53 @@ async function collect(d: PayPipelineDeps): Promise<PayEvent[]> {
 }
 
 describe('runPayPipeline — full lifecycle', () => {
+  it('removes Permit2 before emitting options and selecting a payment', async () => {
+    const decoded = paymentRequired();
+    const exact = decoded.accepts.find((entry) => entry.scheme === 'exact');
+    if (exact === undefined) throw new Error('Missing exact fixture');
+    mockSeller({
+      requiredHeader: encodePaymentRequiredHeader({
+        ...decoded,
+        accepts: [
+          { ...exact, extra: { assetTransferMethod: 'permit2' } },
+          { ...exact, scheme: 'upto' },
+          ...decoded.accepts,
+        ],
+      }),
+    });
+    const selectInflowRequirement = vi.fn((filtered: PaymentRequired) => Promise.resolve(filtered.accepts[0] ?? null));
+    const d = deps({ client: payingClient({ selectInflowRequirement }) as never });
+    const events = await collect(d);
+    expect(selectInflowRequirement).toHaveBeenCalledWith(decoded);
+    expect(events[0]).toMatchObject({ type: 'decoded', decoded });
+    expect(events.at(-1)).toMatchObject({ type: 'replayed', result: { scheme: 'balance' } });
+  });
+
+  it.each([undefined, 'exact', 'upto'])(
+    'never prepares a Permit2-only payment with scheme filter %s',
+    async (schemeFilter) => {
+      const decoded = paymentRequired();
+      mockSeller({
+        requiredHeader: encodePaymentRequiredHeader({
+          ...decoded,
+          accepts: decoded.accepts.map((entry) => ({ ...entry, extra: { assetTransferMethod: 'permit2' } })),
+        }),
+      });
+      const prepareInflowPayment = vi.fn();
+      const d = deps({
+        client: payingClient({ prepareInflowPayment }) as never,
+        ...(schemeFilter === undefined ? {} : { schemeFilter }),
+      });
+      const events = await collect(d);
+      expect(prepareInflowPayment).not.toHaveBeenCalled();
+      expect(events[0]).toMatchObject({ type: 'decoded', decoded: { accepts: [] } });
+      expect(events.at(-1)).toMatchObject({
+        type: 'errored',
+        code: schemeFilter === undefined ? 'NO_INFLOW_MATCH' : 'NO_FILTERED_MATCH',
+      });
+    },
+  );
+
   it('drives decoded → matched → prepared → awaited → replayed and settles with the seller body', async () => {
     const fetchSpy = mockSeller({
       paidHeaders: {

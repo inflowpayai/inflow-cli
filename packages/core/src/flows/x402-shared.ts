@@ -1,4 +1,4 @@
-import { EXTRA_KEYS } from '@inflowpayai/x402';
+import { ASSET_TRANSFER_METHODS, EXTRA_KEYS } from '@inflowpayai/x402';
 import type { PaymentRequired } from '@x402/core/types';
 
 /** Error code emitted when a seller returns 402 but omits the PAYMENT-REQUIRED header. */
@@ -12,6 +12,9 @@ export const NO_INFLOW_MATCH_CODE = 'NO_INFLOW_MATCH';
 
 export const NO_INFLOW_MATCH_MESSAGE =
   "Seller does not accept InFlow-signed payments. Use a buyer client that supports the seller's accept list (e.g., @x402/evm or @x402/svm).";
+
+export const PERMIT2_INSPECTION_WARNING =
+  'This endpoint only offers Permit2 or upto payments, which InFlow treasury payments cannot authorize.';
 
 /**
  * Error code emitted when `--scheme` / `--network` / `--asset` / `--asset-name` filters narrow the accepts list to
@@ -36,6 +39,20 @@ export interface AcceptsFilters {
   network?: string;
   asset?: string;
   assetName?: string;
+}
+
+/** @internal */
+export function excludePermit2Accepts(decoded: PaymentRequired): PaymentRequired {
+  return {
+    ...decoded,
+    accepts: decoded.accepts.filter(
+      // The foundation codec decodes unvalidated seller JSON, which can omit extra.
+      (entry) =>
+        entry.scheme !== 'upto' &&
+        (entry as { extra?: Record<string, unknown> | null }).extra?.[EXTRA_KEYS.ASSET_TRANSFER_METHOD] !==
+          ASSET_TRANSFER_METHODS.PERMIT2,
+    ),
+  };
 }
 
 function extractAssetName(entry: PaymentRequired['accepts'][number]): string | undefined {

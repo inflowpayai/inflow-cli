@@ -320,6 +320,10 @@ describe('buildAcceptsFrame', () => {
       accepts: [],
     };
     expect('extensions' in buildAcceptsFrame(base)).toBe(false);
+    expect('warnings' in buildAcceptsFrame(base)).toBe(false);
+    expect(buildAcceptsFrame({ ...base, warning: 'Unsupported offers' })['warnings']).toEqual([
+      { code: 'NO_INFLOW_MATCH', message: 'Unsupported offers' },
+    ]);
 
     const withExt: InspectResultAccepts = {
       ...base,

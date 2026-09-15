@@ -6,7 +6,12 @@ import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@i
 import { type DecodedChallenge, summarizeChallenges } from './mpp-decode.js';
 import { parseMppHeaderFromProbe } from './mpp-inspect.js';
 import { filterPayableChallenges, resolveAcceptPaymentProbeOptions } from './mpp-shared.js';
-import { isSuccessStatus, UNEXPECTED_PROBE_STATUS_CODE } from './x402-shared.js';
+import {
+  excludePermit2Accepts,
+  isSuccessStatus,
+  PERMIT2_INSPECTION_WARNING,
+  UNEXPECTED_PROBE_STATUS_CODE,
+} from './x402-shared.js';
 import { parseX402HeaderFromProbe } from './x402-inspect.js';
 
 /**
@@ -33,12 +38,13 @@ export type MppSection =
 export type X402Section =
   /** No `PAYMENT-REQUIRED` header on the 402. */
   | { kind: 'absent' }
-  /** Header present and decoded. `accepts` may be empty if the seller advertised none (unusual, but not our error). */
+  /** Header present and decoded. `accepts` excludes Permit2 offers and may be empty. */
   | {
       kind: 'accepts';
       resource: string;
       x402Version: number;
       accepts: readonly PaymentRequirements[];
+      warning?: string;
       extensions?: Record<string, unknown>;
     }
   /** Header present but the codec rejected it. */
@@ -271,12 +277,15 @@ export function buildX402Section(probe: SellerProbeResult): X402Section {
   const parse = parseX402HeaderFromProbe(probe);
   if (parse.kind === 'absent') return { kind: 'absent' };
   if (parse.kind === 'error') return { kind: 'error', code: parse.code, message: parse.message };
-  const decoded = parse.decoded;
+  const decoded = excludePermit2Accepts(parse.decoded);
   return {
     kind: 'accepts',
     resource: decoded.resource.url,
     x402Version: decoded.x402Version,
     accepts: fromFoundationRequirements(decoded.accepts),
+    ...(decoded.accepts.length === 0 && parse.decoded.accepts.length > 0
+      ? { warning: PERMIT2_INSPECTION_WARNING }
+      : {}),
     ...(decoded.extensions !== undefined ? { extensions: decoded.extensions } : {}),
   };
 }
@@ -284,7 +293,7 @@ export function buildX402Section(probe: SellerProbeResult): X402Section {
 /**
  * One-shot probe → decode flow for the protocol-agnostic `inflow inspect`. Probes once, then decodes both MPP and x402
  * challenges off the same response. Emits exactly one terminal event via `emit`. Read-only — no auth, no payment, no
- * filters.
+ * caller filters.
  */
 export async function runCombinedInspectPipeline(
   deps: CombinedInspectPipelineDeps,

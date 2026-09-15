@@ -1,6 +1,6 @@
 import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
 import type { ServiceInspection } from '@inflowpayai/inflow-core';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
+import { decodePaymentRequiredHeader, encodePaymentRequiredHeader } from '@x402/core/http';
 import { render } from 'ink-testing-library';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -189,6 +189,25 @@ async function settle(): Promise<void> {
 }
 
 describe('CombinedInspectView', () => {
+  it('explains filtered x402 offers while retaining the MPP section', async () => {
+    const document = decodePaymentRequiredHeader(x402Header());
+    const header = encodePaymentRequiredHeader({
+      ...document,
+      accepts: document.accepts.map((offer) => ({ ...offer, scheme: 'upto' })),
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('', {
+        status: 402,
+        headers: { 'PAYMENT-REQUIRED': header, 'WWW-Authenticate': mppHeader() },
+      }),
+    );
+    const view = renderView();
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Permit2 or upto payments'));
+    expect(view.lastFrame()).toContain('cannot authorize');
+    expect(view.lastFrame()).toContain('── MPP ──');
+    view.unmount();
+  });
+
   it('renders definitive OpenAPI AEP policy without waiting for a resource probe', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const { lastFrame, unmount } = renderOpenApiAepView();

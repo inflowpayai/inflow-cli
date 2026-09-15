@@ -388,6 +388,7 @@ const X402SectionView: React.FC<{ section: X402Section }> = ({ section }) => {
         <Text dimColor>{`${String(count)} accept${count === 1 ? '' : 's'}`}</Text>
       </Text>
       <Table columns={X402_TRIAGE_COLUMNS} rows={[...section.accepts]} />
+      {section.warning !== undefined ? <Text color="yellow">{section.warning}</Text> : null}
     </Box>
   );
 };
