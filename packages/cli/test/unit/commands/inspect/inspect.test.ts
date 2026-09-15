@@ -103,6 +103,24 @@ function x402Header(): string {
   });
 }
 
+it('includes an x402 warning without losing the inspected resource or version', () => {
+  const frame = buildCombinedFrame({
+    outcome: 'inspected',
+    url: URL,
+    method: 'GET',
+    odp: { kind: 'absent' },
+    aep: { kind: 'absent', source: 'anonymous_probe' },
+    mpp: { kind: 'absent' },
+    x402: { kind: 'accepts', resource: URL, x402Version: 2, accepts: [], warning: 'Unsupported offers' },
+  });
+  expect(frame).toMatchObject({
+    x402: [],
+    x402_resource: URL,
+    x402_version: 2,
+    warnings: [{ protocol: 'x402', code: 'NO_INFLOW_MATCH', message: 'Unsupported offers' }],
+  });
+});
+
 function ctx(): InspectCommandContext {
   return {
     agent: true,

@@ -4,6 +4,7 @@ import {
   type InspectResultAccepts,
   type InspectResultNoPayment,
   type PaymentInspectionBlocked,
+  NO_INFLOW_MATCH_CODE,
   reduceX402Inspect,
   runInspectPipeline,
 } from '@inflowpayai/inflow-core';
@@ -153,6 +154,7 @@ export const InspectView: React.FC<InspectViewProps> = ({ url, method, deps, onC
         <Text dimColor>{`${String(acceptsCount)} accept${acceptsCount === 1 ? '' : 's'}`}</Text>
       </Text>
       {extensionsLine !== null ? <Text dimColor>{`extensions: ${extensionsLine}`}</Text> : null}
+      {result.warning !== undefined ? <Text color="yellow">{result.warning}</Text> : null}
       <Box marginTop={1}>
         <Table columns={COLUMNS} rows={result.accepts} />
       </Box>
@@ -186,6 +188,7 @@ export function buildAcceptsFrame(result: InspectResultAccepts): Record<string, 
     accepts: result.accepts.map(acceptToFrame),
   };
   if (result.extensions !== undefined) frame['extensions'] = result.extensions;
+  if (result.warning !== undefined) frame['warnings'] = [{ code: NO_INFLOW_MATCH_CODE, message: result.warning }];
   return frame;
 }
 

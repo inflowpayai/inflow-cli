@@ -460,6 +460,14 @@ When the seller returns 2xx (no payment required), `inspect` yields `outcome: "n
 The `x402` command group drives the buyer-side of the [x402 protocol](https://x402.org). It wraps
 `@inflowpayai/x402-buyer`'s two-phase signing flow with both TTY and agent renderings.
 
+InFlow treasury payments cannot authorize Permit2. `inspect`, `x402 inspect`, and `x402 pay` exclude `upto` offers and
+offers declaring `extra.assetTransferMethod: "permit2"`, including `exact` offers. Explicit filters cannot select these
+offers. `x402 decode` preserves the raw header for diagnostics.
+
+If every offer is excluded, inspection explains that InFlow treasury payments cannot authorize the advertised payments.
+Structured inspection output includes a `warnings` entry with code `NO_INFLOW_MATCH`; combined inspection also
+identifies its protocol as `x402`.
+
 ### `x402 pay`
 
 ```bash

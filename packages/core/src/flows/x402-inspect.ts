@@ -7,10 +7,12 @@ import { PaymentInspectionBlockedError, type PaymentInspectionBlocked } from './
 import {
   type AcceptsFilters,
   buildNoFilteredMatchMessage,
+  excludePermit2Accepts,
   filterAccepts,
   INVALID_402_CODE,
   isSuccessStatus,
   NO_FILTERED_MATCH_CODE,
+  PERMIT2_INSPECTION_WARNING,
   UNEXPECTED_PROBE_STATUS_CODE,
 } from './x402-shared.js';
 
@@ -30,7 +32,7 @@ export interface InspectResultNoPayment {
 
 /**
  * Result frame returned when the seller responds 402 and the PAYMENT-REQUIRED header decoded cleanly. Carries the
- * decoded accepts list (post-filter, if `schemeFilter` / `networkFilter` were applied).
+ * decoded accepts list after excluding Permit2 offers and applying caller filters.
  */
 export interface InspectResultAccepts {
   outcome: 'accepts';
@@ -39,6 +41,7 @@ export interface InspectResultAccepts {
   resource: string;
   x402Version: number;
   accepts: readonly PaymentRequirements[];
+  warning?: string;
   extensions?: Record<string, unknown>;
 }
 
@@ -116,9 +119,8 @@ export interface InspectPipelineDeps {
  * callback.
  *
  * The filters `(schemeFilter, networkFilter, assetFilter, assetNameFilter)` narrow the rendered accepts via
- * {@link filterAccepts}. An empty filtered set emits `NO_FILTERED_MATCH_CODE` with the available-pairs hint; an
- * unfiltered empty set is still rendered (the seller chose to advertise no accepts, which is unusual but not the
- * caller's error to report).
+ * {@link filterAccepts}. An empty filtered set emits `NO_FILTERED_MATCH_CODE` with the available-pairs hint; an empty
+ * set without caller filters is still rendered, including when every advertised offer requires Permit2.
  */
 export async function runInspectPipeline(
   deps: InspectPipelineDeps,
@@ -174,7 +176,7 @@ export async function runInspectPipeline(
     emit({ type: 'errored', code: parse.code, message: parse.message });
     return;
   }
-  const decoded = parse.decoded;
+  const decoded = excludePermit2Accepts(parse.decoded);
 
   const filters: AcceptsFilters = {
     ...(deps.schemeFilter !== undefined ? { scheme: deps.schemeFilter } : {}),
@@ -206,6 +208,9 @@ export async function runInspectPipeline(
     resource: decoded.resource.url,
     x402Version: decoded.x402Version,
     accepts,
+    ...(decoded.accepts.length === 0 && parse.decoded.accepts.length > 0
+      ? { warning: PERMIT2_INSPECTION_WARNING }
+      : {}),
     ...(decoded.extensions !== undefined ? { extensions: decoded.extensions } : {}),
   };
   emit({ type: 'accepts', result });

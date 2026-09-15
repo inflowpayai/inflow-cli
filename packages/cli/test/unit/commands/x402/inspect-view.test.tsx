@@ -1,4 +1,4 @@
-import { encodePaymentRequiredHeader } from '@x402/core/http';
+import { decodePaymentRequiredHeader, encodePaymentRequiredHeader } from '@x402/core/http';
 import { PaymentInspectionBlockedError } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
 import React from 'react';
@@ -41,6 +41,30 @@ afterEach(() => {
 });
 
 describe('InspectView', () => {
+  it('explains why a Permit2-only endpoint has no available offers', async () => {
+    const document = decodePaymentRequiredHeader(multiAcceptHeader());
+    const header = encodePaymentRequiredHeader({
+      ...document,
+      accepts: document.accepts.map((offer) => ({ ...offer, scheme: 'upto' })),
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('', { status: 402, headers: { 'PAYMENT-REQUIRED': header } }),
+    );
+    const onComplete = vi.fn();
+    const view = render(
+      <InspectView
+        url="https://seller.test"
+        method="GET"
+        deps={{ url: 'https://seller.test', probeOptions: { method: 'GET', headers: {} } }}
+        onComplete={onComplete}
+      />,
+    );
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(view.lastFrame()).toContain('Permit2 or upto payments');
+    expect(view.lastFrame()).toContain('cannot authorize');
+    view.unmount();
+  });
+
   it('renders a proper-cased table with the seller header line and footer hint', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response('payment required', {

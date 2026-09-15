@@ -190,6 +190,9 @@ export function buildCombinedFrame(result: CombinedInspectResult): Record<string
   if (result.x402.kind === 'error') {
     warnings.push({ protocol: 'x402', code: result.x402.code, message: result.x402.message });
   }
+  if (result.x402.kind === 'accepts' && result.x402.warning !== undefined) {
+    warnings.push({ protocol: 'x402', code: 'NO_INFLOW_MATCH', message: result.x402.warning });
+  }
 
   if (result.aep.kind === 'absent' && result.mpp.kind === 'absent' && result.x402.kind === 'absent') {
     warnings.push({
