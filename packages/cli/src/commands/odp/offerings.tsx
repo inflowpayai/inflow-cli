@@ -110,7 +110,7 @@ interface DiscoveryInput {
   keywords: string[];
   maxOfferingsPerService: number | undefined;
   maxServices: number | undefined;
-  enrollment: 'aep'[];
+  withAep: boolean;
   operations: OfferingDiscoverOperation[];
   payments: PaymentFilter[];
   query: string | undefined;
@@ -315,7 +315,7 @@ export async function runOfferingDiscovery(
     const operations = input.operations.length === 0 ? [requiredDiscoveryOperation(input)] : input.operations;
     const serviceFilters = {
       ...(input.keywords.length === 0 ? {} : { keywords: input.keywords }),
-      ...(input.enrollment.length === 0 ? {} : { enrollment: input.enrollment.map((name) => ({ name })) }),
+      ...(input.withAep ? { enrollment: [{ name: 'aep' as const }] } : {}),
       operations: operations.map((name) => ({ name })),
       ...(input.payments.length === 0 ? {} : { payments: normalizePaymentFilters(input.payments) }),
     };
@@ -693,7 +693,7 @@ export function createOfferingsCli(resource: OfferingResource) {
             keywords: c.options.keyword,
             maxOfferingsPerService: c.options.maxOfferingsPerService,
             maxServices: c.options.maxServices,
-            enrollment: c.options.enrollment,
+            withAep: c.options.withAep,
             operations: c.options.operation,
             payments: c.options.payment,
             query: c.args.query,

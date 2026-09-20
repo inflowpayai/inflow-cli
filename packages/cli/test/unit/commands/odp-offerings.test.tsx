@@ -292,7 +292,7 @@ describe('ODP Offering commands', () => {
       keywords: ['gpu'],
       maxOfferingsPerService: 5,
       maxServices: 10,
-      enrollment: [],
+      withAep: true,
       operations: ['search-offerings'],
       payments: ['mpp:inflow', 'mpp:tempo'],
       query: 'a100',
@@ -309,6 +309,7 @@ describe('ODP Offering commands', () => {
       offerings: { query: 'a100' },
       services: {
         filters: {
+          enrollment: [{ name: 'aep' }],
           keywords: ['gpu'],
           operations: [{ name: 'search-offerings' }],
           payments: [{ name: 'mpp', options: ['inflow', 'tempo'] }],
@@ -334,7 +335,7 @@ describe('ODP Offering commands', () => {
     await __testing.runOfferingDiscovery(resource, {
       collectionId: 'compute',
       concurrency: undefined,
-      enrollment: [],
+      withAep: false,
       filters: [],
       includeDescendants: undefined,
       keywords: [],

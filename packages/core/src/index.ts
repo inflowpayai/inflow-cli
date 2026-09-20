@@ -39,6 +39,8 @@ export {
   type CollectionSequence,
   type ContinuationOptions,
   type DirectorySearchPage,
+  type DirectoryResult,
+  type DirectoryResourceSearchRequest,
   type DirectorySearchRequest,
   type DirectoryService,
   type DirectoryServiceFilters,

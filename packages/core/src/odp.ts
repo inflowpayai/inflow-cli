@@ -13,6 +13,8 @@ import {
 import {
   createDirectoryClient,
   type DirectoryClient,
+  type DirectoryResult,
+  type DirectoryResourceSearchRequest,
   type DirectoryIterationOptions,
   type DirectorySearchRequest,
   type DirectorySearchSequence,
@@ -26,6 +28,8 @@ export { OdpInspectionError, OdpRequestError } from '@offering-protocol/agent';
 export { DirectoryRequestError } from '@offering-protocol/directory';
 
 export type {
+  DirectoryResult,
+  DirectoryResourceSearchRequest,
   DirectorySearchPage,
   DirectorySearchRequest,
   DirectoryService,
@@ -80,6 +84,9 @@ export interface OdpServiceTransportOptions {
 
 export interface IOdpResource {
   readonly environment: InflowEnvironment;
+  search(request?: DirectoryResourceSearchRequest): DirectorySearchSequence<DirectoryResult>;
+  continueSearch(next: string, options?: DirectoryIterationOptions): DirectorySearchSequence<DirectoryResult>;
+  suggest(request: DirectorySuggestionRequest): Promise<string[]>;
   searchServices(request?: DirectorySearchRequest): DirectorySearchSequence;
   continueSearchServices(next: string, options?: DirectoryIterationOptions): DirectorySearchSequence;
   suggestServices(request: DirectorySuggestionRequest): Promise<string[]>;
@@ -122,6 +129,18 @@ export class OdpResource implements IOdpResource {
     });
   }
 
+  search(request?: DirectoryResourceSearchRequest): DirectorySearchSequence<DirectoryResult> {
+    return sanitizeSequence(this.directory.search(request));
+  }
+
+  continueSearch(next: string, options?: DirectoryIterationOptions): DirectorySearchSequence<DirectoryResult> {
+    return sanitizeSequence(this.directory.continueSearch(next, options));
+  }
+
+  suggest(request: DirectorySuggestionRequest): Promise<string[]> {
+    return this.directory.suggest(request).then(sanitizeDeep);
+  }
+
   searchServices(request?: DirectorySearchRequest): DirectorySearchSequence {
     const sequence = this.directory.searchServices(request);
     return sanitizeSequence(sequence);
@@ -162,7 +181,7 @@ export class OdpResource implements IOdpResource {
   }
 }
 
-function sanitizeSequence(sequence: DirectorySearchSequence): DirectorySearchSequence {
+function sanitizeSequence<Item>(sequence: DirectorySearchSequence<Item>): DirectorySearchSequence<Item> {
   return {
     items: sanitizeIterable(sequence.items),
     pages: sanitizeIterable(sequence.pages),

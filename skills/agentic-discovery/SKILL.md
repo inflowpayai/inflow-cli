@@ -44,8 +44,8 @@ inflow --llms-full
 
 | Goal | Command |
 | - | - |
-| Find Services | `inflow odp directory search` |
-| Complete a directory keyword | `inflow odp directory suggest` |
+| Find Services and indexed Collections | `inflow odp directory search` |
+| Find matching Service and Collection names | `inflow odp directory suggest` |
 | Inspect one Service and its operations | `inflow odp inspect` |
 | Browse or search Collection groupings | `inflow odp collections list/search/get` |
 | Browse, search, or retrieve products | `inflow odp offerings list/search/get` |
@@ -56,12 +56,14 @@ inflow --llms-full
 
 Discovery has two stages:
 
-1. The canonical directory searches Service metadata such as name, description, keywords, supported operations,
-   enrollment, and payment protocols.
+1. The canonical directory searches Service names, descriptions and keywords, and indexed Collection names and
+   descriptions. Capability filters apply to the owning Service.
 2. The selected Service supplies its own Collections, Offerings, product attributes, and Actions.
 
-The directory does not contain or search a global product catalog. A directory result provides the Service origin an
-agent uses for subsequent `inspect`, `collections`, `offerings`, and `actions` commands.
+The directory does not contain or search a global Offering catalog. Known results contain `type` and nested `service`
+metadata. Use `service.service_origin` for subsequent commands. Collection results also contain `collection.id` for
+`collections get`; the ID is case-sensitive and scoped to its owning Service. Unknown results contain `resource_type`
+and `raw`: do not treat them as Services or invoke them. Protocols remain in `service.protocols`.
 
 ## Find Services
 
@@ -74,15 +76,20 @@ inflow odp directory search compute --keyword gpu --operation search-offerings -
 Use `--payment mpp` or `--payment x402` to match a protocol regardless of its advertised options.
 Use `protocol:option`, such as `mpp:solana` or `x402:base`, to require one Service-advertised payment option.
 Repeat `--payment` to provide alternatives.
+Use `--with-aep` to require advertised AEP support, not an existing enrollment.
+`--operation` filters advertised ODP operations. These filters and `--keyword` also apply to suggestions;
+Collection matches are filtered using their owning Service's capabilities and keywords.
 
-Use suggestions when the directory's normalized keywords are unknown:
+Suggestions return names whose indexed metadata matches the text; they are not keyword filter values or necessarily
+prefix matches:
 
 ```bash
 inflow odp directory suggest gp --limit 10 --format json
 ```
 
-Each directory response contains one page of Services and may contain `next`. Pass `next` back unchanged and do not
-combine it with a new query or filters:
+Each directory response contains mixed `items`, optional `facets`, optional `issues` for skipped malformed results, and
+may contain `next`. Facets count matching results, including Collections. Results are capped at 100; absent `next` does
+not promise exhaustive results. Pass `next` back unchanged and do not combine it with a new query or filters:
 
 ```bash
 inflow odp directory search --next "<next>" --format json

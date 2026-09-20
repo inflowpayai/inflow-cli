@@ -7,6 +7,7 @@ import type {
   TerseCollection,
 } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
+import { OdpInspectionError } from '@inflowpayai/inflow-core';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CollectionsView,
@@ -14,6 +15,7 @@ import {
   InspectionView,
   __testing,
   createCollectionsCli,
+  odpServiceFailure,
 } from '../../../src/commands/odp/service.js';
 import { createInspectCli } from '../../../src/commands/odp/index.js';
 import { OdpCommandError } from '../../../src/commands/odp/command.js';
@@ -117,6 +119,21 @@ function failingCollectionSequence(): CollectionSequence<TerseCollection> {
 }
 
 describe('ODP Service and Collection commands', () => {
+  it('reports blocked inspection destinations without retrying', () => {
+    expect.assertions(1);
+    try {
+      odpServiceFailure(
+        new OdpInspectionError('Blocked destination', 'blocked_destination'),
+        'FAILED',
+        'Inspection failed.',
+      );
+    } catch (error) {
+      expect(error).toMatchObject({
+        detail: { code: 'ODP_INSPECT_DESTINATION_BLOCKED', message: 'Inspection failed.', retryable: false },
+      });
+    }
+  });
+
   it('inspects a Service with the requested language', async () => {
     const inspect = vi.fn<IOdpResource['inspect']>(() => Promise.resolve(inspection));
 

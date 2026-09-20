@@ -16,6 +16,69 @@ const serviceDocument = {
 };
 
 describe('Inflow.odp', () => {
+  it.each(['production', 'sandbox'] as const)('uses mixed discovery without credentials in %s', async (environment) => {
+    const calls: Request[] = [];
+    const stamp = '2026-09-18T12:00:00Z';
+    const service = {
+      ...serviceDocument,
+      service_id: 'compute',
+      service_origin: 'https://compute.example',
+      indexed_at: stamp,
+      protocols: { enrollment: [{ name: 'aep' }], payments: [{ name: 'mpp', authentication: 'required' }] },
+    };
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      const request = new Request(input, init);
+      calls.push(request);
+      return Promise.resolve(
+        Response.json(
+          request.url.includes('suggestions')
+            ? { items: ['\u001b[31mCompute\u001b[0m'] }
+            : {
+                items: [
+                  {
+                    type: 'service',
+                    service,
+                    indexed_at: stamp,
+                    available_through: { service_id: 'platform', service_origin: 'https://platform.example' },
+                  },
+                  {
+                    type: 'collection',
+                    service,
+                    indexed_at: stamp,
+                    collection: { id: 'GPU', name: '\u001b[31mGPU\u001b[0m' },
+                  },
+                  { type: 'future', label: '\u001b[31mUnknown\u001b[0m' },
+                ],
+              },
+        ),
+      );
+    };
+    const resource = new Inflow({ environment, fetch }).odp;
+    const items = [];
+    for await (const item of resource.search({ query: 'compute' }).items) items.push(item);
+    expect(items[0]).toMatchObject({
+      type: 'service',
+      service: { protocols: service.protocols },
+      available_through: { service_id: 'platform' },
+    });
+    expect(items[1]).toMatchObject({ type: 'collection', collection: { id: 'GPU', name: 'GPU' } });
+    expect(items[2]).toEqual({ type: 'unknown', resource_type: 'future', raw: { type: 'future', label: 'Unknown' } });
+    const pages = [];
+    for await (const page of resource.continueSearch('/v1/directory/search?cursor=opaque', { maxPages: 1 }).pages)
+      pages.push(page);
+    expect(pages[0]?.items).toEqual(items);
+    await expect(resource.suggest({ prefix: 'om' })).resolves.toEqual(['Compute']);
+    const origin = environment === 'sandbox' ? 'https://sandbox.inflowpay.ai' : 'https://api.inflowpay.ai';
+    expect(calls.map((request) => [request.url, request.method])).toEqual([
+      [`${origin}/v1/directory/search`, 'POST'],
+      [`${origin}/v1/directory/search?cursor=opaque`, 'GET'],
+      [`${origin}/v1/directory/suggestions`, 'POST'],
+    ]);
+    expect(await calls[0]?.json()).toEqual({ query: 'compute' });
+    expect(await calls[2]?.json()).toEqual({ prefix: 'om' });
+    expect(calls.every((request) => !request.headers.has('authorization'))).toBe(true);
+  });
+
   it('accepts an empty suggestion result from the directory', async () => {
     const fetch: typeof globalThis.fetch = () => Promise.resolve(Response.json({ items: [] }));
     const inflow = new Inflow({ fetch });

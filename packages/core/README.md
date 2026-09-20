@@ -26,9 +26,10 @@ The package exposes three things:
    - `inflow.mpp` (`IMpp`) — `client()` (lazy `MppClient` for MPP, the Machine Payments Protocol, from
      `@inflowpayai/mpp`) plus `pay` / `status` / `cancel` / `inspect` / `supported`; the pure-codec `decodeMppValue`
      decodes a `WWW-Authenticate: Payment` header or a base64url credential / receipt.
-   - `inflow.odp` (`IOdpResource`) — canonical directory search and suggestions, Service inspection and catalog clients,
-     plus bounded multi-Service Offering discovery. The InFlow environment selects ODP production or sandbox; the
-     directory endpoint cannot be overridden.
+   - `inflow.odp` (`IOdpResource`) — mixed Service/Collection `search`, `continueSearch`, and name `suggest` operations;
+     Service-only `searchServices`, `continueSearchServices`, and `suggestServices`; Service inspection and catalog
+     clients, plus bounded multi-Service Offering discovery. The InFlow environment selects ODP production or sandbox;
+     the directory endpoint cannot be overridden.
 
    Every handle is sanitized through an ANSI-stripping Proxy so server-controlled strings can never carry terminal
    escape codes into the consumer. Stateful operations (`pay`, `inspect`, `auth.login`) return a `FlowRun<E>` whose

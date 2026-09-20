@@ -127,6 +127,7 @@ export function odpServiceFailure(
   if (error instanceof OdpInspectionError) {
     const codes: Record<OdpInspectionError['code'], string> = {
       aborted: 'ODP_REQUEST_ABORTED',
+      blocked_destination: 'ODP_INSPECT_DESTINATION_BLOCKED',
       http_error: 'ODP_INSPECT_HTTP_ERROR',
       invalid_json: 'ODP_INSPECT_JSON_INVALID',
       invalid_media_type: 'ODP_INSPECT_MEDIA_TYPE_INVALID',
