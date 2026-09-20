@@ -35,8 +35,8 @@ For host-specific skill and MCP installation, see the repository's
 | `inflow balances list`                                           | List the authenticated user's balances.                                                                                           |
 | `inflow deposit-addresses list`                                  | List the user's configured deposit addresses, grouped by network.                                                                 |
 | `inflow inspect <url>`                                           | Inspect a URL for discovery, enrollment, and payment protocols without taking an action.                                          |
-| `inflow odp directory search`                                    | Search the directory for services.                                                                                                |
-| `inflow odp directory suggest <prefix>`                          | Suggest directory keywords from a prefix.                                                                                         |
+| `inflow odp directory search`                                    | Search the directory for Services and Collections.                                                                                |
+| `inflow odp directory suggest <prefix>`                          | Find matching Service and Collection names.                                                                                       |
 | `inflow odp inspect <service>`                                   | Inspect a service's capabilities.                                                                                                 |
 | `inflow odp collections list <service>`                          | List collections from a service in terse form.                                                                                    |
 | `inflow odp collections search <service>`                        | Search collections from a service in terse form.                                                                                  |
@@ -172,10 +172,10 @@ Lists the configured deposit addresses for the authenticated user. TTY groups by
 
 ## `odp`
 
-ODP discovery has two stages. The canonical directory finds Services from their advertised metadata; Collection and
-Offering commands then query a selected Service's catalog directly. The directory does not store or search a global
-Offering catalog. Directory search and `odp inspect` are public operations. Catalog and Action commands use the existing
-AEP runtime when Service authentication is required.
+ODP discovery has two stages. The canonical directory finds Services and indexed Collections from their metadata;
+Collection and Offering commands then query a selected Service's catalog directly. The directory does not store or
+search a global Offering catalog. Directory search and `odp inspect` are public operations. Catalog and Action commands
+use the existing AEP runtime when Service authentication is required.
 
 The following agent workflow is directly runnable when the canonical directory contains a matching Service. It uses `jq`
 to pass identifiers from one structured response to the next:
@@ -186,7 +186,7 @@ set -eu
 directory_json=$(inflow odp directory search gpu \
   --operation search-offerings \
   --format json)
-service_origin=$(printf '%s' "$directory_json" | jq -er '.items[0].service_origin')
+service_origin=$(printf '%s' "$directory_json" | jq -er '[.items[] | select(.type == "service" or .type == "collection")][0].service.service_origin')
 
 inflow odp inspect "$service_origin" --format json
 
@@ -201,7 +201,27 @@ if [ -n "$action_id" ]; then
 fi
 ```
 
-An opaque continuation can be resumed without interpreting it:
+Directory search JSON contains `items`, optional `facets`, optional `next`, and optional `issues` for skipped invalid
+results. Known items contain `type`, `indexed_at`, and `service` (including `service_id`, `service_origin`, and any
+advertised `protocols`). Collection items also contain `collection.id`, `collection.name`, and an optional description.
+Use the owning origin and Collection ID with `odp collections get`. Service items can carry `available_through`;
+structured output retains it, but the text table does not display attribution or protocols. Unknown types retain
+`resource_type` and `raw` and are displayed as unsupported, not treated as executable targets.
+
+Facets count matching results, including Collections. The mixed endpoint returns at most 100 results; an absent `next`
+does not mean every match was returned. `directory suggest` returns `{ "items": ["name"] }`: names of Services and
+Collections whose indexed metadata matches the input, not necessarily names that begin with that input. Both commands
+accept `--keyword`, `--operation`, `--payment`, and `--with-aep`. `--with-aep` requires advertised AEP support; it does
+not check your enrollment or authenticate you. For Collection results, these filters apply to the owning Service. For
+example:
+
+```bash
+inflow odp directory suggest weather --with-aep --operation get-offering --payment mpp:inflow --format json
+```
+
+`offerings discover` remains Service-only and does not treat a Collection result as another Service.
+
+An opaque continuation, when supplied, can be resumed without interpreting it:
 
 ```bash
 page=$(inflow odp directory search gpu --format json)
@@ -213,8 +233,9 @@ fi
 
 ### Access, caching, and privacy
 
-- A directory query is sent only to `https://directory.offeringprotocol.org`, or to the fixed sandbox directory when
-  `--sandbox` is selected. The directory sees the Service query and Service-level filters.
+- A directory query is sent only to `https://api.inflowpay.ai`, or to `https://sandbox.inflowpay.ai` in the sandbox
+  environment. The directory sees the query and Service-level filters, which also apply to a Collection's owning
+  Service.
 - Per-Service Collection, Offering, and Action requests are sent directly to that Service. `offerings discover` sends
   the Offering query and catalog filters to every selected Service within the configured bounds.
 - The CLI does not send ODP analytics or command telemetry. Shell history, redirected output, and the selected remote
@@ -233,12 +254,12 @@ inflow odp directory search gpu --keyword compute --payment mpp:inflow --format 
 inflow odp directory suggest gp --limit 10 --format json
 ```
 
-Directory search returns one page as `{ items, next?, facets? }`. Pass the opaque `next` value back through
+Directory search returns one page as `{ items, next?, facets?, issues? }`. Pass the opaque `next` value back through
 `--next <value>` to continue; a continuation cannot be combined with a new query or filters. The SDK validates and
 requests the continuation, so callers do not interpret or reconstruct it. `--sandbox` selects the canonical ODP sandbox
 directory.
 
-Suggestions return `{ items }`, where each item is a directory keyword matching the supplied prefix.
+Suggestions return `{ items }`, where each item is a Service or Collection name matched through indexed metadata.
 
 `--payment mpp` matches any Service advertising MPP. Add an ODP payment option after a colon to require a
 Service-advertised option, such as `--payment mpp:solana` or `--payment x402:base`. Repeat the flag for alternatives.

@@ -1,6 +1,7 @@
 import {
   DirectoryRequestError,
   type DirectorySearchPage,
+  type DirectoryResult,
   type DirectoryService,
   type IOdpResource,
 } from '@inflowpayai/inflow-core';
@@ -13,13 +14,13 @@ const emptyInput: Parameters<typeof __testing.runDirectorySearch>[1] = {
   keyword: [],
   limit: undefined,
   next: undefined,
-  enrollment: [],
+  withAep: false,
   operation: [],
   payment: [],
   query: undefined,
 };
 
-function sequence(page: DirectorySearchPage): ReturnType<IOdpResource['searchServices']> {
+function sequence(page: DirectorySearchPage<DirectoryResult>): ReturnType<IOdpResource['search']> {
   return {
     items: {
       async *[Symbol.asyncIterator]() {
@@ -36,7 +37,7 @@ function sequence(page: DirectorySearchPage): ReturnType<IOdpResource['searchSer
   };
 }
 
-function failingSequence(): ReturnType<IOdpResource['searchServices']> {
+function failingSequence(): ReturnType<IOdpResource['search']> {
   return {
     items: {
       async *[Symbol.asyncIterator]() {
@@ -54,12 +55,76 @@ function failingSequence(): ReturnType<IOdpResource['searchServices']> {
 }
 
 describe('ODP directory commands', () => {
+  it('renders mixed identities without attribution and preserves metadata in JSON', async () => {
+    const service: DirectoryService & { service_id: string } = {
+      service_id: 'compute',
+      service_origin: 'https://compute.example',
+      name: 'Compute',
+      description: 'Compute service',
+      language: 'en',
+      localizations: ['en'],
+      operations: [],
+      indexed_at: '2026-09-18T12:00:00Z',
+      protocols: { payments: [{ name: 'mpp' as const, authentication: 'required' as const }] },
+    };
+    const page: DirectorySearchPage<DirectoryResult> = {
+      items: [
+        {
+          type: 'service',
+          service,
+          indexed_at: service.indexed_at,
+          available_through: { service_id: 'platform', service_origin: 'https://platform.example', name: 'Platform' },
+        },
+        { type: 'collection', service, indexed_at: service.indexed_at, collection: { id: 'GPU', name: 'GPU catalog' } },
+        {
+          type: 'collection',
+          service,
+          indexed_at: service.indexed_at,
+          collection: { id: 'cpu', name: 'CPU catalog', description: 'CPU capacity' },
+        },
+        { type: 'unknown', resource_type: 'future', raw: { type: 'future', value: 1 } },
+      ],
+      issues: [{ index: 4, message: 'Invalid result' }],
+    };
+    const frame = render(<SearchView page={page} />).lastFrame();
+    expect(frame).toContain('Collection ID');
+    expect(frame).toContain('GPU catalog');
+    expect(frame).toContain('CPU capacity');
+    expect(frame).toContain('Unsupported');
+    expect(frame).toContain('future');
+    expect(frame).toContain('Skipped result 5: Invalid result');
+    expect(frame).not.toContain('Platform');
+    expect(frame).not.toContain('MPP');
+    const output: string[] = [];
+    await createDirectoryCli({ search: () => sequence(page), continueSearch: vi.fn(), suggest: vi.fn() }).serve(
+      ['search', 'compute', '--format', 'json'],
+      {
+        exit: vi.fn(),
+        stdout: (chunk) => {
+          output.push(chunk);
+        },
+      },
+    );
+    expect(JSON.parse(output.join(''))).toEqual(page);
+    expect(
+      render(
+        <SearchView
+          page={{
+            items: [],
+            issues: [{ index: 4, message: 'Invalid result' }],
+            next: '/v1/directory/search?cursor=next',
+          }}
+        />,
+      ).lastFrame(),
+    ).toContain('Skipped result 5');
+  });
+
   it('sends search terms and filters to one directory page', async () => {
-    const page = { items: [], next: '/v1/services/search?cursor=next' };
-    const searchServices = vi.fn(() => sequence(page));
+    const page = { items: [], next: '/v1/directory/search?cursor=next' };
+    const search = vi.fn(() => sequence(page));
 
     const result = await __testing.runDirectorySearch(
-      { continueSearchServices: vi.fn(), searchServices },
+      { continueSearch: vi.fn(), search },
       {
         ...emptyInput,
         keyword: ['gpu'],
@@ -71,7 +136,7 @@ describe('ODP directory commands', () => {
     );
 
     expect(result).toEqual(page);
-    expect(searchServices).toHaveBeenCalledWith({
+    expect(search).toHaveBeenCalledWith({
       filters: {
         keywords: ['gpu'],
         operations: [{ name: 'search-offerings' }],
@@ -84,28 +149,28 @@ describe('ODP directory commands', () => {
 
   it('delegates an opaque continuation to the ODP resource', async () => {
     const page = { items: [] };
-    const continueSearchServices = vi.fn(() => sequence(page));
+    const continueSearch = vi.fn(() => sequence(page));
 
     await __testing.runDirectorySearch(
-      { continueSearchServices, searchServices: vi.fn() },
-      { ...emptyInput, next: '/v1/services/search?cursor=opaque' },
+      { continueSearch, search: vi.fn() },
+      { ...emptyInput, next: '/v1/directory/search?cursor=opaque' },
     );
 
-    expect(continueSearchServices).toHaveBeenCalledWith('/v1/services/search?cursor=opaque', { maxPages: 1 });
+    expect(continueSearch).toHaveBeenCalledWith('/v1/directory/search?cursor=opaque', { maxPages: 1 });
   });
 
   it('rejects combining a continuation with initial search input', async () => {
     await expect(
       __testing.runDirectorySearch(
-        { continueSearchServices: vi.fn(), searchServices: vi.fn() },
-        { ...emptyInput, next: '/v1/services/search?cursor=opaque', query: 'gpu' },
+        { continueSearch: vi.fn(), search: vi.fn() },
+        { ...emptyInput, next: '/v1/directory/search?cursor=opaque', query: 'gpu' },
       ),
     ).rejects.toMatchObject({ detail: { code: 'ODP_DIRECTORY_NEXT_CONFLICT', exitCode: 2 } });
   });
 
   it('prints directory search usage when no search input is provided', async () => {
     try {
-      await __testing.runDirectorySearch({ continueSearchServices: vi.fn(), searchServices: vi.fn() }, emptyInput);
+      await __testing.runDirectorySearch({ continueSearch: vi.fn(), search: vi.fn() }, emptyInput);
       throw new Error('Expected an empty directory search to fail.');
     } catch (caught) {
       expect(caught).toBeInstanceOf(OdpCommandError);
@@ -124,8 +189,8 @@ describe('ODP directory commands', () => {
     await expect(
       __testing.runDirectorySearch(
         {
-          continueSearchServices: vi.fn(),
-          searchServices: vi.fn(() => ({
+          continueSearch: vi.fn(),
+          search: vi.fn(() => ({
             items: failingSequence().items,
             pages: {
               async *[Symbol.asyncIterator]() {
@@ -148,8 +213,8 @@ describe('ODP directory commands', () => {
   it('reports the directory HTTP status for search failures', async () => {
     const failure = new DirectoryRequestError(503, 'private directory failure', new Headers());
     const resource = {
-      continueSearchServices: vi.fn(),
-      searchServices: vi.fn(() => ({
+      continueSearch: vi.fn(),
+      search: vi.fn(() => ({
         items: failingSequence().items,
         pages: {
           async *[Symbol.asyncIterator]() {
@@ -169,13 +234,55 @@ describe('ODP directory commands', () => {
     });
   });
 
-  it('returns keyword suggestions in the stable items envelope', async () => {
-    const suggestServices = vi.fn(() => Promise.resolve(['gpu', 'gpu compute']));
+  it('returns name suggestions in the stable items envelope', async () => {
+    const suggest = vi.fn(() => Promise.resolve(['gpu', 'gpu compute']));
 
-    await expect(__testing.runDirectorySuggest({ suggestServices }, 'gp', 5)).resolves.toEqual({
+    await expect(__testing.runDirectorySuggest({ suggest }, 'gp', { ...emptyInput, limit: 5 })).resolves.toEqual({
       items: ['gpu', 'gpu compute'],
     });
-    expect(suggestServices).toHaveBeenCalledWith({ limit: 5, prefix: 'gp' });
+    expect(suggest).toHaveBeenCalledWith({ limit: 5, prefix: 'gp' });
+  });
+
+  it.each(['search', 'suggest'])('forwards all filters from %s including --with-aep', async (command) => {
+    const search = vi.fn(() => sequence({ items: [] }));
+    const suggest = vi.fn(() => Promise.resolve(['Weather']));
+    const exit = vi.fn();
+    await createDirectoryCli({ search, suggest, continueSearch: vi.fn() }).serve(
+      [
+        command,
+        'weather',
+        '--with-aep',
+        '--keyword',
+        'weather',
+        '--operation',
+        'get-offering',
+        '--payment',
+        'mpp:inflow',
+        '--limit',
+        '5',
+        '--format',
+        'json',
+      ],
+      { exit, stdout: vi.fn() },
+    );
+    const filters = {
+      enrollment: [{ name: 'aep' }],
+      keywords: ['weather'],
+      operations: [{ name: 'get-offering' }],
+      payments: [{ name: 'mpp', options: ['inflow'] }],
+    };
+    if (command === 'search') expect(search).toHaveBeenCalledWith({ query: 'weather', limit: 5, filters });
+    else expect(suggest).toHaveBeenCalledWith({ prefix: 'weather', limit: 5, filters });
+  });
+
+  it('treats --with-aep as an initial filter and rejects it with continuation', async () => {
+    const search = vi.fn(() => sequence({ items: [] }));
+    const resource = { search, continueSearch: vi.fn() };
+    await __testing.runDirectorySearch(resource, { ...emptyInput, withAep: true });
+    expect(search).toHaveBeenCalledWith({ filters: { enrollment: [{ name: 'aep' }] } });
+    await expect(
+      __testing.runDirectorySearch(resource, { ...emptyInput, withAep: true, next: '/next' }),
+    ).rejects.toBeInstanceOf(OdpCommandError);
   });
 
   it.each([
@@ -185,7 +292,7 @@ describe('ODP directory commands', () => {
   ])('maps directory HTTP %i retryability', async (status, retryable) => {
     const error = new DirectoryRequestError(status, 'private directory failure', new Headers());
     try {
-      await __testing.runDirectorySuggest({ suggestServices: vi.fn(() => Promise.reject(error)) }, 'gp');
+      await __testing.runDirectorySuggest({ suggest: vi.fn(() => Promise.reject(error)) }, 'gp', emptyInput);
       throw new Error('Expected directory suggestion to fail.');
     } catch (caught) {
       expect(caught).toBeInstanceOf(OdpCommandError);
@@ -218,27 +325,33 @@ describe('ODP directory commands', () => {
             payment_options: [{ count: 4, value: { name: 'mpp', option: 'inflow' } }],
             payments: [{ count: 6, value: { authentication: 'not-required', name: 'mpp' } }],
           },
-          items: [service],
-          next: '/v1/services/search?cursor=next',
+          items: [{ type: 'service', service: { ...service, service_id: 'compute' }, indexed_at: service.indexed_at }],
+          next: '/v1/directory/search?cursor=next',
         }}
       />,
     );
     expect(search.lastFrame()).toContain('Compute catalog');
-    expect(search.lastFrame()).toContain('ODP, AEP, MPP');
+    expect(search.lastFrame()).not.toContain('Protocols');
     expect(search.lastFrame()).toContain('Available Filters');
-    expect(search.lastFrame()).toContain('Matching Services');
-    expect(search.lastFrame()).not.toContain('aep');
+    expect(search.lastFrame()).toContain('Matching results');
+    expect(search.lastFrame()).toContain('--with-aep');
     expect(search.lastFrame()).toContain('Payment Option');
-    expect(search.lastFrame()).toContain('Enrollment');
+    expect(search.lastFrame()).toContain('AEP support');
     expect(search.lastFrame()).toContain('AEP');
     expect(search.lastFrame()).toContain('MPP: InFlow');
-    expect(search.lastFrame()).toContain('Use these values with --keyword');
-    expect(search.lastFrame()).toContain("inflow odp directory search --next '/v1/services/search?cursor=next'");
-    expect(render(<SearchView page={{ items: [] }} />).lastFrame()).toContain('No Services found');
+    expect(search.lastFrame()).toContain('Use --with-aep or these values with --keyword');
+    expect(search.lastFrame()).toContain("inflow odp directory search --next '/v1/directory/search?cursor=next'");
+    expect(render(<SearchView page={{ items: [] }} />).lastFrame()).toContain('No results found');
     expect(render(<SuggestView items={['gpu']} />).lastFrame()).toContain('gpu');
-    expect(render(<SuggestView items={[]} />).lastFrame()).toContain('No keyword suggestions found');
+    expect(render(<SuggestView items={[]} />).lastFrame()).toContain('No suggestions found');
 
-    const protocolsOnly = render(<SearchView page={{ items: [service] }} />).lastFrame();
+    const protocolsOnly = render(
+      <SearchView
+        page={{
+          items: [{ type: 'service', service: { ...service, service_id: 'compute' }, indexed_at: service.indexed_at }],
+        }}
+      />,
+    ).lastFrame();
     expect(protocolsOnly).not.toContain('InFlow');
     expect(protocolsOnly).not.toContain('Solana');
   });
@@ -250,9 +363,9 @@ describe('ODP directory commands', () => {
     const output: string[] = [];
     const page = { items: [] };
     const resource = {
-      continueSearchServices: vi.fn(() => sequence(page)),
-      searchServices: vi.fn(() => sequence(page)),
-      suggestServices: vi.fn(() => Promise.resolve(['gpu'])),
+      continueSearch: vi.fn(() => sequence(page)),
+      search: vi.fn(() => sequence(page)),
+      suggest: vi.fn(() => Promise.resolve(['gpu'])),
     };
 
     await createDirectoryCli(resource).serve([...argv], {
@@ -268,12 +381,12 @@ describe('ODP directory commands', () => {
   it('rejects an unexpected directory search positional argument', async () => {
     const output: string[] = [];
     const exit = vi.fn();
-    const searchServices = vi.fn(() => sequence({ items: [] }));
+    const search = vi.fn(() => sequence({ items: [] }));
 
     await createDirectoryCli({
-      continueSearchServices: vi.fn(),
-      searchServices,
-      suggestServices: vi.fn(),
+      continueSearch: vi.fn(),
+      search,
+      suggest: vi.fn(),
     }).serve(['search', 'query', 'plants'], {
       exit,
       stdout(chunk) {
@@ -283,7 +396,7 @@ describe('ODP directory commands', () => {
 
     expect(exit).toHaveBeenCalledWith(1);
     expect(output.join('')).toContain('Unexpected argument: plants');
-    expect(searchServices).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -293,9 +406,9 @@ describe('ODP directory commands', () => {
     const output: string[] = [];
     const exit = vi.fn();
     const resource = {
-      continueSearchServices: vi.fn(() => failingSequence()),
-      searchServices: vi.fn(() => failingSequence()),
-      suggestServices: vi.fn(() => Promise.reject(new TypeError('private directory failure'))),
+      continueSearch: vi.fn(() => failingSequence()),
+      search: vi.fn(() => failingSequence()),
+      suggest: vi.fn(() => Promise.reject(new TypeError('private directory failure'))),
     };
 
     await createDirectoryCli(resource).serve([...argv], {

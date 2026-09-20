@@ -180,7 +180,7 @@ Seller account and the corresponding [Node.js seller SDK](https://github.com/inf
 inflow vault unlock
 inflow auth login
 
-# Discover and inspect a Service
+# Discover Services and Collections, then inspect a Service
 inflow odp directory search plants
 inflow inspect https://service.example
 

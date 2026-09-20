@@ -1,7 +1,9 @@
 import {
   DirectoryRequestError,
   type DirectorySearchPage,
+  type DirectoryResult,
   type DirectorySearchRequest,
+  type DirectoryServiceFilters,
   type IOdpResource,
 } from '@inflowpayai/inflow-core';
 import { Cli } from 'incur';
@@ -22,7 +24,7 @@ import { createCollectionsCli, InspectionView, runInspect } from './service.js';
 import { createOfferingsCli } from './offerings.js';
 import { createActionsCli } from './actions.js';
 import { executeOdpCommand, odpCommandError } from './command.js';
-import { Continuation, listed, summarize } from './presentation.js';
+import { Continuation, summarize } from './presentation.js';
 import {
   enrollmentProtocolLabel,
   normalizePaymentFilters,
@@ -47,7 +49,7 @@ interface SearchInput {
   keyword: string[];
   limit: number | undefined;
   next: string | undefined;
-  enrollment: 'aep'[];
+  withAep: boolean;
   operation: Array<
     | 'get-collection'
     | 'get-offering'
@@ -60,13 +62,19 @@ interface SearchInput {
   payment: PaymentFilter[];
 }
 
-function searchRequest(input: SearchInput): DirectorySearchRequest {
-  const filters = {
+function directoryFilters(
+  input: Pick<SearchInput, 'keyword' | 'withAep' | 'operation' | 'payment'>,
+): DirectoryServiceFilters {
+  return {
     ...(input.keyword.length === 0 ? {} : { keywords: input.keyword }),
-    ...(input.enrollment.length === 0 ? {} : { enrollment: input.enrollment.map((name) => ({ name })) }),
+    ...(input.withAep ? { enrollment: [{ name: 'aep' }] } : {}),
     ...(input.operation.length === 0 ? {} : { operations: input.operation.map((name) => ({ name })) }),
     ...(input.payment.length === 0 ? {} : { payments: normalizePaymentFilters(input.payment) }),
   };
+}
+
+function searchRequest(input: SearchInput): DirectorySearchRequest {
+  const filters = directoryFilters(input);
   return {
     ...(input.query === undefined ? {} : { query: input.query }),
     ...(Object.keys(filters).length === 0 ? {} : { filters }),
@@ -79,21 +87,21 @@ function hasInitialSearchInput(input: SearchInput): boolean {
     input.query !== undefined ||
     input.keyword.length > 0 ||
     input.limit !== undefined ||
-    input.enrollment.length > 0 ||
+    input.withAep ||
     input.operation.length > 0 ||
     input.payment.length > 0
   );
 }
 
-async function firstPage(sequence: ReturnType<IOdpResource['searchServices']>): Promise<DirectorySearchPage> {
+async function firstPage(sequence: ReturnType<IOdpResource['search']>): Promise<DirectorySearchPage<DirectoryResult>> {
   for await (const page of sequence.pages) return page;
   return { items: [] };
 }
 
 async function runDirectorySearch(
-  resource: Pick<IOdpResource, 'continueSearchServices' | 'searchServices'>,
+  resource: Pick<IOdpResource, 'continueSearch' | 'search'>,
   input: SearchInput,
-): Promise<DirectorySearchPage> {
+): Promise<DirectorySearchPage<DirectoryResult>> {
   if (input.next === undefined && !hasInitialSearchInput(input)) {
     return odpCommandError({
       code: 'ODP_DIRECTORY_SEARCH_INPUT_REQUIRED',
@@ -112,8 +120,8 @@ async function runDirectorySearch(
   try {
     const sequence =
       input.next === undefined
-        ? resource.searchServices(searchRequest(input))
-        : resource.continueSearchServices(input.next, { maxPages: 1 });
+        ? resource.search(searchRequest(input))
+        : resource.continueSearch(input.next, { maxPages: 1 });
     return await firstPage(sequence);
   } catch (error) {
     if (error instanceof DirectoryRequestError) {
@@ -139,12 +147,17 @@ async function runDirectorySearch(
 }
 
 async function runDirectorySuggest(
-  resource: Pick<IOdpResource, 'suggestServices'>,
+  resource: Pick<IOdpResource, 'suggest'>,
   prefix: string,
-  limit?: number,
+  input: Pick<SearchInput, 'keyword' | 'withAep' | 'operation' | 'payment'> & { limit?: number | undefined },
 ): Promise<{ items: string[] }> {
   try {
-    const items = await resource.suggestServices({ prefix, ...(limit === undefined ? {} : { limit }) });
+    const filters = directoryFilters(input);
+    const items = await resource.suggest({
+      prefix,
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...(Object.keys(filters).length === 0 ? {} : { filters }),
+    });
     return { items };
   } catch (error) {
     if (error instanceof DirectoryRequestError) {
@@ -167,29 +180,32 @@ async function present(c: CommandContext, view: React.ReactElement): Promise<voi
   await renderInkUntilExit(view);
 }
 
-export function SearchView({ page }: { page: DirectorySearchPage }) {
-  if (page.items.length === 0) return <Text dimColor>No Services found.</Text>;
-  const rows = page.items.map((service) => ({
-    description: summarize(service.description),
-    name: service.name,
-    origin: service.service_origin,
-    protocols: listed([
-      'ODP',
-      ...(service.protocols?.enrollment ?? []).map(({ name }) => enrollmentProtocolLabel(name)),
-      ...(service.protocols?.payments ?? []).map(({ name }) => paymentNameLabel(name)),
-    ]),
-  }));
+export function SearchView({ page }: { page: DirectorySearchPage<DirectoryResult> }) {
+  const rows = page.items.map((result) => {
+    if (result.type === 'unknown') {
+      return { type: 'Unsupported', name: result.resource_type, description: '-', origin: '-', collectionId: '-' };
+    }
+    const metadata = result.type === 'collection' ? result.collection : result.service;
+    return {
+      type: result.type === 'collection' ? 'Collection' : 'Service',
+      name: metadata.name,
+      description: metadata.description === undefined ? '-' : summarize(metadata.description),
+      origin: result.service.service_origin,
+      collectionId: result.type === 'collection' ? result.collection.id : '-',
+    };
+  });
   const columns: ReadonlyArray<TableColumn<(typeof rows)[number]>> = [
+    { header: 'Type', cell: (row) => row.type },
     { header: 'Name', cell: (row) => row.name },
     { header: 'Description', cell: (row) => row.description },
-    { header: 'Protocols', cell: (row) => row.protocols },
     { header: 'Origin', cell: (row) => row.origin },
+    { header: 'Collection ID', cell: (row) => row.collectionId },
   ];
   const facets = [
     ...(page.facets?.keywords ?? []).map(({ count, value }) => ({ count, facet: 'Keyword', value })),
     ...(page.facets?.enrollment ?? []).map(({ count, value }) => ({
       count,
-      facet: 'Enrollment',
+      facet: 'AEP support',
       value: enrollmentProtocolLabel(value.name),
     })),
     ...(page.facets?.operations ?? []).map(({ count, value }) => ({ count, facet: 'Operation', value: value.name })),
@@ -207,18 +223,23 @@ export function SearchView({ page }: { page: DirectorySearchPage }) {
   const facetColumns: ReadonlyArray<TableColumn<(typeof facets)[number]>> = [
     { header: 'Filter', cell: (row) => row.facet },
     { header: 'Value', cell: (row) => row.value },
-    { header: 'Matching Services', cell: (row) => String(row.count) },
+    { header: 'Matching results', cell: (row) => String(row.count) },
   ];
   return (
     <Box flexDirection="column">
-      <Text bold>Services</Text>
-      <Table columns={columns} rows={rows} />
+      <Text bold>Directory results</Text>
+      {rows.length === 0 ? <Text dimColor>No results found.</Text> : <Table columns={columns} rows={rows} />}
+      {(page.issues ?? []).map((issue) => (
+        <Text key={issue.index} dimColor>
+          Skipped result {issue.index + 1}: {issue.message}
+        </Text>
+      ))}
       {facets.length === 0 ? null : (
         <Box flexDirection="column" marginTop={1}>
           <Text bold>Available Filters</Text>
           <Table columns={facetColumns} rows={facets} />
           <Text dimColor>
-            Use these values with --keyword, --enrollment, --operation, or --payment to narrow the directory search.
+            Use --with-aep or these values with --keyword, --operation, or --payment to narrow the directory search.
           </Text>
         </Box>
       )}
@@ -228,27 +249,23 @@ export function SearchView({ page }: { page: DirectorySearchPage }) {
 }
 
 export function SuggestView({ items }: { items: string[] }) {
-  if (items.length === 0) return <Text dimColor>No keyword suggestions found.</Text>;
+  if (items.length === 0) return <Text dimColor>No suggestions found.</Text>;
   const rows = items.map((keyword) => ({ keyword }));
-  const columns: ReadonlyArray<TableColumn<(typeof rows)[number]>> = [
-    { header: 'Keyword', cell: (row) => row.keyword },
-  ];
+  const columns: ReadonlyArray<TableColumn<(typeof rows)[number]>> = [{ header: 'Name', cell: (row) => row.keyword }];
   return (
     <Box flexDirection="column">
-      <Text bold>Directory keyword suggestions</Text>
+      <Text bold>Directory suggestions</Text>
       <Table columns={columns} rows={rows} />
     </Box>
   );
 }
 
-export function createDirectoryCli(
-  resource: Pick<IOdpResource, 'continueSearchServices' | 'searchServices' | 'suggestServices'>,
-) {
-  const directory = Cli.create('directory', { description: 'Search the service directory.' });
+export function createDirectoryCli(resource: Pick<IOdpResource, 'continueSearch' | 'search' | 'suggest'>) {
+  const directory = Cli.create('directory', { description: 'Search the directory for Services and Collections.' });
 
   directory.command('search', {
     args: directorySearchArgs,
-    description: 'Search the directory for services.',
+    description: 'Search the directory for Services and Collections.',
     mcp: mcpTool('odp_directory_search'),
     options: directorySearchOptions,
     outputPolicy: 'agent-only' as const,
@@ -260,7 +277,7 @@ export function createDirectoryCli(
             keyword: c.options.keyword,
             limit: c.options.limit,
             next: c.options.next,
-            enrollment: c.options.enrollment,
+            withAep: c.options.withAep,
             operation: c.options.operation,
             payment: c.options.payment,
             query: c.args.query,
@@ -273,14 +290,14 @@ export function createDirectoryCli(
 
   directory.command('suggest', {
     args: directorySuggestArgs,
-    description: 'Suggest directory keywords.',
+    description: 'Find matching Service and Collection names.',
     mcp: mcpTool('odp_directory_suggest'),
     options: directorySuggestOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
       return executeOdpCommand(
         c,
-        () => runDirectorySuggest(resource, c.args.prefix, c.options.limit),
+        () => runDirectorySuggest(resource, c.args.prefix, c.options),
         (result) => present(c, <SuggestView items={result.items} />),
         { code: 'ODP_DIRECTORY_SUGGEST_FAILED', message: 'ODP directory suggestion failed.', retryable: false },
       );

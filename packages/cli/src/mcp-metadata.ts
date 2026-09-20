@@ -160,8 +160,8 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
   odp_collections_get: read('ODP: Get Collection', 'Get full collection details.'),
   odp_collections_list: read('ODP: List Collections', 'List collections from a service.'),
   odp_collections_search: read('ODP: Search Collections', 'Search collections from a service.'),
-  odp_directory_search: read('ODP: Search Directory', 'Search the directory for services.'),
-  odp_directory_suggest: read('ODP: Suggest Keywords', 'Suggest directory keywords.'),
+  odp_directory_search: read('ODP: Search Directory', 'Search the directory for Services and Collections.'),
+  odp_directory_suggest: read('ODP: Suggest Names', 'Find matching Service and Collection names.'),
   odp_inspect: read('ODP: Inspect Service', "Inspect a service's capabilities."),
   odp_offerings_capabilities: read('ODP: Offering Search Capabilities', 'Resolve offering search filters and sorts.'),
   odp_offerings_discover: read(

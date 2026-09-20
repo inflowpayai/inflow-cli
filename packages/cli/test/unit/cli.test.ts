@@ -60,7 +60,7 @@ const MCP_TOOL_EXPECTATIONS = [
   ['odp_collections_list', 'ODP: List Collections', true, false],
   ['odp_collections_search', 'ODP: Search Collections', true, false],
   ['odp_directory_search', 'ODP: Search Directory', true, false],
-  ['odp_directory_suggest', 'ODP: Suggest Keywords', true, false],
+  ['odp_directory_suggest', 'ODP: Suggest Names', true, false],
   ['odp_inspect', 'ODP: Inspect Service', true, false],
   ['odp_offerings_capabilities', 'ODP: Offering Search Capabilities', true, false],
   ['odp_offerings_discover', 'ODP: Discover Offerings', true, false],
@@ -371,7 +371,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
     });
 
     it.each([
-      [['odp', 'directory', '--help'], 'Search the service directory.'],
+      [['odp', 'directory', '--help'], 'Search the directory for Services and Collections.'],
       [['odp', 'collections', '--help'], 'Browse collections from a service.'],
       [['odp', 'offerings', '--help'], 'Find and inspect offerings.'],
       [['odp', 'actions', '--help'], 'Inspect executable requests advertised by offerings.'],
@@ -721,8 +721,8 @@ describe.skipIf(!existsSync(DIST_CLI))(
         ['odp collections get', 'Get full collection details.'],
         ['odp collections list', 'List collections from a service.'],
         ['odp collections search', 'Search collections from a service.'],
-        ['odp directory search', 'Search the directory for services.'],
-        ['odp directory suggest', 'Suggest directory keywords.'],
+        ['odp directory search', 'Search the directory for Services and Collections.'],
+        ['odp directory suggest', 'Find matching Service and Collection names.'],
         ['odp inspect', "Inspect a service's capabilities."],
         ['odp offerings discover', 'Find offerings across services selected from the directory.'],
         ['odp offerings get', 'Get full offering details.'],

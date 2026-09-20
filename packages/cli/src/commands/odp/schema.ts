@@ -12,29 +12,26 @@ const operation = z.enum([
 ]);
 
 export const directorySearchArgs = z.object({
-  query: z.string().optional().describe('Optional free-text Service query.'),
+  query: z.string().optional().describe('Optional free-text Service and Collection query.'),
 });
 
 export const directorySearchOptions = z.object({
   keyword: z.array(z.string()).default([]).describe('Repeatable Service keyword filter.'),
-  limit: z.number().int().min(1).max(100).optional().describe('Maximum Services requested in this page.'),
+  limit: z.number().int().min(1).max(100).optional().describe('Maximum directory results requested.'),
   next: z.string().optional().describe('Opaque continuation URL from an earlier directory response.'),
-  enrollment: z
-    .array(z.enum(['aep']))
-    .default([])
-    .describe('Repeatable enrollment protocol filter.'),
-  operation: z.array(operation).default([]).describe('Repeatable ODP operation filter.'),
+  operation: z.array(operation).default([]).describe('Filter by an advertised ODP operation. Repeatable.'),
   payment: z
     .array(z.enum(PAYMENT_FILTERS))
     .default([])
     .describe('Repeatable payment filter in protocol or protocol:option form.'),
+  withAep: z.boolean().default(false).describe('Only include results whose Service advertises AEP.'),
 });
 
 export const directorySuggestArgs = z.object({
-  prefix: z.string().describe('Keyword prefix to complete.'),
+  prefix: z.string().describe('Text to match against Service and Collection metadata; returns matching names.'),
 });
 
-export const directorySuggestOptions = z.object({
+export const directorySuggestOptions = directorySearchOptions.omit({ next: true }).extend({
   limit: z.number().int().min(1).max(25).optional().describe('Maximum suggestions to return.'),
 });
 
@@ -124,10 +121,6 @@ export const offeringDiscoverOptions = z.object({
   keyword: z.array(z.string()).default([]).describe('Repeatable directory Service keyword filter.'),
   maxOfferingsPerService: z.number().int().min(1).max(100).optional().describe('Maximum Offerings per Service.'),
   maxServices: z.number().int().min(1).max(100).optional().describe('Maximum Services queried.'),
-  enrollment: z
-    .array(z.enum(['aep']))
-    .default([])
-    .describe('Repeatable directory enrollment protocol filter.'),
   operation: z
     .array(operation)
     .default([])
@@ -139,6 +132,7 @@ export const offeringDiscoverOptions = z.object({
   refinement: z.array(z.string()).default([]).describe('Repeatable filter identifier to refine.'),
   serviceQuery: z.string().optional().describe('Free-text query used only to select Services from the directory.'),
   sort: z.string().optional().describe('Advertised sort identifier sent to each selected Service.'),
+  withAep: z.boolean().default(false).describe('Only query Services that advertise AEP.'),
 });
 
 export const actionResolveArgs = z.object({

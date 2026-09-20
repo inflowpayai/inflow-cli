@@ -168,14 +168,14 @@ importers:
         specifier: ^0.9.1
         version: 0.9.1(@x402/core@2.22.0)
       '@offering-protocol/agent':
-        specifier: ^0.4.2
-        version: 0.4.2(@types/json-schema@7.0.15)
+        specifier: ^0.4.3
+        version: 0.4.3(@types/json-schema@7.0.15)
       '@offering-protocol/core':
         specifier: ^0.3.7
         version: 0.3.7
       '@offering-protocol/directory':
-        specifier: ^0.2.5
-        version: 0.2.5
+        specifier: ^0.2.6
+        version: 0.2.6
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
@@ -1078,16 +1078,16 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@offering-protocol/agent@0.4.2':
-    resolution: {integrity: sha512-XlSo+pqfwdLJuHq0I3ZDC5nZvyYMss3mo2mvhC/tsqesFcayPmuhoLDfDaRy4XnTmWYVrjdwvU6OI0dTfQWTig==}
+  '@offering-protocol/agent@0.4.3':
+    resolution: {integrity: sha512-I/b+9hnahRLgYHAgeDETvaiqqBuO8gve6Ofr5mQpdkrRhMPnE4iPPVKVNTXkqGu1tnXXdwyloiepW8632atcrg==}
     engines: {node: '>=22.0.0'}
 
   '@offering-protocol/core@0.3.7':
     resolution: {integrity: sha512-yfYQUIzZctnZQTlXr2BZdEhGlurzf023eDpg52le/GlMsqoqPSokaqPe4r4mq3c2bzaAsH9wrI1Ojaai37Hqcg==}
     engines: {node: '>=22.0.0'}
 
-  '@offering-protocol/directory@0.2.5':
-    resolution: {integrity: sha512-IV8ZsxxVlTYnz/aTFvYZ4EZAcbCDtB5jX03/qO7/J7CEjMPAubOI2Kt0BVeU0cH15OgL03jsvo9hi0urqAHZUQ==}
+  '@offering-protocol/directory@0.2.6':
+    resolution: {integrity: sha512-71ddRrix2Y4AwPq7DFXtzlTjcHj5tmEtuOJSDGRJl2NSora75lFIfAMwvKArrf1Y7nwFlhajJlonZjWe1+4stg==}
     engines: {node: '>=22.0.0'}
 
   '@open-draft/deferred-promise@2.2.0':
@@ -2966,8 +2966,8 @@ packages:
     resolution: {integrity: sha512-y+8YjDFzWdQlSE9N5nzKMT3g4a5UBX1HKowfdXh0uvAnTaqqwqB92Jt4UXBAeKekDs5IaDKyJFR4X1gYVCgXcw==}
     engines: {node: '>=20.18.1'}
 
-  undici@7.29.0:
-    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
+  undici@7.29.1:
+    resolution: {integrity: sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==}
     engines: {node: '>=20.18.1'}
 
   unist-util-stringify-position@4.0.0:
@@ -3898,18 +3898,18 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.3
 
-  '@offering-protocol/agent@0.4.2(@types/json-schema@7.0.15)':
+  '@offering-protocol/agent@0.4.3(@types/json-schema@7.0.15)':
     dependencies:
       '@apidevtools/json-schema-ref-parser': 15.5.2(patch_hash=11973baa1c73bf2ee8c372f559f79dd0641b1f9e5b8e9967a0f7b1b0bea38a23)(@types/json-schema@7.0.15)
       '@hyperjump/browser': 1.5.0
       '@hyperjump/json-schema': 1.17.8(@hyperjump/browser@1.5.0)
       '@offering-protocol/core': 0.3.7
-      '@offering-protocol/directory': 0.2.5
+      '@offering-protocol/directory': 0.2.6
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       http-cache-semantics: 4.2.0
       ipaddr.js: 2.5.0
-      undici: 7.29.0
+      undici: 7.29.1
     transitivePeerDependencies:
       - '@types/json-schema'
 
@@ -3919,7 +3919,7 @@ snapshots:
       ajv-formats: 3.0.1(ajv@8.20.0)
       bcp-47: 2.1.1
 
-  '@offering-protocol/directory@0.2.5':
+  '@offering-protocol/directory@0.2.6':
     dependencies:
       '@offering-protocol/core': 0.3.7
 
@@ -5835,7 +5835,7 @@ snapshots:
 
   undici@7.18.2: {}
 
-  undici@7.29.0: {}
+  undici@7.29.1: {}
 
   unist-util-stringify-position@4.0.0:
     dependencies:
