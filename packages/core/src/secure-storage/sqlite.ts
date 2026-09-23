@@ -62,7 +62,7 @@ export interface StoredPublicDocument {
   etag?: string;
   finalUrl?: string;
   lastModified?: string;
-  namespace: 'inspect' | 'openapi' | 'platform-discovery';
+  namespace: 'inspect' | 'openapi' | 'platform-discovery' | 'source-document' | 'source-location';
   payload: unknown;
   url: string;
 }

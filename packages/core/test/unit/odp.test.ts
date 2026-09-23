@@ -22,6 +22,7 @@ describe('Inflow.odp', () => {
     const service = {
       ...serviceDocument,
       service_id: 'compute',
+      source: { type: 'odp', url: 'https://compute.example/.well-known/odp', x402_discovery: false },
       service_origin: 'https://compute.example',
       indexed_at: stamp,
       protocols: { enrollment: [{ name: 'aep' }], payments: [{ name: 'mpp', authentication: 'required' }] },
