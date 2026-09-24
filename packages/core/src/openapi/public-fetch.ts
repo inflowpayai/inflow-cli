@@ -51,7 +51,10 @@ export function publicDocumentUrl(value: string, base?: string): URL {
 
 export type PublicDocumentFetch = (url: URL, init: RequestInit) => Promise<Response>;
 
-export const fetchPublicDocument: PublicDocumentFetch = async (url, init) => {
+export const fetchPublicDocument: PublicDocumentFetch = (url, init) =>
+  fetchPublicRequest(url, { ...init, method: 'GET', body: null });
+
+export const fetchPublicRequest: PublicDocumentFetch = async (url, init) => {
   publicDocumentUrl(url.href);
   const dispatcher = new Agent({
     connect: {
@@ -76,7 +79,8 @@ export const fetchPublicDocument: PublicDocumentFetch = async (url, init) => {
   try {
     const response = await fetch(url, {
       dispatcher,
-      method: 'GET',
+      method: init.method ?? 'GET',
+      ...(typeof init.body === 'string' ? { body: init.body } : {}),
       redirect: 'manual',
       credentials: 'omit',
       headers: Object.fromEntries(new Headers(init.headers)),

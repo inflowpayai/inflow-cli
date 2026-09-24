@@ -43,6 +43,8 @@ export {
 } from './openapi/prepare.js';
 export { SqlitePublicSourceCache, type PublicSourceCache } from './openapi/cache.js';
 export type { OpenApiDescription, OpenApiOperation } from './openapi/reader.js';
+export type { OpenApiPayment } from './openapi/payments.js';
+export { callOpenApiOperation, openApiHandoff, OpenApiCallError, type OpenApiCallInput } from './openapi/call.js';
 export type { PublicDocumentFetch } from './openapi/public-fetch.js';
 export {
   OdpResource,

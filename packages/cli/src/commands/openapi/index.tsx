@@ -8,6 +8,10 @@ import {
   prepareOpenApiRequest,
   previewOpenApiRequest,
   selectOpenApiOperation,
+  callOpenApiOperation,
+  openApiHandoff,
+  OpenApiCallError,
+  type PublicDocumentFetch,
   type OpenApiDescription,
   type OpenApiOperation,
 } from '@inflowpayai/inflow-core';
@@ -16,7 +20,7 @@ import { Box, Text } from 'ink';
 import { mcpTool } from '../../mcp-metadata.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { Table } from '../../utils/table.js';
-import { documentArgs, getOptions, listOptions, prepareOptions } from './schema.js';
+import { callOptions, documentArgs, getOptions, listOptions, prepareOptions } from './schema.js';
 
 interface ReadContext {
   agent: boolean;
@@ -48,6 +52,8 @@ export function OperationView({ operation }: { operation: OpenApiOperation }) {
       <Text bold>Declared authentication</Text>
       <Text>{JSON.stringify(operation.security, null, 2)}</Text>
       <Text>{JSON.stringify(operation.securitySchemes, null, 2)}</Text>
+      <Text bold>Advertised payment</Text>
+      <Text>{JSON.stringify(operation.payment ?? { advertised: false }, null, 2)}</Text>
       <Text dimColor>
         Requirement objects are alternatives; schemes within an object are all required. No declared requirement does
         not prove anonymous access or free execution. Provider login and SIWX are not automated.
@@ -59,7 +65,14 @@ export function OperationView({ operation }: { operation: OpenApiOperation }) {
   );
 }
 
-export function PreparedRequestView({ preview }: { preview: ReturnType<typeof previewOpenApiRequest> }) {
+export function PreparedRequestView({
+  preview,
+}: {
+  preview: ReturnType<typeof previewOpenApiRequest> & {
+    payment?: OpenApiOperation['payment'];
+    next?: ReturnType<typeof openApiHandoff>;
+  };
+}) {
   return (
     <Box flexDirection="column">
       <Text bold>Prepared request — not sent</Text>
@@ -69,6 +82,10 @@ export function PreparedRequestView({ preview }: { preview: ReturnType<typeof pr
       <Text>{JSON.stringify(preview.request.headers, null, 2)}</Text>
       {preview.request.body === undefined ? null : <Text>{preview.request.body}</Text>}
       <Text>Declared authentication: {JSON.stringify(preview.authentication.requirements)}</Text>
+      {preview.payment === undefined ? null : <Text>Advertised payment: {JSON.stringify(preview.payment)}</Text>}
+      {preview.next === undefined || preview.next.length === 0 ? null : (
+        <Text>Payment commands: {JSON.stringify(preview.next, null, 2)}</Text>
+      )}
       {preview.redactions.map((item) => (
         <Text key={`${item.location}:${item.name}`}>
           Redacted {item.location}: {item.name}
@@ -94,6 +111,37 @@ function jsonObject(value: string | undefined, option: string): Record<string, u
     /* Report the option, not its potentially sensitive value. */
   }
   throw new OpenApiPreparationError('OPENAPI_INPUT_INVALID', `${option} must contain a JSON object.`);
+}
+
+export function CallView({ result }: { result: Awaited<ReturnType<typeof callOpenApiOperation>> }) {
+  return (
+    <Box flexDirection="column">
+      <Text bold>
+        {result.outcome} — {result.sent ? `HTTP ${result.status}` : 'request not sent'}
+      </Text>
+      <Text>
+        {result.request.method} {result.request.url}
+      </Text>
+      {'body' in result ? <Text>{result.body}</Text> : null}
+      {'body_base64' in result ? <Text>{result.body_base64}</Text> : null}
+      {'output_saved_to' in result ? <Text>Saved to {result.output_saved_to}</Text> : null}
+      {result.next.map((next) => (
+        <Box key={next.command.join(' ')} flexDirection="column">
+          <Text>
+            Use inflow {next.command.join(' ')} with URL {next.url}
+          </Text>
+          <Text>{JSON.stringify(next.options, null, 2)}</Text>
+          <Text>{next.message}</Text>
+          {next.requiredInputs.length > 0 ? (
+            <Text>Supply the original credentials for: {next.requiredInputs.map((item) => item.name).join(', ')}</Text>
+          ) : null}
+        </Box>
+      ))}
+      {result.outcome === 'payment-required' && result.next.length === 0 ? (
+        <Text>No recognized payment protocol. No payment was attempted.</Text>
+      ) : null}
+    </Box>
+  );
 }
 
 function requestHeaders(values: string[]): Record<string, string> {
@@ -127,6 +175,13 @@ export function OperationsView({ document }: { document: OpenApiDescription }) {
             { header: 'Method', cell: (operation: OpenApiOperation) => operation.method },
             { header: 'Path', cell: (operation: OpenApiOperation) => operation.path },
             { header: 'Summary', cell: (operation: OpenApiOperation) => operation.summary ?? '-' },
+            {
+              header: 'Payment',
+              cell: (operation: OpenApiOperation) =>
+                operation.payment?.advertised
+                  ? operation.payment.protocols.join(', ') || 'Unrecognized'
+                  : 'Not advertised',
+            },
           ]}
           rows={document.operations}
         />
@@ -145,7 +200,8 @@ async function readCommand<T>(context: ReadContext, operation: () => Promise<T>)
     if (
       error instanceof SourceDiscoveryError ||
       error instanceof OpenApiOperationError ||
-      error instanceof OpenApiPreparationError
+      error instanceof OpenApiPreparationError ||
+      error instanceof OpenApiCallError
     )
       return context.error({
         code: error.code,
@@ -164,12 +220,15 @@ async function readCommand<T>(context: ReadContext, operation: () => Promise<T>)
   }
 }
 
-export function createOpenApiCli(discovery: Pick<SourceDiscovery, 'inspect'> = new SourceDiscovery()) {
+export function createOpenApiCli(
+  discovery: Pick<SourceDiscovery, 'inspect'> = new SourceDiscovery(),
+  request?: PublicDocumentFetch,
+) {
   const cli = Cli.create('openapi', {
-    description: 'Read public OpenAPI documents without invoking their operations.',
+    description: 'Discover, prepare, and call OpenAPI operations. Payments require an explicit payment command.',
   });
   const operations = Cli.create('operations', {
-    description: 'List and inspect operations from the full OpenAPI document.',
+    description: 'List, inspect, prepare, and call operations from the full OpenAPI document.',
   });
   const read = async (source: string, refresh: boolean) => {
     const result = await discovery.inspect(source, { format: 'openapi', refresh, signal: AbortSignal.timeout(60_000) });
@@ -190,11 +249,12 @@ export function createOpenApiCli(discovery: Pick<SourceDiscovery, 'inspect'> = n
           source: { type: 'openapi', url: document.sourceUrl },
           title: document.title,
           openapi: document.version,
-          items: document.operations.map(({ method, path, operationId, summary }) => ({
+          items: document.operations.map(({ method, path, operationId, summary, payment }) => ({
             method,
             path,
             ...(operationId === undefined ? {} : { operationId }),
             ...(summary === undefined ? {} : { summary }),
+            ...(payment === undefined ? {} : { payment }),
           })),
           limitations: document.limitations,
         };
@@ -238,10 +298,46 @@ export function createOpenApiCli(discovery: Pick<SourceDiscovery, 'inspect'> = n
         };
         const document = await read(c.args.source, c.options.refresh);
         const prepared = prepareOpenApiRequest(document, input);
-        const preview = sanitizeDeep(previewOpenApiRequest(prepared, selectOpenApiOperation(document, input)));
+        const operation = selectOpenApiOperation(document, input);
+        const preview = sanitizeDeep({
+          ...previewOpenApiRequest(prepared, operation),
+          payment: operation.payment,
+          next: openApiHandoff(prepared, operation, operation.payment?.protocols ?? []),
+        });
         if (!c.agent && !c.formatExplicit) await renderInkUntilExit(<PreparedRequestView preview={preview} />);
         return preview;
       });
+    },
+  });
+  operations.command('call', {
+    args: documentArgs,
+    description: 'Call an operation once, or direct an advertised paid operation to an explicit payment command.',
+    mcp: mcpTool('openapi_operations_call'),
+    options: callOptions,
+    outputPolicy: 'agent-only' as const,
+    async run(c) {
+      const result = await readCommand(c, async () => {
+        const document = await read(c.args.source, c.options.refresh);
+        return callOpenApiOperation(
+          document,
+          {
+            ...c.options,
+            headers: requestHeaders(c.options.header),
+            parameters: jsonObject(c.options.parameters, '--parameters'),
+            serverVariables: jsonObject(c.options.serverVariables, '--server-variables'),
+          },
+          request,
+        );
+      });
+      if (result.outcome === 'http-error')
+        return c.error({
+          code: 'OPENAPI_HTTP_ERROR',
+          message: `The operation returned HTTP ${result.status}. Redirects are not followed automatically.`,
+          details: result,
+          retryable: false,
+        });
+      if (!c.agent && !c.formatExplicit) await renderInkUntilExit(<CallView result={result} />);
+      return result;
     },
   });
   cli.command(operations);

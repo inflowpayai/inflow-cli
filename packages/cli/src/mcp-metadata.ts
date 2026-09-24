@@ -33,6 +33,7 @@ type ToolName =
   | 'odp_offerings_list'
   | 'odp_offerings_search'
   | 'odp_actions_resolve'
+  | 'openapi_operations_call'
   | 'openapi_operations_get'
   | 'openapi_operations_list'
   | 'openapi_operations_prepare'
@@ -177,6 +178,11 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
   odp_actions_resolve: read(
     'ODP: Resolve Action',
     "Resolve an offering's action into an executable request without invoking it.",
+  ),
+  openapi_operations_call: write(
+    'OpenAPI: Call Operation',
+    'Call an operation once without automatically paying or enrolling. Advertised paid operations return payment guidance without sending a request.',
+    { destructive: true },
   ),
   openapi_operations_get: read(
     'OpenAPI: Get Operation',

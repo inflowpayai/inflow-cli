@@ -200,6 +200,56 @@ request or payment follows a successful read. Security requirements preserve alt
 requirements within each object; provider login and SIWX are not automated. An empty security list does not prove that
 an endpoint is free or publicly callable.
 
+### Call an OpenAPI operation
+
+```bash
+inflow openapi operations call https://example.com/openapi.json \
+  --method POST --path /search --data '{"query":"weather forecasts"}' --format json
+```
+
+`call` accepts the preparation inputs below, plus `--timeout` (seconds, default 30, maximum 900), `--max-response-bytes`
+(default and maximum 16777216), `--no-show-body`, and `--output-file`. It requires no InFlow login or vault access.
+Explicit headers and declared API keys are sent to the selected server; no credentials are obtained automatically.
+Requests and responses are not cached. An explicit output file saves response bytes and overwrites an existing file.
+
+Payment information appears as `payment` on each `list` item and `get` operation, and in `prepare` output. It contains
+`advertised`, recognized `protocols` (`mpp`, `x402`), MPP `offers`, `response402`, and explanatory `notes`. MPP
+single-offer and `offers` declarations are recognized, as are operation-level `x-payment-info.protocols` string or
+named-object arrays. An explicit `x-payment-required: true` without a recognized protocol is reported as unknown payment
+support. Service-wide metadata, unused security schemes, and a documented 402 alone do not mark every operation as paid.
+Missing declarations mean **payment not advertised**, not free access.
+
+- Advertised paid operation: return `payment-required` with `sent: false`, without sending the operation.
+- Unmarked operation: send exactly one request. A runtime 402 returns `payment-required` with `sent: true`.
+- A 401 with an AEP challenge returns `authentication-required` and an explicit `aep fetch` handoff. This command does
+  not enroll or obtain an AEP grant. Other provider authentication is not automated.
+- Success returns `response`. Other HTTP failures, including redirects, return `OPENAPI_HTTP_ERROR` with the result
+  under error `details`. Redirects are not followed, and requests are not automatically retried.
+
+The result fields are:
+
+| Field                                           | Meaning                                                                                                                                    |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `outcome`, `sent`                               | Result classification and whether the operation was sent.                                                                                  |
+| `source`, `operation`                           | OpenAPI source and selected operation, as in preparation.                                                                                  |
+| `request`, `redactions`                         | Redacted request preview and recognized credential locations. Arbitrary body data is not redacted.                                         |
+| `status`, `content_type`, `response_size_bytes` | Present after a response; content type can be null.                                                                                        |
+| `body` / `body_base64` / `output_saved_to`      | Text, binary base64, or saved response location. Body fields are absent with `--no-show-body`; explicit output files still receive bytes.  |
+| `payment`                                       | Full advertised metadata before sending, or `{protocols: [...]}` from a runtime 402. Empty protocols mean no recognized payment challenge. |
+| `next`                                          | Explicit handoffs: `command` words, `url`, `options` (`method`, repeatable `header`, optional `data`), `requiredInputs`, and `message`.    |
+
+Choose between the MPP and x402 handoffs when both are advertised; no protocol is selected automatically. Use the
+original values for `requiredInputs`, never the redacted placeholders. Payment commands request a fresh challenge; they
+do not resume the exact response received by `call`. Advertised prices and protocols are guidance, not a promise that a
+particular offer or provider-specific signing requirement is supported. The runtime challenge determines payment terms.
+Preparation includes the same payment handoffs in `next`.
+
+`OPENAPI_CALL_OUTCOME_UNKNOWN` means the request or response transfer failed: the operation may have completed. Do not
+automatically repeat it. `OPENAPI_RESPONSE_TOO_LARGE` likewise does not imply failure at the server.
+`OPENAPI_OUTPUT_WRITE_FAILED` means the response was received but could not be saved; repeating the operation is not a
+safe way to retry a local file write. `OPENAPI_CALL_CANCELLED` means cancellation occurred before sending. Invalid core
+call limits produce `OPENAPI_CALL_INPUT_INVALID`; command options also validate these limits before execution.
+
 ### Prepare a request without sending it
 
 Use the same source and operation selector as `get`, with explicit request inputs:

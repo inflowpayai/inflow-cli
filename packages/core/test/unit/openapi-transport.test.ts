@@ -13,7 +13,7 @@ vi.mock('undici', () => ({
   },
 }));
 
-import { fetchPublicDocument } from '../../src/openapi/public-fetch.js';
+import { fetchPublicDocument, fetchPublicRequest } from '../../src/openapi/public-fetch.js';
 
 describe('public document transport ownership', () => {
   beforeEach(() => {
@@ -39,6 +39,28 @@ describe('public document transport ownership', () => {
     });
     expect(mocks.fetch.mock.calls[0]?.[1]).not.toHaveProperty('body');
     expect(mocks.close).toHaveBeenCalled();
+  });
+  it('sends an explicit operation method, body and headers without following redirects', async () => {
+    mocks.fetch.mockResolvedValue(
+      new Response(null, { status: 302, headers: { location: 'https://elsewhere.example' } }),
+    );
+    await fetchPublicRequest(new URL('https://public.example/search'), {
+      method: 'POST',
+      body: '{"q":"weather"}',
+      headers: { authorization: 'Bearer secret' },
+      redirect: 'follow',
+    });
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    expect(mocks.fetch.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: '{"q":"weather"}',
+      headers: { authorization: 'Bearer secret' },
+      redirect: 'manual',
+      credentials: 'omit',
+    });
+    mocks.fetch.mockResolvedValue(new Response(null, { status: 204 }));
+    await fetchPublicRequest(new URL('https://public.example'), {});
+    expect(mocks.fetch.mock.calls[1]?.[1]).toMatchObject({ method: 'GET' });
   });
 
   it('closes a bodyless response and destroys rejected requests and cancelled streams', async () => {
