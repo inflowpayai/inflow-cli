@@ -5,6 +5,7 @@ import {
   type PublicSourceCache,
   type OpenApiDescription,
   type OpenApiOperation,
+  type PublicDocumentFetch,
 } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,7 @@ import {
   OperationView,
   OperationsView,
   PreparedRequestView,
+  CallView,
 } from '../../../src/commands/openapi/index.js';
 import { prepareOpenApiRequest, previewOpenApiRequest } from '@inflowpayai/inflow-core';
 import * as renderer from '../../../src/utils/render-ink-until-exit.js';
@@ -52,10 +54,10 @@ function setup() {
   return { fetch, discovery };
 }
 
-async function run(discovery: Pick<SourceDiscovery, 'inspect'>, args: string[]) {
+async function run(discovery: Pick<SourceDiscovery, 'inspect'>, args: string[], request?: PublicDocumentFetch) {
   const output: string[] = [];
   const exit = vi.fn();
-  await createOpenApiCli(discovery).serve(['operations', ...args, '--format', 'json'], {
+  await createOpenApiCli(discovery, request).serve(['operations', ...args, '--format', 'json'], {
     exit,
     stdout: (chunk) => {
       output.push(chunk);
@@ -65,6 +67,87 @@ async function run(discovery: Pick<SourceDiscovery, 'inspect'>, args: string[]) 
 }
 
 describe('OpenAPI commands', () => {
+  it('calls through discovery and preparation with exactly one operation request', async () => {
+    const { discovery } = setup();
+    const request = vi.fn().mockResolvedValue(Response.json({ answer: '\u001b[31mweather' }));
+    const result = await run(
+      discovery,
+      [
+        'call',
+        'https://example.com',
+        '--operation-id',
+        'search',
+        '--data',
+        '{"q":"weather"}',
+        '--header',
+        'Authorization: Bearer secret',
+      ],
+      request,
+    );
+    expect(result.value).toMatchObject({ outcome: 'response', sent: true, status: 200 });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: '{"q":"weather"}',
+      headers: { authorization: 'Bearer secret' },
+    });
+    expect(result.text).not.toContain('secret');
+  });
+  it('returns useful HTTP errors with response details and no automatic retry', async () => {
+    const { discovery } = setup();
+    const request = vi.fn().mockResolvedValue(new Response('invalid input', { status: 422 }));
+    const result = await run(discovery, ['call', 'https://example.com', '--operation-id', 'search'], request);
+    expect(result.text).toContain('OPENAPI_HTTP_ERROR');
+    expect(result.text).toContain('invalid input');
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+  it('reports ambiguous network failure without printing transport secrets', async () => {
+    const result = await run(setup().discovery, ['call', 'https://example.com', '--operation-id', 'search'], () =>
+      Promise.reject(new Error('secret')),
+    );
+    expect(result.text).toContain('OPENAPI_CALL_OUTCOME_UNKNOWN');
+    expect(result.text).not.toContain('secret');
+  });
+  it('renders call results for human output without credentials', async () => {
+    const { callOpenApiOperation } = await import('@inflowpayai/inflow-core');
+    const inspected = await setup().discovery.inspect('https://example.com', { format: 'openapi' });
+    if (inspected.sourceType !== 'openapi') throw new Error('Expected OpenAPI');
+    for (const response of [
+      new Response('answer'),
+      new Response(new Uint8Array([0, 255])),
+      new Response(null, { status: 402 }),
+    ]) {
+      const result = await callOpenApiOperation(inspected.document, { operationId: 'search' }, () =>
+        Promise.resolve(response),
+      );
+      expect(render(<CallView result={result} />).lastFrame()).toContain(result.outcome);
+    }
+    const operation = inspected.document.operations[0];
+    if (operation === undefined) throw new Error('Expected operation');
+    operation.payment = { advertised: true, protocols: ['mpp'], offers: [], response402: true, notes: [] };
+    const result = await callOpenApiOperation(inspected.document, {
+      operationId: 'search',
+      headers: { authorization: 'Bearer secret' },
+    });
+    const view = render(<CallView result={result} />).lastFrame();
+    expect(view).toContain('request not sent');
+    expect(view).toContain('inflow mpp pay');
+    expect(view).toContain('Supply the original credentials');
+    expect(view).not.toContain('secret');
+    const prepared = prepareOpenApiRequest(inspected.document, { operationId: 'search' });
+    expect(
+      render(
+        <PreparedRequestView
+          preview={{ ...previewOpenApiRequest(prepared, operation), payment: operation.payment, next: result.next }}
+        />,
+      ).lastFrame(),
+    ).toContain('Payment commands');
+    expect(render(<OperationsView document={inspected.document} />).lastFrame()).toContain('mpp');
+    operation.payment.protocols = [];
+    expect(render(<OperationsView document={inspected.document} />).lastFrame()).toContain('Unrecognized');
+    const unknown = await callOpenApiOperation(inspected.document, { operationId: 'search' });
+    expect(render(<CallView result={unknown} />).lastFrame()).toContain('No recognized payment protocol');
+  });
   it('sanitizes input names in preparation errors', async () => {
     const { discovery } = setup();
     const result = await run(discovery, [
@@ -174,7 +257,7 @@ describe('OpenAPI commands', () => {
       expect(text).not.toContain('secret');
     }
   });
-  it('renders both read commands in human mode', async () => {
+  it('renders read and call commands in human mode', async () => {
     const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
     Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
     const rendered = vi.spyOn(renderer, 'renderInkUntilExit').mockResolvedValue(undefined);
@@ -183,10 +266,14 @@ describe('OpenAPI commands', () => {
       for (const args of [
         ['list', 'https://example.com'],
         ['get', 'https://example.com', '--operation-id', 'search'],
+        ['call', 'https://example.com', '--operation-id', 'search'],
       ]) {
-        await createOpenApiCli(discovery).serve(['operations', ...args], { exit: vi.fn(), stdout: vi.fn() });
+        await createOpenApiCli(discovery, () => Promise.resolve(new Response('answer'))).serve(
+          ['operations', ...args],
+          { exit: vi.fn(), stdout: vi.fn() },
+        );
       }
-      expect(rendered).toHaveBeenCalledTimes(2);
+      expect(rendered).toHaveBeenCalledTimes(3);
     } finally {
       rendered.mockRestore();
       if (descriptor === undefined) Reflect.deleteProperty(process.stdout, 'isTTY');
@@ -201,8 +288,18 @@ describe('OpenAPI commands', () => {
       title: 'Weather',
       openapi: '3.1.0',
       items: [
-        { method: 'POST', path: '/search', operationId: 'search', summary: 'Search forecasts' },
-        { method: 'GET', path: '/items' },
+        {
+          method: 'POST',
+          path: '/search',
+          operationId: 'search',
+          summary: 'Search forecasts',
+          payment: { advertised: false, protocols: [], offers: [], response402: false, notes: [] },
+        },
+        {
+          method: 'GET',
+          path: '/items',
+          payment: { advertised: false, protocols: [], offers: [], response402: false, notes: [] },
+        },
       ],
       limitations: [],
     });

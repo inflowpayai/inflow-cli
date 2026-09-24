@@ -38,3 +38,21 @@ export const prepareOptions = getOptions.extend({
     .optional()
     .describe('JSON object overriding declared server variables; otherwise their declared defaults are used.'),
 });
+
+export const callOptions = prepareOptions.extend({
+  timeout: z
+    .number()
+    .positive()
+    .max(900)
+    .default(30)
+    .describe('Request timeout in seconds. A timeout does not prove the operation failed.'),
+  maxResponseBytes: z
+    .number()
+    .int()
+    .positive()
+    .max(16777216)
+    .default(16777216)
+    .describe('Maximum response size in bytes, up to 16 MiB.'),
+  showBody: z.boolean().default(true).describe('Include the response body in output.'),
+  outputFile: z.string().min(1).optional().describe('Save response bytes to this path, overwriting an existing file.'),
+});

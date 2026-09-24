@@ -212,6 +212,11 @@ request without sending it. Multiple advertised servers require explicit selecti
 but ordinary request data remains visible; see the
 [preparation reference](packages/cli/README.md#prepare-a-request-without-sending-it).
 
+Use `inflow openapi operations call` with the same inputs to send an operation. Advertised paid operations return
+MPP/x402 command guidance without sending; unexpected 402 responses also stop without paying. See the
+[call reference](packages/cli/README.md#call-an-openapi-operation) for response output and explicit
+authentication/payment handoff.
+
 ## Security and local data
 
 - OAuth tokens, API keys, and Agent Enrollment Protocol credentials are encrypted in the local SQLite vault.

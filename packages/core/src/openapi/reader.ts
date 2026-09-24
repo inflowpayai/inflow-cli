@@ -1,5 +1,6 @@
 import { isRecord, type PublicSourceDocuments, type SourceDocument, type SourceOptions } from './documents.js';
 import { publicDocumentUrl } from './public-fetch.js';
+import { operationPayment, type OpenApiPayment } from './payments.js';
 
 export interface OpenApiOperation {
   method: string;
@@ -13,6 +14,7 @@ export interface OpenApiOperation {
   security: Record<string, string[]>[];
   securitySchemes: Record<string, Record<string, unknown>>;
   limitations: string[];
+  payment?: OpenApiPayment;
 }
 
 export interface OpenApiDescription {
@@ -88,6 +90,7 @@ export async function readOpenApi(
         security: security(raw['security'] ?? root['security']),
         securitySchemes: schemes,
         limitations: [],
+        payment: operationPayment(raw),
       };
       for (const field of ['operationId', 'summary', 'description'] as const) {
         if (typeof raw[field] === 'string') operation[field] = raw[field];

@@ -53,6 +53,7 @@ inflow --llms-full
 | Resolve an Offering Action without invoking it | `inflow odp actions resolve` |
 | Read public OpenAPI operations | `inflow openapi operations list/get` |
 | Prepare an OpenAPI request without sending it | `inflow openapi operations prepare` |
+| Execute an OpenAPI operation or receive payment guidance | `inflow openapi operations call` |
 
 ## Understand the discovery model
 
@@ -142,6 +143,24 @@ do not assume the document host is the execution host. `--server-variables` acce
 body data is not. Never execute a redacted placeholder as a credential. No prepared request is stored and preparation
 does not authorize a later call or payment. Missing inputs and unsupported encodings are errors, not permission to
 invent values or bypass the advertised contract. Use `prepare --help` and `--schema` for the installed interface.
+
+## Call an OpenAPI operation
+
+Read the operation's `payment` metadata before execution. Recognized MPP/x402 advertisements guide the caller to the
+corresponding payment command. If both are advertised, choose explicitly. Missing metadata means payment is not
+advertised, not that access is free. An unused security scheme or a Service-wide payment declaration is not an
+operation-level requirement.
+
+With authorization to perform the operation, use `openapi operations call` with the same inputs as `prepare`.
+Advertised paid operations return `payment-required` and `sent: false` without sending. Otherwise `call` sends once;
+a runtime 402 stops without paying. Follow a `next` payment handoff only after payment authorization and the payment
+skill's checks. Preserve its method, headers and body; supply original credentials for `requiredInputs`, not redacted
+placeholders. A payment command obtains a fresh challenge; it does not resume the exact earlier response.
+
+An AEP challenge returns an explicit `aep fetch` handoff. Use the enrollment skill for that flow; `call` itself does not
+enroll or obtain credentials. Other provider authentication is not automated. The command does not need the vault.
+Redirects are not followed. An ambiguous network failure, oversized response, or output-file failure does not prove
+the server failed to perform the operation: do not automatically retry. Inspect HTTP error `details` for the response.
 
 ## Inspect before navigating an ODP Service
 
