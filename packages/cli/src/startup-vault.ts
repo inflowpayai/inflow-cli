@@ -1,3 +1,5 @@
+import { isDocumentInspect } from './commands/inspect/routing.js';
+
 export function commandPath(argv: readonly string[], maxDepth = 2): string[] {
   const out: string[] = [];
   const valueFlags = new Set([
@@ -143,13 +145,27 @@ function requiresMppLocalState(argv: readonly string[], subcommand: string | und
 export function shouldConfigureOdpServiceTransport(argv: readonly string[]): boolean {
   if (shouldBypassVault(argv)) return false;
   const [group, subgroup, command] = commandPath(argv, 3);
-  if (group === 'inspect') return subgroup !== undefined;
+  if (group === 'inspect') return subgroup !== undefined && !isPublicDocumentInspect(argv);
   if (group !== 'odp' || command === undefined) return false;
   if (subgroup === 'inspect') return true;
   if (subgroup === 'actions') return command === 'resolve';
   if (subgroup === 'collections') return isOneOf(command, 'get', 'list', 'search');
   if (subgroup === 'offerings') return isOneOf(command, 'capabilities', 'discover', 'get', 'list', 'search');
   return false;
+}
+
+export function isPublicDocumentInspect(argv: readonly string[]): boolean {
+  const [group, target] = commandPath(argv);
+  if (group !== 'inspect' || target === undefined) return false;
+  if (
+    argv
+      .slice(2)
+      .some((value) =>
+        ['--method', '--data', '--header'].some((flag) => value === flag || value.startsWith(`${flag}=`)),
+      )
+  )
+    return false;
+  return isDocumentInspect(target, { header: [] });
 }
 
 function isOneOf(value: string | undefined, ...choices: readonly string[]): boolean {

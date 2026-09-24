@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { directorySearchOptions, offeringDiscoverOptions } from '../../../src/commands/odp/schema.js';
+import { offeringDiscoverOptions } from '../../../src/commands/odp/schema.js';
+import { directorySearchOptions } from '../../../src/commands/directory/schema.js';
 import {
   enrollmentProtocolLabel,
   normalizePaymentFilters,

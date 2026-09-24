@@ -22,6 +22,8 @@ import { createDepositAddressesCli } from './commands/deposit-addresses/index.js
 import { createInspectCommand } from './commands/inspect/index.js';
 import { createMppCli } from './commands/mpp/index.js';
 import { createOdpCli } from './commands/odp/index.js';
+import { createOpenApiCli } from './commands/openapi/index.js';
+import { createDirectoryCli } from './commands/directory/index.js';
 import { createSubscriptionsCli } from './commands/subscriptions/index.js';
 import {
   createVaultCli,
@@ -40,6 +42,7 @@ import {
 } from './utils/update-probe.js';
 import {
   isAgentInvocation,
+  isPublicDocumentInspect,
   normalizeFormatAssignments,
   shouldConfigureOdpServiceTransport,
   shouldReconcileVaultDaemon,
@@ -213,7 +216,10 @@ async function main(): Promise<void> {
       return {};
     }
   }
-  const apiKeyFromSaved = apiKeyFromFlag !== undefined || apiKeyFromEnv !== undefined ? undefined : readSavedApiKey();
+  const apiKeyFromSaved =
+    apiKeyFromFlag !== undefined || apiKeyFromEnv !== undefined || isPublicDocumentInspect(process.argv)
+      ? undefined
+      : readSavedApiKey();
   const apiKey = apiKeyFromFlag ?? apiKeyFromEnv ?? apiKeyFromSaved;
   const apiKeySource: 'flag' | 'env' | 'saved' | undefined =
     apiKeyFromFlag !== undefined && apiKeyFromFlag.length > 0
@@ -366,7 +372,9 @@ async function main(): Promise<void> {
       }),
     });
   }
+  cli.command(createDirectoryCli(odp));
   cli.command(createOdpCli(odp));
+  cli.command(createOpenApiCli());
   cli.command('inspect', createInspectCommand(inflow, authStorage, odp));
 
   await cli.serve();
@@ -374,7 +382,7 @@ async function main(): Promise<void> {
 
 function showDirectorySearchHelpForEmptyInput(argv: string[]): void {
   const command = argv.slice(2);
-  if (command.length === 3 && command[0] === 'odp' && command[1] === 'directory' && command[2] === 'search') {
+  if (command.length === 2 && command[0] === 'directory' && command[1] === 'search') {
     argv.push('--help');
   }
 }

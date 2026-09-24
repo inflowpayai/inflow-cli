@@ -22,13 +22,17 @@ import { challengeToFrame } from '../mpp/inspect.js';
 import { acceptToFrame } from '../x402/inspect.js';
 import { CombinedInspectView, detectedProtocols } from './combined-inspect-view.js';
 import { inspectArgs, inspectOptions } from './schema.js';
+import { isDocumentInspect } from './routing.js';
+import { inspectDocument } from './document.js';
+import { SourceDiscovery } from '@inflowpayai/inflow-core';
 
 interface InspectCommandContext {
   agent: boolean;
   formatExplicit: boolean;
   args: { url: string };
   options: {
-    method: string;
+    method?: string | undefined;
+    refresh?: boolean | undefined;
     data?: string | undefined;
     header: string[];
   };
@@ -263,7 +267,7 @@ export async function runCombinedInspectCommand(
       : createTapFetch({ capabilities: inflow.capabilities, operation: 'odp.browse', tap: inflow.tap });
   const probeHeaders = parseHeaderFlagsOrFail(c, c.options.header);
   const probeOptions: SellerProbeOptions = {
-    method: c.options.method,
+    method: c.options.method ?? 'GET',
     headers: probeHeaders,
     ...(c.options.data !== undefined ? { data: c.options.data } : {}),
   };
@@ -363,7 +367,7 @@ export async function runCombinedInspectCommand(
     await renderInkUntilExit(
       <CombinedInspectView
         url={c.args.url}
-        method={c.options.method}
+        method={c.options.method ?? 'GET'}
         deps={deps}
         onComplete={(phase) => {
           captured.finalPhase = phase;
@@ -410,6 +414,7 @@ export function createInspectCommand(
   inflow: Inflow,
   authStorage?: AuthStorage,
   odpResource?: Pick<IOdpResource, 'inspect'>,
+  discovery: Pick<SourceDiscovery, 'inspect'> = new SourceDiscovery(),
 ): InspectCommandDefinition {
   return {
     description: 'Inspect a URL for agent discovery, enrollment, and payment capabilities',
@@ -429,6 +434,12 @@ export function createInspectCommand(
       },
     ],
     async run(c: InspectCommandContext) {
+      if (isDocumentInspect(c.args.url, c.options)) return inspectDocument(c, discovery);
+      if (c.options.refresh)
+        return c.error({
+          code: 'INSPECT_REFRESH_REQUIRES_DOCUMENT',
+          message: '--refresh applies to document inspection, not endpoint probes.',
+        });
       return runCombinedInspectCommand(c, inflow, authStorage, odpResource);
     },
   };

@@ -33,6 +33,7 @@ export {
   type SourceDiscoveryResult,
 } from './openapi/discovery.js';
 export { PublicSourceDocuments, type SourceDocument, type SourceOptions } from './openapi/documents.js';
+export { OpenApiOperationError, selectOpenApiOperation, type OpenApiOperationSelector } from './openapi/operations.js';
 export { SqlitePublicSourceCache, type PublicSourceCache } from './openapi/cache.js';
 export type { OpenApiDescription, OpenApiOperation } from './openapi/reader.js';
 export type { PublicDocumentFetch } from './openapi/public-fetch.js';
