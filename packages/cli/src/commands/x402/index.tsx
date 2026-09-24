@@ -940,7 +940,7 @@ export function createX402Cli(inflow: Inflow, authStorage: AuthStorage, apiBaseU
   });
 
   cli.command('inspect', {
-    description: "Show the seller's PAYMENT-REQUIRED accepts for a URL. Read-only probe - no auth, no payment.",
+    description: "Show the seller's PAYMENT-REQUIRED accepts for a URL. Sends a request; no payment.",
     mcp: mcpTool('x402_inspect'),
     args: inspectArgs,
     options: inspectOptions,

@@ -90,6 +90,14 @@ has a fifteen-second retrieval deadline. It sends no platform authentication, co
 data. Custom `PublicSourceDocuments` transports and caches are trusted embedding dependencies and must preserve these
 guarantees.
 
+For OpenAPI execution, `prepareOpenApiRequest(document, input)` constructs a request without sending it;
+`previewOpenApiRequest` redacts recognized credentials for display. `callOpenApiOperation(document, input)` sends one
+request unless the operation advertises payment, in which case it returns payment handoffs without invocation. Runtime
+402 and AEP challenges also return explicit handoffs. It neither pays nor obtains credentials automatically. Responses
+are bounded; redirects and retries are disabled. These helpers are not resource handles: callers must use `sanitizeDeep`
+before rendering remote content, as the CLI does. See the
+[CLI call contract](../cli/README.md#call-an-openapi-operation) for outputs and failures.
+
 ## Two-minute tour
 
 ```ts

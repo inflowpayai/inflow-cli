@@ -87,13 +87,29 @@ to run `inflow vault unlock` themselves in a terminal, then retry `auth status`.
 
 ## Which protocol? - start here
 
-Before paying, decide which protocol the resource uses. **You do not choose it - the seller's 402 challenge decides.** Run one read-only, no-auth command and let it detect both:
+Before paying, decide which protocol the resource uses. **You do not choose it - the seller's 402 challenge decides.**
+An OpenAPI `prepare` or `call` result may provide a `next` array with payment commands, a URL, request options and
+`requiredInputs`. Follow the protocol selection table below, including MPP precedence when both are present;
+discovery metadata alone does not prove the account can pay its offers. Preserve the method, headers and body, and
+supply original values for redacted credentials. A pay command requests a fresh challenge; it does not resume the
+earlier response. A `payment-required` result is not payment authorization.
+
+Start by inspecting the URL:
 
 ```bash
 inflow inspect <url>
 ```
 
-`inflow inspect` probes the URL **once** and decodes both MPP and x402 challenges from the same 402. Read its `detected` array to pick the protocol. For MPP, also read each challenge's `intent`: use `mpp subscribe` for `subscription` and `mpp pay` for one-time `charge`.
+An endpoint may require `--method`, repeatable `--header` values, and `--data` to supply its request body. Use the
+endpoint's documented request requirements, or preserve those inputs from an OpenAPI preparation or handoff.
+Explicit request options select endpoint probing. Without them, origins and recognized ODP/OpenAPI document URLs select document
+discovery and return `document-inspected`, not payment terms. Other paths are endpoint probes. A probe sends an actual
+request and may perform the operation if the endpoint allows it; it is not inherently read-only. Document discovery
+and `decode` do not invoke the operation.
+
+Endpoint inspection decodes both MPP and x402 from the response. Read `detected`, then match the offers against what
+the account supports. For MPP, use `mpp subscribe` for `subscription` and `mpp pay` for a supported one-time charge.
+Do not treat a different advertised intent or payment method as supported merely because it uses MPP.
 
 If `detected` includes `aep` and also reveals a payment protocol, continue with the matching `mpp pay` or `x402 pay`;
 the payment commands perform AEP authentication before creating the payment transaction. If `aep.blocked` is true, AEP
@@ -115,7 +131,12 @@ If `inspect` returns `outcome: "no-payment-required"`, the URL isn't paywalled -
 
 This section covers one-time MPP charges and x402 payments. MPP subscriptions use [Subscribing to an MPP resource](#subscribing-to-an-mpp-resource). Prerequisite: you are authenticated (see [Authenticate](#authenticate)). First find your protocol's row in the **Protocol deltas** table below - it names the 402 header that selected it, the matching model, the filter flags, and the Fetch command that completes the seller request. Everything else in this section applies to both protocols.
 
-**Sequencing.** Run pre-flight before pay - `pay` fails or double-charges if the pre-flight checks didn't clear. `inspect` and `decode` are read-only and need no auth, so they may run before you authenticate if useful (e.g. sizing up a paywall first). If the seller requires AEP before payment, `pay` authenticates with the Service first, then creates the payment only after the legitimate 402 is available. Do not run a separate `aep grant` just to continue payment.
+**Sequencing.** Complete pre-flight before paying: review the target, price, supported payment method and available
+funds. Reuse information already obtained from inspection or OpenAPI preparation; a separate `inspect` call is not
+mandatory when that information is available. Both payment commands obtain a fresh challenge themselves. Endpoint
+probing sends a request and can execute an operation; it is not inherently read-only. If the seller requires AEP before
+payment, `pay` authenticates with the Service first, then creates the payment only after the legitimate 402 is available.
+Do not run a separate `aep grant` just to continue payment.
 
 ### Protocol deltas
 
@@ -137,7 +158,7 @@ Throughout this section `<mpp|x402>` means "use your protocol's prefix." For the
 ### Step 1: Pre-flight evaluation
 
 ```bash
-# 1. Parse what the seller will accept - read-only, no auth (both protocols in one probe)
+# 1. Inspect the URL; supply request parameters when the endpoint requires them
 inflow inspect <url>
 
 # (Already have the raw 402 header from a prior response? Decode it directly instead of re-probing:)
@@ -184,7 +205,7 @@ The result includes `outcome`, `transaction_id`, `response_status`, `settled`, t
 | --- | --- | --- |
 | `paid` | Settled and the seller returned 2xx | Deliver the body to the user |
 | `no-payment-required` | The resource wasn't paywalled, or was already paid | Tell the user nothing was charged; return the body |
-| `replay-rejected` | Payment was approved (funds in transit) but the seller replied non-2xx on the replay | Do NOT report success. Tell the user the seller's response failed; because the payment didn't complete, the in-transit funds are reverted to their InFlow balance. Offer to retry |
+| `replay-rejected` (x402) / `seller-rejected` (MPP) | The seller returned a non-2xx response to the payment-bearing request | Do NOT report success. Check the transaction status before deciding whether to retry. Do not report a refund unless it is confirmed. |
 
 **Two-step path.** Use this when the agent's host can't block I/O long enough for the user to approve (chat UIs that yield between turns). Drop `--interval`; the first call returns `transaction_id` + `approval_id` + `approval_url` + a `_next` Fetch command/tool input. Fetch owns polling and seller replay.
 
@@ -202,6 +223,9 @@ inflow <mpp|x402> pay https://seller.example.com/api/widgets --method POST --dat
 ```
 
 **Idempotency (x402 only).** Set `--payment-id <id>` whenever a retry on transport failure is possible - the server treats two requests with the same id as the same logical payment, so a retry after a network blip won't double-charge. Use a stable random opaque value generated once per intent; reuse the same id on transport retry; regenerate only when the user explicitly wants a fresh charge. Don't tie the id to wall-clock time - a date-based id silently double-charges on next-day "buy this again" requests. Without `--payment-id`, the server generates one each call - fine for one-shots, unsafe for retries. (Format constraints: `inflow x402 pay --schema`.)
+
+Reusing a payment identifier does not guarantee that the seller's operation is safe to repeat. After an ambiguous
+failure, check the transaction and operation outcome before retrying.
 
 ```bash
 inflow x402 pay <url> --payment-id "<stable-opaque-id>"
