@@ -429,7 +429,7 @@ export function createInspectCommand(
       },
       {
         args: { url: 'https://api.foo.dev/widgets' },
-        options: { method: 'POST', data: '{"sku":"widget-1"}' },
+        options: { method: 'POST', data: '\'{"sku":"widget-1"}\'' },
         description: 'Probe a POST-only paywalled endpoint.',
       },
     ],

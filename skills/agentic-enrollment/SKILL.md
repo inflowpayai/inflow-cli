@@ -70,6 +70,12 @@ inflow inspect https://service.example/api/resource --format json
 If `detected` includes `aep`, use `aep fetch`. A resource that returns successfully without authentication is not an
 error; return its content without enrolling or requesting approval.
 
+An origin or recognized document URL passed to `inspect` reads discovery metadata instead of probing a resource.
+Use an explicit `--method GET` to probe a GET resource at such a URL; preserve the actual method, headers and body
+for other operations. Probing sends a request and may execute the operation. An OpenAPI `call` result with
+`authentication-required` supplies an `aep fetch` handoff in `next`. Use its URL and request options, replacing
+redacted credentials with the original values. This starts a fresh request, not a continuation of the earlier response.
+
 Use AEP-specific inspection for Service discovery and resource authentication details:
 
 ```bash

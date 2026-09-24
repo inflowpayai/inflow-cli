@@ -29,6 +29,10 @@ Running as an MCP server? Add an `inflow` server to your MCP client config that 
 
 ## 2. Authenticate
 
+Public directory search, document discovery through `inflow inspect`, and OpenAPI discovery, preparation and calls do
+not require an InFlow login. For those tasks, go directly to the discovery playbook below. Authenticate before payments
+or AEP operations that require an InFlow account; Service-specific credentials are separate from an InFlow login.
+
 Check the current state first - the user may already be logged in:
 
 ```bash
@@ -60,11 +64,11 @@ Confirm with `inflow auth status` before proceeding.
 
 Setup alone is not enough. Before performing a task with InFlow, load and follow its playbook:
 
-| Task                                          | Playbook                                                                                            |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Discover Services, products, and Actions      | run `inflow --skill agentic-discovery`, or fetch https://inflowcli.ai/skills/agentic-discovery.md   |
-| Enroll with or access an AEP Service          | run `inflow --skill agentic-enrollment`, or fetch https://inflowcli.ai/skills/agentic-enrollment.md |
-| Pay HTTP 402-protected resources (MPP / x402) | run `inflow --skill agentic-payments`, or fetch https://inflowcli.ai/skills/agentic-payments.md     |
+| Task                                                                | Playbook                                                                                            |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Discover Services, navigate ODP catalogs, or use OpenAPI operations | run `inflow --skill agentic-discovery`, or fetch https://inflowcli.ai/skills/agentic-discovery.md   |
+| Enroll with or access an AEP Service                                | run `inflow --skill agentic-enrollment`, or fetch https://inflowcli.ai/skills/agentic-enrollment.md |
+| Pay HTTP 402-protected resources (MPP / x402)                       | run `inflow --skill agentic-payments`, or fetch https://inflowcli.ai/skills/agentic-payments.md     |
 
 Prefer `inflow --skill <name>` - it always matches the version you are running. The web copy reflects the latest
 release; compare its `version:` header against `inflow --version`.

@@ -139,6 +139,16 @@ describe('automatic inspection routing', () => {
 });
 
 describe('public document inspection', () => {
+  it('renders a shell-quoted JSON body in the generated command reference', async () => {
+    const cli = Cli.create('inflow');
+    cli.command('inspect', createInspectCommand(new Inflow()));
+    const stdout = vi.fn();
+    await cli.serve(['--llms-full'], { stdout, exit: vi.fn() });
+    expect(stdout.mock.calls.flat().join('')).toContain(
+      'inflow inspect https://api.foo.dev/widgets --method POST --data \'{"sku":"widget-1"}\'',
+    );
+  });
+
   it.each([true, false])('preserves a single default GET endpoint probe (agent=%s)', async (agent) => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('public', { status: 200 }));
     if (!agent)

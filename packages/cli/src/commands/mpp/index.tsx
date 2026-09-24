@@ -996,7 +996,7 @@ export function createMppCli(inflow: Inflow, authStorage: MppStorage, apiBaseUrl
   });
 
   cli.command('inspect', {
-    description: "Show the seller's MPP challenge(s) for a URL. Read-only probe - no auth, no payment.",
+    description: "Show the seller's MPP challenge(s) for a URL. Sends a request; no payment.",
     mcp: mcpTool('mpp_inspect'),
     args: inspectArgs,
     options: inspectOptions,

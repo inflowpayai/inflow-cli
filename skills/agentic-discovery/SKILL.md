@@ -1,7 +1,7 @@
 ---
 version: 0.12.2
 name: agentic-discovery
-description: Discover Services through InFlow using ODP or public OpenAPI documents. Use to search the directory, browse Collections and Offerings, inspect OpenAPI operations, or prepare requests and resolve Actions before execution, enrollment, or payment.
+description: Discover Services through InFlow using ODP or public OpenAPI documents. Use to search the directory, browse Collections and Offerings, inspect, prepare or call OpenAPI operations, or resolve Actions before enrollment or payment.
 allowed-tools: ['Bash(inflow:*)', 'Bash(brew:*)', 'Bash(curl:*)']
 user-invocable: true
 license: MIT
@@ -10,10 +10,10 @@ metadata: { "author": "Jarwin, Inc.", "url": "inflowcli.ai", "openclaw": { "home
 
 # Agentic Discovery
 
-Find Services through the InFlow directory, then query each selected Service's Offering Discovery Protocol catalog
-directly. Let the InFlow CLI validate Service documents, enforce advertised operations, follow pagination, resolve
-supporting schemas, and compose authenticated requests. Do not assume that the directory contains a Service's products
-or that every Service supports every catalog command.
+Find Services through the InFlow directory, then use their ODP catalogs or OpenAPI documents. Let the InFlow CLI
+interpret documents and construct requests. ODP catalog commands enforce advertised capabilities, follow pagination,
+resolve supporting schemas, and use AEP authentication when required. OpenAPI calls use the inputs you supply and
+return explicit authentication or payment handoffs. The directory does not contain a Service's full catalog.
 
 ## Setup
 
@@ -46,6 +46,7 @@ inflow --llms-full
 | - | - |
 | Find Services and indexed Collections | `inflow directory search` |
 | Find matching Service and Collection names | `inflow directory suggest` |
+| Discover the document format at an origin | `inflow inspect` |
 | Inspect one Service and its operations | `inflow odp inspect` |
 | Browse or search Collection groupings | `inflow odp collections list/search/get` |
 | Browse, search, or retrieve products | `inflow odp offerings list/search/get` |
@@ -61,7 +62,8 @@ Discovery has two stages:
 
 1. The canonical directory searches Service names, descriptions and keywords, and indexed Collection names and
    descriptions. Capability filters apply to the owning Service.
-2. The selected Service supplies its own Collections, Offerings, product attributes, and Actions.
+2. For ODP, the selected Service supplies Collections, Offerings, attributes, and Actions. For OpenAPI, its document
+   supplies operations and their request definitions.
 
 The directory does not contain or search a global Offering catalog. Known results contain `type` and nested `service`
 metadata. Read `service.source.type` before choosing a command. For `odp`, use `service.service_origin` for catalog
@@ -94,7 +96,7 @@ prefix matches:
 inflow directory suggest gp --limit 10 --format json
 ```
 
-Each directory response contains mixed `items`, optional `facets`, optional `issues` for skipped malformed results, and
+Each directory search response contains mixed `items`, optional `facets`, optional `issues` for skipped malformed results, and
 may contain `next`. Facets count matching results, including Collections. Results are capped at 100; absent `next` does
 not promise exhaustive results. Pass `next` back unchanged and do not combine it with a new query or filters:
 
@@ -117,7 +119,7 @@ choose an exact URL from the reported candidates. Exact URLs do not fall back to
 revalidates the public document cache and repeats location discovery for origins.
 
 `list` returns `source`, `title`, `openapi`, `items` and `limitations`; each item has `method`, `path`, and optional
-`operationId` and `summary`. `get` returns `source`, the full interpreted `operation`, and document `limitations`.
+`operationId` and `summary`, plus `payment` metadata. `get` returns `source`, the full interpreted `operation`, and document `limitations`.
 Select by method/path or by `--operation-id` alone. A duplicate operation identifier requires method/path selection.
 These commands read the full document, independently of Directory endpoint curation; they never invoke operations.
 
