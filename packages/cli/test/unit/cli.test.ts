@@ -35,6 +35,8 @@ const VAULT_COMMANDS = [
 ] as const;
 const VAULT_MCP_TOOLS = VAULT_COMMANDS.map((command) => command.replace(' ', '_'));
 const MCP_TOOL_EXPECTATIONS = [
+  ['openapi_operations_get', 'OpenAPI: Get Operation', true, false],
+  ['openapi_operations_list', 'OpenAPI: List Operations', true, false],
   ['aep_enroll', 'AEP: Enroll Service', false, false],
   ['aep_fetch', 'AEP: Fetch Resource', false, false],
   ['aep_grant', 'AEP: Grant Credential', false, false],
@@ -59,8 +61,8 @@ const MCP_TOOL_EXPECTATIONS = [
   ['odp_collections_get', 'ODP: Get Collection', true, false],
   ['odp_collections_list', 'ODP: List Collections', true, false],
   ['odp_collections_search', 'ODP: Search Collections', true, false],
-  ['odp_directory_search', 'ODP: Search Directory', true, false],
-  ['odp_directory_suggest', 'ODP: Suggest Names', true, false],
+  ['directory_search', 'Directory: Search', true, false],
+  ['directory_suggest', 'Directory: Suggest Names', true, false],
   ['odp_inspect', 'ODP: Inspect Service', true, false],
   ['odp_offerings_capabilities', 'ODP: Offering Search Capabilities', true, false],
   ['odp_offerings_discover', 'ODP: Discover Offerings', true, false],
@@ -87,6 +89,8 @@ const MCP_TOOL_EXPECTATIONS = [
   ['x402_supported', 'x402: List Payment Methods', true, false],
 ] as const;
 const CLI_SCHEMA_COMMANDS = [
+  'openapi operations get',
+  'openapi operations list',
   'aep enroll',
   'aep fetch',
   'aep grant',
@@ -108,8 +112,8 @@ const CLI_SCHEMA_COMMANDS = [
   'mpp subscribe',
   'mpp supported',
   'odp actions resolve',
-  'odp directory search',
-  'odp directory suggest',
+  'directory search',
+  'directory suggest',
   'odp collections get',
   'odp collections list',
   'odp collections search',
@@ -371,7 +375,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
     });
 
     it.each([
-      [['odp', 'directory', '--help'], 'Search the directory for Services and Collections.'],
+      [['directory', '--help'], 'Search the directory for Services and Collections.'],
       [['odp', 'collections', '--help'], 'Browse collections from a service.'],
       [['odp', 'offerings', '--help'], 'Find and inspect offerings.'],
       [['odp', 'actions', '--help'], 'Inspect executable requests advertised by offerings.'],
@@ -381,11 +385,30 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(stdout).toContain(description);
     });
 
-    it('odp directory search without input prints command help', async () => {
-      const { exitCode, stdout, stderr } = await run(['odp', 'directory', 'search']);
+    it('directory search without input prints command help', async () => {
+      const { exitCode, stdout, stderr } = await run(['directory', 'search']);
       expect(exitCode).toBe(0);
-      expect(stdout).toContain('Usage: inflow odp directory search [query] [options]');
+      expect(stdout).toContain('Usage: inflow directory search [query] [options]');
       expect(stderr).toBe('');
+    });
+
+    it('does not register the old ODP directory path', async () => {
+      const { exitCode, stdout } = await run(['odp', 'directory', 'search', 'weather']);
+      expect(exitCode).not.toBe(0);
+      expect(stdout).toContain('directory');
+    });
+
+    it('exposes source filters and OpenAPI selectors through command schemas', async () => {
+      for (const command of ['search', 'suggest']) {
+        const result = await run(['directory', command, '--schema']);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain('openapi');
+        expect(result.stdout).toContain('source');
+      }
+      const result = await run(['openapi', 'operations', 'get', '--schema']);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('operationId');
+      expect(result.stdout).toContain('refresh');
     });
 
     it('subscriptions help describes the buyer-facing actions', async () => {
@@ -644,7 +667,7 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(exitCode).toBe(0);
       expect(stderr).toBe('');
       expect(stdout.startsWith('# Agentic Discovery')).toBe(true);
-      expect(stdout).toContain('inflow odp directory search');
+      expect(stdout).toContain('inflow directory search');
       expect(stdout).not.toMatch(/^---/);
     });
 
@@ -721,8 +744,8 @@ describe.skipIf(!existsSync(DIST_CLI))(
         ['odp collections get', 'Get full collection details.'],
         ['odp collections list', 'List collections from a service.'],
         ['odp collections search', 'Search collections from a service.'],
-        ['odp directory search', 'Search the directory for Services and Collections.'],
-        ['odp directory suggest', 'Find matching Service and Collection names.'],
+        ['directory search', 'Search the directory for Services and Collections.'],
+        ['directory suggest', 'Find matching Service and Collection names.'],
         ['odp inspect', "Inspect a service's capabilities."],
         ['odp offerings discover', 'Find offerings across services selected from the directory.'],
         ['odp offerings get', 'Get full offering details.'],

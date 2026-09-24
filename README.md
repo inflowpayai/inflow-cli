@@ -181,7 +181,7 @@ inflow vault unlock
 inflow auth login
 
 # Discover Services and Collections, then inspect a Service
-inflow odp directory search plants
+inflow directory search plants --source odp
 inflow inspect https://service.example
 
 # Establish access when the Service requires enrollment
@@ -195,6 +195,17 @@ inflow mpp pay https://service.example/actions/purchase
 The three protocol layers are composable rather than mandatory on every request. ODP identifies Services, Offerings, and
 executable Actions. AEP establishes Service access when required. MPP or x402 completes payment when the selected
 endpoint returns a payment challenge. Start with `inflow inspect` when the required layers are not yet known.
+
+For public OpenAPI discovery, no login is needed:
+
+```bash
+inflow directory search --source openapi
+inflow openapi operations list https://parallelmpp.dev/openapi.json
+inflow openapi operations get https://parallelmpp.dev/openapi.json --method POST --path /api/search
+```
+
+Pass the Directory result's `service.source.url` to OpenAPI commands. Reading operation details does not invoke the
+operation or make a payment; Directory Collection selections do not restrict the document's operation list.
 
 ## Security and local data
 

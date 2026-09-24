@@ -3,11 +3,14 @@ import { z } from 'incur';
 export const inspectArgs = z.object({
   url: z
     .string()
-    .describe('The resource URL to inspect for ODP, AEP, MPP, and x402. No enrollment or payment is performed.'),
+    .describe(
+      'An origin or recognized ODP/OpenAPI document URL for public discovery, or an endpoint URL to probe. No enrollment or payment is performed.',
+    ),
 });
 
 export const inspectOptions = z.object({
-  method: z.string().default('GET').describe('HTTP method for the probe request.'),
+  method: z.string().optional().describe('Explicitly probe using this HTTP method. Endpoint probes default to GET.'),
+  refresh: z.boolean().default(false).describe('Revalidate public documents and rediscover origin candidates.'),
   data: z
     .string()
     .optional()

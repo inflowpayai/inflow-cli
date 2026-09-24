@@ -12,6 +12,8 @@ type ToolName =
   | 'auth_status'
   | 'balances_list'
   | 'deposit-addresses_list'
+  | 'directory_search'
+  | 'directory_suggest'
   | 'inspect'
   | 'mpp_cancel'
   | 'mpp_decode'
@@ -24,8 +26,6 @@ type ToolName =
   | 'odp_collections_get'
   | 'odp_collections_list'
   | 'odp_collections_search'
-  | 'odp_directory_search'
-  | 'odp_directory_suggest'
   | 'odp_inspect'
   | 'odp_offerings_capabilities'
   | 'odp_offerings_discover'
@@ -33,6 +33,8 @@ type ToolName =
   | 'odp_offerings_list'
   | 'odp_offerings_search'
   | 'odp_actions_resolve'
+  | 'openapi_operations_get'
+  | 'openapi_operations_list'
   | 'subscriptions_cancel'
   | 'subscriptions_fetch'
   | 'subscriptions_get'
@@ -129,6 +131,8 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
     read('Deposit Addresses: List Deposit Addresses', "List the authenticated user's configured deposit addresses."),
     'stored-session',
   ),
+  directory_search: read('Directory: Search', 'Search the directory for Services and Collections.'),
+  directory_suggest: read('Directory: Suggest Names', 'Find matching Service and Collection names.'),
   inspect: read(
     'Inspect: Inspect Resource',
     'Inspect a resource for ODP, AEP, MPP, and x402 capabilities and requirements.',
@@ -160,8 +164,6 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
   odp_collections_get: read('ODP: Get Collection', 'Get full collection details.'),
   odp_collections_list: read('ODP: List Collections', 'List collections from a service.'),
   odp_collections_search: read('ODP: Search Collections', 'Search collections from a service.'),
-  odp_directory_search: read('ODP: Search Directory', 'Search the directory for Services and Collections.'),
-  odp_directory_suggest: read('ODP: Suggest Names', 'Find matching Service and Collection names.'),
   odp_inspect: read('ODP: Inspect Service', "Inspect a service's capabilities."),
   odp_offerings_capabilities: read('ODP: Offering Search Capabilities', 'Resolve offering search filters and sorts.'),
   odp_offerings_discover: read(
@@ -174,6 +176,14 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
   odp_actions_resolve: read(
     'ODP: Resolve Action',
     "Resolve an offering's action into an executable request without invoking it.",
+  ),
+  openapi_operations_get: read(
+    'OpenAPI: Get Operation',
+    'Read one operation from a public OpenAPI document without invoking it.',
+  ),
+  openapi_operations_list: read(
+    'OpenAPI: List Operations',
+    'Read all operations from a public OpenAPI document without invoking them.',
   ),
   subscriptions_cancel: vault(
     write('Subscriptions: Cancel Subscription', 'Cancel your subscription immediately.', {

@@ -11,30 +11,6 @@ const operation = z.enum([
   'search-offerings',
 ]);
 
-export const directorySearchArgs = z.object({
-  query: z.string().optional().describe('Optional free-text Service and Collection query.'),
-});
-
-export const directorySearchOptions = z.object({
-  keyword: z.array(z.string()).default([]).describe('Repeatable Service keyword filter.'),
-  limit: z.number().int().min(1).max(100).optional().describe('Maximum directory results requested.'),
-  next: z.string().optional().describe('Opaque continuation URL from an earlier directory response.'),
-  operation: z.array(operation).default([]).describe('Filter by an advertised ODP operation. Repeatable.'),
-  payment: z
-    .array(z.enum(PAYMENT_FILTERS))
-    .default([])
-    .describe('Repeatable payment filter in protocol or protocol:option form.'),
-  withAep: z.boolean().default(false).describe('Only include results whose Service advertises AEP.'),
-});
-
-export const directorySuggestArgs = z.object({
-  prefix: z.string().describe('Text to match against Service and Collection metadata; returns matching names.'),
-});
-
-export const directorySuggestOptions = directorySearchOptions.omit({ next: true }).extend({
-  limit: z.number().int().min(1).max(25).optional().describe('Maximum suggestions to return.'),
-});
-
 const serviceArgs = z.object({
   service: z.string().describe('ODP Service URL or origin.'),
 });

@@ -35,8 +35,8 @@ For host-specific skill and MCP installation, see the repository's
 | `inflow balances list`                                           | List the authenticated user's balances.                                                                                           |
 | `inflow deposit-addresses list`                                  | List the user's configured deposit addresses, grouped by network.                                                                 |
 | `inflow inspect <url>`                                           | Inspect a URL for discovery, enrollment, and payment protocols without taking an action.                                          |
-| `inflow odp directory search`                                    | Search the directory for Services and Collections.                                                                                |
-| `inflow odp directory suggest <prefix>`                          | Find matching Service and Collection names.                                                                                       |
+| `inflow directory search`                                        | Search the directory for Services and Collections.                                                                                |
+| `inflow directory suggest <prefix>`                              | Find matching Service and Collection names.                                                                                       |
 | `inflow odp inspect <service>`                                   | Inspect a service's capabilities.                                                                                                 |
 | `inflow odp collections list <service>`                          | List collections from a service in terse form.                                                                                    |
 | `inflow odp collections search <service>`                        | Search collections from a service in terse form.                                                                                  |
@@ -170,6 +170,36 @@ inflow deposit-addresses list --format json
 
 Lists the configured deposit addresses for the authenticated user. TTY groups by network with a deposit address per row.
 
+## `openapi operations`
+
+Read a public JSON OpenAPI 3.x document without login, vault access, enrollment, payment, or operation execution:
+
+```bash
+inflow openapi operations list https://stableenrich.dev --format json
+inflow openapi operations list https://stableenrich.dev/openapi.json --refresh --format json
+inflow openapi operations get https://example.com/openapi.json --method POST --path /search --format json
+inflow openapi operations get https://example.com/openapi.json --operation-id search --format json
+```
+
+Origins use bounded discovery, including `/openapi.json` and `/v1/openapi.json`. Multiple candidates require an exact
+document URL; an exact URL never silently falls back to another document. `--refresh` revalidates cached documents and
+rediscovers an origin. Public document caches honor HTTP freshness and do not contain operation responses or
+credentials.
+
+`list` returns `{ source: { type: "openapi", url }, title, openapi, items, limitations }`. Each item contains `method`,
+`path`, optional `operationId`, and optional `summary`. `get` returns `{ source, operation, limitations }`. Its
+operation contains `method`, `path`, optional `operationId`, `summary`, `description`, `requestBody`, and the `servers`,
+`parameters`, `security`, `securitySchemes`, and `limitations` fields. Server records retain their reference `baseUrl`
+when needed to interpret relative addresses. Both commands read the entire source document, not a Directory's curated
+endpoint list. An imported Directory Collection identifies this same parent document.
+
+Use method/path together or a unique operation identifier alone. Errors include `OPENAPI_SELECTOR_INVALID`,
+`OPENAPI_OPERATION_NOT_FOUND`, `OPENAPI_OPERATION_AMBIGUOUS`, `SOURCE_NOT_FOUND`, `SOURCE_AMBIGUOUS`,
+`SOURCE_UNAVAILABLE`, and `OPENAPI_READ_FAILED`. Ambiguous-source errors list the candidate URLs. No automatic operation
+request or payment follows a successful read. Security requirements preserve alternatives between objects and combined
+requirements within each object; provider login and SIWX are not automated. An empty security list does not prove that
+an endpoint is free or publicly callable.
+
 ## `odp`
 
 ODP discovery has two stages. The canonical directory finds Services and indexed Collections from their metadata;
@@ -183,7 +213,7 @@ to pass identifiers from one structured response to the next:
 ```bash
 set -eu
 
-directory_json=$(inflow odp directory search gpu \
+directory_json=$(inflow directory search gpu --source odp \
   --operation search-offerings \
   --format json)
 service_origin=$(printf '%s' "$directory_json" | jq -er '[.items[] | select(.type == "service" or .type == "collection")][0].service.service_origin')
@@ -203,20 +233,30 @@ fi
 
 Directory search JSON contains `items`, optional `facets`, optional `next`, and optional `issues` for skipped invalid
 results. Known items contain `type`, `indexed_at`, and `service` (including `service_id`, `service_origin`, and any
-advertised `protocols`). Collection items also contain `collection.id`, `collection.name`, and an optional description.
-Use the owning origin and Collection ID with `odp collections get`. Service items can carry `available_through`;
-structured output retains it, but the text table does not display attribution or protocols. Unknown types retain
-`resource_type` and `raw` and are displayed as unsupported, not treated as executable targets.
+advertised `protocols` and `source`). `source` contains `type`, the exact document `url`, and `x402_discovery`, which
+indicates a supporting discovery file, not a verified payment capability. Collection items also contain `collection.id`,
+`collection.name`, and an optional description. Only native `source.type: "odp"` Collections can use the owning origin
+and Collection ID with `odp collections get`. For `openapi`, pass `service.source.url` to `openapi operations list`; an
+imported Collection points to the full parent document, not an ODP endpoint or a CLI-filtered subset. Service items can
+carry `available_through`; structured output retains it, but the text table does not display attribution or protocols.
+Unknown types retain `resource_type` and `raw` and are displayed as unsupported, not treated as executable targets.
 
 Facets count matching results, including Collections. The mixed endpoint returns at most 100 results; an absent `next`
 does not mean every match was returned. `directory suggest` returns `{ "items": ["name"] }`: names of Services and
 Collections whose indexed metadata matches the input, not necessarily names that begin with that input. Both commands
-accept `--keyword`, `--operation`, `--payment`, and `--with-aep`. `--with-aep` requires advertised AEP support; it does
-not check your enrollment or authenticate you. For Collection results, these filters apply to the owning Service. For
-example:
+accept `--source`, `--keyword`, `--operation`, `--payment`, and `--with-aep`. Repeat `--source odp` or
+`--source openapi` to select formats; omit it to include all formats. Unknown source formats remain displayable but are
+not ODP targets. `--with-aep` requires advertised AEP support; it does not check your enrollment or authenticate you.
+For Collection results, these filters apply to the owning Service.
+
+The text table's Target URL is the Service origin for ODP and the exact document URL for OpenAPI. Copy it into the
+corresponding ODP or OpenAPI commands. Collections use their parent Service's target alongside their Collection ID. JSON
+retains both the origin and source document URL. Repeated source values are combined without duplicates.
+
+For example:
 
 ```bash
-inflow odp directory suggest weather --with-aep --operation get-offering --payment mpp:inflow --format json
+inflow directory suggest weather --with-aep --operation get-offering --payment mpp:inflow --format json
 ```
 
 `offerings discover` remains Service-only and does not treat a Collection result as another Service.
@@ -224,10 +264,10 @@ inflow odp directory suggest weather --with-aep --operation get-offering --payme
 An opaque continuation, when supplied, can be resumed without interpreting it:
 
 ```bash
-page=$(inflow odp directory search gpu --format json)
+page=$(inflow directory search gpu --format json)
 next=$(printf '%s' "$page" | jq -r '.next // empty')
 if [ -n "$next" ]; then
-  inflow odp directory search --next "$next" --format json
+  inflow directory search --next "$next" --format json
 fi
 ```
 
@@ -247,11 +287,11 @@ fi
 - Service-controlled output is recursively stripped of ANSI escape sequences before TTY or structured rendering.
   `--verbose` does not print ODP AEP credentials, protected response bodies, or cache-partition identifiers.
 
-### `odp directory`
+### `directory`
 
 ```bash
-inflow odp directory search gpu --keyword compute --payment mpp:inflow --format json
-inflow odp directory suggest gp --limit 10 --format json
+inflow directory search gpu --keyword compute --payment mpp:inflow --format json
+inflow directory suggest gp --limit 10 --format json
 ```
 
 Directory search returns one page as `{ items, next?, facets?, issues? }`. Pass the opaque `next` value back through
@@ -400,6 +440,34 @@ included in error output.
 
 ## `inspect`
 
+The URL selects public document inspection or endpoint probing:
+
+- An origin or `/` path discovers ODP first, then OpenAPI when ODP is absent.
+- `/.well-known/odp`, `/.well-known/x402.json`, and paths containing `openapi` (case-insensitive) are inspected as
+  documents. An exact-document failure is reported without falling back to an endpoint probe.
+- Other paths retain endpoint probing. Explicit `--method`, `--data`, or `--header` selects probing regardless of path,
+  including `--method GET`.
+
+Public document inspection requires no login or vault access and invokes no advertised operation. Use `--refresh` to
+revalidate documents and rediscover origin candidates. Multiple OpenAPI candidates require an exact URL. For documents
+at other paths, use `openapi operations list/get`, which explicitly selects document reading.
+
+```bash
+inflow inspect https://demo.inflowpay.ai
+inflow inspect https://parallelmpp.dev/openapi.json --refresh
+inflow inspect https://seller.example.com/ --method GET
+```
+
+Document JSON output contains `outcome: "document-inspected"`, `source: { type, url }`, and `document`. ODP includes
+`service_origin` and the validated Service Document. OpenAPI includes `operation_count` and the parsed document with
+title, version, operations, server choices, parameters, authentication declarations, and limitations. These declarations
+do not prove that an endpoint is free or payable; actual payment challenges are checked only by endpoint probing.
+Discovery failures use `SOURCE_NOT_FOUND`, `SOURCE_AMBIGUOUS` (with candidate URLs in its message), or
+`SOURCE_UNAVAILABLE`; other document failures use `INSPECT_DOCUMENT_FAILED`. `--refresh` on an endpoint probe returns
+`INSPECT_REFRESH_REQUIRES_DOCUMENT`.
+
+### Endpoint probing
+
 ```bash
 inflow inspect https://seller.example.com/api/widgets
 ```
@@ -411,9 +479,9 @@ unless a compatible stored AEP session credential can reveal the downstream paym
 once and decodes both MPP and x402 challenges from the same 402 response — so you don't have to know the protocol before
 inspecting. This is the recommended first step: read `detected` to decide which rail owns the next action.
 
-Unlike the per-protocol probes it carries only the probe-shape flags (`--method`, `--data`, `--header`) — it is
-deliberately unfiltered. For filtered probes or full per-protocol detail (pay-to, timeout, extras, challenge ids /
-digests), use [`inflow mpp inspect`](#mpp-inspect) / [`inflow x402 inspect`](#x402-inspect).
+Endpoint probing uses `--method`, `--data`, and `--header` and is deliberately unfiltered. For filtered probes or full
+per-protocol detail (pay-to, timeout, extras, challenge ids / digests), use [`inflow mpp inspect`](#mpp-inspect) /
+[`inflow x402 inspect`](#x402-inspect).
 
 TTY renders a `detected:` summary line, then ODP, AEP, MPP, and x402 sections. Each section shows details or a dim "none
 advertised" line; a protocol whose header is present but undecodable shows a one-line warning rather than failing the

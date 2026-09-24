@@ -19,6 +19,7 @@ import {
 } from '../../../src/commands/odp/service.js';
 import { createInspectCli } from '../../../src/commands/odp/index.js';
 import { OdpCommandError } from '../../../src/commands/odp/command.js';
+import * as renderer from '../../../src/utils/render-ink-until-exit.js';
 
 const collection: Collection = {
   id: 'compute',
@@ -154,6 +155,23 @@ describe('ODP Service and Collection commands', () => {
     );
 
     expect(JSON.parse(output.join(''))).toMatchObject({ document: { mcp: inspection.document.mcp } });
+  });
+
+  it('renders native inspection in a human terminal', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+    const rendered = vi.spyOn(renderer, 'renderInkUntilExit').mockResolvedValue(undefined);
+    try {
+      await createInspectCli({ inspect: vi.fn(() => Promise.resolve(inspection)) }).serve(
+        ['inspect', 'https://compute.example'],
+        { exit: vi.fn(), stdout: vi.fn() },
+      );
+      expect(rendered).toHaveBeenCalledOnce();
+    } finally {
+      rendered.mockRestore();
+      if (descriptor === undefined) Reflect.deleteProperty(process.stdout, 'isTTY');
+      else Object.defineProperty(process.stdout, 'isTTY', descriptor);
+    }
   });
 
   it('returns a stable Service inspection failure', async () => {

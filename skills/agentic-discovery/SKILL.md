@@ -29,7 +29,7 @@ Install the signed native CLI through one of these channels:
 Use structured output for programmatic work:
 
 ```bash
-inflow odp directory search gpu --format json
+inflow directory search gpu --format json
 ```
 
 The CLI is self-describing. Query the installed version instead of guessing parameters:
@@ -44,8 +44,8 @@ inflow --llms-full
 
 | Goal | Command |
 | - | - |
-| Find Services and indexed Collections | `inflow odp directory search` |
-| Find matching Service and Collection names | `inflow odp directory suggest` |
+| Find Services and indexed Collections | `inflow directory search` |
+| Find matching Service and Collection names | `inflow directory suggest` |
 | Inspect one Service and its operations | `inflow odp inspect` |
 | Browse or search Collection groupings | `inflow odp collections list/search/get` |
 | Browse, search, or retrieve products | `inflow odp offerings list/search/get` |
@@ -61,8 +61,11 @@ Discovery has two stages:
 2. The selected Service supplies its own Collections, Offerings, product attributes, and Actions.
 
 The directory does not contain or search a global Offering catalog. Known results contain `type` and nested `service`
-metadata. Use `service.service_origin` for subsequent commands. Collection results also contain `collection.id` for
-`collections get`; the ID is case-sensitive and scoped to its owning Service. Unknown results contain `resource_type`
+metadata. Read `service.source.type` before choosing a command. For `odp`, use `service.service_origin` for catalog
+commands. For `openapi`, pass the exact `service.source.url` to `openapi operations list`. Native ODP Collection results
+also contain `collection.id` for `collections get`; the ID is case-sensitive and scoped to its owning Service.
+Imported Collections point to the full parent OpenAPI document; do not call ODP operations with their IDs.
+Unknown source formats are not ODP targets. Unknown result types contain `resource_type`
 and `raw`: do not treat them as Services or invoke them. Protocols remain in `service.protocols`.
 
 ## Find Services
@@ -70,21 +73,22 @@ and `raw`: do not treat them as Services or invoke them. Protocols remain in `se
 Search with free text and structured filters when they are known:
 
 ```bash
-inflow odp directory search compute --keyword gpu --operation search-offerings --payment mpp:inflow --format json
+inflow directory search compute --keyword gpu --operation search-offerings --payment mpp:inflow --format json
 ```
 
 Use `--payment mpp` or `--payment x402` to match a protocol regardless of its advertised options.
 Use `protocol:option`, such as `mpp:solana` or `x402:base`, to require one Service-advertised payment option.
 Repeat `--payment` to provide alternatives.
 Use `--with-aep` to require advertised AEP support, not an existing enrollment.
-`--operation` filters advertised ODP operations. These filters and `--keyword` also apply to suggestions;
+`--operation` filters advertised ODP operations. Use `--source odp` or `--source openapi` to select document formats;
+repeat it for alternatives or omit it for all formats. These filters and `--keyword` also apply to suggestions;
 Collection matches are filtered using their owning Service's capabilities and keywords.
 
 Suggestions return names whose indexed metadata matches the text; they are not keyword filter values or necessarily
 prefix matches:
 
 ```bash
-inflow odp directory suggest gp --limit 10 --format json
+inflow directory suggest gp --limit 10 --format json
 ```
 
 Each directory response contains mixed `items`, optional `facets`, optional `issues` for skipped malformed results, and
@@ -92,10 +96,41 @@ may contain `next`. Facets count matching results, including Collections. Result
 not promise exhaustive results. Pass `next` back unchanged and do not combine it with a new query or filters:
 
 ```bash
-inflow odp directory search --next "<next>" --format json
+inflow directory search --next "<next>" --format json
 ```
 
-## Inspect before navigating a Service
+## Read OpenAPI operations
+
+Public OpenAPI commands need neither login nor vault access. They accept an origin or an exact JSON document URL:
+
+```bash
+inflow openapi operations list https://example.com --format json
+inflow openapi operations list https://example.com/openapi.json --refresh --format json
+inflow openapi operations get https://example.com/openapi.json --method POST --path /search --format json
+```
+
+Origin discovery checks advertised links, `/openapi.json`, and `/v1/openapi.json`. If multiple documents are found,
+choose an exact URL from the reported candidates. Exact URLs do not fall back to another document. `--refresh`
+revalidates the public document cache and repeats location discovery for origins.
+
+`list` returns `source`, `title`, `openapi`, `items` and `limitations`; each item has `method`, `path`, and optional
+`operationId` and `summary`. `get` returns `source`, the full interpreted `operation`, and document `limitations`.
+Select by method/path or by `--operation-id` alone. A duplicate operation identifier requires method/path selection.
+These commands read the full document, independently of Directory endpoint curation; they never invoke operations.
+
+Authentication requirements are alternatives between objects and cumulative within one object. Do not mistake an
+arbitrary API key or bearer scheme for AEP. Provider login, SIWX and custom signing are not automated. Missing security
+metadata does not establish anonymous access or free execution. These read commands do not enroll or pay.
+
+## Inspect before navigating an ODP Service
+
+`inflow inspect <origin>` performs public ODP-first discovery with OpenAPI fallback. Exact `/.well-known/odp`,
+`/.well-known/x402.json`, and paths containing `openapi` are read as documents, without login or endpoint invocation.
+Use `--refresh` to revalidate. The JSON result has `outcome: "document-inspected"`, `source`, and `document`; OpenAPI
+also has `operation_count`, while ODP has `service_origin`. For arbitrary document paths use `openapi operations list`.
+Other URL paths are endpoint probes. Explicit `--method`, `--data`, or `--header` selects endpoint probing even for an
+origin or document-looking path. Do not pass these options when you only want to read a document. Document failures do
+not fall back to probing. Authentication declarations are not proof that execution is available or payment is supported.
 
 Inspect the selected Service before choosing catalog commands:
 

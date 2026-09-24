@@ -87,7 +87,7 @@ describe('vault startup decisions', () => {
     ['odp collections list', ['odp', 'collections', 'list', 'https://service.test'], true],
     ['odp offerings discover', ['odp', 'offerings', 'discover'], true],
     ['odp offerings capabilities', ['odp', 'offerings', 'capabilities', 'https://service.test'], true],
-    ['odp directory', ['odp', 'directory'], false],
+    ['directory', ['directory'], false],
     ['odp inspect', ['odp', 'inspect'], false],
     ['balances list', ['balances', 'list'], false],
     ['deposit-addresses list', ['deposit-addresses', 'list'], false],
@@ -97,7 +97,8 @@ describe('vault startup decisions', () => {
     ['vault status', ['vault', 'status'], true],
     ['vault unlock', ['vault', 'unlock'], false],
     ['top inspect', ['inspect'], false],
-    ['top inspect target', ['inspect', 'https://service.test'], true],
+    ['top inspect origin', ['inspect', 'https://service.test'], false],
+    ['top inspect endpoint', ['inspect', 'https://service.test/resource'], true],
   ] as const)('starts daemon for %s when required', (_label, args, expected) => {
     expect(shouldStartVaultDaemon(argv(...args))).toBe(expected);
   });
@@ -116,11 +117,12 @@ describe('vault startup decisions', () => {
     ['aep inspect', ['aep', 'inspect'], false],
     ['odp offerings list', ['odp', 'offerings', 'list', 'https://service.test'], true],
     ['odp offerings capabilities', ['odp', 'offerings', 'capabilities', 'https://service.test'], true],
-    ['odp directory', ['odp', 'directory'], false],
+    ['directory', ['directory'], false],
     ['odp inspect', ['odp', 'inspect'], false],
     ['vault unlock', ['vault', 'unlock'], false],
     ['top inspect', ['inspect'], false],
-    ['top inspect target', ['inspect', 'https://service.test'], true],
+    ['top inspect origin', ['inspect', 'https://service.test'], false],
+    ['top inspect endpoint', ['inspect', 'https://service.test/resource'], true],
   ] as const)('reconciles a running daemon for %s when required', (_label, args, expected) => {
     expect(shouldReconcileVaultDaemon(argv(...args))).toBe(expected);
   });
@@ -154,14 +156,15 @@ describe('vault startup decisions', () => {
     ['odp collections search', ['odp', 'collections', 'search', 'https://service.test'], true],
     ['odp offerings get', ['odp', 'offerings', 'get', 'https://service.test', 'offering-1'], true],
     ['odp offerings capabilities', ['odp', 'offerings', 'capabilities', 'https://service.test'], true],
-    ['odp directory', ['odp', 'directory'], false],
+    ['directory', ['directory'], false],
     ['odp inspect', ['odp', 'inspect'], false],
     ['balances list', ['balances', 'list'], true],
     ['deposit-addresses list', ['deposit-addresses', 'list'], true],
     ['user get', ['user', 'get'], true],
     ['vault unlock', ['vault', 'unlock'], false],
     ['top inspect', ['inspect'], false],
-    ['top inspect target', ['inspect', 'https://service.test'], true],
+    ['top inspect origin', ['inspect', 'https://service.test'], false],
+    ['top inspect endpoint', ['inspect', 'https://service.test/resource'], true],
   ] as const)('unlocks vault for human %s when required', (_label, args, expected) => {
     expect(shouldUnlockVault(argv(...args))).toBe(expected);
   });

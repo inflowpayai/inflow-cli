@@ -7,10 +7,11 @@ import {
 } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
-import { SearchView, SuggestView, __testing, createDirectoryCli } from '../../../src/commands/odp/index.js';
+import { SearchView, SuggestView, __testing, createDirectoryCli } from '../../../src/commands/directory/index.js';
 import { OdpCommandError } from '../../../src/commands/odp/command.js';
 
 const emptyInput: Parameters<typeof __testing.runDirectorySearch>[1] = {
+  source: [],
   keyword: [],
   limit: undefined,
   next: undefined,
@@ -54,7 +55,7 @@ function failingSequence(): ReturnType<IOdpResource['search']> {
   };
 }
 
-describe('ODP directory commands', () => {
+describe('Directory commands', () => {
   it('renders mixed identities without attribution and preserves metadata in JSON', async () => {
     const service: DirectoryService & {
       service_id: string;
@@ -92,6 +93,9 @@ describe('ODP directory commands', () => {
     };
     const frame = render(<SearchView page={page} />).lastFrame();
     expect(frame).toContain('Collection ID');
+    expect(frame).toContain('Target URL');
+    expect(frame).toMatch(/https:\/\/compute\.example\s/);
+    expect(frame).not.toContain(service.source.url);
     expect(frame).toContain('GPU catalog');
     expect(frame).toContain('CPU capacity');
     expect(frame).toContain('Unsupported');
@@ -169,7 +173,7 @@ describe('ODP directory commands', () => {
         { continueSearch: vi.fn(), search: vi.fn() },
         { ...emptyInput, next: '/v1/directory/search?cursor=opaque', query: 'gpu' },
       ),
-    ).rejects.toMatchObject({ detail: { code: 'ODP_DIRECTORY_NEXT_CONFLICT', exitCode: 2 } });
+    ).rejects.toMatchObject({ detail: { code: 'DIRECTORY_NEXT_CONFLICT', exitCode: 2 } });
   });
 
   it('prints directory search usage when no search input is provided', async () => {
@@ -179,14 +183,14 @@ describe('ODP directory commands', () => {
     } catch (caught) {
       expect(caught).toBeInstanceOf(OdpCommandError);
       if (caught instanceof OdpCommandError) {
-        expect(caught.detail.code).toBe('ODP_DIRECTORY_SEARCH_INPUT_REQUIRED');
+        expect(caught.detail.code).toBe('DIRECTORY_SEARCH_INPUT_REQUIRED');
         expect(caught.detail.exitCode).toBe(2);
-        expect(caught.detail.message).toContain('Usage: inflow odp directory search [query] [options]');
+        expect(caught.detail.message).toContain('Usage: inflow directory search [query] [options]');
       }
     }
   });
 
-  it('identifies an invalid ODP directory response', async () => {
+  it('identifies an invalid Directory response', async () => {
     const failure = new Error('Invalid ODP Service Document');
     failure.name = 'OdpValidationError';
 
@@ -208,8 +212,8 @@ describe('ODP directory commands', () => {
       ),
     ).rejects.toMatchObject({
       detail: {
-        code: 'ODP_DIRECTORY_RESPONSE_INVALID',
-        message: 'The directory returned Service metadata that does not conform to ODP.',
+        code: 'DIRECTORY_RESPONSE_INVALID',
+        message: 'The directory returned invalid result metadata.',
       },
     });
   });
@@ -231,7 +235,7 @@ describe('ODP directory commands', () => {
 
     await expect(__testing.runDirectorySearch(resource, { ...emptyInput, query: 'plants' })).rejects.toMatchObject({
       detail: {
-        code: 'ODP_DIRECTORY_HTTP_ERROR',
+        code: 'DIRECTORY_HTTP_ERROR',
         message: 'The directory returned HTTP 503.',
         retryable: true,
       },
@@ -256,6 +260,10 @@ describe('ODP directory commands', () => {
         command,
         'weather',
         '--with-aep',
+        '--source',
+        'odp',
+        '--source',
+        'openapi',
         '--keyword',
         'weather',
         '--operation',
@@ -270,6 +278,7 @@ describe('ODP directory commands', () => {
       { exit, stdout: vi.fn() },
     );
     const filters = {
+      sources: ['odp', 'openapi'],
       enrollment: [{ name: 'aep' }],
       keywords: ['weather'],
       operations: [{ name: 'get-offering' }],
@@ -289,6 +298,82 @@ describe('ODP directory commands', () => {
     ).rejects.toBeInstanceOf(OdpCommandError);
   });
 
+  it('accepts source alone and rejects source with a continuation', async () => {
+    const search = vi.fn(() => sequence({ items: [] }));
+    const resource = { search, continueSearch: vi.fn() };
+    await __testing.runDirectorySearch(resource, { ...emptyInput, source: ['openapi'] });
+    expect(search).toHaveBeenCalledWith({ filters: { sources: ['openapi'] } });
+    await expect(
+      __testing.runDirectorySearch(resource, { ...emptyInput, source: ['openapi'], next: '/next' }),
+    ).rejects.toMatchObject({ detail: { code: 'DIRECTORY_NEXT_CONFLICT' } });
+  });
+
+  it.each(['search', 'suggest'])('deduplicates source filters for %s', async (command) => {
+    const search = vi.fn(() => sequence({ items: [] }));
+    const suggest = vi.fn(() => Promise.resolve([]));
+    await createDirectoryCli({ search, suggest, continueSearch: vi.fn() }).serve(
+      [command, 'weather', '--source', 'openapi', '--source', 'odp', '--source', 'openapi', '--format', 'json'],
+      { exit: vi.fn(), stdout: vi.fn() },
+    );
+    const filters = { sources: ['openapi', 'odp'] };
+    if (command === 'search') expect(search).toHaveBeenCalledWith({ query: 'weather', filters });
+    else expect(suggest).toHaveBeenCalledWith({ prefix: 'weather', filters });
+  });
+
+  it.each(['search', 'suggest'])('rejects blank %s text before calling the directory', async (command) => {
+    for (const text of ['', '   ', '\t\n']) {
+      const search = vi.fn(() => sequence({ items: [] }));
+      const suggest = vi.fn(() => Promise.resolve([]));
+      const stdout = vi.fn();
+      await createDirectoryCli({ search, suggest, continueSearch: vi.fn() }).serve(
+        [command, text, '--format', 'json'],
+        { exit: vi.fn(), stdout },
+      );
+      expect(search).not.toHaveBeenCalled();
+      expect(suggest).not.toHaveBeenCalled();
+      expect(stdout.mock.calls.flat().join('')).toContain('VALIDATION_ERROR');
+      expect(stdout.mock.calls.flat().join('')).toContain('nonblank');
+    }
+  });
+
+  it.each(['search', 'suggest'])('trims surrounding whitespace from %s text', async (command) => {
+    const search = vi.fn(() => sequence({ items: [] }));
+    const suggest = vi.fn(() => Promise.resolve([]));
+    await createDirectoryCli({ search, suggest, continueSearch: vi.fn() }).serve(
+      [command, '  weather forecast  ', '--format', 'json'],
+      { exit: vi.fn(), stdout: vi.fn() },
+    );
+    if (command === 'search') expect(search).toHaveBeenCalledWith({ query: 'weather forecast' });
+    else expect(suggest).toHaveBeenCalledWith({ prefix: 'weather forecast' });
+  });
+
+  it('shows the exact parent document for imported Collections and preserves future source kinds', () => {
+    const service = {
+      service_id: 'imported',
+      service_origin: 'https://example.com',
+      name: 'Imported',
+      indexed_at: '2026-09-23T00:00:00Z',
+      source: { type: 'openapi', url: 'https://example.com/api/spec?version=2', x402_discovery: true },
+    };
+    const page: DirectorySearchPage<DirectoryResult> = {
+      items: [
+        { type: 'collection', service, collection: { id: 'group', name: 'Weather' }, indexed_at: service.indexed_at },
+        {
+          type: 'service',
+          service: { ...service, source: { ...service.source, type: 'future' } },
+          indexed_at: service.indexed_at,
+        },
+      ],
+    };
+    const output = render(<SearchView page={page} />).lastFrame();
+    expect(output).toContain('openapi');
+    expect(output).toContain('future');
+    expect(output).toContain(service.source.url);
+    expect(output).toContain('Target URL');
+    expect(output).not.toMatch(/https:\/\/example\.com\s/);
+    expect(output).not.toContain('odp collections get');
+  });
+
   it.each([
     [404, false],
     [429, true],
@@ -301,7 +386,7 @@ describe('ODP directory commands', () => {
     } catch (caught) {
       expect(caught).toBeInstanceOf(OdpCommandError);
       if (caught instanceof OdpCommandError) {
-        expect(caught.detail).toMatchObject({ code: 'ODP_DIRECTORY_HTTP_ERROR', retryable });
+        expect(caught.detail).toMatchObject({ code: 'DIRECTORY_HTTP_ERROR', retryable });
       }
     }
   });
@@ -345,7 +430,7 @@ describe('ODP directory commands', () => {
     expect(search.lastFrame()).toContain('AEP');
     expect(search.lastFrame()).toContain('MPP: InFlow');
     expect(search.lastFrame()).toContain('Use --with-aep or these values with --keyword');
-    expect(search.lastFrame()).toContain("inflow odp directory search --next '/v1/directory/search?cursor=next'");
+    expect(search.lastFrame()).toContain("inflow directory search --next '/v1/directory/search?cursor=next'");
     expect(render(<SearchView page={{ items: [] }} />).lastFrame()).toContain('No results found');
     expect(render(<SuggestView items={['gpu']} />).lastFrame()).toContain('gpu');
     expect(render(<SuggestView items={[]} />).lastFrame()).toContain('No suggestions found');
@@ -405,8 +490,8 @@ describe('ODP directory commands', () => {
   });
 
   it.each([
-    ['search', ['search', 'plants'], 'ODP_DIRECTORY_SEARCH_FAILED'],
-    ['suggest', ['suggest', 'gp'], 'ODP_DIRECTORY_SUGGEST_FAILED'],
+    ['search', ['search', 'plants'], 'DIRECTORY_SEARCH_FAILED'],
+    ['suggest', ['suggest', 'gp'], 'DIRECTORY_SUGGEST_FAILED'],
   ] as const)('returns a stable directory %s failure', async (_name, argv, code) => {
     const output: string[] = [];
     const exit = vi.fn();
