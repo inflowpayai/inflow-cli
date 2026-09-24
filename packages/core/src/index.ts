@@ -137,6 +137,7 @@ export type {
 } from './resources/interfaces.js';
 export {
   createTapFetch,
+  TapSigningError,
   createTapRequestTransport,
   type TapFetchOptions,
   type TapHttpRequest,

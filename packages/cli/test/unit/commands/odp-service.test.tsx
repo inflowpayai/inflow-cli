@@ -7,7 +7,7 @@ import type {
   TerseCollection,
 } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
-import { OdpInspectionError } from '@inflowpayai/inflow-core';
+import { OdpInspectionError, SecureStorageError, TapSigningError } from '@inflowpayai/inflow-core';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CollectionsView,
@@ -120,6 +120,34 @@ function failingCollectionSequence(): CollectionSequence<TerseCollection> {
 }
 
 describe('ODP Service and Collection commands', () => {
+  it('preserves locked-vault errors from credential lookup and signing', () => {
+    expect.assertions(2);
+    const locked = new SecureStorageError('vault_locked', 'Unlock the vault.');
+    for (const cause of [locked, new TapSigningError(locked)]) {
+      try {
+        odpServiceFailure(new OdpInspectionError('fetch failed', 'http_error', undefined, cause), 'FAILED', 'Failed.');
+      } catch (error) {
+        expect(error).toMatchObject({ detail: { code: 'VAULT_LOCKED', message: 'Unlock the vault.' } });
+      }
+    }
+  });
+  it('identifies platform signing failures wrapped by ODP without printing underlying secrets', () => {
+    expect.assertions(4);
+    const signing = new TapSigningError(new Error('secret'));
+    for (const error of [signing, new OdpInspectionError('fetch failed', 'http_error', undefined, signing)]) {
+      try {
+        odpServiceFailure(error, 'FALLBACK', 'Service failed.');
+      } catch (failure) {
+        expect(failure).toBeInstanceOf(OdpCommandError);
+        if (!(failure instanceof OdpCommandError)) throw failure;
+        expect(failure.detail).toEqual({
+          code: 'TAP_SIGNING_FAILED',
+          message: 'InFlow TAP signing failed. The Service request was not sent.',
+          retryable: false,
+        });
+      }
+    }
+  });
   it('reports blocked inspection destinations without retrying', () => {
     expect.assertions(1);
     try {

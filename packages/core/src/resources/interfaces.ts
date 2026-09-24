@@ -46,6 +46,7 @@ export interface TapSignatureResponse {
 }
 
 export interface ITapResource {
+  canSign(): boolean;
   finalize(
     signingRequestId: string,
     contentDigest: string,

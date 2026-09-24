@@ -4,7 +4,10 @@ import { createApiError } from './api-error.js';
 import { InflowApiError } from '../errors.js';
 
 export class TapResource implements ITapResource {
-  constructor(private readonly api: InflowApiClient) {}
+  constructor(
+    private readonly api: InflowApiClient,
+    readonly canSign: () => boolean,
+  ) {}
 
   async finalize(
     signingRequestId: string,
