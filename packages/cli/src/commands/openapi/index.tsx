@@ -1,8 +1,12 @@
 import {
   OpenApiOperationError,
+  OpenApiPreparationError,
   SourceDiscovery,
   SourceDiscoveryError,
   sanitizeDeep,
+  parseHeaderFlag,
+  prepareOpenApiRequest,
+  previewOpenApiRequest,
   selectOpenApiOperation,
   type OpenApiDescription,
   type OpenApiOperation,
@@ -12,7 +16,7 @@ import { Box, Text } from 'ink';
 import { mcpTool } from '../../mcp-metadata.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { Table } from '../../utils/table.js';
-import { documentArgs, getOptions, listOptions } from './schema.js';
+import { documentArgs, getOptions, listOptions, prepareOptions } from './schema.js';
 
 interface ReadContext {
   agent: boolean;
@@ -30,7 +34,11 @@ export function OperationView({ operation }: { operation: OpenApiOperation }) {
       {operation.description === undefined ? null : <Text>{operation.description}</Text>}
       <Text>Operation ID: {operation.operationId ?? 'Not declared'}</Text>
       <Text bold>Servers</Text>
-      <Text>{JSON.stringify(operation.servers, null, 2)}</Text>
+      {operation.servers.map((server, index) => (
+        <Text key={index}>
+          {index + 1}. {JSON.stringify(server)}
+        </Text>
+      ))}
       <Text bold>Parameters</Text>
       <Text>{JSON.stringify(operation.parameters, null, 2)}</Text>
       <Text bold>Request body</Text>
@@ -49,6 +57,60 @@ export function OperationView({ operation }: { operation: OpenApiOperation }) {
       ))}
     </Box>
   );
+}
+
+export function PreparedRequestView({ preview }: { preview: ReturnType<typeof previewOpenApiRequest> }) {
+  return (
+    <Box flexDirection="column">
+      <Text bold>Prepared request — not sent</Text>
+      <Text>
+        {preview.request.method} {preview.request.url}
+      </Text>
+      <Text>{JSON.stringify(preview.request.headers, null, 2)}</Text>
+      {preview.request.body === undefined ? null : <Text>{preview.request.body}</Text>}
+      <Text>Declared authentication: {JSON.stringify(preview.authentication.requirements)}</Text>
+      {preview.redactions.map((item) => (
+        <Text key={`${item.location}:${item.name}`}>
+          Redacted {item.location}: {item.name}
+        </Text>
+      ))}
+      {preview.limitations.map((item, index) => (
+        <Text key={index}>{item}</Text>
+      ))}
+      <Text dimColor>
+        Only recognized credentials are redacted. Other supplied data can be sensitive. This preview is not persisted.
+      </Text>
+    </Box>
+  );
+}
+
+function jsonObject(value: string | undefined, option: string): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed))
+      return parsed as Record<string, unknown>;
+  } catch {
+    /* Report the option, not its potentially sensitive value. */
+  }
+  throw new OpenApiPreparationError('OPENAPI_INPUT_INVALID', `${option} must contain a JSON object.`);
+}
+
+function requestHeaders(values: string[]): Record<string, string> {
+  const entries: [string, string][] = [];
+  for (const value of values) {
+    let parsed: ReturnType<typeof parseHeaderFlag>;
+    try {
+      parsed = parseHeaderFlag(value);
+    } catch {
+      throw new OpenApiPreparationError('OPENAPI_INPUT_INVALID', 'Use --header "Name: Value" for each request header.');
+    }
+    const name = parsed.name.toLowerCase();
+    if (entries.some(([key]) => key === name))
+      throw new OpenApiPreparationError('OPENAPI_INPUT_INVALID', 'Each request header may be supplied only once.');
+    entries.push([name, parsed.value]);
+  }
+  return Object.fromEntries(entries);
 }
 
 export function OperationsView({ document }: { document: OpenApiDescription }) {
@@ -80,13 +142,18 @@ async function readCommand<T>(context: ReadContext, operation: () => Promise<T>)
   try {
     return sanitizeDeep(await operation());
   } catch (error) {
-    if (error instanceof SourceDiscoveryError || error instanceof OpenApiOperationError)
+    if (
+      error instanceof SourceDiscoveryError ||
+      error instanceof OpenApiOperationError ||
+      error instanceof OpenApiPreparationError
+    )
       return context.error({
         code: error.code,
-        message:
+        message: sanitizeDeep(
           error instanceof SourceDiscoveryError && error.candidates.length > 0
             ? `${error.message}\n${error.candidates.join('\n')}`
             : error.message,
+        ),
         retryable: false,
       });
     return context.error({
@@ -152,6 +219,28 @@ export function createOpenApiCli(discovery: Pick<SourceDiscovery, 'inspect'> = n
             </Box>,
           );
         return { source: { type: 'openapi', url: document.sourceUrl }, operation, limitations: document.limitations };
+      });
+    },
+  });
+  operations.command('prepare', {
+    args: documentArgs,
+    description: 'Construct a request preview without invoking the operation, enrolling, or paying.',
+    mcp: mcpTool('openapi_operations_prepare'),
+    options: prepareOptions,
+    outputPolicy: 'agent-only' as const,
+    async run(c) {
+      return readCommand(c, async () => {
+        const input = {
+          ...c.options,
+          headers: requestHeaders(c.options.header),
+          parameters: jsonObject(c.options.parameters, '--parameters'),
+          serverVariables: jsonObject(c.options.serverVariables, '--server-variables'),
+        };
+        const document = await read(c.args.source, c.options.refresh);
+        const prepared = prepareOpenApiRequest(document, input);
+        const preview = sanitizeDeep(previewOpenApiRequest(prepared, selectOpenApiOperation(document, input)));
+        if (!c.agent && !c.formatExplicit) await renderInkUntilExit(<PreparedRequestView preview={preview} />);
+        return preview;
       });
     },
   });

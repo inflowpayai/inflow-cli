@@ -35,6 +35,7 @@ type ToolName =
   | 'odp_actions_resolve'
   | 'openapi_operations_get'
   | 'openapi_operations_list'
+  | 'openapi_operations_prepare'
   | 'subscriptions_cancel'
   | 'subscriptions_fetch'
   | 'subscriptions_get'
@@ -184,6 +185,10 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
   openapi_operations_list: read(
     'OpenAPI: List Operations',
     'Read all operations from a public OpenAPI document without invoking them.',
+  ),
+  openapi_operations_prepare: read(
+    'OpenAPI: Prepare Request',
+    'Construct a request preview without calling the operation, obtaining credentials, enrolling, or paying.',
   ),
   subscriptions_cancel: vault(
     write('Subscriptions: Cancel Subscription', 'Cancel your subscription immediately.', {
