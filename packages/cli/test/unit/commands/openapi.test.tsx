@@ -8,7 +8,13 @@ import {
 } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
-import { createOpenApiCli, OperationView, OperationsView } from '../../../src/commands/openapi/index.js';
+import {
+  createOpenApiCli,
+  OperationView,
+  OperationsView,
+  PreparedRequestView,
+} from '../../../src/commands/openapi/index.js';
+import { prepareOpenApiRequest, previewOpenApiRequest } from '@inflowpayai/inflow-core';
 import * as renderer from '../../../src/utils/render-ink-until-exit.js';
 
 function setup() {
@@ -59,6 +65,115 @@ async function run(discovery: Pick<SourceDiscovery, 'inspect'>, args: string[]) 
 }
 
 describe('OpenAPI commands', () => {
+  it('sanitizes input names in preparation errors', async () => {
+    const { discovery } = setup();
+    const result = await run(discovery, [
+      'prepare',
+      'https://example.com',
+      '--operation-id',
+      'search',
+      '--parameters',
+      JSON.stringify({ query: { '\u001b[31munknown': 'value' } }),
+    ]);
+    expect(result.text).toContain('Unknown query parameter: unknown');
+    expect(result.text).not.toContain('\\u001b');
+  });
+  it('prepares from a cold document through real discovery without invoking or persisting the request', async () => {
+    const { discovery, fetch } = setup();
+    const result = await run(discovery, [
+      'prepare',
+      'https://example.com',
+      '--operation-id',
+      'search',
+      '--data',
+      '{"query":"weather"}',
+      '--header',
+      'Authorization: Bearer secret',
+    ]);
+    expect(result.value).toMatchObject({
+      outcome: 'request-prepared',
+      source: { type: 'openapi', url: 'https://example.com/v1/openapi.json' },
+      operation: { method: 'POST', path: '/search', operationId: 'search' },
+      request: {
+        method: 'POST',
+        url: 'https://example.com/search',
+        headers: { authorization: '[REDACTED]', 'content-type': 'application/json' },
+        body: '{"query":"weather"}',
+      },
+      redactions: [{ location: 'header', name: 'authorization' }],
+      authentication: { requirements: [], verified: false },
+    });
+    expect(result.text).not.toContain('secret');
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch.mock.calls.every(([url]) => !['/search', '/items'].includes(url.pathname))).toBe(true);
+    const without = await run(discovery, ['prepare', 'https://example.com', '--operation-id', 'search']);
+    expect(without.value).toMatchObject({ request: { headers: {} }, redactions: [] });
+    expect(without.text).not.toContain('weather');
+  });
+  it.each([
+    [['--parameters', '{secret'], '--parameters must contain a JSON object'],
+    [['--parameters', '[]'], '--parameters must contain a JSON object'],
+    [['--parameters', 'null'], '--parameters must contain a JSON object'],
+    [['--server-variables', '1'], '--server-variables must contain a JSON object'],
+    [['--header', 'secret'], 'Use --header'],
+    [['--header', 'X-Key: secret', '--header', 'x-key: secret'], 'only once'],
+    [['--data', '{secret'], '--data must contain valid JSON'],
+    [['--header', 'X-Test: a\r\nsecret'], 'valid printable'],
+    [['--parameters', '{"query":{"unknown":"secret"}}'], 'Unknown query parameter'],
+    [['--server', '2'], 'advertised server'],
+  ])('reports invalid preparation inputs without exposing values %j', async (options, message) => {
+    const { discovery } = setup();
+    const result = await run(discovery, ['prepare', 'https://example.com', '--operation-id', 'search', ...options]);
+    expect(result.text).toContain(message);
+    expect(result.text).not.toContain('secret');
+    expect(result.exit).toHaveBeenCalledWith(1);
+  });
+  it('accepts parsed parameters and server variables and displays a redacted human preview', async () => {
+    const { discovery } = setup();
+    const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+    const rendered = vi.spyOn(renderer, 'renderInkUntilExit').mockResolvedValue(undefined);
+    try {
+      await createOpenApiCli(discovery).serve(
+        [
+          'operations',
+          'prepare',
+          'https://example.com',
+          '--operation-id',
+          'search',
+          '--parameters',
+          '{}',
+          '--server-variables',
+          '{}',
+          '--server',
+          '1',
+          '--data',
+          '{}',
+        ],
+        { exit: vi.fn(), stdout: vi.fn() },
+      );
+      expect(rendered).toHaveBeenCalledTimes(1);
+    } finally {
+      rendered.mockRestore();
+      if (descriptor === undefined) Reflect.deleteProperty(process.stdout, 'isTTY');
+      else Object.defineProperty(process.stdout, 'isTTY', descriptor);
+    }
+    const result = await discovery.inspect('https://example.com', { format: 'openapi' });
+    if (result.sourceType !== 'openapi') throw new Error('Expected OpenAPI');
+    const operation = result.document.operations[0];
+    if (operation === undefined) throw new Error('Expected operation');
+    for (const data of [undefined, '{}']) {
+      const prepared = prepareOpenApiRequest(result.document, {
+        operationId: 'search',
+        data,
+        headers: { authorization: 'secret' },
+      });
+      const text = render(<PreparedRequestView preview={previewOpenApiRequest(prepared, operation)} />).lastFrame();
+      expect(text).toContain('Prepared request');
+      expect(text).toContain('Redacted header: authorization');
+      expect(text).not.toContain('secret');
+    }
+  });
   it('renders both read commands in human mode', async () => {
     const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
     Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });

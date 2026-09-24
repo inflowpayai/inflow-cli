@@ -207,6 +207,11 @@ inflow openapi operations get https://parallelmpp.dev/openapi.json --method POST
 Pass the Directory result's `service.source.url` to OpenAPI commands. Reading operation details does not invoke the
 operation or make a payment; Directory Collection selections do not restrict the document's operation list.
 
+Use `inflow openapi operations prepare` with the same operation selector and `--data` or `--parameters` to preview a
+request without sending it. Multiple advertised servers require explicit selection. Recognized credentials are redacted,
+but ordinary request data remains visible; see the
+[preparation reference](packages/cli/README.md#prepare-a-request-without-sending-it).
+
 ## Security and local data
 
 - OAuth tokens, API keys, and Agent Enrollment Protocol credentials are encrypted in the local SQLite vault.

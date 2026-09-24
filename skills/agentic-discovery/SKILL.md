@@ -1,7 +1,7 @@
 ---
 version: 0.12.2
 name: agentic-discovery
-description: Discover Services and products through InFlow using the Offering Discovery Protocol. Use when an agent needs to search the directory, inspect a Service's supported catalog operations, browse Collections, find Offerings, inspect full product details, or resolve an Action before enrollment or payment.
+description: Discover Services through InFlow using ODP or public OpenAPI documents. Use to search the directory, browse Collections and Offerings, inspect OpenAPI operations, or prepare requests and resolve Actions before execution, enrollment, or payment.
 allowed-tools: ['Bash(inflow:*)', 'Bash(brew:*)', 'Bash(curl:*)']
 user-invocable: true
 license: MIT
@@ -51,6 +51,8 @@ inflow --llms-full
 | Browse, search, or retrieve products | `inflow odp offerings list/search/get` |
 | Find Offerings across directory Services | `inflow odp offerings discover` |
 | Resolve an Offering Action without invoking it | `inflow odp actions resolve` |
+| Read public OpenAPI operations | `inflow openapi operations list/get` |
+| Prepare an OpenAPI request without sending it | `inflow openapi operations prepare` |
 
 ## Understand the discovery model
 
@@ -121,6 +123,25 @@ These commands read the full document, independently of Directory endpoint curat
 Authentication requirements are alternatives between objects and cumulative within one object. Do not mistake an
 arbitrary API key or bearer scheme for AEP. Provider login, SIWX and custom signing are not automated. Missing security
 metadata does not establish anonymous access or free execution. These read commands do not enroll or pay.
+
+## Prepare an OpenAPI request
+
+Before execution, an OpenAPI request can be constructed with:
+
+```bash
+inflow openapi operations prepare https://example.com/openapi.json --method POST --path /search \
+  --data '{"query":"weather forecasts"}' --format json
+```
+
+Use `--parameters '{"path":{"id":"123"},"query":{"limit":10}}'` for declared parameter values and repeatable
+`--header 'Name: Value'` for headers. Select an advertised server using `--server 1` when multiple choices exist;
+do not assume the document host is the execution host. `--server-variables` accepts a JSON object of declared overrides.
+
+`request-prepared` means construction succeeded, not authentication or execution. Inspect `request`, `authentication`,
+`redactions`, and `limitations`. Recognized authentication headers and declared API-key locations are redacted; arbitrary
+body data is not. Never execute a redacted placeholder as a credential. No prepared request is stored and preparation
+does not authorize a later call or payment. Missing inputs and unsupported encodings are errors, not permission to
+invent values or bypass the advertised contract. Use `prepare --help` and `--schema` for the installed interface.
 
 ## Inspect before navigating an ODP Service
 

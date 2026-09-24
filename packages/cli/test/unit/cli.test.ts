@@ -37,6 +37,7 @@ const VAULT_MCP_TOOLS = VAULT_COMMANDS.map((command) => command.replace(' ', '_'
 const MCP_TOOL_EXPECTATIONS = [
   ['openapi_operations_get', 'OpenAPI: Get Operation', true, false],
   ['openapi_operations_list', 'OpenAPI: List Operations', true, false],
+  ['openapi_operations_prepare', 'OpenAPI: Prepare Request', true, false],
   ['aep_enroll', 'AEP: Enroll Service', false, false],
   ['aep_fetch', 'AEP: Fetch Resource', false, false],
   ['aep_grant', 'AEP: Grant Credential', false, false],
@@ -91,6 +92,7 @@ const MCP_TOOL_EXPECTATIONS = [
 const CLI_SCHEMA_COMMANDS = [
   'openapi operations get',
   'openapi operations list',
+  'openapi operations prepare',
   'aep enroll',
   'aep fetch',
   'aep grant',

@@ -200,6 +200,66 @@ request or payment follows a successful read. Security requirements preserve alt
 requirements within each object; provider login and SIWX are not automated. An empty security list does not prove that
 an endpoint is free or publicly callable.
 
+### Prepare a request without sending it
+
+Use the same source and operation selector as `get`, with explicit request inputs:
+
+```bash
+inflow openapi operations prepare https://example.com/openapi.json \
+  --method POST --path '/items/{id}' \
+  --parameters '{"path":{"id":"123"},"query":{"limit":10}}' \
+  --data '{"query":"weather forecasts"}' --format json
+```
+
+`--parameters` is a JSON object with optional `path`, `query`, and `header` objects. It retains JSON types rather than
+guessing whether text means a number or a boolean. Use repeatable `--header 'Name: Value'` for literal headers. Declared
+header values supplied through `--parameters` use OpenAPI simple serialization with percent-encoding; `--header` values
+are already serialized literal text and are not percent-encoded. Do not provide the same header through both inputs.
+Unknown path/query parameters are errors; declared query API keys can also be supplied. Header names are
+case-insensitive. Cookies and transport-controlled headers such as Host and Content-Length are not accepted.
+
+The document URL identifies the description, not necessarily the execution server. A single advertised server is
+selected automatically. Multiple servers require `--server 1` (or another one-based number shown by `get` and the
+error). Use `--server-variables '{"region":"eu"}'` to override declared server variables; otherwise their declared
+defaults apply. Request parameter/body defaults and examples are not inserted. Relative server URLs resolve against the
+document that defines them. Preparation accepts public HTTPS server URLs without credentials, fragments, or queries.
+
+Supported encodings are simple path/header parameters, form query parameters, scalar values, arrays of scalars, and JSON
+bodies. Query arrays use repeated names unless `explode: false` selects comma separation. A single advertised JSON media
+type is selected automatically; choose among multiple types with `--header 'Content-Type: application/…+json'`. Required
+fields, basic types, safe integers, enums and constants are checked. This is not full JSON Schema validation:
+constraints such as patterns, string lengths and numeric bounds are not checked. Optional omitted inputs are not sent.
+
+Parameter and request-body object references use the document reader's bounded reference support. Schema references and
+composition, object-valued parameter encodings, matrix/label/deepObject styles, `allowReserved: true`, content-based
+parameters, multipart/form/XML/binary bodies, and GET/HEAD bodies are not supported for preparation. If a supplied or
+required input needs unsupported handling, preparation fails instead of returning a request containing placeholders.
+Document inspection remains available.
+
+JSON output has these fields:
+
+| Field            | Contents                                                                                  |
+| ---------------- | ----------------------------------------------------------------------------------------- |
+| `outcome`        | `"request-prepared"`; nothing was sent.                                                   |
+| `source`         | `{ type: "openapi", url }`, identifying the source document.                              |
+| `operation`      | `method`, documented `path`, and optional `operationId`.                                  |
+| `request`        | `method`, constructed `url`, lowercase-name `headers`, and optional JSON-text `body`.     |
+| `authentication` | Advertised `requirements` and `verified: false`; credentials are not acquired or checked. |
+| `redactions`     | Array of `{ location: "header" \| "query", name }` identifying redacted credentials.      |
+| `limitations`    | Document/operation limitations and the scope of preparation checks.                       |
+
+Human and JSON previews redact Authorization, Proxy-Authorization, and API-key header/query locations explicitly
+declared by the document. Other fields, including body contents, are not scanned for secrets or personal data. A
+redacted preview is not a complete executable request: keep the original inputs for deliberate execution. Prepared
+requests and supplied inputs are not cached or logged by preparation. Documents still use the public discovery cache.
+Command-line inputs can appear in shell history or operating-system process inspection.
+
+Errors follow the ordinary CLI error format, with `retryable: false`: `OPENAPI_INPUT_REQUIRED` identifies missing
+inputs; `OPENAPI_INPUT_INVALID` identifies malformed or conflicting inputs; `OPENAPI_SERVER_REQUIRED` lists server
+choices; `OPENAPI_SERVER_INVALID` identifies invalid selections/addresses; `OPENAPI_PREPARATION_UNSUPPORTED` explains
+unsupported construction. Discovery and operation-selection errors retain their existing codes. Both human and agent
+modes report the error without prompting, sending the operation, enrolling, or paying.
+
 ## `odp`
 
 ODP discovery has two stages. The canonical directory finds Services and indexed Collections from their metadata;
