@@ -27,6 +27,16 @@
 /* Client + augmented interfaces ------------------------------------------- */
 export { Inflow, type IAepResource, type IMppResource, type IX402Resource } from './client.js';
 export {
+  SourceDiscovery,
+  SourceDiscoveryError,
+  type SourceDiscoveryOptions,
+  type SourceDiscoveryResult,
+} from './openapi/discovery.js';
+export { PublicSourceDocuments, type SourceDocument, type SourceOptions } from './openapi/documents.js';
+export { SqlitePublicSourceCache, type PublicSourceCache } from './openapi/cache.js';
+export type { OpenApiDescription, OpenApiOperation } from './openapi/reader.js';
+export type { PublicDocumentFetch } from './openapi/public-fetch.js';
+export {
   OdpResource,
   DirectoryRequestError,
   OdpInspectionError,

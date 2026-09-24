@@ -39,14 +39,9 @@ export function sanitizeDeep<T>(value: T): T {
   }
 
   if (typeof value === 'object') {
-    const result: Record<string, unknown> = {};
-    const keys = Object.keys(value);
-
-    for (const k of keys) {
-      result[k] = sanitizeDeep((value as Record<string, unknown>)[k]);
-    }
-
-    return result as T;
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]: [string, unknown]) => [key, sanitizeDeep(entry)]),
+    ) as T;
   }
 
   return value;

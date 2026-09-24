@@ -45,6 +45,44 @@ The package exposes three things:
    `describeBody`), the x402 decode helpers (`decodeHeader`, `summarizeAccepts`), plus the `approvalUrlFor` /
    `dashboardHostFor` URL helpers. All used inside the augmented handles; all re-exported for direct consumption.
 
+## Public source discovery
+
+`SourceDiscovery` reads public ODP and JSON OpenAPI documents without constructing an authenticated InFlow client or
+opening the vault. It does not invoke operations, enroll, obtain credentials, or make payments.
+
+```ts
+import { SourceDiscovery } from '@inflowpayai/inflow-core';
+
+const discovery = new SourceDiscovery();
+const source = await discovery.inspect('https://service.example', { format: 'openapi' });
+const exact = await discovery.inspect('https://service.example/contracts/search.json', { refresh: true });
+```
+
+Origin inspection prefers ODP unless `format: 'openapi'` is explicit. OpenAPI discovery checks the ODP-advertised
+OpenAPI URL, `/openapi.json`, `/v1/openapi.json`, and the OpenAPI link in `/.well-known/x402.json`. Multiple valid
+documents produce `SOURCE_AMBIGUOUS` with candidate URLs; supply one exact URL. Exact URLs retain their path and query
+and never fall back to another document. HTTP failures are not treated as absence.
+
+The default public SQLite cache uses separate document and discovered-location namespaces. Neither reads credential
+records nor performs secret-lifecycle recovery. Freshness defaults to ten minutes; HTTP freshness directives and
+conditional revalidation take precedence. `refresh: true` bypasses freshness. `no-store` prevents both document and
+derived-location persistence. Each namespace is bounded to 128 records and 32 MiB; one response is limited to 4 MiB.
+Stale fetch failures are errors, not permission to use stale content.
+
+`OpenApiDescription` preserves operation parameter overrides, server choices and variables, request bodies, and
+authentication alternatives. Security schemes describe advertised requirements; they do not establish that InFlow can
+obtain those credentials. Server entries retain their reference base for request preparation. Local JSON pointers and up
+to eight external HTTPS documents are resolved for Path Items, parameters, request bodies and security schemes;
+reference chains are limited to sixteen links. Schema trees are retained, not compiled or recursively expanded.
+Unsupported callback/webhook listeners, non-JSON bodies and complex parameter schemas are identified explicitly. This is
+not a JSON Schema validator or an operation executor. Reference siblings other than summary/description and optional
+`x-` extensions are rejected rather than silently discarded.
+
+Public fetching permits HTTPS only, rejects credentials and non-public IP/DNS destinations, checks every redirect, and
+has a fifteen-second retrieval deadline. It sends no platform authentication, cookies, proxy credentials or payment
+data. Custom `PublicSourceDocuments` transports and caches are trusted embedding dependencies and must preserve these
+guarantees.
+
 ## Two-minute tour
 
 ```ts

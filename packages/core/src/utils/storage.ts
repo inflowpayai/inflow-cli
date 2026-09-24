@@ -440,10 +440,9 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
 
   getDiscoveryDocuments(): AepPublicDocumentCacheRecord[] {
     this.initialize();
-    return this.repository
-      .listPublicDocuments('inspect')
-      .concat(this.repository.listPublicDocuments('platform-discovery'))
-      .map(publicDocumentToCacheRecord);
+    return (['inspect', 'platform-discovery'] as const).flatMap((namespace) =>
+      this.repository.listPublicDocuments(namespace).map((record) => publicDocumentToCacheRecord(record, namespace)),
+    );
   }
 
   setDiscoveryDocuments(records: AepPublicDocumentCacheRecord[]): void {
@@ -453,7 +452,9 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
 
   getOpenApiDocuments(): AepPublicDocumentCacheRecord[] {
     this.initialize();
-    return this.repository.listPublicDocuments('openapi').map(publicDocumentToCacheRecord);
+    return this.repository
+      .listPublicDocuments('openapi')
+      .map((record) => publicDocumentToCacheRecord(record, 'openapi'));
   }
 
   setOpenApiDocuments(records: AepPublicDocumentCacheRecord[]): void {
@@ -651,10 +652,13 @@ function defaultSecretStore(): SyncSecureSecretStore {
   return new SyncVaultSecretStore();
 }
 
-function publicDocumentToCacheRecord(record: StoredPublicDocument): AepPublicDocumentCacheRecord {
+function publicDocumentToCacheRecord(
+  record: StoredPublicDocument,
+  namespace: AepPublicDocumentCacheRecord['namespace'],
+): AepPublicDocumentCacheRecord {
   return {
     cachedAt: record.cachedAt,
-    namespace: record.namespace,
+    namespace,
     url: record.url,
     value: structuredClone(record.payload),
     ...(record.cacheControl === undefined ? {} : { cacheControl: record.cacheControl }),

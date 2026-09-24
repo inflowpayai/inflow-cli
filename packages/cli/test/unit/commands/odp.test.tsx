@@ -56,7 +56,11 @@ function failingSequence(): ReturnType<IOdpResource['search']> {
 
 describe('ODP directory commands', () => {
   it('renders mixed identities without attribution and preserves metadata in JSON', async () => {
-    const service: DirectoryService & { service_id: string } = {
+    const service: DirectoryService & {
+      service_id: string;
+      source: { type: string; url: string; x402_discovery: boolean };
+    } = {
+      source: { type: 'odp', url: 'https://compute.example/.well-known/odp', x402_discovery: false },
       service_id: 'compute',
       service_origin: 'https://compute.example',
       name: 'Compute',
@@ -303,7 +307,8 @@ describe('ODP directory commands', () => {
   });
 
   it('renders Service results, continuations, and suggestions for interactive terminals', () => {
-    const service: DirectoryService = {
+    const service: DirectoryService & { source: { type: string; url: string; x402_discovery: boolean } } = {
+      source: { type: 'odp', url: 'https://compute.example/.well-known/odp', x402_discovery: false },
       description: 'Compute catalog',
       indexed_at: '2026-08-03T00:00:00Z',
       language: 'en',
