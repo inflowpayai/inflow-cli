@@ -135,7 +135,7 @@ describe('AEP-aware seller transport', () => {
       fetch,
       inflow: {
         capabilities: { has: vi.fn().mockResolvedValue(true) },
-        tap: { sign },
+        tap: { canSign: () => true, sign },
       } as never,
       inspectionOperation: 'mpp.inspect',
       paymentOperation: 'mpp.payment',

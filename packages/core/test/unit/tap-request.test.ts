@@ -58,12 +58,35 @@ function tap(): {
 } {
   const finalize = vi.fn<ITapResource['finalize']>(() => Promise.resolve(signature({ tapEvidenceId: 'evidence' })));
   const sign = vi.fn<ITapResource['sign']>(() => Promise.resolve(signature({ signingRequestId: 'prepared' })));
-  return { finalize, resource: { finalize, sign }, sign };
+  return { finalize, resource: { canSign: () => true, finalize, sign }, sign };
 }
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('TAP request transport', () => {
+  it('does not transmit requests when credential access or body signing fails', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const signer = tap();
+    const transport = createTapRequestTransport({ capabilities: capabilities(true), fetch, tap: signer.resource });
+    const input = {
+      body: '{}',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      operation: 'odp.browse' as const,
+      url: 'https://seller.example/search',
+    };
+    signer.sign.mockRejectedValueOnce(new Error('prepare failed'));
+    await expect(transport.request(input)).rejects.toMatchObject({ name: 'TapSigningError' });
+    signer.finalize.mockRejectedValueOnce(new Error('finalize failed'));
+    await expect(transport.request(input)).rejects.toMatchObject({ name: 'TapSigningError' });
+    const locked = new Error('locked');
+    signer.resource.canSign = () => {
+      throw locked;
+    };
+    await expect(transport.request(input)).rejects.toBe(locked);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('signs one exact fetch attempt and leaves redirects to the composing protocol', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()
@@ -328,7 +351,8 @@ describe('TAP request transport', () => {
     signer.sign.mockRejectedValue(new InflowApiError('unavailable', { code: 'TAP_SIGNING_UNAVAILABLE', status: 503 }));
     await expect(
       transport.request({ method: 'GET', operation: 'odp.browse', url: 'https://seller.example/' }),
-    ).rejects.toMatchObject({ code: 'TAP_SIGNING_UNAVAILABLE' });
+    ).rejects.toMatchObject({ name: 'TapSigningError', cause: { code: 'TAP_SIGNING_UNAVAILABLE' } });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('rejects requests whose body metadata or wire method cannot be signed exactly', async () => {

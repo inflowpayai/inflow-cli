@@ -9,6 +9,7 @@ import {
   type OdpServiceOptions,
   OdpInspectionError,
   OdpRequestError,
+  TapSigningError,
   type PageEnvelope,
   type ServiceInspection,
   type TerseCollection,
@@ -122,8 +123,11 @@ export function odpServiceFailure(
   inspectionCode?: string,
 ): never {
   if (error instanceof OdpCommandError) throw error;
-  const authentication = mapAepRuntimeError(error);
+  const cause = error instanceof OdpInspectionError || error instanceof OdpRequestError ? error.cause : error;
+  const authentication = mapAepRuntimeError(cause instanceof TapSigningError ? cause.cause : cause);
   if (authentication !== undefined) return odpCommandError(authentication);
+  if (cause instanceof TapSigningError)
+    return odpCommandError({ code: 'TAP_SIGNING_FAILED', message: cause.message, retryable: false });
   if (error instanceof OdpInspectionError) {
     const codes: Record<OdpInspectionError['code'], string> = {
       aborted: 'ODP_REQUEST_ABORTED',

@@ -8,6 +8,13 @@ Use this package when developing the InFlow CLI itself or embedding its headless
 applications should use the signed `inflow` binary or its MCP server; this package has no independent npm compatibility
 promise while it remains private.
 
+## TAP request authentication
+
+The TAP transport sends unsigned requests when no InFlow login is stored or an API key is selected. With a device-token
+login, it uses InFlow's signing endpoint and refreshes expired access tokens through the normal authentication flow.
+Locked credentials and signing failures stop the request; they do not trigger an unsigned retry. OpenAPI document
+discovery and operation calls use the public HTTP transport without TAP.
+
 ## What's in here
 
 The package exposes three things:

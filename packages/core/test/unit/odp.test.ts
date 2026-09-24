@@ -259,7 +259,7 @@ describe('Inflow.odp', () => {
       capabilities: enabledTapCapabilities(),
       fetch,
       operation: 'odp.browse',
-      tap: { finalize: vi.fn<ITapResource['finalize']>(), sign },
+      tap: { canSign: () => true, finalize: vi.fn<ITapResource['finalize']>(), sign },
     });
     const odp = new Inflow({ fetch }).odp.withServiceTransport({
       inspectionTransport: tapFetch,
@@ -305,7 +305,7 @@ describe('Inflow.odp', () => {
       capabilities: enabledTapCapabilities(),
       fetch,
       operation: 'odp.browse',
-      tap: { finalize: vi.fn<ITapResource['finalize']>(), sign },
+      tap: { canSign: () => true, finalize: vi.fn<ITapResource['finalize']>(), sign },
     });
     const odp = new Inflow({ fetch }).odp.withServiceTransport({ inspectionTransport: tapFetch, transport: tapFetch });
 

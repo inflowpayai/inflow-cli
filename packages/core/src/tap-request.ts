@@ -10,6 +10,18 @@ import type {
 const TAP_FEATURE = 'visa_tap';
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
+export class TapSigningError extends Error {
+  constructor(cause: unknown) {
+    super('InFlow TAP signing failed. The Service request was not sent.', { cause });
+    this.name = 'TapSigningError';
+  }
+}
+
+function signingFailure(error: unknown): never {
+  if (error instanceof InflowApiError && error.code === 'TAP_NOT_ELIGIBLE') throw error;
+  throw new TapSigningError(error);
+}
+
 export interface TapHttpRequest {
   body?: string | Uint8Array;
   headers?: ConstructorParameters<typeof Headers>[0];
@@ -190,6 +202,7 @@ async function signedHeaders(
   input: TapHttpRequest,
 ): Promise<{ headers: Headers; signature?: TapSignatureResponse }> {
   const headers = new Headers(input.headers);
+  if (!tap.canSign()) return { headers };
   if (!(await capabilities.has(TAP_FEATURE, input.signal === undefined ? {} : { signal: input.signal }))) {
     return { headers };
   }
@@ -204,7 +217,9 @@ async function signedHeaders(
   try {
     let signature: TapSignatureResponse;
     if (input.body === undefined) {
-      signature = await tap.sign(request, input.signal === undefined ? {} : { signal: input.signal });
+      signature = await tap
+        .sign(request, input.signal === undefined ? {} : { signal: input.signal })
+        .catch(signingFailure);
     } else {
       const contentType = headers.get('Content-Type');
       if (contentType === null || contentType.length === 0) {
@@ -215,19 +230,20 @@ async function signedHeaders(
       if (existingDigest !== null && existingDigest !== contentDigest) {
         throw new InflowTransportError('The supplied Content-Digest does not match the TAP request body.');
       }
-      const prepared = await tap.sign(
-        { ...request, prepare: true },
-        input.signal === undefined ? {} : { signal: input.signal },
-      );
+      const prepared = await tap
+        .sign({ ...request, prepare: true }, input.signal === undefined ? {} : { signal: input.signal })
+        .catch(signingFailure);
       if (prepared.signingRequestId === undefined) {
         throw new InflowTransportError('The TAP signing response is missing signingRequestId.');
       }
-      signature = await tap.finalize(
-        prepared.signingRequestId,
-        contentDigest,
-        contentType,
-        input.signal === undefined ? {} : { signal: input.signal },
-      );
+      signature = await tap
+        .finalize(
+          prepared.signingRequestId,
+          contentDigest,
+          contentType,
+          input.signal === undefined ? {} : { signal: input.signal },
+        )
+        .catch(signingFailure);
       headers.set('Content-Digest', contentDigest);
     }
     if (signature.signature === undefined || signature.signatureInput === undefined) {

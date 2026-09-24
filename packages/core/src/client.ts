@@ -187,7 +187,13 @@ export class Inflow {
     this.capabilities = sanitizeResource<ICliCapabilitiesResource>(
       new CliCapabilitiesResource(this.platformApi, options.capabilitiesMaxAgeMs ?? Number.POSITIVE_INFINITY),
     );
-    this.tap = sanitizeResource<ITapResource>(new TapResource(this.platformApi));
+    this.tap = sanitizeResource<ITapResource>(
+      new TapResource(this.platformApi, () => {
+        if (dataConfig.authMode.type === 'apiKey' || dataConfig.authMode.type === 'anonymous') return false;
+        if (options.accessToken !== undefined || options.getAccessToken !== undefined) return true;
+        return options.authStorage?.getAuth() != null;
+      }),
+    );
 
     this.balances = sanitizeResource<IBalanceResource>(new BalanceResource(dataOptions, dataConfig));
     this.depositAddresses = sanitizeResource<IDepositAddressResource>(

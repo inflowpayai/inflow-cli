@@ -390,7 +390,7 @@ describe('runCombinedInspectCommand (agent path)', () => {
         aep: { inspect: vi.fn().mockRejectedValue(new Error('AEP absent')) },
         capabilities: { has: vi.fn().mockResolvedValue(false) },
         odp: { inspect: vi.fn().mockRejectedValue(new Error('ODP absent')) },
-        tap: { sign: vi.fn() },
+        tap: { canSign: () => true, sign: vi.fn() },
       } as never,
       new MemoryStorage(),
     );
@@ -430,7 +430,7 @@ describe('runCombinedInspectCommand (agent path)', () => {
       {
         aep: { inspect: vi.fn().mockRejectedValue(new Error('AEP absent')) },
         capabilities: { has },
-        tap: { sign },
+        tap: { canSign: () => true, sign },
       } as never,
       undefined,
       { inspect: vi.fn().mockRejectedValue(new Error('ODP absent')) },
@@ -454,7 +454,7 @@ describe('runCombinedInspectCommand (agent path)', () => {
       {
         aep: { inspect: vi.fn().mockRejectedValue(new Error('AEP absent')) },
         capabilities: { has: vi.fn().mockResolvedValue(false) },
-        tap: { sign: vi.fn() },
+        tap: { canSign: () => true, sign: vi.fn() },
       } as never,
       undefined,
       { inspect: vi.fn().mockRejectedValue(new Error('ODP absent')) },
@@ -510,7 +510,7 @@ describe('runCombinedInspectCommand (agent path)', () => {
       {
         aep: { inspect: vi.fn().mockResolvedValue(inspect) },
         capabilities: { has: vi.fn().mockResolvedValue(false) },
-        tap: { sign: vi.fn() },
+        tap: { canSign: () => true, sign: vi.fn() },
       } as never,
       new MemoryStorage(),
     );
