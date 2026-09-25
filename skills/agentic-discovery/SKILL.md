@@ -1,5 +1,5 @@
 ---
-version: 0.12.2
+version: 0.13.0
 name: agentic-discovery
 description: Discover Services through InFlow using ODP or public OpenAPI documents. Use to search the directory, browse Collections and Offerings, inspect, prepare or call OpenAPI operations, or resolve Actions before enrollment or payment.
 allowed-tools: ['Bash(inflow:*)', 'Bash(brew:*)', 'Bash(curl:*)']
