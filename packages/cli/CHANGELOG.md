@@ -1,5 +1,103 @@
 # @inflowpayai/inflow
 
+## 0.13.0
+
+### Minor Changes
+
+- [#148](https://github.com/inflowpayai/inflow-cli/pull/148)
+  [`d406357`](https://github.com/inflowpayai/inflow-cli/commit/d4063571d974cc58b0fc3a20ff0476ce94a4f741) Thanks
+  [@nkavian](https://github.com/nkavian)! - Filter OpenAPI operation lists by Directory Collection or provider tag, and
+  include provider tags in human and structured operation output.
+
+- [#144](https://github.com/inflowpayai/inflow-cli/pull/144)
+  [`8d2fc74`](https://github.com/inflowpayai/inflow-cli/commit/8d2fc7464f8f844f0f2cb7d888515277e6bc04c5) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add OpenAPI operation calls with upfront payment routing and explicit MPP,
+  x402, and AEP handoffs. Expose operation payment declarations in discovery and preparation. Preserve request inputs,
+  redact recognized credentials, and avoid automatic payment, enrollment, redirects, or retries.
+
+- [#143](https://github.com/inflowpayai/inflow-cli/pull/143)
+  [`e34e1d2`](https://github.com/inflowpayai/inflow-cli/commit/e34e1d29497fa2da6453af2ace398e9a71113ef9) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add public OpenAPI request preparation to the CLI and MCP. Select advertised
+  servers, encode supported parameters and JSON bodies, and preview requests without invoking operations, enrolling, or
+  paying. Redact recognized authentication headers and declared API-key locations without scanning arbitrary request
+  data.
+
+- [#142](https://github.com/inflowpayai/inflow-cli/pull/142)
+  [`0b90306`](https://github.com/inflowpayai/inflow-cli/commit/0b90306d715aec797bb90ddf146535a39de45379) Thanks
+  [@nkavian](https://github.com/nkavian)! - Move Directory search and suggestions to top-level CLI commands and MCP
+  tools, without aliases. Add source format filters and source-aware target URLs, and public OpenAPI operation listing
+  and details. Deduplicate source filters and report blank search or suggestion text as invalid input.
+
+  Route origin and recognized document inspection through public ODP/OpenAPI discovery without vault access. Preserve
+  endpoint probing for other paths and explicit request options, and add document refresh support.
+
+  Update the published ODP agent, core, and directory dependencies to 0.4.4, 0.3.8, and 0.3.0 respectively.
+
+- [#141](https://github.com/inflowpayai/inflow-cli/pull/141)
+  [`a336294`](https://github.com/inflowpayai/inflow-cli/commit/a336294ce818815748ade5a45aead257e1ad2ec6) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add public OpenAPI discovery, document caching, and operation interpretation
+  for source-aware inspection.
+
+### Patch Changes
+
+- [#146](https://github.com/inflowpayai/inflow-cli/pull/146)
+  [`b428d64`](https://github.com/inflowpayai/inflow-cli/commit/b428d6422673aac99765ec5107cc825cdf5728e3) Thanks
+  [@nkavian](https://github.com/nkavian)! - Allow unsigned public discovery without a device-token login and distinguish
+  TAP signing failures from ODP Service errors.
+
+- [#134](https://github.com/inflowpayai/inflow-cli/pull/134)
+  [`326aecc`](https://github.com/inflowpayai/inflow-cli/commit/326aecc0034835c2e00540d78927a6d0d59dd5e8) Thanks
+  [@nkavian](https://github.com/nkavian)! - Recover safely when a local vault daemon was started by another InFlow CLI
+  installation.
+
+- [#138](https://github.com/inflowpayai/inflow-cli/pull/138)
+  [`72a271a`](https://github.com/inflowpayai/inflow-cli/commit/72a271ab19a5228680e3eed60f2ae25787457106) Thanks
+  [@mnebliienko](https://github.com/mnebliienko)! - Exclude Permit2 and upto offers from detected x402 payment options
+  and payment selection because InFlow treasury payments cannot authorize them. Preserve exact EIP-3009, Solana, and
+  balance offers. Explain unsupported-only offers in human inspection output and structured warnings.
+
+- [#140](https://github.com/inflowpayai/inflow-cli/pull/140)
+  [`508d8a0`](https://github.com/inflowpayai/inflow-cli/commit/508d8a0c39345c03433a56cc9f0a8b48829e0286) Thanks
+  [@nkavian](https://github.com/nkavian)! - Support payment, keyword, ODP operation, and AEP filters for Directory
+  suggestions. Replace the enrollment filter flag with `--with-aep` for Directory search and Offering discovery.
+
+- [#145](https://github.com/inflowpayai/inflow-cli/pull/145)
+  [`42bbf61`](https://github.com/inflowpayai/inflow-cli/commit/42bbf6164d70622382f334dfab6e04ba968f2875) Thanks
+  [@nkavian](https://github.com/nkavian)! - Correct inspection help to describe outgoing requests and quote the JSON
+  body in the generated POST example.
+
+- [#140](https://github.com/inflowpayai/inflow-cli/pull/140)
+  [`508d8a0`](https://github.com/inflowpayai/inflow-cli/commit/508d8a0c39345c03433a56cc9f0a8b48829e0286) Thanks
+  [@nkavian](https://github.com/nkavian)! - Search indexed Services and Collections through the mixed Directory endpoint
+  and return matching names from suggestions. Directory search JSON items contain a type and nested Service metadata;
+  Collection results also contain their Collection ID and metadata. Display Type, Name, Description, Origin, and
+  Collection ID in human output while preserving protocols and attribution in structured output. Keep cross-Service
+  Offering discovery Service-only.
+
+  Use the published ODP Agent 0.4.3 and Directory 0.2.6 packages, including a CLI error mapping for blocked inspection
+  destinations.
+
+- [#137](https://github.com/inflowpayai/inflow-cli/pull/137)
+  [`74fce4c`](https://github.com/inflowpayai/inflow-cli/commit/74fce4cccb2930c91746498f107b5900f604549c) Thanks
+  [@nkavian](https://github.com/nkavian)! - Distinguish uncertain MPP and x402 payment replay outcomes from failures
+  that happen before replay or while saving the seller response locally.
+
+- [#139](https://github.com/inflowpayai/inflow-cli/pull/139)
+  [`a75672d`](https://github.com/inflowpayai/inflow-cli/commit/a75672d0718a61c1b1a86646c0486ef3c438677c) Thanks
+  [@nkavian](https://github.com/nkavian)! - Use the AEP-aware Service transport when resolving protected ODP Offering
+  search capabilities.
+
+- [#148](https://github.com/inflowpayai/inflow-cli/pull/148)
+  [`d406357`](https://github.com/inflowpayai/inflow-cli/commit/d4063571d974cc58b0fc3a20ff0476ce94a4f741) Thanks
+  [@nkavian](https://github.com/nkavian)! - Preserve terminal scrollback when listing OpenAPI operations, terminate
+  output with a newline, and shorten displayed summaries without changing structured output.
+
+- [#149](https://github.com/inflowpayai/inflow-cli/pull/149)
+  [`696966b`](https://github.com/inflowpayai/inflow-cli/commit/696966b8d4d6b8a0929104174a88484c12c862b8) Thanks
+  [@nkavian](https://github.com/nkavian)! - Decode combined MPP payment challenges, show only advertised AEP command
+  URLs, and start the vault daemon for MPP and x402 inspection. Interactive inspection prompts for vault unlock; agent
+  output includes unlock instructions when stored credentials are locked.
+
 ## 0.12.2
 
 ### Patch Changes
