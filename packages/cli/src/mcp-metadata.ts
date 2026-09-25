@@ -145,7 +145,7 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
     write('MPP: Fetch Resource', 'Complete a ready or pending MPP payment and fetch the seller resource.'),
     'stored-session',
   ),
-  mpp_inspect: read('MPP: Inspect Resource', 'Inspect a resource for MPP payment requirements.'),
+  mpp_inspect: vault(read('MPP: Inspect Resource', 'Inspect a resource for MPP payment requirements.'), 'required'),
   mpp_pay: vault(
     write('MPP: Pay Resource', 'Pay for an MPP-protected resource and return the seller response.', {
       destructive: true,
@@ -244,7 +244,7 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
     write('x402: Fetch Resource', 'Fetch an x402 resource using an existing or pending payment transaction.'),
     'stored-session',
   ),
-  x402_inspect: read('x402: Inspect Resource', 'Inspect a resource for x402 payment requirements.'),
+  x402_inspect: vault(read('x402: Inspect Resource', 'Inspect a resource for x402 payment requirements.'), 'required'),
   x402_pay: vault(
     write('x402: Pay Resource', 'Pay for an x402-protected resource and return the seller response.', {
       destructive: true,

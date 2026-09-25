@@ -885,11 +885,12 @@ async function runInspect(c: Context, inflow: Inflow, authStorage?: AuthStorage)
     const frame = sanitizeDeep({
       document: result.document,
       resolved: {
-        enroll: String(result.commandUrl('enroll')),
-        grant: String(result.commandUrl('grant')),
-        revoke: String(result.commandUrl('revoke')),
+        ...Object.fromEntries(
+          (['enroll', 'grant', 'revoke', 'status'] as const)
+            .filter((command) => result.document.commands.supported.includes(command))
+            .map((command) => [command, String(result.commandUrl(command))]),
+        ),
         service_url: String(result.finalUrl ?? result.inspectUrl).replace('/.well-known/aep', ''),
-        status: String(result.commandUrl('status')),
       },
       response: {
         ...(result.cacheControl === undefined ? {} : { cache_control: result.cacheControl }),

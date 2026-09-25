@@ -30,13 +30,16 @@ function ChallengeBody({ challenge }: { challenge: DecodedChallenge }): React.Re
 }
 
 export const DecodeView: React.FC<DecodeViewProps> = ({ result }) => {
-  if (result.kind === 'challenge') {
+  if (result.kind === 'challenge' || result.kind === 'challenges') {
+    const challenges = result.kind === 'challenge' ? [result.challenge] : result.challenges;
     return (
       <Box flexDirection="column" paddingY={1}>
         <Box marginBottom={1}>
           <Text bold>Decoded WWW-Authenticate: Payment</Text>
         </Box>
-        <ChallengeBody challenge={result.challenge} />
+        {challenges.map((challenge, index) => (
+          <ChallengeBody key={index} challenge={challenge} />
+        ))}
       </Box>
     );
   }

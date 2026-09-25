@@ -13,7 +13,8 @@ describe('MCP vault metadata', () => {
     ['x402_fetch', 'stored-session'],
     ['aep_inspect', 'none'],
     ['inspect', 'none'],
-    ['mpp_inspect', 'none'],
+    ['mpp_inspect', 'required'],
+    ['x402_inspect', 'required'],
     ['odp_collections_list', 'none'],
     ['vault_status', 'none'],
     ['unknown_tool', 'none'],
@@ -26,5 +27,7 @@ describe('MCP vault metadata', () => {
     expect(shouldEnsureVaultDaemonForMcpTool('mpp_pay', true)).toBe(false);
     expect(shouldEnsureVaultDaemonForMcpTool('aep_status', true)).toBe(true);
     expect(shouldEnsureVaultDaemonForMcpTool('inspect', false)).toBe(false);
+    expect(shouldEnsureVaultDaemonForMcpTool('mpp_inspect', false)).toBe(true);
+    expect(shouldEnsureVaultDaemonForMcpTool('x402_inspect', true)).toBe(true);
   });
 });

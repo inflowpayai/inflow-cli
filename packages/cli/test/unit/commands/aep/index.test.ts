@@ -304,6 +304,29 @@ describe('aep commands', () => {
     expect(typeof options === 'object' && options !== null && 'publicDocumentCache' in options).toBe(true);
   });
 
+  it.each([['inspect'], ['inspect', 'enroll', 'status'], ['inspect', 'enroll', 'grant', 'revoke', 'status']] as const)(
+    'resolves only advertised AEP commands: %j',
+    async (...supported) => {
+      const client = inflow() as InflowCore.Inflow;
+      const advertised: InspectServiceResult = {
+        ...inspect,
+        document: {
+          ...inspect.document,
+          commands: { supported: [...supported] },
+        },
+      };
+      const commandUrl = vi.spyOn(advertised, 'commandUrl');
+      vi.spyOn(client.aep, 'inspect').mockResolvedValue(advertised);
+      const result = await __testing.runInspect(context({ timeout: 30 }), client);
+      const commands = supported.filter((command) => command !== 'inspect');
+      expect(result['resolved']).toEqual({
+        service_url: 'https://service.example',
+        ...Object.fromEntries(commands.map((command) => [command, `https://service.example/aep/${command}`])),
+      });
+      expect(commandUrl.mock.calls.map(([command]) => command)).toEqual(commands);
+    },
+  );
+
   it('uses definitive OpenAPI Inspect policy without probing the protected resource', async () => {
     openApiScenario.policy = {
       freshness: 'fresh',

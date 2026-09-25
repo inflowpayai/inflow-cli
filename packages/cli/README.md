@@ -528,6 +528,8 @@ Inspection probes an exact URL when one is supplied and reports `resource_authen
 `aep-authenticatable`, or `other-authentication-required`. DID input reports `not-checked`. Service discovery remains
 origin-based.
 
+The `resolved` object includes URLs only for commands listed in the Service's `commands.supported` array.
+
 ### `aep fetch`
 
 ```bash
@@ -986,6 +988,17 @@ Subscription fetch requests a short-lived authorization from InFlow and sends it
 therefore be used from any authenticated InFlow CLI installation. Cancellation is idempotent. Failed renewal collection
 moves a subscription to `PAST_DUE`; a later successful retry restores `ACTIVE`. Once the subscription end is reached,
 `EXPIRED` is terminal. Use `subscriptions get` to see the next scheduled billing attempt.
+
+### Inspection and decoding
+
+`mpp decode --format json` returns `{ "kind": "challenge", "challenge": { ... } }` for one challenge or
+`{ "kind": "challenges", "challenges": [{ ... }, { ... }] }` for multiple challenges in one header. Each entry is an
+alternative payment option. Credential and receipt inputs use `kind: "credential"` and `kind: "receipt"` respectively.
+
+MPP and x402 inspection can use stored credentials for request signing and AEP access. They start the vault daemon
+automatically and prompt terminal users to unlock it. Agent and explicit-format invocations never prompt for a PIN or
+passphrase; if required credentials are locked, they return `VAULT_LOCKED` with instructions to run
+`inflow vault unlock` in a terminal. Inspection does not initiate a payment or enrollment.
 
 ### Errors (mpp group)
 

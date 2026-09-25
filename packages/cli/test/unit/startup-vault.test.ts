@@ -14,6 +14,23 @@ function argv(...args: string[]): string[] {
 }
 
 describe('vault startup decisions', () => {
+  it.each(['mpp', 'x402'])('handles %s inspection for humans, agents, and help', (protocol) => {
+    const args = argv(protocol, 'inspect', 'https://seller.test');
+    for (const hasDirectApiKey of [true, false]) {
+      expect(shouldStartVaultDaemon(args, { hasDirectApiKey, isAgent: true })).toBe(true);
+      expect(shouldReconcileVaultDaemon(args, hasDirectApiKey)).toBe(true);
+      expect(shouldUnlockVault(args, { hasDirectApiKey })).toBe(true);
+      expect(shouldUnlockVault(args, { hasDirectApiKey, isAgent: true })).toBe(false);
+    }
+    for (const flag of ['--schema', '--help', '-h']) {
+      expect(shouldStartVaultDaemon([...args, flag])).toBe(false);
+      expect(shouldReconcileVaultDaemon([...args, flag])).toBe(false);
+      expect(shouldUnlockVault([...args, flag])).toBe(false);
+    }
+    expect(shouldStartVaultDaemon(argv(protocol, 'decode', 'value'))).toBe(false);
+    expect(shouldUnlockVault(argv(protocol, 'decode', 'value'))).toBe(false);
+  });
+
   it.each([
     ['separate output format', ['mpp', 'pay', '--format', 'json'], true, true],
     ['assigned output format', ['mpp', 'pay', '--format=json'], true, true],
@@ -76,13 +93,13 @@ describe('vault startup decisions', () => {
     ['mpp status', ['mpp', 'status'], true],
     ['mpp supported', ['mpp', 'supported'], true],
     ['mpp cancel', ['mpp', 'cancel'], true],
-    ['mpp inspect', ['mpp', 'inspect'], false],
+    ['mpp inspect', ['mpp', 'inspect'], true],
     ['x402 pay', ['x402', 'pay'], true],
     ['x402 fetch', ['x402', 'fetch'], true],
     ['x402 status', ['x402', 'status'], true],
     ['x402 supported', ['x402', 'supported'], true],
     ['x402 cancel', ['x402', 'cancel'], true],
-    ['x402 inspect', ['x402', 'inspect'], false],
+    ['x402 inspect', ['x402', 'inspect'], true],
     ['odp actions resolve', ['odp', 'actions', 'resolve', 'https://service.test', 'offering-1', 'action-1'], true],
     ['odp collections list', ['odp', 'collections', 'list', 'https://service.test'], true],
     ['odp offerings discover', ['odp', 'offerings', 'discover'], true],
@@ -143,7 +160,7 @@ describe('vault startup decisions', () => {
     ['mpp status', ['mpp', 'status'], true],
     ['mpp supported', ['mpp', 'supported'], true],
     ['mpp cancel', ['mpp', 'cancel'], true],
-    ['mpp inspect', ['mpp', 'inspect'], false],
+    ['mpp inspect', ['mpp', 'inspect'], true],
     ['subscriptions cancel', ['subscriptions', 'cancel', 'id'], true],
     ['subscriptions fetch', ['subscriptions', 'fetch', 'id', 'https://seller.test'], true],
     ['x402 pay', ['x402', 'pay'], true],
@@ -151,7 +168,7 @@ describe('vault startup decisions', () => {
     ['x402 status', ['x402', 'status'], true],
     ['x402 supported', ['x402', 'supported'], true],
     ['x402 cancel', ['x402', 'cancel'], true],
-    ['x402 inspect', ['x402', 'inspect'], false],
+    ['x402 inspect', ['x402', 'inspect'], true],
     ['odp actions resolve', ['odp', 'actions', 'resolve', 'https://service.test', 'offering-1', 'action-1'], true],
     ['odp collections search', ['odp', 'collections', 'search', 'https://service.test'], true],
     ['odp offerings get', ['odp', 'offerings', 'get', 'https://service.test', 'offering-1'], true],

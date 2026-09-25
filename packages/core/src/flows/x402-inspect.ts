@@ -4,6 +4,7 @@ import { decodePaymentRequiredHeader } from '@x402/core/http';
 import type { PaymentRequired } from '@x402/core/types';
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { PaymentInspectionBlockedError, type PaymentInspectionBlocked } from './payment-fetch.js';
+import { inspectionError } from './api-error.js';
 import {
   type AcceptsFilters,
   buildNoFilteredMatchMessage,
@@ -136,8 +137,7 @@ export async function runInspectPipeline(
     }
     emit({
       type: 'errored',
-      code: 'INSPECT_FAILED',
-      message: err instanceof Error ? err.message : String(err),
+      ...inspectionError(err),
     });
     return;
   }
