@@ -328,6 +328,28 @@ describe('public address boundary', () => {
 });
 
 describe('OpenAPI interpretation', () => {
+  it('preserves operation tags without inheriting top-level tag declarations', async () => {
+    const tags = ['Weather', 'Weather', 'Forecast'];
+    const state = setup({
+      [`${origin}/openapi.json`]: () =>
+        Response.json({
+          ...contract,
+          tags: [{ name: 'Global' }],
+          paths: { '/weather': { get: { tags } }, '/other': { get: {} } },
+        }),
+    });
+    const result = await state.discovery.inspect(`${origin}/openapi.json`, { format: 'openapi' });
+    if (result.sourceType !== 'openapi') throw new Error('Expected OpenAPI');
+    expect(result.document.operations[0]?.tags).toEqual(['Weather', 'Forecast']);
+    expect(result.document.operations[1]?.tags).toBeUndefined();
+    expect(tags).toEqual(['Weather', 'Weather', 'Forecast']);
+  });
+  it.each([null, 'Weather', [1]])('rejects malformed operation tags %j', async (tags) => {
+    const state = setup({
+      [`${origin}/openapi.json`]: () => Response.json({ ...contract, paths: { '/weather': { get: { tags } } } }),
+    });
+    await expect(state.discovery.inspect(`${origin}/openapi.json`, { format: 'openapi' })).rejects.toThrow();
+  });
   it('preserves arbitrary security scheme names as data, not object prototypes', async () => {
     const schemes = Object.fromEntries([['__proto__', { type: 'http', scheme: 'bearer' }]]);
     const state = setup({

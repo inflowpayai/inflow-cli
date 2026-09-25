@@ -4,11 +4,24 @@ export const documentArgs = z.object({
   source: z.string().describe('HTTPS origin or exact public OpenAPI JSON document URL.'),
 });
 
-export const listOptions = z.object({
+const documentOptions = z.object({
   refresh: z.boolean().default(false).describe('Revalidate documents and rediscover locations for an origin.'),
 });
 
-export const getOptions = listOptions.extend({
+export const listOptions = documentOptions.extend({
+  collectionId: z
+    .string()
+    .regex(/^(?!\.{1,2}$)[A-Za-z0-9._~-]{1,128}$/)
+    .optional()
+    .describe('Directory Collection identifier. Selects its operations from the provider document.'),
+  tag: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Exact provider operation tag. Combines with --collection-id by intersection.'),
+});
+
+export const getOptions = documentOptions.extend({
   method: z.string().optional().describe('HTTP method, together with --path.'),
   operationId: z.string().optional().describe('Unique operationId, instead of --method and --path.'),
   path: z.string().optional().describe('Exact documented path template, together with --method.'),

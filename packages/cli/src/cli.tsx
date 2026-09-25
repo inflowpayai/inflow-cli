@@ -1,6 +1,7 @@
 import process from 'node:process';
 import { isMainThread, workerData } from 'node:worker_threads';
 import {
+  OpenApiCollections,
   type AuthStorage,
   createTapFetch,
   Inflow,
@@ -374,7 +375,7 @@ async function main(): Promise<void> {
   }
   cli.command(createDirectoryCli(odp));
   cli.command(createOdpCli(odp));
-  cli.command(createOpenApiCli());
+  cli.command(createOpenApiCli(undefined, undefined, new OpenApiCollections(resolvedApiBaseUrl)));
   cli.command('inspect', createInspectCommand(inflow, authStorage, odp));
 
   await cli.serve();

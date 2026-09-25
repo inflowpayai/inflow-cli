@@ -1,5 +1,6 @@
 import {
   PublicSourceDocuments,
+  OpenApiCollectionError,
   SourceDiscovery,
   SourceDiscoveryError,
   type PublicSourceCache,
@@ -8,6 +9,7 @@ import {
   type PublicDocumentFetch,
 } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
+import { Static } from 'ink';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createOpenApiCli,
@@ -67,6 +69,78 @@ async function run(discovery: Pick<SourceDiscovery, 'inspect'>, args: string[], 
 }
 
 describe('OpenAPI commands', () => {
+  it('filters Collections and tags independently or by intersection without mutating the document', async () => {
+    const { discovery } = setup();
+    const inspected = await discovery.inspect('https://example.com', { format: 'openapi' });
+    if (inspected.sourceType !== 'openapi') throw new Error('Expected OpenAPI');
+    const first = inspected.document.operations[0];
+    const second = inspected.document.operations[1];
+    if (first === undefined || second === undefined) throw new Error('Expected operations');
+    first.tags = ['Weather', 'Forecast'];
+    second.tags = ['Other'];
+    const snapshot = structuredClone(inspected.document);
+    const operations = vi.fn().mockResolvedValue([first]);
+    const cases = [
+      { flags: ['--tag', 'Weather'], paths: ['/search'], calls: 0 },
+      { flags: ['--tag', 'weather'], paths: [], calls: 0 },
+      { flags: ['--collection-id', 'weather'], paths: ['/search'], calls: 1 },
+      { flags: ['--collection-id', 'weather', '--tag', 'Other'], paths: [], calls: 1 },
+      { flags: ['--collection-id', 'weather', '--tag', 'Forecast'], paths: ['/search'], calls: 1 },
+    ];
+    for (const entry of cases) {
+      operations.mockClear();
+      const chunks: string[] = [];
+      await createOpenApiCli({ inspect: () => Promise.resolve(inspected) }, undefined, { operations }).serve(
+        ['operations', 'list', 'https://example.com', ...entry.flags, '--format', 'json'],
+        { exit: vi.fn(), stdout: (chunk) => chunks.push(chunk) },
+      );
+      const result = JSON.parse(chunks.join('')) as { items: { path: string; tags?: string[] }[] };
+      expect(result.items.map((item) => item.path)).toEqual(entry.paths);
+      if (result.items.length > 0) expect(result.items[0]?.tags).toEqual(['Weather', 'Forecast']);
+      expect(operations).toHaveBeenCalledTimes(entry.calls);
+      expect(inspected.document).toEqual(snapshot);
+    }
+    const view = render(<OperationsView document={inspected.document} />);
+    expect(view.lastFrame()).toContain('Tags');
+    expect(view.lastFrame()).toContain('Weather, Forecast');
+    view.unmount();
+    const detail = render(<OperationView operation={first} />);
+    expect(detail.lastFrame()).toContain('Tags: Weather, Forecast');
+    detail.unmount();
+  });
+  it('reports Collection failures without returning all provider operations', async () => {
+    const { discovery } = setup();
+    const chunks: string[] = [];
+    const exit = vi.fn();
+    const operations = vi
+      .fn()
+      .mockRejectedValue(new OpenApiCollectionError('OPENAPI_COLLECTION_UNAVAILABLE', 'Collection unavailable.'));
+    await createOpenApiCli(discovery, undefined, { operations }).serve(
+      ['operations', 'list', 'https://example.com', '--collection-id', 'missing', '--format', 'json'],
+      { exit, stdout: (chunk) => chunks.push(chunk) },
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(chunks.join('')).toContain('OPENAPI_COLLECTION_UNAVAILABLE');
+    expect(chunks.join('')).not.toContain('/search');
+  });
+  it('caps human summaries without shortening structured operation details', async () => {
+    const { discovery } = setup();
+    const inspected = await discovery.inspect('https://example.com', { format: 'openapi' });
+    if (inspected.sourceType !== 'openapi') throw new Error('Expected OpenAPI');
+    const operation = inspected.document.operations[0];
+    if (operation === undefined) throw new Error('Expected operation');
+    const summary = `Short first line\n${'long summary '.repeat(15)}`;
+    operation.summary = summary;
+    const document = inspected.document;
+    const view = render(<OperationsView document={document} />);
+    const frame = view.lastFrame() ?? '';
+    expect(frame).toContain(`${summary.replace(/\s+/g, ' ').slice(0, 47)}…`);
+    expect(frame).not.toContain(summary);
+    expect(frame).toContain('/items');
+    view.unmount();
+    const result = await run({ inspect: () => Promise.resolve(inspected) }, ['list', 'https://example.com']);
+    expect(result.value).toMatchObject({ items: [{ summary }, {}] });
+  });
   it('calls through discovery and preparation with exactly one operation request', async () => {
     const { discovery } = setup();
     const request = vi.fn().mockResolvedValue(Response.json({ answer: '\u001b[31mweather' }));
@@ -274,6 +348,13 @@ describe('OpenAPI commands', () => {
         );
       }
       expect(rendered).toHaveBeenCalledTimes(3);
+      const listing = rendered.mock.calls[0]?.[0];
+      expect(listing?.type).toBe(Static);
+      if (listing === undefined) throw new Error('Expected listing');
+      const view = render(listing);
+      expect(view.frames.join('')).toContain('/search');
+      expect(view.frames.join('')).toContain('/items');
+      view.unmount();
     } finally {
       rendered.mockRestore();
       if (descriptor === undefined) Reflect.deleteProperty(process.stdout, 'isTTY');
@@ -382,7 +463,7 @@ describe('OpenAPI commands', () => {
     ).toContain('Full description');
     expect(render(<OperationsView document={document} />).lastFrame()).toContain('Webhooks unsupported');
     expect(render(<OperationsView document={{ ...document, operations: [] }} />).lastFrame()).toContain(
-      'No operations declared',
+      'No operations found',
     );
   });
 });

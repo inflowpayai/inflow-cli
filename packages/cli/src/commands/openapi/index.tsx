@@ -1,5 +1,7 @@
 import {
   OpenApiOperationError,
+  OpenApiCollections,
+  OpenApiCollectionError,
   OpenApiPreparationError,
   SourceDiscovery,
   SourceDiscoveryError,
@@ -16,10 +18,11 @@ import {
   type OpenApiOperation,
 } from '@inflowpayai/inflow-core';
 import { Cli } from 'incur';
-import { Box, Text } from 'ink';
+import { Box, Static, Text } from 'ink';
 import { mcpTool } from '../../mcp-metadata.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { Table } from '../../utils/table.js';
+import { summarize } from '../odp/presentation.js';
 import { callOptions, documentArgs, getOptions, listOptions, prepareOptions } from './schema.js';
 
 interface ReadContext {
@@ -37,6 +40,7 @@ export function OperationView({ operation }: { operation: OpenApiOperation }) {
       {operation.summary === undefined ? null : <Text>{operation.summary}</Text>}
       {operation.description === undefined ? null : <Text>{operation.description}</Text>}
       <Text>Operation ID: {operation.operationId ?? 'Not declared'}</Text>
+      {(operation.tags?.length ?? 0) > 0 ? <Text>Tags: {operation.tags?.join(', ')}</Text> : null}
       <Text bold>Servers</Text>
       {operation.servers.map((server, index) => (
         <Text key={index}>
@@ -168,13 +172,25 @@ export function OperationsView({ document }: { document: OpenApiDescription }) {
       <Text>OpenAPI {document.version}</Text>
       <Text>Document: {document.sourceUrl}</Text>
       {document.operations.length === 0 ? (
-        <Text>No operations declared.</Text>
+        <Text>No operations found.</Text>
       ) : (
         <Table
           columns={[
             { header: 'Method', cell: (operation: OpenApiOperation) => operation.method },
             { header: 'Path', cell: (operation: OpenApiOperation) => operation.path },
-            { header: 'Summary', cell: (operation: OpenApiOperation) => operation.summary ?? '-' },
+            ...(document.operations.some((operation) => (operation.tags?.length ?? 0) > 0)
+              ? [
+                  {
+                    header: 'Tags',
+                    cell: (operation: OpenApiOperation) =>
+                      summarize((operation.tags ?? []).join(', ').replace(/\s+/g, ' '), 24),
+                  },
+                ]
+              : []),
+            {
+              header: 'Summary',
+              cell: (operation: OpenApiOperation) => summarize((operation.summary ?? '-').replace(/\s+/g, ' ')),
+            },
             {
               header: 'Payment',
               cell: (operation: OpenApiOperation) =>
@@ -199,6 +215,7 @@ async function readCommand<T>(context: ReadContext, operation: () => Promise<T>)
   } catch (error) {
     if (
       error instanceof SourceDiscoveryError ||
+      error instanceof OpenApiCollectionError ||
       error instanceof OpenApiOperationError ||
       error instanceof OpenApiPreparationError ||
       error instanceof OpenApiCallError
@@ -223,6 +240,7 @@ async function readCommand<T>(context: ReadContext, operation: () => Promise<T>)
 export function createOpenApiCli(
   discovery: Pick<SourceDiscovery, 'inspect'> = new SourceDiscovery(),
   request?: PublicDocumentFetch,
+  collections: Pick<OpenApiCollections, 'operations'> = new OpenApiCollections('https://api.inflowpay.ai'),
 ) {
   const cli = Cli.create('openapi', {
     description: 'Discover, prepare, and call OpenAPI operations. Payments require an explicit payment command.',
@@ -237,24 +255,36 @@ export function createOpenApiCli(
   };
   operations.command('list', {
     args: documentArgs,
-    description: 'List all operations advertised by an OpenAPI document.',
+    description: 'List OpenAPI operations, optionally filtered by Directory Collection or provider tag.',
     mcp: mcpTool('openapi_operations_list'),
     options: listOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
       return readCommand(c, async () => {
         const document = await read(c.args.source, c.options.refresh);
-        if (!c.agent && !c.formatExplicit) await renderInkUntilExit(<OperationsView document={document} />);
+        const members =
+          c.options.collectionId === undefined
+            ? document.operations
+            : await collections.operations(document, c.options.collectionId);
+        const tag = c.options.tag;
+        const operations =
+          tag === undefined ? members : members.filter((operation) => operation.tags?.includes(tag) === true);
+        const selected = { ...document, operations };
+        if (!c.agent && !c.formatExplicit)
+          await renderInkUntilExit(
+            <Static items={[selected]}>{(item) => <OperationsView key={item.sourceUrl} document={item} />}</Static>,
+          );
         return {
           source: { type: 'openapi', url: document.sourceUrl },
           title: document.title,
           openapi: document.version,
-          items: document.operations.map(({ method, path, operationId, summary, payment }) => ({
+          items: operations.map(({ method, path, operationId, summary, payment, tags }) => ({
             method,
             path,
             ...(operationId === undefined ? {} : { operationId }),
             ...(summary === undefined ? {} : { summary }),
             ...(payment === undefined ? {} : { payment }),
+            ...(tags === undefined ? {} : { tags }),
           })),
           limitations: document.limitations,
         };

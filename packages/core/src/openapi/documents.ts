@@ -143,7 +143,8 @@ function freshness(headers: Record<string, string>, now: number): { cacheable: b
   return { cacheable, expiresAt };
 }
 
-async function readJson(response: Response): Promise<string> {
+/** @internal */
+export async function readJson(response: Response): Promise<string> {
   const reader = response.body?.getReader();
   if (reader === undefined) throw new TypeError('Public document is empty.');
   const chunks: Uint8Array[] = [];
