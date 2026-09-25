@@ -69,7 +69,8 @@ The directory does not contain or search a global Offering catalog. Known result
 metadata. Read `service.source.type` before choosing a command. For `odp`, use `service.service_origin` for catalog
 commands. For `openapi`, pass the exact `service.source.url` to `openapi operations list`. Native ODP Collection results
 also contain `collection.id` for `collections get`; the ID is case-sensitive and scoped to its owning Service.
-Imported Collections point to the full parent OpenAPI document; do not call ODP operations with their IDs.
+For imported Collections, use `openapi operations list <service.source.url> --collection-id <collection.id>`;
+do not call ODP operations with their IDs.
 Unknown source formats are not ODP targets. Unknown result types contain `resource_type`
 and `raw`: do not treat them as Services or invoke them. Protocols remain in `service.protocols`.
 
@@ -111,6 +112,8 @@ Public OpenAPI commands need neither login nor vault access. They accept an orig
 ```bash
 inflow openapi operations list https://example.com --format json
 inflow openapi operations list https://example.com/openapi.json --refresh --format json
+inflow openapi operations list https://nano.blockrun.ai/openapi.json --collection-id kalshi --format json
+inflow openapi operations list https://api.orthogonal.com/openapi.json --tag "Abstract Avatars" --format json
 inflow openapi operations get https://example.com/openapi.json --method POST --path /search --format json
 ```
 
@@ -119,9 +122,13 @@ choose an exact URL from the reported candidates. Exact URLs do not fall back to
 revalidates the public document cache and repeats location discovery for origins.
 
 `list` returns `source`, `title`, `openapi`, `items` and `limitations`; each item has `method`, `path`, and optional
-`operationId` and `summary`, plus `payment` metadata. `get` returns `source`, the full interpreted `operation`, and document `limitations`.
+`operationId`, `summary`, and provider `tags`, plus `payment` metadata. `get` returns `source`, the full interpreted `operation`, and document `limitations`.
 Select by method/path or by `--operation-id` alone. A duplicate operation identifier requires method/path selection.
-These commands read the full document, independently of Directory endpoint curation; they never invoke operations.
+`list --collection-id` retrieves membership from the configured Directory and selects matching method/path pairs from
+the provider document. `--tag` filters locally by an exact, case-sensitive operation tag; both filters combine by
+intersection. Without these filters, `list` includes the full document. Collection IDs are not provider tags, and some
+providers declare no tags. Unavailable Collections fail rather than returning every operation. If a selected operation
+is missing from the document, retry with `--refresh`; the Directory may also need to refresh. These commands never invoke operations.
 
 Authentication requirements are alternatives between objects and cumulative within one object. Do not mistake an
 arbitrary API key or bearer scheme for AEP. Provider login, SIWX and custom signing are not automated. Missing security

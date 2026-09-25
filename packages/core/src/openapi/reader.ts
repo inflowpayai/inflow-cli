@@ -7,6 +7,7 @@ export interface OpenApiOperation {
   path: string;
   operationId?: string;
   summary?: string;
+  tags?: string[];
   description?: string;
   servers: Record<string, unknown>[];
   parameters: Record<string, unknown>[];
@@ -94,6 +95,11 @@ export async function readOpenApi(
       };
       for (const field of ['operationId', 'summary', 'description'] as const) {
         if (typeof raw[field] === 'string') operation[field] = raw[field];
+      }
+      if (raw['tags'] !== undefined) {
+        if (!Array.isArray(raw['tags']) || !raw['tags'].every((tag: unknown) => typeof tag === 'string'))
+          throw new TypeError('OpenAPI operation tags must be an array of strings.');
+        operation.tags = [...new Set<string>(raw['tags'])];
       }
       if (raw['requestBody'] !== undefined)
         operation.requestBody = (await references.resolve(raw['requestBody'], item.url)).value;

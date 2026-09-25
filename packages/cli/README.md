@@ -177,6 +177,8 @@ Read a public JSON OpenAPI 3.x document without login, vault access, enrollment,
 ```bash
 inflow openapi operations list https://stableenrich.dev --format json
 inflow openapi operations list https://stableenrich.dev/openapi.json --refresh --format json
+inflow openapi operations list https://nano.blockrun.ai/openapi.json --collection-id kalshi --format json
+inflow openapi operations list https://api.orthogonal.com/openapi.json --tag "Abstract Avatars" --format json
 inflow openapi operations get https://example.com/openapi.json --method POST --path /search --format json
 inflow openapi operations get https://example.com/openapi.json --operation-id search --format json
 ```
@@ -187,11 +189,20 @@ rediscovers an origin. Public document caches honor HTTP freshness and do not co
 credentials.
 
 `list` returns `{ source: { type: "openapi", url }, title, openapi, items, limitations }`. Each item contains `method`,
-`path`, optional `operationId`, and optional `summary`. `get` returns `{ source, operation, limitations }`. Its
-operation contains `method`, `path`, optional `operationId`, `summary`, `description`, `requestBody`, and the `servers`,
-`parameters`, `security`, `securitySchemes`, and `limitations` fields. Server records retain their reference `baseUrl`
-when needed to interpret relative addresses. Both commands read the entire source document, not a Directory's curated
-endpoint list. An imported Directory Collection identifies this same parent document.
+`path`, optional `operationId`, optional `summary`, and optional provider `tags`. `get` returns
+`{ source, operation, limitations }`. Its operation contains `method`, `path`, optional `operationId`, `summary`,
+`description`, `requestBody`, and the `servers`, `parameters`, `security`, `securitySchemes`, and `limitations` fields.
+Server records retain their reference `baseUrl` when needed to interpret relative addresses. Both commands read the
+entire source document for operation definitions. `list --collection-id` additionally reads the selected Collection's
+membership from the configured Directory and filters by method/path. `--tag` filters locally by an exact, case-sensitive
+provider operation tag. Both filters combine by intersection; neither filter means the full list. Provider tags and
+Directory Collection IDs are distinct. Human output caps summaries and tags; structured output keeps their full values.
+Collection selection requires no login and sends no credentials to the Directory.
+
+`OPENAPI_COLLECTION_UNAVAILABLE` means the Collection is not published in the configured Directory.
+`OPENAPI_COLLECTION_LOOKUP_FAILED` means its membership could not be retrieved or validated. `OPENAPI_COLLECTION_STALE`
+means selected operations are missing from the provider document: retry with `--refresh`; the Directory may also need to
+refresh the Service. None of these failures falls back to the full operation list.
 
 Use method/path together or a unique operation identifier alone. Errors include `OPENAPI_SELECTOR_INVALID`,
 `OPENAPI_OPERATION_NOT_FOUND`, `OPENAPI_OPERATION_AMBIGUOUS`, `SOURCE_NOT_FOUND`, `SOURCE_AMBIGUOUS`,
@@ -347,9 +358,9 @@ advertised `protocols` and `source`). `source` contains `type`, the exact docume
 indicates a supporting discovery file, not a verified payment capability. Collection items also contain `collection.id`,
 `collection.name`, and an optional description. Only native `source.type: "odp"` Collections can use the owning origin
 and Collection ID with `odp collections get`. For `openapi`, pass `service.source.url` to `openapi operations list`; an
-imported Collection points to the full parent document, not an ODP endpoint or a CLI-filtered subset. Service items can
-carry `available_through`; structured output retains it, but the text table does not display attribution or protocols.
-Unknown types retain `resource_type` and `raw` and are displayed as unsupported, not treated as executable targets.
+imported Collection can select its operations using `--collection-id <collection.id>`. Service items can carry
+`available_through`; structured output retains it, but the text table does not display attribution or protocols. Unknown
+types retain `resource_type` and `raw` and are displayed as unsupported, not treated as executable targets.
 
 Facets count matching results, including Collections. The mixed endpoint returns at most 100 results; an absent `next`
 does not mean every match was returned. `directory suggest` returns `{ "items": ["name"] }`: names of Services and

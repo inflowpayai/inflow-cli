@@ -205,7 +205,9 @@ inflow openapi operations get https://parallelmpp.dev/openapi.json --method POST
 ```
 
 Pass the Directory result's `service.source.url` to OpenAPI commands. Reading operation details does not invoke the
-operation or make a payment; Directory Collection selections do not restrict the document's operation list.
+operation or make a payment. For a Collection result, add `--collection-id <collection.id>` to list its selected
+operations. Use `--tag <tag>` to filter by a provider's exact operation tag. Without either filter, the full document is
+listed.
 
 Use `inflow openapi operations prepare` with the same operation selector and `--data` or `--parameters` to preview a
 request without sending it. Multiple advertised servers require explicit selection. Recognized credentials are redacted,
