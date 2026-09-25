@@ -1,3 +1,19 @@
+import { SecureStorageError } from '../secure-storage/errors.js';
+
+/** @internal */
+export function inspectionError(err: unknown): { code: string; message: string } {
+  if (
+    err instanceof SecureStorageError &&
+    (err.secureStorageCode === 'vault_locked' || err.secureStorageCode === 'vault_not_initialized')
+  ) {
+    return {
+      code: err.secureStorageCode.toUpperCase(),
+      message: `${err.message} A human must run \`inflow vault unlock\` first.`,
+    };
+  }
+  return { code: 'INSPECT_FAILED', message: err instanceof Error ? err.message : String(err) };
+}
+
 /**
  * Map an SDK API error into the user-facing `{ code, message }` envelope the CLI prints.
  *

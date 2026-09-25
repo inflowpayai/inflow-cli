@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PaymentInspectionBlockedError,
+  SecureStorageError,
   reduceX402Inspect,
   runInspectPipeline,
   type InspectEvent,
@@ -36,6 +37,27 @@ describe('reduceX402Inspect', () => {
 });
 
 describe('runInspectPipeline', () => {
+  it.each(['vault_locked', 'vault_not_initialized'] as const)('reports actionable %s', async (code) => {
+    const events: InspectEvent[] = [];
+    await runInspectPipeline(
+      {
+        url: 'https://seller/api',
+        probeOptions: { method: 'GET', headers: {} },
+        probe: () => {
+          throw new SecureStorageError(code, 'Vault unavailable.');
+        },
+      },
+      (event) => events.push(event),
+    );
+    expect(events).toEqual([
+      {
+        type: 'errored',
+        code: code.toUpperCase(),
+        message: 'Vault unavailable. A human must run `inflow vault unlock` first.',
+      },
+    ]);
+  });
+
   function captureEmits(): { events: InspectEvent[]; emit: (e: InspectEvent) => void } {
     const events: InspectEvent[] = [];
     return { events, emit: (e) => events.push(e) };

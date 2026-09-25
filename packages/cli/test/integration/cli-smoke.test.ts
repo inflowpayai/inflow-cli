@@ -7,7 +7,8 @@
  * If you want a live-sandbox smoke run, set `INFLOW_API_KEY` and `INFLOW_SMOKE_SANDBOX=1` — the gated `live sandbox`
  * block below hits `balances list` against `sandbox.inflowpay.ai`.
  */
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -213,6 +214,82 @@ describe('cli smoke', () => {
     expect(parsed.kind).toBe('challenge');
   });
 
+  it('mpp decode --format json returns every alternative in a combined header', async () => {
+    const header = ['USDC', 'USDT']
+      .map((currency) =>
+        renderChallengeHeader({
+          id: currency,
+          realm: 'mpp.test',
+          method: 'inflow',
+          intent: 'charge',
+          request: encode({ amount: '0.0098', currency, methodDetails: { rail: 'balance' } }),
+        }),
+      )
+      .join(', ');
+    const result = await run(['mpp', 'decode', header, '--format', 'json']);
+    expect(result.exitCode).toBe(0);
+    expect(parseAgentJson(result.stdout)).toMatchObject({
+      kind: 'challenges',
+      challenges: [
+        { id: 'USDC', amount: '0.0098', currency: 'USDC', rail: 'balance' },
+        { id: 'USDT', amount: '0.0098', currency: 'USDT', rail: 'balance' },
+      ],
+    });
+  });
+
+  it.skipIf(process.platform !== 'darwin' || packagedExecutable !== undefined)(
+    'payment inspection restarts a stopped vault and reports locked credentials without prompting an agent',
+    async () => {
+      const root = realpathSync(mkdtempSync(join('/private/tmp', 'inflow-inspect-vault-')));
+      const env = {
+        HOME: root,
+        XDG_DATA_HOME: join(root, 'data'),
+        INFLOW_AUTH_FILE: join(root, 'auth.json'),
+        INFLOW_API_KEY: undefined,
+      };
+      const coreUrl = new URL('../../../core/dist/index.js', import.meta.url).href;
+      const execute = promisify(execFile);
+      const vaultScript = (body: string) =>
+        execute(
+          process.execPath,
+          [
+            '--input-type=module',
+            '-e',
+            `
+        import { LocalVaultClient, Storage } from ${JSON.stringify(coreUrl)};
+        const client = new LocalVaultClient();
+        ${body}
+      `,
+          ],
+          { env: { ...process.env, ...env }, timeout: 10_000 },
+        );
+      try {
+        expect((await run(['vault', 'policy', '--format', 'json'], env)).exitCode).toBe(0);
+        await vaultScript(`
+          await client.unlock(Buffer.from('test-inspection-only-passphrase'));
+          new Storage({ configPath: process.env.INFLOW_AUTH_FILE }).setAuth({
+            access_token: 'test-access', refresh_token: 'test-refresh', token_type: 'Bearer',
+            expires_in: 3600, expires_at: Date.now() + 3600000,
+          });
+        `);
+        for (const protocol of ['mpp', 'x402']) {
+          await vaultScript('await client.shutdown();');
+          const result = await run([protocol, 'inspect', 'http://127.0.0.1:1/resource', '--format', 'json'], env);
+          expect(result.exitCode).not.toBe(0);
+          expect(`${result.stdout}${result.stderr}`).toContain('VAULT_LOCKED');
+          expect(`${result.stdout}${result.stderr}`).toContain('inflow vault unlock');
+          expect(`${result.stdout}${result.stderr}`).not.toContain('daemon is unavailable');
+          await vaultScript("if (!(await client.status()).daemonRunning) throw new Error('daemon did not restart');");
+        }
+      } finally {
+        const reset = await run(['vault', 'reset', '--force', '--format', 'json'], env);
+        expect(reset.exitCode).toBe(0);
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   it('mpp decode --format json emits a DECODE_FAILED error envelope on garbage input', async () => {
     const result = await run(['mpp', 'decode', '@@@not-decodable@@@', '--format', 'json']);
     expect(result.exitCode).not.toBe(0);
@@ -309,8 +386,8 @@ describe('cli smoke', () => {
     } satisfies PaymentRequired['accepts'][number];
 
     for (const command of [['x402', 'inspect'], ['inspect']]) {
-      // Combined inspection uses the credential vault; Linux exercises it through the installed system package.
-      it.skipIf(command.length === 1 && process.platform === 'linux' && packagedExecutable === undefined).each([
+      // Inspection uses the credential vault; Linux exercises it through the installed system package.
+      it.skipIf(process.platform === 'linux' && packagedExecutable === undefined).each([
         {
           name: 'mixed',
           offers: [permit2, upto, exact, solana, balance],

@@ -1,12 +1,13 @@
 import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   type MppInspectEvent,
   type MppInspectResultChallenges,
   type MppInspectResultNoPayment,
   PaymentInspectionBlockedError,
+  SecureStorageError,
   reduceMppInspect,
   runMppInspectPipeline,
 } from '../../../src/index.js';
@@ -48,6 +49,38 @@ async function collect(filters: Partial<Parameters<typeof runMppInspectPipeline>
 }
 
 describe('runMppInspectPipeline', () => {
+  it('reports a non-Error probe rejection', async () => {
+    const events = await collect({ probe: vi.fn().mockRejectedValue('connection closed') });
+    expect(events).toEqual([{ type: 'errored', code: 'INSPECT_FAILED', message: 'connection closed' }]);
+  });
+
+  it.each(['vault_locked', 'vault_not_initialized'] as const)(
+    'reports actionable %s without a network request',
+    async (code) => {
+      const events = await collect({
+        probe: () => {
+          throw new SecureStorageError(code, 'Vault unavailable.');
+        },
+      });
+      expect(events).toEqual([
+        {
+          type: 'errored',
+          code: code.toUpperCase(),
+          message: 'Vault unavailable. A human must run `inflow vault unlock` first.',
+        },
+      ]);
+    },
+  );
+
+  it('preserves peer verification failures without suggesting an unlock', async () => {
+    const events = await collect({
+      probe: () => {
+        throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+      },
+    });
+    expect(events).toEqual([{ type: 'errored', code: 'INSPECT_FAILED', message: 'Vault peer verification failed.' }]);
+  });
+
   it('parses the inflow challenge(s) from a 402', async () => {
     server.use(
       http.get(

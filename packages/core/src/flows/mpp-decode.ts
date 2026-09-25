@@ -6,7 +6,7 @@ import {
   type MppChallenge,
   type MppCredential,
   type MppReceipt,
-  parseChallengeHeader,
+  parseChallengeHeaders,
   subscriptionOptionFingerprint,
   subscriptionOptionFingerprints,
 } from '@inflowpayai/mpp';
@@ -104,6 +104,7 @@ export function summarizeChallenges(challenges: readonly MppChallenge[]): Decode
 /** Tagged decode result for `mpp decode`: a challenge header, a base64url credential, or a base64url receipt. */
 export type DecodeResult =
   | { kind: 'challenge'; challenge: DecodedChallenge }
+  | { kind: 'challenges'; challenges: DecodedChallenge[] }
   | { kind: 'credential'; credential: MppCredential }
   | { kind: 'receipt'; receipt: MppReceipt };
 
@@ -111,7 +112,7 @@ export type DecodeResult =
  * Decode a raw MPP artifact into structured JSON, auto-detecting its kind:
  *
  * - A `WWW-Authenticate: Payment …` header value (the `Payment ` scheme prefix or auth-param `key="value"` pairs) is
- *   parsed as a challenge.
+ *   parsed as one or more challenges.
  * - Otherwise the value is a base64url-JCS artifact: a `Payment-Receipt` (the receipt base fields are present) or an
  *   `Authorization: Payment` credential (`challenge` + `payload`).
  *
@@ -120,7 +121,10 @@ export type DecodeResult =
 export function decodeMppValue(raw: string): DecodeResult {
   const trimmed = raw.trim();
   if (/^payment\s+/i.test(trimmed) || /[a-zA-Z0-9-]+="/.test(trimmed)) {
-    return { kind: 'challenge', challenge: summarizeChallenge(parseChallengeHeader(trimmed)) };
+    const challenges = summarizeChallenges(parseChallengeHeaders(trimmed));
+    const first = challenges[0];
+    if (challenges.length === 1 && first !== undefined) return { kind: 'challenge', challenge: first };
+    return { kind: 'challenges', challenges };
   }
   const probe = decode<Record<string, unknown>>(trimmed, 'value');
   if ('method' in probe && 'reference' in probe && 'status' in probe && 'timestamp' in probe) {

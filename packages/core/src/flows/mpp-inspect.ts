@@ -1,6 +1,7 @@
 import { HEADERS, type MppChallenge, parseChallengeHeaders, readHeaderAll } from '@inflowpayai/mpp';
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { type DecodedChallenge, summarizeChallenges } from './mpp-decode.js';
+import { inspectionError } from './api-error.js';
 import { PaymentInspectionBlockedError, type PaymentInspectionBlocked } from './payment-fetch.js';
 import {
   buildNoFilteredMatchMessage,
@@ -126,7 +127,7 @@ export async function runMppInspectPipeline(
       emit({ type: 'blocked', result: err.blocked });
       return;
     }
-    emit({ type: 'errored', code: 'INSPECT_FAILED', message: err instanceof Error ? err.message : String(err) });
+    emit({ type: 'errored', ...inspectionError(err) });
     return;
   }
 

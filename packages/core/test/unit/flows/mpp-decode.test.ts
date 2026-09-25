@@ -110,6 +110,33 @@ describe('summarizeChallenge', () => {
 });
 
 describe('decodeMppValue', () => {
+  it('decodes multiple payment options in order, preserving quoted commas', () => {
+    const first = { ...inflowChallenge(), description: 'USDC, Payment option' };
+    const second = {
+      ...inflowChallenge(),
+      id: 'chal-2',
+      request: encode({ amount: '10', currency: 'USDT', methodDetails: { rail: 'balance' } }),
+    };
+    expect(decodeMppValue(`${renderChallengeHeader(first)}, ${renderChallengeHeader(second)}`)).toEqual({
+      kind: 'challenges',
+      challenges: [summarizeChallenge(first), summarizeChallenge(second)],
+    });
+  });
+
+  it.each(['first', 'second'])('rejects duplicate parameters inside the %s challenge', (position) => {
+    const valid = renderChallengeHeader(inflowChallenge());
+    const invalid = `${valid}, id="duplicate"`;
+    expect(() => decodeMppValue(position === 'first' ? `${invalid}, ${valid}` : `${valid}, ${invalid}`)).toThrow(
+      "duplicate parameter 'id'",
+    );
+  });
+
+  it('rejects a malformed second challenge rather than returning only the valid first one', () => {
+    expect(() => decodeMppValue(`${renderChallengeHeader(inflowChallenge())}, Payment id="incomplete"`)).toThrow(
+      'missing required parameter',
+    );
+  });
+
   it('detects and summarizes a WWW-Authenticate: Payment header', () => {
     const header = renderChallengeHeader(inflowChallenge());
     const result = decodeMppValue(header);

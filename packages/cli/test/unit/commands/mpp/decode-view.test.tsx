@@ -5,6 +5,27 @@ import { describe, expect, it } from 'vitest';
 import { DecodeView } from '../../../../src/commands/mpp/decode.js';
 
 describe('DecodeView', () => {
+  it('renders each challenge in a multi-option header', () => {
+    const { lastFrame, unmount } = render(
+      <DecodeView
+        result={{
+          kind: 'challenges',
+          challenges: ['USDC', 'USDT'].map((currency) => ({
+            id: currency,
+            realm: 'mpp.test',
+            method: 'inflow',
+            intent: 'charge',
+            currency,
+            amount: '0.0098',
+          })),
+        }}
+      />,
+    );
+    expect(lastFrame()).toContain('amount: 0.0098 USDC');
+    expect(lastFrame()).toContain('amount: 0.0098 USDT');
+    unmount();
+  });
+
   it('renders a decoded challenge', () => {
     const result: DecodeResult = {
       kind: 'challenge',
