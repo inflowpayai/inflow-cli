@@ -28,6 +28,20 @@ import * as renderer from '../../../../src/utils/render-ink-until-exit.js';
 
 afterEach(() => vi.restoreAllMocks());
 
+it('does not prepare vault credentials for public document inspection', async () => {
+  const { discovery } = setup();
+  const prepare = vi.fn().mockRejectedValue(new Error('Vault must not be accessed'));
+  const command = createInspectCommand(
+    new Inflow({ authStorage: new MemoryStorage() }),
+    undefined,
+    undefined,
+    discovery,
+    prepare,
+  );
+  await command.run(context());
+  expect(prepare).not.toHaveBeenCalled();
+});
+
 const api = {
   openapi: '3.1.0',
   info: { title: 'Weather' },

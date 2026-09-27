@@ -15,6 +15,7 @@ import {
   sanitizeDeep,
 } from '@inflowpayai/inflow-core';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
+import { authenticatedApiError } from '../../utils/api-error.js';
 import { mcpTool } from '../../mcp-metadata.js';
 import { persistedAepPublicDocumentCache } from '../../utils/aep-public-document-cache.js';
 import { storedAepCredentialAuthenticationHeaders } from '../aep/runtime.js';
@@ -415,6 +416,7 @@ export function createInspectCommand(
   authStorage?: AuthStorage,
   odpResource?: Pick<IOdpResource, 'inspect'>,
   discovery: Pick<SourceDiscovery, 'inspect'> = new SourceDiscovery(),
+  prepareVault?: () => Promise<void>,
 ): InspectCommandDefinition {
   return {
     description: 'Inspect a URL for agent discovery, enrollment, and payment capabilities',
@@ -440,6 +442,13 @@ export function createInspectCommand(
           code: 'INSPECT_REFRESH_REQUIRES_DOCUMENT',
           message: '--refresh applies to document inspection, not endpoint probes.',
         });
+      try {
+        await prepareVault?.();
+      } catch (error) {
+        const mapped = authenticatedApiError(error);
+        if (mapped !== undefined) return c.error(mapped);
+        throw error;
+      }
       return runCombinedInspectCommand(c, inflow, authStorage, odpResource);
     },
   };

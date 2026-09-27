@@ -1,4 +1,5 @@
 import { isDocumentInspect } from './commands/inspect/routing.js';
+import { shouldEnsureVaultDaemonForMcpTool } from './mcp-metadata.js';
 
 export function commandPath(argv: readonly string[], maxDepth = 2): string[] {
   const out: string[] = [];
@@ -62,52 +63,13 @@ export function shouldStartVaultDaemon(
     );
   }
   if (group === 'vault') return subcommand === 'status';
-  if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
-  if (group === 'inspect') return shouldConfigureOdpServiceTransport(argv);
-  if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
-  if (group === 'mpp') {
-    return (
-      subcommand === 'inspect' ||
-      requiresMppLocalState(argv, subcommand) ||
-      (options.hasDirectApiKey !== true && isOneOf(subcommand, 'cancel', 'pay', 'status', 'supported'))
-    );
-  }
-  if (group === 'x402') {
-    return (
-      subcommand === 'inspect' ||
-      (options.hasDirectApiKey !== true && isOneOf(subcommand, 'cancel', 'fetch', 'pay', 'status', 'supported'))
-    );
-  }
-  if (group === 'subscriptions') return isOneOf(subcommand, 'cancel', 'fetch');
-  return false;
+  if (options.hasInitializedVault === false) return false;
+  return commandNeedsVault(argv, options.hasDirectApiKey);
 }
 
 export function shouldReconcileVaultDaemon(argv: readonly string[], hasDirectApiKey = false): boolean {
   if (shouldBypassVault(argv)) return false;
-  const [group, subcommand] = commandPath(argv);
-  if (group === 'auth') {
-    return isOneOf(subcommand, 'login', 'logout') || (!hasDirectApiKey && subcommand === 'status');
-  }
-  if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
-  if (group === 'inspect') return shouldConfigureOdpServiceTransport(argv);
-  if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
-  if (group === 'mpp') {
-    return (
-      subcommand === 'inspect' ||
-      requiresMppLocalState(argv, subcommand) ||
-      (!hasDirectApiKey && isOneOf(subcommand, 'cancel', 'pay', 'status', 'supported'))
-    );
-  }
-  if (group === 'x402')
-    return (
-      subcommand === 'inspect' ||
-      (!hasDirectApiKey && isOneOf(subcommand, 'cancel', 'fetch', 'pay', 'status', 'supported'))
-    );
-  if (group === 'subscriptions' && isOneOf(subcommand, 'cancel', 'fetch')) return true;
-  if (hasDirectApiKey) return false;
-  if (group === 'balances' || group === 'deposit-addresses') return subcommand === 'list';
-  if (group === 'subscriptions') return isOneOf(subcommand, 'cancel', 'get', 'list');
-  return group === 'user' && subcommand === 'get';
+  return commandNeedsVault(argv, hasDirectApiKey);
 }
 
 export function shouldUnlockVault(
@@ -119,40 +81,20 @@ export function shouldUnlockVault(
   if (group === 'auth') {
     return subcommand === 'login' || (options.hasDirectApiKey !== true && subcommand === 'status');
   }
-  if (group === 'aep') return isOneOf(subcommand, 'enroll', 'fetch', 'grant', 'revoke', 'status');
-  if (group === 'inspect') return shouldConfigureOdpServiceTransport(argv);
-  if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
-  if (group === 'mpp') {
-    return (
-      subcommand === 'inspect' ||
-      requiresMppLocalState(argv, subcommand) ||
-      (options.hasDirectApiKey !== true && isOneOf(subcommand, 'cancel', 'pay', 'status', 'supported'))
-    );
-  }
-  if (group === 'x402') {
-    return (
-      subcommand === 'inspect' ||
-      (options.hasDirectApiKey !== true && isOneOf(subcommand, 'cancel', 'fetch', 'pay', 'status', 'supported'))
-    );
-  }
-  if (group === 'subscriptions' && isOneOf(subcommand, 'cancel', 'fetch')) return true;
-  if (options.hasDirectApiKey === true) return false;
-  if (group === 'balances' || group === 'deposit-addresses') return subcommand === 'list';
-  if (group === 'subscriptions') return isOneOf(subcommand, 'cancel', 'get', 'list');
-  return group === 'user' && subcommand === 'get';
+  if (group === 'vault') return false;
+  return commandNeedsVault(argv, options.hasDirectApiKey);
 }
 
 function shouldBypassVault(argv: readonly string[]): boolean {
   return argv.includes('--schema') || argv.includes('--help') || argv.includes('-h');
 }
 
-function requiresMppLocalState(argv: readonly string[], subcommand: string | undefined): boolean {
-  if (isOneOf(subcommand, 'fetch', 'subscribe')) return true;
-  if (subcommand !== 'pay') return false;
-  const assigned = argv.find((argument) => argument.startsWith('--intent='));
-  if (assigned !== undefined) return assigned.slice('--intent='.length) === 'subscription';
-  const index = argv.indexOf('--intent');
-  return index >= 0 && argv[index + 1] === 'subscription';
+function commandNeedsVault(argv: readonly string[], hasDirectApiKey = false): boolean {
+  const [group, subcommand] = commandPath(argv, 3);
+  if (group === 'inspect') return subcommand !== undefined && !isPublicDocumentInspect(argv);
+  if (group === 'odp') return shouldConfigureOdpServiceTransport(argv);
+  const name = [group, subcommand].filter((part) => part !== undefined).join('_');
+  return shouldEnsureVaultDaemonForMcpTool(name, hasDirectApiKey);
 }
 
 export function shouldConfigureOdpServiceTransport(argv: readonly string[]): boolean {

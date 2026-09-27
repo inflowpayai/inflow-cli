@@ -9,13 +9,14 @@ describe('MCP vault metadata', () => {
     ['auth_status', 'stored-session'],
     ['balances_list', 'stored-session'],
     ['deposit-addresses_list', 'stored-session'],
-    ['mpp_pay', 'stored-session'],
-    ['x402_fetch', 'stored-session'],
-    ['aep_inspect', 'none'],
-    ['inspect', 'none'],
+    ['user_get', 'stored-session'],
+    ['mpp_pay', 'required'],
+    ['x402_fetch', 'required'],
+    ['aep_inspect', 'required'],
+    ['inspect', 'required'],
     ['mpp_inspect', 'required'],
     ['x402_inspect', 'required'],
-    ['odp_collections_list', 'none'],
+    ['odp_collections_list', 'required'],
     ['vault_status', 'none'],
     ['unknown_tool', 'none'],
   ] as const)('classifies %s as %s', (name, access) => {
@@ -24,10 +25,12 @@ describe('MCP vault metadata', () => {
 
   it('uses direct API keys only in place of stored InFlow sessions', () => {
     expect(shouldEnsureVaultDaemonForMcpTool('mpp_pay', false)).toBe(true);
-    expect(shouldEnsureVaultDaemonForMcpTool('mpp_pay', true)).toBe(false);
+    expect(shouldEnsureVaultDaemonForMcpTool('mpp_pay', true)).toBe(true);
     expect(shouldEnsureVaultDaemonForMcpTool('aep_status', true)).toBe(true);
-    expect(shouldEnsureVaultDaemonForMcpTool('inspect', false)).toBe(false);
+    expect(shouldEnsureVaultDaemonForMcpTool('inspect', false)).toBe(true);
     expect(shouldEnsureVaultDaemonForMcpTool('mpp_inspect', false)).toBe(true);
     expect(shouldEnsureVaultDaemonForMcpTool('x402_inspect', true)).toBe(true);
+    expect(shouldEnsureVaultDaemonForMcpTool('user_get', false)).toBe(true);
+    expect(shouldEnsureVaultDaemonForMcpTool('user_get', true)).toBe(false);
   });
 });

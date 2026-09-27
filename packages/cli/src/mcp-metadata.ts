@@ -41,6 +41,7 @@ type ToolName =
   | 'subscriptions_fetch'
   | 'subscriptions_get'
   | 'subscriptions_list'
+  | 'user_get'
   | 'vault_change-passphrase'
   | 'vault_lock'
   | 'vault_policy'
@@ -107,7 +108,7 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
     'required',
   ),
   aep_grant: vault(write('AEP: Grant Credential', 'Request and store an AEP Service credential.'), 'required'),
-  aep_inspect: read('AEP: Inspect Service', 'Inspect an AEP Service without authentication.'),
+  aep_inspect: vault(read('AEP: Inspect Service', 'Inspect an AEP Service without authentication.'), 'required'),
   aep_revoke: vault(
     write('AEP: Revoke Credentials', 'Revoke stored AEP Service credentials.', { destructive: true }),
     'required',
@@ -135,49 +136,55 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
   ),
   directory_search: read('Directory: Search', 'Search the directory for Services and Collections.'),
   directory_suggest: read('Directory: Suggest Names', 'Find matching Service and Collection names.'),
-  inspect: read(
-    'Inspect: Inspect Resource',
-    'Inspect a resource for ODP, AEP, MPP, and x402 capabilities and requirements.',
+  inspect: vault(
+    read('Inspect: Inspect Resource', 'Inspect a resource for ODP, AEP, MPP, and x402 capabilities and requirements.'),
+    'required',
   ),
-  mpp_cancel: write('MPP: Cancel Approval', 'Cancel an MPP approval.', { destructive: true, idempotent: true }),
+  mpp_cancel: vault(
+    write('MPP: Cancel Approval', 'Cancel an MPP approval.', { destructive: true, idempotent: true }),
+    'stored-session',
+  ),
   mpp_decode: read('MPP: Decode Header', 'Decode an MPP Payment header, credential, or receipt.', false),
   mpp_fetch: vault(
     write('MPP: Fetch Resource', 'Complete a ready or pending MPP payment and fetch the seller resource.'),
-    'stored-session',
+    'required',
   ),
   mpp_inspect: vault(read('MPP: Inspect Resource', 'Inspect a resource for MPP payment requirements.'), 'required'),
   mpp_pay: vault(
     write('MPP: Pay Resource', 'Pay for an MPP-protected resource and return the seller response.', {
       destructive: true,
     }),
-    'stored-session',
+    'required',
   ),
   mpp_status: vault(read('MPP: Check Payment', 'Poll the status of an MPP payment transaction.'), 'stored-session'),
   mpp_subscribe: vault(
     write('MPP: Subscribe to Resource', 'Subscribe to an MPP-protected resource.', {
       destructive: true,
     }),
-    'stored-session',
+    'required',
   ),
   mpp_supported: vault(
     read('MPP: List Payment Methods', 'List MPP payment methods available to the buyer.'),
     'stored-session',
   ),
-  odp_collections_get: read('ODP: Get Collection', 'Get full collection details.'),
-  odp_collections_list: read('ODP: List Collections', 'List collections from a service.'),
-  odp_collections_search: read('ODP: Search Collections', 'Search collections from a service.'),
-  odp_inspect: read('ODP: Inspect Service', "Inspect a service's capabilities."),
-  odp_offerings_capabilities: read('ODP: Offering Search Capabilities', 'Resolve offering search filters and sorts.'),
-  odp_offerings_discover: read(
-    'ODP: Discover Offerings',
-    'Find offerings across services selected from the directory.',
+  odp_collections_get: vault(read('ODP: Get Collection', 'Get full collection details.'), 'required'),
+  odp_collections_list: vault(read('ODP: List Collections', 'List collections from a service.'), 'required'),
+  odp_collections_search: vault(read('ODP: Search Collections', 'Search collections from a service.'), 'required'),
+  odp_inspect: vault(read('ODP: Inspect Service', "Inspect a service's capabilities."), 'required'),
+  odp_offerings_capabilities: vault(
+    read('ODP: Offering Search Capabilities', 'Resolve offering search filters and sorts.'),
+    'required',
   ),
-  odp_offerings_get: read('ODP: Get Offering', 'Get full offering details.'),
-  odp_offerings_list: read('ODP: List Offerings', 'List offerings from a service.'),
-  odp_offerings_search: read('ODP: Search Offerings', 'Search offerings from a service.'),
-  odp_actions_resolve: read(
-    'ODP: Resolve Action',
-    "Resolve an offering's action into an executable request without invoking it.",
+  odp_offerings_discover: vault(
+    read('ODP: Discover Offerings', 'Find offerings across services selected from the directory.'),
+    'required',
+  ),
+  odp_offerings_get: vault(read('ODP: Get Offering', 'Get full offering details.'), 'required'),
+  odp_offerings_list: vault(read('ODP: List Offerings', 'List offerings from a service.'), 'required'),
+  odp_offerings_search: vault(read('ODP: Search Offerings', 'Search offerings from a service.'), 'required'),
+  odp_actions_resolve: vault(
+    read('ODP: Resolve Action', "Resolve an offering's action into an executable request without invoking it."),
+    'required',
   ),
   openapi_operations_call: write(
     'OpenAPI: Call Operation',
@@ -214,6 +221,7 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
     'stored-session',
   ),
   subscriptions_list: vault(read('Subscriptions: List Subscriptions', 'List your subscriptions.'), 'stored-session'),
+  user_get: vault(read('User: Get Profile', "Read the authenticated user's profile."), 'stored-session'),
   'vault_change-passphrase': write('Vault: Change Passphrase', 'Change the local vault PIN or passphrase.', {
     destructive: true,
   }),
@@ -238,18 +246,21 @@ const TOOLS: Record<ToolName, ToolMetadata> = {
   vault_unlock: write('Vault: Unlock Vault', 'Unlock or initialize the local credential vault.', {
     openWorld: false,
   }),
-  x402_cancel: write('x402: Cancel Approval', 'Cancel an x402 approval.', { destructive: true, idempotent: true }),
+  x402_cancel: vault(
+    write('x402: Cancel Approval', 'Cancel an x402 approval.', { destructive: true, idempotent: true }),
+    'stored-session',
+  ),
   x402_decode: read('x402: Decode Header', 'Decode a PAYMENT-REQUIRED header value.', false),
   x402_fetch: vault(
     write('x402: Fetch Resource', 'Fetch an x402 resource using an existing or pending payment transaction.'),
-    'stored-session',
+    'required',
   ),
   x402_inspect: vault(read('x402: Inspect Resource', 'Inspect a resource for x402 payment requirements.'), 'required'),
   x402_pay: vault(
     write('x402: Pay Resource', 'Pay for an x402-protected resource and return the seller response.', {
       destructive: true,
     }),
-    'stored-session',
+    'required',
   ),
   x402_status: vault(read('x402: Check Payment', 'Poll the status of an x402 payment transaction.'), 'stored-session'),
   x402_supported: vault(

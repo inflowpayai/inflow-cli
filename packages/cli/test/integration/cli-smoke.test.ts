@@ -99,6 +99,70 @@ function parseAgentJson(out: string): unknown {
   }
 }
 
+function callMcp(
+  name: string,
+  arguments_: Record<string, unknown>,
+  env: NodeJS.ProcessEnv,
+  afterInitialize?: () => Promise<unknown>,
+): Promise<string> {
+  return new Promise((resolveResult, reject) => {
+    const child = spawn(process.execPath, [cliBin, '--mcp'], {
+      env: { ...process.env, NO_UPDATE_NOTIFIER: '1', ...env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let output = '';
+    let errors = '';
+    let response: string | undefined;
+    let initialized = false;
+    const timer = setTimeout(() => child.kill('SIGTERM'), 10_000);
+    child.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+      for (const line of output.split('\n').slice(0, -1)) {
+        const message = JSON.parse(line) as { id?: number };
+        if (message.id === 1 && !initialized) {
+          initialized = true;
+          void Promise.resolve()
+            .then(afterInitialize)
+            .then(
+              () => {
+                child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+                child.stdin.write(
+                  `${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: arguments_ } })}\n`,
+                );
+              },
+              (error: unknown) => {
+                child.kill('SIGTERM');
+                reject(error instanceof Error ? error : new Error(String(error)));
+              },
+            );
+        }
+        if (message.id === 2) {
+          response = line;
+          child.kill('SIGTERM');
+        }
+      }
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      errors += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', () => {
+      clearTimeout(timer);
+      if (response === undefined) reject(new Error(`MCP did not respond: ${errors}`));
+      else resolveResult(response);
+    });
+    for (const message of [
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'vault-test', version: '1' } },
+      },
+    ])
+      child.stdin.write(`${JSON.stringify(message)}\n`);
+  });
+}
+
 async function withSeller(handler: TestServerHandler, test: (url: string) => Promise<void>): Promise<void> {
   const server = createServer(handler);
   await new Promise<void>((resolveListening) => {
@@ -200,6 +264,35 @@ describe('cli smoke', () => {
     expect(first.authenticated).toBe(false);
   });
 
+  it.skipIf(packagedExecutable !== undefined || process.platform === 'win32')(
+    'anonymous inspection does not start a vault on a fresh installation',
+    async () => {
+      const root = realpathSync(mkdtempSync(join(tmpdir(), 'inflow-anonymous-inspect-')));
+      const env = { HOME: root, XDG_DATA_HOME: join(root, 'data'), INFLOW_AUTH_FILE: join(root, 'auth.json') };
+      const vaultRoot =
+        process.platform === 'darwin'
+          ? join(root, 'Library', 'Application Support', 'InFlow')
+          : join(root, 'data', 'inflow');
+      try {
+        await withSeller(
+          (_req, res) => {
+            res.end('public resource');
+          },
+          async (url) => {
+            const result = await run(['x402', 'inspect', url, '--format', 'json'], env);
+            expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+            expect(existsSync(join(vaultRoot, 'run', 'vault.sock'))).toBe(false);
+            expect(existsSync(join(vaultRoot, 'inflow.vault'))).toBe(false);
+          },
+        );
+      } finally {
+        const reset = await run(['vault', 'reset', '--force', '--format', 'json'], env);
+        expect(reset.exitCode, `${reset.stdout}\n${reset.stderr}`).toBe(0);
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('mpp decode --format json decodes a WWW-Authenticate: Payment header to a challenge', async () => {
     const header = renderChallengeHeader({
       id: 'chal-1',
@@ -238,7 +331,7 @@ describe('cli smoke', () => {
   });
 
   it.skipIf(process.platform !== 'darwin' || packagedExecutable !== undefined)(
-    'payment inspection restarts a stopped vault and reports locked credentials without prompting an agent',
+    'credential-using commands restart a stopped vault and report locked credentials without prompting an agent',
     async () => {
       const root = realpathSync(mkdtempSync(join('/private/tmp', 'inflow-inspect-vault-')));
       const env = {
@@ -256,7 +349,7 @@ describe('cli smoke', () => {
             '--input-type=module',
             '-e',
             `
-        import { LocalVaultClient, Storage } from ${JSON.stringify(coreUrl)};
+        import { LocalVaultClient, Storage, SyncVaultSecretStore } from ${JSON.stringify(coreUrl)};
         const client = new LocalVaultClient();
         ${body}
       `,
@@ -272,22 +365,138 @@ describe('cli smoke', () => {
             expires_in: 3600, expires_at: Date.now() + 3600000,
           });
         `);
-        for (const protocol of ['mpp', 'x402']) {
+        for (const command of [
+          ['mpp', 'inspect', 'http://127.0.0.1:1/resource'],
+          ['x402', 'inspect', 'http://127.0.0.1:1/resource'],
+          ['aep', 'inspect', 'https://service.test'],
+          ['balances', 'list'],
+          ['deposit-addresses', 'list'],
+          ['subscriptions', 'list'],
+          ['subscriptions', 'get', 'test-subscription'],
+          ['mpp', 'pay', 'https://service.test', '--api-key', 'test-key'],
+          ['x402', 'pay', 'https://service.test', '--api-key', 'test-key'],
+          ['x402', 'fetch', 'test-transaction', 'https://service.test', '--api-key', 'test-key'],
+          ['odp', 'inspect', 'https://service.test'],
+          ['inspect', 'https://service.test/resource'],
+        ]) {
           await vaultScript('await client.shutdown();');
-          const result = await run([protocol, 'inspect', 'http://127.0.0.1:1/resource', '--format', 'json'], env);
+          const result = await run([...command, '--format', 'json'], env);
           expect(result.exitCode).not.toBe(0);
           expect(`${result.stdout}${result.stderr}`).toContain('VAULT_LOCKED');
           expect(`${result.stdout}${result.stderr}`).toContain('inflow vault unlock');
           expect(`${result.stdout}${result.stderr}`).not.toContain('daemon is unavailable');
           await vaultScript("if (!(await client.status()).daemonRunning) throw new Error('daemon did not restart');");
         }
+        for (const [name, arguments_] of [
+          ['aep_inspect', { serviceReference: 'https://service.test' }],
+          ['odp_inspect', { service: 'https://service.test' }],
+          ['mpp_cancel', { approvalId: 'test-approval' }],
+          ['x402_cancel', { approvalId: 'test-approval' }],
+          ['inspect', { url: 'https://service.test/resource' }],
+        ] as const) {
+          await vaultScript('await client.shutdown();');
+          const response = await callMcp(name, arguments_, env);
+          expect(response).toContain('inflow vault unlock');
+          expect(response).not.toContain('daemon is unavailable');
+        }
+        const received: { key: string | undefined; bearer: string | undefined }[] = [];
+        let requests = 0;
+        await withSeller(
+          (req, res) => {
+            requests += 1;
+            res.setHeader('Content-Type', 'application/json');
+            if (req.url === '/v1/balances') {
+              const key = req.headers['x-api-key'];
+              received.push({ key: typeof key === 'string' ? key : undefined, bearer: req.headers.authorization });
+              res.end(JSON.stringify({ balances: [] }));
+            } else {
+              res.statusCode = 404;
+              res.end('{}');
+            }
+          },
+          async (url) => {
+            const environment = { ...env, INFLOW_BASE_URL: new URL(url).origin };
+            const unlock = () => vaultScript("await client.unlock(Buffer.from('test-inspection-only-passphrase'));");
+            const device = await callMcp('balances_list', {}, environment, unlock);
+            expect(device).not.toContain('isError');
+            expect(received).toEqual([{ key: undefined, bearer: 'Bearer test-access' }]);
+            await vaultScript(`
+            new Storage({ configPath: process.env.INFLOW_AUTH_FILE }).setApiKey('stored-test-key');
+            await client.lock();
+          `);
+            const blocked = await callMcp('balances_list', {}, environment, unlock);
+            expect(blocked).toContain('reconnect the InFlow MCP server');
+            expect(received).toHaveLength(1);
+            const reconnected = await callMcp('balances_list', {}, environment);
+            expect(reconnected).not.toContain('isError');
+            expect(received.at(-1)).toEqual({ key: 'stored-test-key', bearer: undefined });
+            await vaultScript('await client.lock();');
+            const explicit = await callMcp(
+              'balances_list',
+              {},
+              { ...environment, INFLOW_API_KEY: 'explicit-test-key' },
+            );
+            expect(explicit).not.toContain('isError');
+            expect(received.at(-1)).toEqual({ key: 'explicit-test-key', bearer: undefined });
+            const document = await callMcp('inspect', { url: `${new URL(url).origin}/openapi.json` }, environment);
+            expect(document).toContain('Unable to read a valid public ODP or JSON OpenAPI');
+            expect(document).not.toContain('reconnect');
+            const decoded = await callMcp(
+              'mpp_decode',
+              {
+                value: renderChallengeHeader({
+                  id: 'public-decode',
+                  realm: 'service.test',
+                  method: 'inflow',
+                  intent: 'charge',
+                  request: encode({ amount: '10', currency: 'USDC', methodDetails: { rail: 'balance' } }),
+                  expires: '2999-01-01T00:00:00Z',
+                }),
+              },
+              environment,
+            );
+            expect(decoded).not.toContain('isError');
+            expect(decoded).toContain('public-decode');
+            const resource = await callMcp('inspect', { url: `${new URL(url).origin}/resource` }, environment);
+            expect(resource).toContain('reconnect the InFlow MCP server');
+            await vaultScript('await client.shutdown();');
+            const stopped = await callMcp('balances_list', {}, environment);
+            expect(stopped).toContain('reconnect the InFlow MCP server');
+            expect(received).toHaveLength(3);
+            expect((await run(['vault', 'status', '--format', 'json'], env)).exitCode).toBe(0);
+            await unlock();
+            await vaultScript(`
+              const secrets = new SyncVaultSecretStore();
+              let reference;
+              new Storage({
+                configPath: process.env.INFLOW_AUTH_FILE,
+                secretStore: {
+                  create(key, value) { reference = key; secrets.create(key, value); },
+                  read(key) { return secrets.read(key); },
+                  delete(key) { secrets.delete(key); },
+                },
+              }).setApiKey('missing-test-key');
+              secrets.delete(reference);
+            `);
+            const requestsBeforeFailure = requests;
+            for (const args of [
+              ['balances', 'list'],
+              ['inspect', `${new URL(url).origin}/resource`],
+            ]) {
+              const failure = await run([...args, '--format', 'json'], environment);
+              expect(failure.exitCode).not.toBe(0);
+              expect(`${failure.stdout}${failure.stderr}`).toContain('A referenced vault secret is missing.');
+              expect(requests).toBe(requestsBeforeFailure);
+            }
+          },
+        );
       } finally {
         const reset = await run(['vault', 'reset', '--force', '--format', 'json'], env);
         expect(reset.exitCode).toBe(0);
         rmSync(root, { recursive: true, force: true });
       }
     },
-    30_000,
+    60_000,
   );
 
   it('mpp decode --format json emits a DECODE_FAILED error envelope on garbage input', async () => {
