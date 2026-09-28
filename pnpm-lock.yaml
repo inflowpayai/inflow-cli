@@ -85,17 +85,17 @@ importers:
         specifier: ^0.5.0
         version: 0.5.0
       '@inflowpayai/mpp':
-        specifier: ^0.10.0
-        version: 0.10.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.10.1
+        version: 0.10.1(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/mpp-buyer':
-        specifier: ^0.7.2
-        version: 0.7.2(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.7.3
+        version: 0.7.3(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/x402':
-        specifier: ^0.9.1
-        version: 0.9.1(@x402/core@2.22.0)
+        specifier: ^0.10.0
+        version: 0.10.0(@x402/core@2.27.0)
       '@inflowpayai/x402-buyer':
-        specifier: ^0.9.1
-        version: 0.9.1(@x402/core@2.22.0)
+        specifier: ^0.10.0
+        version: 0.10.0(@x402/core@2.27.0)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))
       '@modelcontextprotocol/server':
         specifier: 2.0.0-alpha.4
         version: 2.0.0-alpha.4
@@ -103,8 +103,8 @@ importers:
         specifier: ^2.0.2
         version: 2.0.2
       '@x402/core':
-        specifier: ^2.22.0
-        version: 2.22.0
+        specifier: ^2.27.0
+        version: 2.27.0
       incur:
         specifier: ^0.4.5
         version: 0.4.19(patch_hash=db810b6bf4ff682d812812447c25be42191d896d0785c71dc0fd8896a76a684f)
@@ -156,26 +156,26 @@ importers:
         specifier: ^0.5.0
         version: 0.5.0
       '@inflowpayai/mpp':
-        specifier: ^0.10.0
-        version: 0.10.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.10.1
+        version: 0.10.1(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/mpp-buyer':
-        specifier: ^0.7.2
-        version: 0.7.2(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.7.3
+        version: 0.7.3(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/x402':
-        specifier: ^0.9.1
-        version: 0.9.1(@x402/core@2.22.0)
+        specifier: ^0.10.0
+        version: 0.10.0(@x402/core@2.27.0)
       '@inflowpayai/x402-buyer':
-        specifier: ^0.9.1
-        version: 0.9.1(@x402/core@2.22.0)
+        specifier: ^0.10.0
+        version: 0.10.0(@x402/core@2.27.0)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))
       '@offering-protocol/agent':
-        specifier: ^0.4.4
-        version: 0.4.4(@types/json-schema@7.0.15)
+        specifier: ^0.4.5
+        version: 0.4.5(@types/json-schema@7.0.15)
       '@offering-protocol/core':
         specifier: ^0.3.8
         version: 0.3.8
       '@offering-protocol/directory':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.4.0
+        version: 0.4.0
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
@@ -183,8 +183,8 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(supports-color@7.2.0)(vitest@2.1.9(@types/node@24.13.3)(msw@2.15.0(@types/node@24.13.3)(typescript@5.9.3))(supports-color@7.2.0))
       '@x402/core':
-        specifier: ^2.22.0
-        version: 2.22.0
+        specifier: ^2.27.0
+        version: 2.27.0
 
 packages:
 
@@ -846,8 +846,8 @@ packages:
   '@hyperjump/uri@1.3.6':
     resolution: {integrity: sha512-9a2/wOIp666Veq1a8QctYPRtyFHH0p1yw8Nt/DEf06M+eDpwBpeuc2rGqqjBthENTOy1NyJ/xhSiDtkjU5LfKA==}
 
-  '@inflowpayai/mpp-buyer@0.7.2':
-    resolution: {integrity: sha512-sGtKFhxD4ycFjYAklaKSsQKeFadw3LkVeYWvSaNetY2mBZgMshXV9lbPed4VZF7iVEOT/dlcbxc/l6t6IRuJsg==}
+  '@inflowpayai/mpp-buyer@0.7.3':
+    resolution: {integrity: sha512-esPkB+n3ajR/12JVz/hKuiX4UQBvcfF+JcpYu7mtlan5jBysr5OuzNWhKNP8yAbMik09CbPVTzIiUUca4tq11A==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': '>=1.25.0'
@@ -856,23 +856,30 @@ packages:
       '@modelcontextprotocol/sdk':
         optional: true
 
-  '@inflowpayai/mpp@0.10.0':
-    resolution: {integrity: sha512-z8o8JMeAMOS2SuTUwj0uXhYR6V94a1jxqDjkex8q04TNaMoJxo4stxVLNUiiFk/9O64UWB0tbjHBEangXNHrGw==}
+  '@inflowpayai/mpp@0.10.1':
+    resolution: {integrity: sha512-q9/QBDPwcvNrfaQgFmrWZLJV9TZCk2GkEaB6NMs8fzvMIT25dWwpOxwfGEdhwvnJv1RU/U1ZcB7Ux8ZBl4Tekw==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       mppx: ^0.8.17
 
-  '@inflowpayai/x402-buyer@0.9.1':
-    resolution: {integrity: sha512-/qLvNj2Umx7ue51iK3VVPGxWwr1CLF/837SwBW3UmKnQGcUpc7lvrp5jkIch9mm2x6rOH0pvutWljV9MQ90DHA==}
+  '@inflowpayai/x402-buyer@0.10.0':
+    resolution: {integrity: sha512-Xm438pm9vw4DVgXoPvxxfq9c/ZYAp538VGDjkp96L4VyiYUB00ET0/opUSX3ul03vPaNnuSmW4MX1tSNzH9ZgA==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
-      '@x402/core': ^2.22.0
+      '@x402/core': ^2.27.0
+      '@x402/evm': ^2.27.0
+      viem: ^2.56.3
+    peerDependenciesMeta:
+      '@x402/evm':
+        optional: true
+      viem:
+        optional: true
 
-  '@inflowpayai/x402@0.9.1':
-    resolution: {integrity: sha512-3sA9bMKvoTSrFBaZC/jIo/k/9ff4uy0NAsCR8iAwnZ0wdseDFEXx4+zqMl1g+xhIUBX1uW9sWSdOnwPD2zytfQ==}
+  '@inflowpayai/x402@0.10.0':
+    resolution: {integrity: sha512-h4dVf/9hirKKDgUDkJfYwRHZsYdXs0QD+eTZGpWkFz4wF1xakvCGyssrJUwx22CmsvLqH6D6fLL3/5+sQwXPQA==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
-      '@x402/core': ^2.22.0
+      '@x402/core': ^2.27.0
 
   '@inquirer/ansi@2.0.8':
     resolution: {integrity: sha512-WpQM+Ti6Z40EFwwt+uL2p4UabT+W179zHp6HhLVOzfbwnVn05IPO/eXIZXGNqcT1jbQ15SujNLzQ39k4QPPxBQ==}
@@ -1078,16 +1085,16 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@offering-protocol/agent@0.4.4':
-    resolution: {integrity: sha512-7Y4c+V7+TeBOCEx8X/Ypco6TjBc7kDatk5t8gr1mJrcxqdobezAktBIrGZGAm4V8aMMaGxWQNYHI6s4CktCR7A==}
+  '@offering-protocol/agent@0.4.5':
+    resolution: {integrity: sha512-Pir4CYbnnSmJ+RZ8x5dBZxAWpE/ItISRM8uWDh7q6yLhoutx5Depp9eLlePNqxiMm9wA1JgOzgvEQFVOgKU4zw==}
     engines: {node: '>=22.0.0'}
 
   '@offering-protocol/core@0.3.8':
     resolution: {integrity: sha512-3tK0hsy6Kno21R2d2CQQsnJx01g17iOGc3vaFuIU8wEn2rIICYn9sUXF0M14dV/6QO7EaORg1gMGYChhbwFRbg==}
     engines: {node: '>=22.0.0'}
 
-  '@offering-protocol/directory@0.3.0':
-    resolution: {integrity: sha512-+0qCLIprmnb8XpxMAoWYGK323xlLHQcuBkchiMXOD49jRkCCaM9B4VaG5UIPmjtAxaq0X03AlAcMlGEY7aYGTQ==}
+  '@offering-protocol/directory@0.4.0':
+    resolution: {integrity: sha512-lvIWICh29C3jIZdD7jG1jBWvWo6fQVGFiVnOUyJRHwhV+ajHUrqpVGLxuRFSyfNp0AGGsJEPRfVTPENq1k9dVQ==}
     engines: {node: '>=22.0.0'}
 
   '@open-draft/deferred-promise@2.2.0':
@@ -1448,8 +1455,8 @@ packages:
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
 
-  '@x402/core@2.22.0':
-    resolution: {integrity: sha512-hYySs/PvukqRipC2mKqrsn/jx2U/p5EGnN3clQ2CIcApwtoFuG77CqpC3Wy7Fdp/juW8t8quiPVnqGuIkfix1Q==}
+  '@x402/core@2.27.0':
+    resolution: {integrity: sha512-UbxCKnoTsg5nQX9fYER3g9tt5l80jHm1IZOmDczQRqE0cwskls5r+VAAj0iUQfHVshnpv0qo/rLFI7UntqL96g==}
 
   abitype@1.2.3:
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
@@ -3701,24 +3708,26 @@ snapshots:
 
   '@hyperjump/uri@1.3.6': {}
 
-  '@inflowpayai/mpp-buyer@0.7.2(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))':
+  '@inflowpayai/mpp-buyer@0.7.3(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))':
     dependencies:
-      '@inflowpayai/mpp': 0.10.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
+      '@inflowpayai/mpp': 0.10.1(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
       mppx: 0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))
 
-  '@inflowpayai/mpp@0.10.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))':
+  '@inflowpayai/mpp@0.10.1(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))':
     dependencies:
       mppx: 0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))
 
-  '@inflowpayai/x402-buyer@0.9.1(@x402/core@2.22.0)':
+  '@inflowpayai/x402-buyer@0.10.0(@x402/core@2.27.0)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))':
     dependencies:
-      '@inflowpayai/x402': 0.9.1(@x402/core@2.22.0)
-      '@x402/core': 2.22.0
+      '@inflowpayai/x402': 0.10.0(@x402/core@2.27.0)
+      '@x402/core': 2.27.0
       bs58: 6.0.0
+    optionalDependencies:
+      viem: 2.56.8(typescript@5.9.3)(zod@4.4.3)
 
-  '@inflowpayai/x402@0.9.1(@x402/core@2.22.0)':
+  '@inflowpayai/x402@0.10.0(@x402/core@2.27.0)':
     dependencies:
-      '@x402/core': 2.22.0
+      '@x402/core': 2.27.0
 
   '@inquirer/ansi@2.0.8': {}
 
@@ -3899,13 +3908,13 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.3
 
-  '@offering-protocol/agent@0.4.4(@types/json-schema@7.0.15)':
+  '@offering-protocol/agent@0.4.5(@types/json-schema@7.0.15)':
     dependencies:
       '@apidevtools/json-schema-ref-parser': 15.5.2(patch_hash=11973baa1c73bf2ee8c372f559f79dd0641b1f9e5b8e9967a0f7b1b0bea38a23)(@types/json-schema@7.0.15)
       '@hyperjump/browser': 1.5.0
       '@hyperjump/json-schema': 1.17.8(@hyperjump/browser@1.5.0)
       '@offering-protocol/core': 0.3.8
-      '@offering-protocol/directory': 0.3.0
+      '@offering-protocol/directory': 0.4.0
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       http-cache-semantics: 4.2.0
@@ -3918,7 +3927,7 @@ snapshots:
     dependencies:
       bcp-47: 2.1.1
 
-  '@offering-protocol/directory@0.3.0':
+  '@offering-protocol/directory@0.4.0':
     dependencies:
       '@offering-protocol/core': 0.3.8
 
@@ -4262,7 +4271,7 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 1.2.0
 
-  '@x402/core@2.22.0':
+  '@x402/core@2.27.0':
     dependencies:
       zod: 3.25.76
 
@@ -5376,7 +5385,7 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@5.9.3)(zod@4.4.3)
+      abitype: 1.3.0(typescript@5.9.3)(zod@4.4.3)
       eventemitter3: 5.0.1
     optionalDependencies:
       typescript: 5.9.3
