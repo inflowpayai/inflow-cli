@@ -1,8 +1,6 @@
 /**
- * End-to-end smoke test against the built binary. Exercises the no-network paths that don't require a real sandbox
- * account: `--version`, `--skill`, the agent-mode error envelope for `x402 decode`, the unauthenticated `auth status`
- * frame, and the happy decode path. Run after `pnpm build` (AGENTS.md says the CLI's integration tests run against
- * `dist/cli.js`).
+ * Smoke tests against the built binary, including completed MPP and x402 payments with local HTTP fixtures. Run after
+ * `pnpm build`.
  *
  * If you want a live-sandbox smoke run, set `INFLOW_API_KEY` and `INFLOW_SMOKE_SANDBOX=1` — the gated `live sandbox`
  * block below hits `balances list` against `sandbox.inflowpay.ai`.
@@ -50,7 +48,7 @@ interface RunResult {
 
 type TestServerHandler = (req: IncomingMessage, res: ServerResponse) => void;
 
-function run(args: string[], env: NodeJS.ProcessEnv = {}): Promise<RunResult> {
+function run(args: string[], env: NodeJS.ProcessEnv = {}, timeout?: number): Promise<RunResult> {
   return new Promise((resolveResult, reject) => {
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
@@ -69,6 +67,7 @@ function run(args: string[], env: NodeJS.ProcessEnv = {}): Promise<RunResult> {
       {
         env: childEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
+        ...(timeout === undefined ? {} : { timeout }),
       },
     );
     let stdout = '';
@@ -504,6 +503,211 @@ describe('cli smoke', () => {
     expect(result.exitCode).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('DECODE_FAILED');
   });
+
+  it.each(['mpp', 'x402'] as const)(
+    '%s pay completes approval polling and paid replay through the built CLI',
+    async (protocol) => {
+      const transactionId = '30b929bc-6825-49bc-b279-6c859a81fa15';
+      const approvalId = 'b5c8541c-635d-4682-887b-c0bed502d9db';
+      const apiKey = 'test-platform-api-key';
+      const requestBody = JSON.stringify({ query: 'weather forecast' });
+      const responseBody = JSON.stringify({ answer: 'Sunny' });
+      const challenge = {
+        id: 'test-challenge',
+        realm: 'seller.test',
+        method: 'inflow',
+        intent: 'charge',
+        request: encode({ amount: '1', currency: 'USD', methodDetails: { rail: 'balance' } }),
+      };
+      const credential = encode({
+        challenge,
+        source: 'did:inflow:09f33b80-fd6d-48a9-b983-ce8f9d09ef3e',
+        payload: { approvalId, transactionId, type: 'balance' },
+      });
+      const accept = {
+        scheme: 'balance',
+        network: 'inflow:1',
+        amount: '1',
+        asset: 'USD',
+        payTo: '1c239d45-3cc2-4d76-95bc-967c47e19c32',
+        maxTimeoutSeconds: 60,
+        extra: {},
+      } satisfies PaymentRequired['accepts'][number];
+      const paymentPayload = { x402Version: 2, accepted: accept, payload: { transactionId } };
+      const encodedPayload = Buffer.from(JSON.stringify(paymentPayload)).toString('base64');
+      const paymentHeader = protocol === 'mpp' ? 'authorization' : 'payment-signature';
+      const paymentValue = protocol === 'mpp' ? `Payment ${credential}` : encodedPayload;
+      const pending =
+        protocol === 'mpp'
+          ? { state: 'pending', transactionId, approvalId, retryAfterSeconds: 1, methodSpecific: { rail: 'balance' } }
+          : { status: 'INITIATED' };
+      const ready =
+        protocol === 'mpp'
+          ? { state: 'ready', transactionId, credential }
+          : { status: 'PENDING', encodedPayload, paymentPayload };
+      const events: string[] = [];
+      const platformRequests: {
+        method: string | undefined;
+        path: string | undefined;
+        headers: IncomingMessage['headers'];
+        body: string;
+      }[] = [];
+      const sellerRequests: { method: string | undefined; headers: IncomingMessage['headers']; body: string }[] = [];
+      let polls = 0;
+
+      await withSeller(
+        (req, res) => {
+          let body = '';
+          req.on('data', (chunk: Buffer) => {
+            body += chunk.toString('utf8');
+          });
+          req.on('end', () => {
+            platformRequests.push({ method: req.method, path: req.url, headers: req.headers, body });
+            res.setHeader('Content-Type', 'application/json');
+            if (req.headers['x-api-key'] !== apiKey) {
+              res.writeHead(401);
+              res.end('{}');
+            } else if (protocol === 'x402' && req.method === 'GET' && req.url === '/v1/transactions/x402-supported') {
+              res.end(JSON.stringify({ kinds: [{ scheme: 'balance', network: 'inflow:1', x402Version: 2 }] }));
+            } else if (req.method === 'POST' && req.url === `/v1/transactions/${protocol}`) {
+              events.push('create');
+              res.end(
+                JSON.stringify(protocol === 'mpp' ? pending : { transactionId, approvalId, approvalStatus: 'PENDING' }),
+              );
+            } else if (req.method === 'GET' && req.url === `/v1/transactions/${transactionId}/${protocol}`) {
+              polls += 1;
+              events.push(polls === 1 ? 'poll-pending' : 'poll-ready');
+              res.end(JSON.stringify(polls === 1 ? pending : ready));
+            } else {
+              res.writeHead(404);
+              res.end('{}');
+            }
+          });
+        },
+        async (platformUrl) => {
+          await withSeller(
+            (req, res) => {
+              let body = '';
+              req.on('data', (chunk: Buffer) => {
+                body += chunk.toString('utf8');
+              });
+              req.on('end', () => {
+                sellerRequests.push({ method: req.method, headers: req.headers, body });
+                if (req.url !== '/paywalled' || req.method !== 'POST') {
+                  res.writeHead(404);
+                  res.end();
+                } else if (req.headers[paymentHeader] === undefined) {
+                  events.push('probe');
+                  res.writeHead(
+                    402,
+                    protocol === 'mpp'
+                      ? { 'WWW-Authenticate': renderChallengeHeader(challenge) }
+                      : {
+                          'PAYMENT-REQUIRED': encodePaymentRequiredHeader({
+                            x402Version: 2,
+                            resource: { url: `http://${req.headers.host}/paywalled`, mimeType: 'application/json' },
+                            accepts: [accept],
+                          }),
+                        },
+                  );
+                  res.end('payment required');
+                } else if (req.headers[paymentHeader] !== paymentValue || polls !== 2) {
+                  res.writeHead(403);
+                  res.end('unexpected payment proof');
+                } else {
+                  events.push('replay');
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(responseBody);
+                }
+              });
+            },
+            async (sellerUrl) => {
+              const result = await run(
+                [
+                  protocol,
+                  'pay',
+                  sellerUrl,
+                  '--method',
+                  'POST',
+                  '--data',
+                  requestBody,
+                  '--header',
+                  'X-Request-Context: forecast',
+                  '--format',
+                  'json',
+                  '--interval',
+                  '0.01',
+                  '--max-attempts',
+                  '5',
+                  '--timeout',
+                  '5',
+                ],
+                { INFLOW_API_KEY: apiKey, INFLOW_BASE_URL: new URL(platformUrl).origin },
+                10_000,
+              );
+
+              expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+              expect(`${result.stdout}${result.stderr}`).not.toContain(apiKey);
+              const frames: unknown = JSON.parse(result.stdout);
+              expect(frames).toMatchObject([
+                {
+                  transaction_id: transactionId,
+                  approval_id: approvalId,
+                  ...(protocol === 'mpp'
+                    ? { state: 'pending', challenge: { id: challenge.id } }
+                    : { scheme: 'balance', network: 'inflow:1', resource: sellerUrl }),
+                },
+                {
+                  outcome: 'paid',
+                  transaction_id: transactionId,
+                  response_status: 200,
+                  response_content_type: 'application/json',
+                  body: responseBody,
+                  body_size_bytes: Buffer.byteLength(responseBody),
+                  ...(protocol === 'mpp'
+                    ? { challenge_id: challenge.id, intent: 'charge', credential }
+                    : {
+                        approval_id: approvalId,
+                        scheme: 'balance',
+                        network: 'inflow:1',
+                        encoded_payload: encodedPayload,
+                      }),
+                },
+              ]);
+              expect(events).toEqual(['probe', 'create', 'poll-pending', 'poll-ready', 'probe', 'replay']);
+              expect(polls).toBe(2);
+              expect(sellerRequests).toHaveLength(3);
+              for (const request of sellerRequests) {
+                expect(request.method).toBe('POST');
+                expect(request.body).toBe(requestBody);
+                expect(request.headers['content-type']).toBe('application/json');
+                expect(request.headers['x-request-context']).toBe('forecast');
+                expect(request.headers['x-api-key']).toBeUndefined();
+              }
+              expect(sellerRequests[0]?.headers[paymentHeader]).toBeUndefined();
+              expect(sellerRequests[1]?.headers[paymentHeader]).toBeUndefined();
+              expect(sellerRequests[2]?.headers[paymentHeader]).toBe(paymentValue);
+              expect(platformRequests).toHaveLength(protocol === 'mpp' ? 3 : 4);
+              for (const request of platformRequests) {
+                expect(request.headers['x-api-key']).toBe(apiKey);
+                expect(request.headers['x-request-context']).toBeUndefined();
+                expect(request.headers['authorization']).toBeUndefined();
+                expect(request.headers['payment-signature']).toBeUndefined();
+              }
+              const submissions = platformRequests.filter((request) => request.method === 'POST');
+              expect(submissions).toHaveLength(1);
+              expect(submissions[0]?.path).toBe(`/v1/transactions/${protocol}`);
+              expect(JSON.parse(submissions[0]?.body ?? '')).toEqual(
+                protocol === 'mpp'
+                  ? { challenge, options: {} }
+                  : { accept, x402Version: 2, resource: { url: sellerUrl, mimeType: 'application/json' } },
+              );
+            },
+          );
+        },
+      );
+    },
+  );
 
   it('mpp pay --format json propagates a delegated generator NO_FILTERED_MATCH error', async () => {
     const header = renderChallengeHeader({
