@@ -12,9 +12,10 @@ import {
   runWindowsVaultService,
   runWindowsVaultWorker,
   Storage,
+  SecureStorageError,
   SyncVaultSecretStore,
 } from '@inflowpayai/inflow-core';
-import { Cli, Help } from 'incur';
+import { Cli, Errors, Help } from 'incur';
 import { createAuthCli } from './commands/auth/index.js';
 import { createAepCli } from './commands/aep/index.js';
 import { aepCachePartition, createAepAwareFetch } from './commands/aep/runtime.js';
@@ -34,6 +35,7 @@ import {
   type LocalVaultDaemonClientOptions,
 } from './commands/vault/index.js';
 import { createX402Cli } from './commands/x402/index.js';
+import { authenticatedApiError } from './utils/api-error.js';
 import { shouldEnsureVaultDaemonForMcpTool } from './mcp-metadata.js';
 import {
   formatUpdateNotice,
@@ -42,6 +44,7 @@ import {
   type UpdateProbe,
 } from './utils/update-probe.js';
 import {
+  commandPath,
   isAgentInvocation,
   isPublicDocumentInspect,
   normalizeFormatAssignments,
@@ -189,7 +192,10 @@ async function main(): Promise<void> {
   if (shouldStartVaultDaemon(process.argv, { hasDirectApiKey, hasInitializedVault, isAgent })) {
     await ensureLocalVaultDaemon(vaultOptions);
   }
-  if (shouldUnlockVault(process.argv, { hasDirectApiKey, isAgent })) {
+  if (
+    shouldUnlockVault(process.argv, { hasDirectApiKey, isAgent }) &&
+    (hasInitializedVault || commandPath(process.argv)[0] === 'auth')
+  ) {
     await ensureLocalVaultUnlocked({ mode: isAgent ? 'agent' : 'human', vaultOptions });
   }
 
@@ -199,12 +205,31 @@ async function main(): Promise<void> {
     secretStore,
   });
 
+  let credentialReadError: Error | undefined;
   function readSavedApiKey(): string | undefined {
     try {
       return authStorage.getApiKey() ?? undefined;
-    } catch {
+    } catch (error) {
+      if (process.argv.includes('--mcp') || shouldReconcileVaultDaemon(process.argv, hasDirectApiKey)) {
+        credentialReadError = error instanceof Error ? error : new Error(String(error));
+      }
       return undefined;
     }
+  }
+  function assertMcpCredentials(): void {
+    if (!process.argv.includes('--mcp') || credentialReadError === undefined) return;
+    if (
+      credentialReadError instanceof SecureStorageError &&
+      ['vault_locked', 'vault_not_initialized', 'secure_storage_unavailable'].includes(
+        credentialReadError.secureStorageCode,
+      )
+    ) {
+      throw new Errors.IncurError({
+        code: 'MCP_RECONNECT_REQUIRED',
+        message: 'Unlock the InFlow vault, then reconnect the InFlow MCP server to load your saved API key.',
+      });
+    }
+    throw credentialReadError;
   }
   function readSavedConnection(): {
     environment?: 'production' | 'sandbox';
@@ -296,14 +321,33 @@ async function main(): Promise<void> {
     version: cliVersion,
   });
 
-  if (process.argv.includes('--mcp')) {
-    cli.use(async (context, next) => {
-      if (shouldEnsureVaultDaemonForMcpTool(context.command, hasDirectApiKey)) {
-        await ensureLocalVaultDaemon(vaultOptions);
+  cli.use(async (context, next) => {
+    const mcp = process.argv.includes('--mcp');
+    if (mcp && context.command === 'auth_logout') await ensureLocalVaultDaemon(vaultOptions);
+    const needsVault = mcp
+      ? context.command !== 'inspect' &&
+        !context.command.startsWith('vault_') &&
+        context.command !== 'auth_logout' &&
+        shouldEnsureVaultDaemonForMcpTool(context.command, hasDirectApiKey)
+      : shouldUnlockVault(process.argv, { hasDirectApiKey });
+    if (needsVault) assertMcpCredentials();
+    if (needsVault) {
+      try {
+        if ((await readVaultStatusWithoutStarting(vaultOptions)).lockState !== 'not_initialized') {
+          await ensureLocalVaultUnlocked({
+            mode: context.agent || context.formatExplicit ? 'agent' : 'human',
+            vaultOptions,
+          });
+        }
+        if (credentialReadError !== undefined) throw credentialReadError;
+      } catch (error) {
+        const mapped = authenticatedApiError(error);
+        if (mapped !== undefined) return context.error(mapped);
+        throw error;
       }
-      await next();
-    });
-  }
+    }
+    await next();
+  });
 
   const backgroundUpdateProbe = makeBackgroundUpdateProbe(cliName, cliVersion);
   let updateProbe: UpdateProbe = backgroundUpdateProbe;
@@ -338,8 +382,8 @@ async function main(): Promise<void> {
   cli.command(createMppCli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createAepCli(inflow, authStorage));
   let odp = inflow.odp;
-  if (shouldConfigureOdpServiceTransport(process.argv)) {
-    const cachePartition = await aepCachePartition(authStorage, inflow);
+  if (shouldConfigureOdpServiceTransport(process.argv) || process.argv.includes('--mcp')) {
+    const cachePartition = process.argv.includes('--mcp') ? undefined : await aepCachePartition(authStorage, inflow);
     const tapFetch = createTapFetch({
       capabilities: inflow.capabilities,
       operation: 'odp.browse',
@@ -376,7 +420,15 @@ async function main(): Promise<void> {
   cli.command(createDirectoryCli(odp));
   cli.command(createOdpCli(odp));
   cli.command(createOpenApiCli(undefined, undefined, new OpenApiCollections(resolvedApiBaseUrl)));
-  cli.command('inspect', createInspectCommand(inflow, authStorage, odp));
+  cli.command(
+    'inspect',
+    createInspectCommand(inflow, authStorage, odp, undefined, async () => {
+      assertMcpCredentials();
+      if ((await readVaultStatusWithoutStarting(vaultOptions)).lockState !== 'not_initialized') {
+        await ensureLocalVaultUnlocked({ mode: isAgent ? 'agent' : 'human', vaultOptions });
+      }
+    }),
+  );
 
   await cli.serve();
 }

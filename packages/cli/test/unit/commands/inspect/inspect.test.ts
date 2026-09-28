@@ -1,4 +1,6 @@
 import {
+  Inflow,
+  SecureStorageError,
   MemoryStorage,
   type CombinedInspectNoPayment,
   type CombinedInspectResult,
@@ -383,6 +385,24 @@ describe('buildCombinedFrame', () => {
 });
 
 describe('runCombinedInspectCommand (agent path)', () => {
+  it.each([
+    [new SecureStorageError('vault_locked', 'Locked'), 'VAULT_LOCKED'],
+    [new Error('Unavailable'), 'Unavailable'],
+  ])('prepares credentials before inspecting a resource: %s', async (error, expected) => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const prepare = vi.fn().mockRejectedValue(error);
+    const command = createInspectCommand(
+      new Inflow({ authStorage: new MemoryStorage() }),
+      undefined,
+      undefined,
+      undefined,
+      prepare,
+    );
+    await expect(command.run(ctx())).rejects.toThrow(expected);
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('registers the top-level Inspect command metadata', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
     const command = createInspectCommand(

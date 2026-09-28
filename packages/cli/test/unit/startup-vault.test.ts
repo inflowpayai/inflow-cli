@@ -84,7 +84,7 @@ describe('vault startup decisions', () => {
     ['aep enroll', ['aep', 'enroll'], true],
     ['aep fetch', ['aep', 'fetch'], true],
     ['aep grant', ['aep', 'grant'], true],
-    ['aep inspect', ['aep', 'inspect'], false],
+    ['aep inspect', ['aep', 'inspect'], true],
     ['aep revoke', ['aep', 'revoke'], true],
     ['aep status', ['aep', 'status'], true],
     ['mpp pay', ['mpp', 'pay'], true],
@@ -106,11 +106,11 @@ describe('vault startup decisions', () => {
     ['odp offerings capabilities', ['odp', 'offerings', 'capabilities', 'https://service.test'], true],
     ['directory', ['directory'], false],
     ['odp inspect', ['odp', 'inspect'], false],
-    ['balances list', ['balances', 'list'], false],
-    ['deposit-addresses list', ['deposit-addresses', 'list'], false],
-    ['subscriptions list', ['subscriptions', 'list'], false],
+    ['balances list', ['balances', 'list'], true],
+    ['deposit-addresses list', ['deposit-addresses', 'list'], true],
+    ['subscriptions list', ['subscriptions', 'list'], true],
     ['subscriptions fetch', ['subscriptions', 'fetch', 'id', 'https://seller.test'], true],
-    ['user get', ['user', 'get'], false],
+    ['user get', ['user', 'get'], true],
     ['vault status', ['vault', 'status'], true],
     ['vault unlock', ['vault', 'unlock'], false],
     ['top inspect', ['inspect'], false],
@@ -131,7 +131,7 @@ describe('vault startup decisions', () => {
     ['mpp cancel', ['mpp', 'cancel'], true],
     ['x402 fetch', ['x402', 'fetch'], true],
     ['x402 cancel', ['x402', 'cancel'], true],
-    ['aep inspect', ['aep', 'inspect'], false],
+    ['aep inspect', ['aep', 'inspect'], true],
     ['odp offerings list', ['odp', 'offerings', 'list', 'https://service.test'], true],
     ['odp offerings capabilities', ['odp', 'offerings', 'capabilities', 'https://service.test'], true],
     ['directory', ['directory'], false],
@@ -151,7 +151,7 @@ describe('vault startup decisions', () => {
     ['aep enroll', ['aep', 'enroll'], true],
     ['aep fetch', ['aep', 'fetch'], true],
     ['aep grant', ['aep', 'grant'], true],
-    ['aep inspect', ['aep', 'inspect'], false],
+    ['aep inspect', ['aep', 'inspect'], true],
     ['aep revoke', ['aep', 'revoke'], true],
     ['aep status', ['aep', 'status'], true],
     ['mpp pay', ['mpp', 'pay'], true],
@@ -206,9 +206,9 @@ describe('vault startup decisions', () => {
       expect(shouldReconcileVaultDaemon(args, true)).toBe(true);
       expect(shouldUnlockVault(args, { hasDirectApiKey: true })).toBe(true);
     }
-    expect(shouldStartVaultDaemon(argv('subscriptions', 'cancel', 'id'), { hasDirectApiKey: true })).toBe(true);
-    expect(shouldReconcileVaultDaemon(argv('subscriptions', 'cancel', 'id'), true)).toBe(true);
-    expect(shouldUnlockVault(argv('subscriptions', 'cancel', 'id'), { hasDirectApiKey: true })).toBe(true);
+    expect(shouldStartVaultDaemon(argv('subscriptions', 'cancel', 'id'), { hasDirectApiKey: true })).toBe(false);
+    expect(shouldReconcileVaultDaemon(argv('subscriptions', 'cancel', 'id'), true)).toBe(false);
+    expect(shouldUnlockVault(argv('subscriptions', 'cancel', 'id'), { hasDirectApiKey: true })).toBe(false);
     const subscriptionFetchArgs = argv('subscriptions', 'fetch', 'id', 'https://seller.test');
     expect(shouldStartVaultDaemon(subscriptionFetchArgs, { hasDirectApiKey: true })).toBe(true);
     expect(shouldReconcileVaultDaemon(subscriptionFetchArgs, true)).toBe(true);
@@ -216,7 +216,7 @@ describe('vault startup decisions', () => {
   });
 
   it('bypasses vault credentials that a direct InFlow API key replaces', () => {
-    expect(shouldStartVaultDaemon(argv('mpp', 'pay'), { hasDirectApiKey: true })).toBe(false);
+    expect(shouldStartVaultDaemon(argv('mpp', 'pay'), { hasDirectApiKey: true })).toBe(true);
     expect(shouldStartVaultDaemon(argv('mpp', 'cancel'), { hasDirectApiKey: true })).toBe(false);
     expect(shouldStartVaultDaemon(argv('x402', 'cancel'), { hasDirectApiKey: true })).toBe(false);
     expect(shouldStartVaultDaemon(argv('auth', 'status'), { hasDirectApiKey: true })).toBe(false);
@@ -225,7 +225,7 @@ describe('vault startup decisions', () => {
     expect(shouldUnlockVault(argv('auth', 'status'), { hasDirectApiKey: true })).toBe(false);
     expect(shouldUnlockVault(argv('mpp', 'cancel'), { hasDirectApiKey: true })).toBe(false);
     expect(shouldUnlockVault(argv('x402', 'cancel'), { hasDirectApiKey: true })).toBe(false);
-    expect(shouldUnlockVault(argv('x402', 'fetch'), { hasDirectApiKey: true })).toBe(false);
+    expect(shouldUnlockVault(argv('x402', 'fetch'), { hasDirectApiKey: true })).toBe(true);
   });
 
   it('does not touch the vault in schema mode', () => {
@@ -308,5 +308,24 @@ describe('vault startup decisions', () => {
     expect(shouldUnlockVault(argv('odp', 'offerings', 'capabilities', 'https://service.test'), { isAgent: true })).toBe(
       false,
     );
+  });
+
+  it.each([
+    ['aep', 'inspect', 'https://service.test'],
+    ['mpp', 'pay', 'https://service.test'],
+    ['x402', 'fetch', 'transaction', 'https://service.test'],
+    ['odp', 'inspect', 'https://service.test'],
+    ['balances', 'list'],
+  ])('does not start an uninitialized vault for %s %s', (...args) => {
+    for (const hasDirectApiKey of [true, false]) {
+      for (const isAgent of [true, false]) {
+        expect(shouldStartVaultDaemon(argv(...args), { hasInitializedVault: false, hasDirectApiKey, isAgent })).toBe(
+          false,
+        );
+        expect(shouldStartVaultDaemon(argv(...args), { hasInitializedVault: true, hasDirectApiKey, isAgent })).toBe(
+          args[0] !== 'balances' || !hasDirectApiKey,
+        );
+      }
+    }
   });
 });
