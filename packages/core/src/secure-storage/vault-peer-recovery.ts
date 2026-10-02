@@ -5,7 +5,11 @@ import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SecureStorageError } from './errors.js';
 import { usesLinuxVaultService, vaultFilePaths } from './vault-files.js';
-import { createSameUserVaultSocketPeerVerifier, type VaultSocketPeer } from './vault-peer-verifier.js';
+import {
+  createSameUserVaultSocketPeerVerifier,
+  inspectSameUserVaultListener,
+  type VaultSocketPeer,
+} from './vault-peer-verifier.js';
 import { inspectVaultSocketPeer, isReachableVaultSocket } from './vault-socket.js';
 
 const SHUTDOWN_TIMEOUT_MILLISECONDS = 2_000;
@@ -40,7 +44,10 @@ const defaultProcessDependencies: VaultDaemonProcessDependencies = {
 
 const defaultDependencies: LocalVaultPeerRecoveryDependencies = {
   currentProcessId: process.pid,
-  inspectPeer: (socketPath) => inspectVaultSocketPeer(socketPath, createSameUserVaultSocketPeerVerifier()),
+  inspectPeer: async (socketPath) =>
+    process.platform === 'darwin'
+      ? inspectSameUserVaultListener(socketPath)
+      : inspectVaultSocketPeer(socketPath, createSameUserVaultSocketPeerVerifier()),
   isVaultDaemonProcess,
   now: Date.now,
   platform: process.platform,
