@@ -21,6 +21,7 @@ export interface VaultSocketPeer {
 export type VaultSocketPeerVerifier = (socket: Socket) => Promise<VaultSocketPeer> | VaultSocketPeer;
 
 interface NativeVaultPeerModule {
+  listenerInfo?(socketPath: string): VaultSocketPeer;
   peerCredentials(fd: number): Pick<VaultSocketPeer, 'pid' | 'uid'>;
   peerInfo(fd: number): VaultSocketPeer;
 }
@@ -107,6 +108,25 @@ export function createSameUserVaultSocketPeerVerifier(
     }
     return peer;
   };
+}
+
+export function inspectSameUserVaultListener(
+  socketPath: string,
+  options: VaultPeerVerifierOptions = {},
+  dependencies: VaultPeerVerifierDependencies = defaultPeerVerifierDependencies,
+): VaultSocketPeer {
+  if (process.platform !== 'darwin') {
+    throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+  }
+  const config = createVaultPeerVerificationConfig(options, dependencies);
+  verifyVaultPeerVerificationConfig(config, dependencies);
+  const native = dependencies.loadNativeModule(config.nativeModulePath);
+  const peer = native.listenerInfo?.(socketPath);
+  const currentUserId = dependencies.currentUserId();
+  if (peer === undefined || currentUserId === undefined || peer.uid !== currentUserId) {
+    throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
+  }
+  return peer;
 }
 
 export function verifyTransferredVaultSocketPeer(socket: Socket, attestedPeer: VaultSocketPeer): VaultSocketPeer {

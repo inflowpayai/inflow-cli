@@ -1,11 +1,14 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import { vaultFilePaths } from '../../../src/secure-storage/vault-files.js';
+import * as peerVerification from '../../../src/secure-storage/vault-peer-verifier.js';
+import * as vaultSocket from '../../../src/secure-storage/vault-socket.js';
 import {
   __testing,
   type LocalVaultPeerRecoveryDependencies,
@@ -29,9 +32,46 @@ function dependencies(overrides: Partial<LocalVaultPeerRecoveryDependencies> = {
 }
 
 describe('vault peer recovery', () => {
-  it.runIf(process.platform === 'darwin' || process.platform === 'linux')(
-    'shuts down a same-user local daemon through the public recovery boundary',
-    async () => {
+  it.runIf(process.platform === 'darwin' || process.platform === 'linux').each(['darwin', 'linux'] as const)(
+    'routes %s recovery to its operating-system inspection method',
+    async (platform) => {
+      const originalPlatform = process.platform;
+      const peer = { path: '/old/inflow', pid: 123, uid: 501 };
+      const verifier = () => peer;
+      const createVerifier = vi
+        .spyOn(peerVerification, 'createSameUserVaultSocketPeerVerifier')
+        .mockReturnValue(verifier);
+      const inspectListener = vi.spyOn(peerVerification, 'inspectSameUserVaultListener').mockReturnValue(peer);
+      const inspectSocket = vi.spyOn(vaultSocket, 'inspectVaultSocketPeer').mockResolvedValue(peer);
+      vi.spyOn(vaultSocket, 'isReachableVaultSocket').mockResolvedValue(false);
+      const signal = vi.spyOn(process, 'kill').mockImplementation(() => {
+        throw Object.assign(new Error('process exited'), { code: 'ESRCH' });
+      });
+      try {
+        Object.defineProperty(process, 'platform', { value: platform });
+        await shutdownUnverifiedLocalVaultDaemon('/isolated-vault');
+        if (platform === 'darwin') {
+          expect(inspectListener).toHaveBeenCalledWith('/isolated-vault/run/vault.sock');
+          expect(createVerifier).not.toHaveBeenCalled();
+          expect(inspectSocket).not.toHaveBeenCalled();
+        } else {
+          expect(createVerifier).toHaveBeenCalledOnce();
+          expect(inspectSocket).toHaveBeenCalledWith('/isolated-vault/run/vault.sock', verifier);
+          expect(inspectListener).not.toHaveBeenCalled();
+        }
+        expect(signal).toHaveBeenCalledWith(peer.pid, 'SIGTERM');
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform });
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
+  it
+    .runIf(process.platform === 'darwin' || process.platform === 'linux')
+    .each(process.platform === 'darwin' ? [false, true] : [false])(
+    'shuts down a same-user local daemon through the public recovery boundary (reject connections: %s)',
+    async (rejectConnections) => {
       const rootDirectory = mkdtempSync(join(tmpdir(), 'inflow-vault-recovery-'));
       const socketPath = vaultFilePaths(rootDirectory).socket;
       const child = spawn(
@@ -44,9 +84,17 @@ describe('vault peer recovery', () => {
             "const { createServer } = require('node:net');",
             'const socketPath = process.argv[1];',
             'mkdirSync(dirname(socketPath), { recursive: true });',
-            'const server = createServer(() => {});',
+            'let connections = 0;',
+            `const rejectConnections = ${String(rejectConnections)};`,
+            'const server = createServer(socket => {',
+            'connections++;',
+            'if (rejectConnections) {',
+            "socket.on('error', () => {});",
+            "socket.end('rejected', () => socket.destroy());",
+            '}',
+            '});',
             "server.listen(socketPath, () => process.send('ready'));",
-            "process.on('SIGTERM', () => server.close(() => process.exit(0)));",
+            "process.on('SIGTERM', () => server.close(() => process.exit(rejectConnections && connections !== 1 ? 1 : 0)));",
           ].join(''),
           socketPath,
           '--daemon',
@@ -56,6 +104,11 @@ describe('vault peer recovery', () => {
       );
       try {
         await once(child, 'message');
+        if (rejectConnections) {
+          const client = createConnection(socketPath);
+          client.resume();
+          await once(client, 'close');
+        }
         await expect(shutdownUnverifiedLocalVaultDaemon(rootDirectory)).resolves.toBeUndefined();
         expect(child.exitCode).toBe(0);
       } finally {

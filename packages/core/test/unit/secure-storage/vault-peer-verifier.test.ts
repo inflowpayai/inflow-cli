@@ -10,6 +10,7 @@ import {
   __testing,
   createSameUserVaultSocketPeerVerifier,
   createVaultSocketPeerVerifier,
+  inspectSameUserVaultListener,
   shouldRequireVaultPeerVerification,
   socketFileDescriptor,
   type VaultSocketPeer,
@@ -116,6 +117,41 @@ describe('vault peer verifier', () => {
       );
       expect(() => verifier(socketWithFd(42))).toThrow('Vault peer verification failed.');
     }
+  });
+
+  it('inspects a same-user macOS listener through the verified native module', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const peer = { path: '/different/inflow', pid: 123, uid: 501 };
+    const harness = dependencies({ currentUserId: 501, peer, realpaths: new Map() });
+    expect(inspectSameUserVaultListener('/vault.sock', {}, harness)).toEqual(peer);
+    expect(harness.verifyNativeModule).toHaveBeenCalledOnce();
+    expect(harness.loadNativeModule).toHaveBeenCalledOnce();
+    expect(harness.verifySignature).not.toHaveBeenCalled();
+  });
+
+  it.each([502, undefined])('refuses listener inspection when the user is %s', (currentUserId) => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const harness = dependencies({
+      currentUserId,
+      peer: { path: '/different/inflow', pid: 123, uid: 501 },
+      realpaths: new Map(),
+    });
+    expect(() => inspectSameUserVaultListener('/vault.sock', {}, harness)).toThrow('Vault peer verification failed.');
+  });
+
+  it('refuses listener inspection with an older native module or another operating system', () => {
+    const harness = dependencies({
+      currentUserId: 501,
+      peer: { path: '/different/inflow', pid: 123, uid: 501 },
+      realpaths: new Map(),
+    });
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const { listenerInfo: _listenerInfo, ...olderNative } = harness.loadNativeModule();
+    expect(() =>
+      inspectSameUserVaultListener('/vault.sock', {}, { ...harness, loadNativeModule: () => olderNative }),
+    ).toThrow('Vault peer verification failed.');
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    expect(() => inspectSameUserVaultListener('/vault.sock', {}, harness)).toThrow('Vault peer verification failed.');
   });
 
   it('accepts an explicit expected Team ID for tests and future packaging variants', () => {
@@ -473,6 +509,7 @@ function dependencies(input: TestDependencyInput) {
   return {
     currentUserId: vi.fn(() => input.currentUserId),
     loadNativeModule: vi.fn(() => ({
+      listenerInfo: vi.fn(() => input.peer),
       peerCredentials: vi.fn(() => ({ pid: input.peer.pid, uid: input.peer.uid })),
       peerInfo: vi.fn(() => input.peer),
     })),
