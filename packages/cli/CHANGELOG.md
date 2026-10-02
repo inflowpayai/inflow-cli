@@ -1,5 +1,14 @@
 # @inflowpayai/inflow
 
+## 0.13.1
+
+### Patch Changes
+
+- [#154](https://github.com/inflowpayai/inflow-cli/pull/154)
+  [`2f31e52`](https://github.com/inflowpayai/inflow-cli/commit/2f31e52725a6258fb05a752ab77f0c8cd0076685) Thanks
+  [@nkavian](https://github.com/nkavian)! - Recover from incompatible macOS vault daemons by identifying their listening
+  process without opening a connection that the daemon can reject before identification completes.
+
 ## 0.13.0
 
 ### Minor Changes
