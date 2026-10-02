@@ -19,7 +19,7 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "cli": "node packages/cli/dist/cli.js",
-    "build": "turbo run build && node scripts/align-skill-version.js && node scripts/publish-skills.mjs",
+    "build": "turbo run build && node scripts/align-skill-version.js && pnpm stage:web",
     "build:homebrew-cask": "node scripts/render-homebrew-cask.mjs",
     "build:linux-apt-repository": "node scripts/build-linux-apt-repository.mjs",
     "build:linux-installer": "node scripts/render-linux-installer.mjs",
@@ -55,6 +55,7 @@
     "conformance": "node scripts/mpp-conformance.mjs",
     "conformance:update": "node scripts/mpp-conformance.mjs --update",
     "changeset": "changeset",
+    "stage:web": "node scripts/stage-web.mjs",
     "version-packages": "changeset version && node scripts/align-skill-version.js",
     "release": "pnpm --filter @inflowpayai/inflow build:shim && changeset publish",
     "clean": "turbo run clean && rm -rf node_modules",

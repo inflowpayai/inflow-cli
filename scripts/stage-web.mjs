@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Publishes web-served CLI files. Destination: the inflowcli.ai docroot in the sibling server repo —
- * ../inflow-server/src/main/resources/static/cli/ (skipped silently when absent).
+ * Stages web-served CLI files when INFLOW_WEB_STAGING=1. Destination: the inflowcli.ai docroot in the sibling server
+ * repo — ../inflow-server/src/main/resources/static/cli/ (skipped when absent).
  *
  * 1. Hosted installers → <dest>/{cli,install.sh,install.ps1}
  * 2. Skills/skill.md → <dest>/skill.md (entry point)
@@ -16,6 +16,8 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+if (process.env.INFLOW_WEB_STAGING !== '1') process.exit(0);
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const skillsDir = resolve(repoRoot, 'skills');
@@ -51,14 +53,14 @@ ${playbookLinks}
 `;
 
 if (!existsSync(dest)) {
-  process.stdout.write(`publish-skills: skipped (no ${dest})\n`);
+  process.stdout.write(`stage:web: skipped (no ${dest})\n`);
   process.exit(0);
 }
 
 for (const [name, source] of hostedFiles) {
   copyFileSync(source, resolve(dest, name));
 }
-process.stdout.write(`publish-skills: [${[...hostedFiles.keys()].join(', ')}] → ${dest}\n`);
+process.stdout.write(`stage:web: [${[...hostedFiles.keys()].join(', ')}] → ${dest}\n`);
 
 /** Remove the `allowed-tools` key (scalar, inline list, or block list) from YAML frontmatter. */
 function stripAllowedTools(markdown) {
@@ -87,7 +89,7 @@ for (const name of playbooks) {
   const body = readFileSync(resolve(skillsDir, name, 'SKILL.md'), 'utf8');
   writeFileSync(resolve(dest, 'skills', `${name}.md`), stripAllowedTools(body));
 }
-process.stdout.write(`publish-skills: [${playbooks.join(', ')}] → ${dest}/skills\n`);
+process.stdout.write(`stage:web: [${playbooks.join(', ')}] → ${dest}/skills\n`);
 
 const sitemapFile = resolve(dest, 'sitemap.xml');
 if (existsSync(sitemapFile)) {
@@ -101,7 +103,7 @@ if (existsSync(sitemapFile)) {
     '',
   );
   const rewritten = withoutSkillUrls.replace(entryPoint, `${entryPoint}${skillUrls}\n`);
-  if (rewritten === withoutSkillUrls) throw new Error('publish-skills: sitemap is missing the skill.md entry');
+  if (rewritten === withoutSkillUrls) throw new Error('stage:web: sitemap is missing the skill.md entry');
   writeFileSync(sitemapFile, rewritten);
 }
 
@@ -113,7 +115,7 @@ if (existsSync(pluginSkillsDir)) {
     const link = join(pluginSkillsDir, name);
     if (!existsSync(link)) {
       symlinkSync(join('..', '..', '..', 'skills', name), link);
-      process.stdout.write(`publish-skills: plugin symlink created for skill '${name}'\n`);
+      process.stdout.write(`stage:web: plugin symlink created for skill '${name}'\n`);
     }
   }
 }
@@ -124,18 +126,18 @@ if (existsSync(cliDist)) {
     try {
       return execFileSync(process.execPath, [cliDist, flag], { encoding: 'utf8' });
     } catch (error) {
-      process.stderr.write(`publish-skills: dist/cli.js failed on ${flag}\n`);
+      process.stderr.write(`stage:web: dist/cli.js failed on ${flag}\n`);
       throw error;
     }
   };
   writeFileSync(resolve(dest, 'skill.md'), run('--bootstrap'));
   writeFileSync(resolve(dest, 'llms.txt'), LLMS_HEADER + run('--llms'));
   writeFileSync(resolve(dest, 'llms-full.txt'), LLMS_HEADER + run('--llms-full'));
-  process.stdout.write(`publish-skills: skill.md, llms.txt, llms-full.txt projected from ${cliDist}\n`);
+  process.stdout.write(`stage:web: skill.md, llms.txt, llms-full.txt projected from ${cliDist}\n`);
 } else {
   // Pre-build fallback: skill.md straight from source; llms files need the binary.
   writeFileSync(resolve(dest, 'skill.md'), readFileSync(resolve(skillsDir, 'skill.md'), 'utf8'));
   process.stdout.write(
-    'publish-skills: no dist/cli.js — skill.md copied from source; llms.txt/llms-full.txt not generated\n',
+    'stage:web: no dist/cli.js — skill.md copied from source; llms.txt/llms-full.txt not generated\n',
   );
 }
