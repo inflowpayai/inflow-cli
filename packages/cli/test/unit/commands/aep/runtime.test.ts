@@ -3,6 +3,8 @@ import {
   Inflow,
   MemoryStorage,
   PaymentInspectionBlockedError,
+  runInspectPipeline,
+  runMppInspectPipeline,
   type SellerAuthenticationError,
 } from '@inflowpayai/inflow-core';
 import {
@@ -436,6 +438,94 @@ describe('AEP-aware ODP transport', () => {
 });
 
 describe('AEP-aware read-only inspection probe', () => {
+  describe.each([
+    ['MPP', runMppInspectPipeline],
+    ['x402', runInspectPipeline],
+  ] as const)('%s challenge origins', (_protocol, runPipeline) => {
+    it.each([
+      ['different host', 'https://resource.test', 'https://seller.test', false],
+      ['different port', 'https://seller.test:8443', 'https://seller.test', false],
+      ['different scheme', 'http://localhost', 'https://localhost', false],
+      ['same origin', 'https://seller.test', 'https://seller.test', true],
+      ['equivalent origin', 'https://seller.test', 'https://SELLER.test:443', true],
+    ] as const)('handles a challenge with %s', async (_case, resourceOrigin, inspectOrigin, accepted) => {
+      const serviceDid = `did:web:${new URL(inspectOrigin).host.replace(':', '%3A')}`;
+      const authStorage = new MemoryStorage();
+      const storage = new AepStorage(authStorage, {
+        platformOrigin: 'https://platform.example',
+        userId: 'user-1',
+      });
+      await storage.credentials().saveCredential({
+        credential: {
+          api_key: 'stored-api-key',
+          credential_id: 'cred-origin',
+          expires_at: '2999-01-01T00:00:00.000Z',
+          header: 'x-aep-api-key',
+          scopes: [],
+        },
+        credentialId: 'cred-origin',
+        expiresAt: '2999-01-01T00:00:00.000Z',
+        grantType: 'api-key',
+        issuedAt: '2026-01-01T00:00:00.000Z',
+        serviceDid,
+      });
+      const readState = vi.spyOn(authStorage, 'getAepState');
+      const receivedCredentials: Array<string | null> = [];
+      const inspectedOrigins: string[] = [];
+      const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation((input, init) => {
+        const url = new URL(requestUrl(input));
+        if (url.pathname === '/.well-known/aep') {
+          inspectedOrigins.push(url.origin);
+          if (url.origin !== new URL(inspectOrigin).origin) return Promise.resolve(new Response(null, { status: 404 }));
+          return Promise.resolve(
+            Response.json(
+              { ...API_KEY_INSPECT_DOCUMENT, service: { did: serviceDid } },
+              { headers: { 'content-type': 'application/aep+json' } },
+            ),
+          );
+        }
+        if (url.pathname === '/openapi.json') return Promise.resolve(Response.json({ openapi: '3.1.0', paths: {} }));
+        expect(url.toString()).toBe(`${resourceOrigin}/resource`);
+        const credential = new Headers(init?.headers).get('x-aep-api-key');
+        receivedCredentials.push(credential);
+        if (credential !== null) return Promise.resolve(new Response('available'));
+        return Promise.resolve(
+          new Response(null, {
+            status: 401,
+            headers: {
+              'WWW-Authenticate': `AEP service_did="${serviceDid}", inspect="${inspectOrigin}/.well-known/aep"`,
+            },
+          }),
+        );
+      });
+      const probe = createAepAwareInspectProbe({
+        authStorage,
+        context: context(),
+        fetch,
+        inflow: inflow(),
+        timeout: 30,
+      });
+      const events: unknown[] = [];
+
+      await runPipeline(
+        { probe, probeOptions: { method: 'GET', headers: {} }, url: `${resourceOrigin}/resource` },
+        (event) => events.push(event),
+      );
+
+      if (accepted) {
+        expect(events).toEqual([expect.objectContaining({ type: 'no-payment' })]);
+        expect(receivedCredentials).toEqual([null, 'stored-api-key']);
+      } else {
+        expect(events).toEqual([
+          expect.objectContaining({ type: 'errored', message: 'AEP challenge Inspect URI changed origin.' }),
+        ]);
+        expect(receivedCredentials).toEqual([null]);
+        expect(inspectedOrigins).toEqual([resourceOrigin]);
+        expect(readState).not.toHaveBeenCalled();
+      }
+    });
+  });
+
   it('passes through ordinary seller responses without AEP state', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       const url = requestUrl(input);
