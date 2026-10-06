@@ -562,6 +562,9 @@ export function createAepAwareInspectProbe(
     if (probe.classification !== 'aep-challenge' || probe.challenge === undefined) {
       return responseToSellerResult(probe.response);
     }
+    if (probe.challenge.inspect.origin !== new URL(url).origin) {
+      throw new Error('AEP challenge Inspect URI changed origin.');
+    }
     const inspected = await inspectService({
       fetch: aepFetch,
       ...(publicDocumentCache === undefined ? {} : { publicDocumentCache }),
