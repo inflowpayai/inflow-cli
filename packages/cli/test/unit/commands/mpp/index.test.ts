@@ -92,19 +92,20 @@ describe('createdFrameFromEvent', () => {
     expect(frame['state']).toBe('pending');
     expect(frame['approval_id']).toBe('ap-1');
     const next = frame['_next'] as { command: string; tool: string; input: Record<string, unknown> };
-    expect(next.command).toContain('mpp fetch tx-1 https://seller/api');
+    expect(next.command).toBeUndefined();
+    expect(next).toHaveProperty('requires_original_request_options', true);
     expect(next.tool).toBe('mpp_fetch');
     expect(next.input).toMatchObject({
       transactionId: 'tx-1',
       resourceUrl: 'https://seller/api',
       method: 'POST',
-      header: ['X-Test: yes'],
-      data: '{"hello":true}',
       interval: 5,
-      maxAttempts: 60,
+      maxAttempts: 0,
       timeout: 900,
       showBody: true,
     });
+    expect(next.input).not.toHaveProperty('header');
+    expect(next.input).not.toHaveProperty('data');
     expect(frame['instruction']).toContain('Present the approval_url');
   });
 

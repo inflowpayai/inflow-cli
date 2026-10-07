@@ -9,6 +9,7 @@ import {
 } from '@aep-foundation/agent';
 import type { InspectServiceResult } from '@aep-foundation/agent';
 import type * as InflowCore from '@inflowpayai/inflow-core';
+import { enrollOptions, grantOptions, serviceReferenceArgs } from '../../../../src/commands/aep/schema.js';
 
 const platformRecovery = vi.hoisted<{
   identity: unknown;
@@ -17,6 +18,7 @@ const platformRecovery = vi.hoisted<{
   notRecognized: boolean;
   provisioned: boolean;
   statusErrorCode: string | undefined;
+  approvalsCreated: number;
 }>(() => ({
   identity: undefined,
   identityNotFoundOnSign: false,
@@ -24,6 +26,7 @@ const platformRecovery = vi.hoisted<{
   notRecognized: false,
   provisioned: false,
   statusErrorCode: undefined,
+  approvalsCreated: 0,
 }));
 
 const fetchScenario = vi.hoisted(() => ({
@@ -135,6 +138,7 @@ vi.mock('@aep-foundation/agent', () => {
       };
     }
     if (context.platformContext?.['claims'] !== undefined || context.platformContext?.['grant_type'] !== undefined) {
+      platformRecovery.approvalsCreated += 1;
       return { platformContext: { approval_id: 'approval-1' }, retryAfterSeconds: 1, status: 'pending' as const };
     }
     return {
@@ -234,6 +238,7 @@ afterEach(() => {
   platformRecovery.notRecognized = false;
   platformRecovery.provisioned = false;
   platformRecovery.statusErrorCode = undefined;
+  platformRecovery.approvalsCreated = 0;
   probeScenario.classification = 'success';
   probeScenario.calls = 0;
   probeScenario.status = 204;
@@ -1290,6 +1295,15 @@ describe('aep commands', () => {
 
     await expect(__testing.runEnroll(context({ maxAttempts: 0, timeout: 900 }), inflow(), storage)).resolves.toEqual({
       _next: {
+        command: 'aep enroll service.example --approval-id approval-1 --interval 1 --max-attempts 0 --timeout 900',
+        tool: 'aep_enroll',
+        input: {
+          serviceReference: 'service.example',
+          approvalId: 'approval-1',
+          interval: 1,
+          maxAttempts: 0,
+          timeout: 900,
+        },
         poll_interval_seconds: 1,
         until: 'enrollment completes',
       },
@@ -1318,13 +1332,20 @@ describe('aep commands', () => {
     });
     await persisted.identities().saveIdentity(identity);
 
+    const pending = await __testing.runEnroll(context({ maxAttempts: 1, timeout: 1 }), inflow(), storage);
+    const next = pending['_next'] as { tool: string; input: Record<string, unknown> };
+    expect(next.tool).toBe('aep_enroll');
     await expect(
       __testing.runEnroll(
-        context({ approvalId: 'approval-1', interval: 1, maxAttempts: 1, timeout: 1 }),
+        {
+          ...context(enrollOptions.parse(next.input)),
+          args: serviceReferenceArgs.parse(next.input),
+        },
         inflow(),
         storage,
       ),
     ).resolves.toEqual({ status: 'active' });
+    expect(platformRecovery.approvalsCreated).toBe(1);
   });
 
   it('returns an agentic pending approval frame for Grant without polling inline', async () => {
@@ -1340,6 +1361,17 @@ describe('aep commands', () => {
 
     await expect(__testing.runGrant(context({ scope: ['read'], timeout: 900 }), inflow(), storage)).resolves.toEqual({
       _next: {
+        command:
+          'aep grant service.example --approval-id approval-1 --grant-type oauth-bearer --interval 1 --timeout 900 --scope read',
+        tool: 'aep_grant',
+        input: {
+          serviceReference: 'service.example',
+          approvalId: 'approval-1',
+          grantType: 'oauth-bearer',
+          scope: ['read'],
+          interval: 1,
+          timeout: 900,
+        },
         poll_interval_seconds: 1,
         until: 'credential grant completes',
       },
@@ -1368,15 +1400,16 @@ describe('aep commands', () => {
     });
     await persisted.identities().saveIdentity(identity);
 
+    const pending = await __testing.runGrant(context({ scope: ['read', 'read'], timeout: 1 }), inflow(), storage);
+    const next = pending['_next'] as { tool: string; input: Record<string, unknown> };
+    expect(next.tool).toBe('aep_grant');
+    expect(next.input['scope']).toEqual(['read']);
     await expect(
       __testing.runGrant(
-        context({
-          approvalId: 'approval-1',
-          grantType: 'oauth-bearer',
-          interval: 1,
-          scope: ['read'],
-          timeout: 1,
-        }),
+        {
+          ...context(grantOptions.parse(next.input)),
+          args: serviceReferenceArgs.parse(next.input),
+        },
         inflow(),
         storage,
       ),
@@ -1388,6 +1421,7 @@ describe('aep commands', () => {
       service_did: 'did:web:service.example',
       scopes: ['read'],
     });
+    expect(platformRecovery.approvalsCreated).toBe(1);
   });
 
   it('rehydrates a missing local identity from the Platform before checking Status', async () => {

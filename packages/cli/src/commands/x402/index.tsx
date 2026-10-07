@@ -25,7 +25,7 @@ import { useMemo } from 'react';
 import { assertSessionGuard } from '../../utils/assert-session.js';
 import { authenticatedApiError } from '../../utils/api-error.js';
 import { mcpTool } from '../../mcp-metadata.js';
-import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
+import { buildPaymentFetchContinuation } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import {
   type AepApprovalDisplay,
@@ -351,7 +351,6 @@ function noPaymentFrameFromResult(result: PayResultNoPayment): Record<string, un
 }
 
 function initialPayFrame(event: Extract<PayEvent, { type: 'prepared' }>, c: PayContext): Record<string, unknown> {
-  const max = c.options.maxAttempts > 0 ? c.options.maxAttempts : 60;
   const frame: Record<string, unknown> = {
     transaction_id: event.prepared.transactionId,
     approval_id: event.prepared.approvalId,
@@ -364,33 +363,13 @@ function initialPayFrame(event: Extract<PayEvent, { type: 'prepared' }>, c: PayC
   if (event.requirement.amount !== '') frame['amount'] = event.requirement.amount;
   if (event.requirement.asset !== '') frame['asset'] = event.requirement.asset;
   if (c.options.interval <= 0) {
-    frame['_next'] = {
-      command: buildPaymentFetchNextCommand({
-        protocol: 'x402',
-        transactionId: event.prepared.transactionId,
-        resourceUrl: c.args.url,
-        method: c.options.method,
-        interval: 5,
-        maxAttempts: max,
-        showBody: c.options.showBody,
-        ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
-      }),
-      tool: 'x402_fetch',
-      input: {
-        transactionId: event.prepared.transactionId,
-        resourceUrl: c.args.url,
-        method: c.options.method,
-        header: c.options.header,
-        ...(c.options.data !== undefined ? { data: c.options.data } : {}),
-        interval: 5,
-        maxAttempts: max,
-        timeout: c.options.timeout,
-        showBody: c.options.showBody,
-        ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
-      },
-      poll_interval_seconds: 5,
-      until: 'resource fetch completes',
-    };
+    frame['_next'] = buildPaymentFetchContinuation({
+      protocol: 'x402',
+      transactionId: event.prepared.transactionId,
+      resourceUrl: c.args.url,
+      ...c.options,
+      interval: 5,
+    });
   }
   return frame;
 }

@@ -742,23 +742,38 @@ then calls `x402 fetch` to wait for the signed payload and fetch the seller reso
   "network": "inflow:1",
   "instruction": "Present the approval_url to the user ...",
   "_next": {
-    "command": "x402 fetch txn_... https://seller.example.com/api/widgets --interval 5 --max-attempts 60",
+    "command": "x402 fetch txn_... https://seller.example.com/api/widgets --interval 5 --max-attempts 0 --timeout 900",
     "tool": "x402_fetch",
     "input": {
       "transactionId": "txn_...",
       "resourceUrl": "https://seller.example.com/api/widgets",
       "method": "GET",
-      "header": [],
       "interval": 5,
-      "maxAttempts": 60,
+      "maxAttempts": 0,
       "timeout": 900,
       "showBody": true,
     },
+    "requires_original_request_options": false,
+    "message": "Restore the original data and header arguments before calling Fetch if required. Resume this transaction; do not start another payment.",
     "poll_interval_seconds": 5,
     "until": "resource fetch completes",
   },
 }
 ```
+
+`_next.tool` names a tool on the InFlow MCP server, not a tool supplied by another agent. `_next.input` contains the
+values for that call; `tools/list` supplies the tool's input schema. For shell use, prefix `_next.command` with
+`inflow`. Both forms resume the existing transaction. They wait for approval; they do not approve on the user's behalf.
+
+When the original request includes `data` or custom `header` arguments, `_next` omits `command`, sets
+`requires_original_request_options: true`, and excludes those arguments from `input`. Restore their original values
+before calling Fetch. Do not put credentials or private request bodies into chat. Polling limits, `timeout`, `showBody`,
+and an optional `outputFile` are preserved; `maxAttempts: 0` means unlimited attempts within the timeout.
+
+Deferred `aep enroll` and `aep grant` responses also provide `_next.command`, `_next.tool`, and `_next.input`. These
+resume with the same `approvalId` and Service reference. Grant retains the selected grant type and requested scopes.
+Show the approval URL to the user, then resume. When a command is already polling inline, keep that call running instead
+of starting a second call. A terminal failure is not permission to start another payment or approval.
 
 #### Agent example — with `--interval` (inline poll)
 
