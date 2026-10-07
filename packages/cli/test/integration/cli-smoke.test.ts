@@ -189,6 +189,45 @@ function closeServer(server: Server): Promise<void> {
 }
 
 describe('cli smoke', () => {
+  it('AEP fetch sends JSON data without an explicit content-type header', async () => {
+    const body = '{ "query": "OpenAI official documentation", "num_results": 1 }\n';
+    const received: Array<{ body: string; contentType: string | undefined }> = [];
+    await withSeller(
+      (request, response) => {
+        if (request.url !== '/paywalled') {
+          response.writeHead(404);
+          response.end();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        request.on('data', (chunk: Buffer) => chunks.push(chunk));
+        request.on('end', () => {
+          received.push({ body: Buffer.concat(chunks).toString('utf8'), contentType: request.headers['content-type'] });
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end('{"ok":true}');
+        });
+      },
+      async (url) => {
+        const result = await run([
+          'aep',
+          'fetch',
+          url,
+          '--method',
+          'POST',
+          '--data',
+          body,
+          '--format',
+          'json',
+          '--api-key',
+          'local-fixture-key',
+        ]);
+        expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+        expect(result.stdout).toContain('not-required');
+        expect(received).toEqual([{ body, contentType: 'application/json' }]);
+      },
+    );
+  });
+
   it('the build produces an executable dist/cli.js', () => {
     expect(existsSync(cliBin)).toBe(true);
   });

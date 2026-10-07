@@ -166,7 +166,7 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
   return Object.keys(headers).some((key) => key.toLowerCase() === lower);
 }
 
-function requestHeaders(headers: Record<string, string>, body: string | undefined): Record<string, string> {
+export function requestHeaders(headers: Record<string, string>, body: string | undefined): Record<string, string> {
   if (body === undefined || hasHeader(headers, 'Content-Type')) return headers;
   return { ...headers, 'Content-Type': 'application/json' };
 }

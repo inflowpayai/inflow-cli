@@ -67,6 +67,7 @@ import {
   cancelApproval,
   remainingApprovalDelay,
 } from './approval-polling.js';
+import { requestHeaders } from './runtime.js';
 import {
   EnrollView,
   FetchView,
@@ -624,7 +625,7 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
     });
   let headers: Record<string, string>;
   try {
-    headers = parseHeaderFlags(options.header);
+    headers = requestHeaders(parseHeaderFlags(options.header), options.data);
   } catch (error) {
     return c.error({
       code: 'INVALID_HEADER',

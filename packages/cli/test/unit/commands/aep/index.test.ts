@@ -644,6 +644,70 @@ describe('aep commands', () => {
     });
   });
 
+  it.each([
+    { name: 'JSON body', data: '{ "query": "café" }\n', header: [], expected: { 'Content-Type': 'application/json' } },
+    { name: 'empty body', data: '', header: [], expected: { 'Content-Type': 'application/json' } },
+    { name: 'absent body', data: undefined, header: ['X-Test: one'], expected: { 'X-Test': 'one' } },
+    {
+      name: 'lowercase override',
+      data: 'plain text',
+      header: ['content-type: text/plain'],
+      expected: { 'content-type': 'text/plain' },
+    },
+    {
+      name: 'mixed-case override',
+      data: 'a=b',
+      header: ['cOnTeNt-TyPe: application/x-www-form-urlencoded'],
+      expected: { 'cOnTeNt-TyPe': 'application/x-www-form-urlencoded' },
+    },
+  ])('normalizes standalone fetch headers for $name without changing the body', async ({ data, header, expected }) => {
+    const fetchCall = vi.fn(fetchScenario.run);
+    fetchScenario.run = fetchCall;
+    await __testing.runFetch(
+      {
+        ...context({
+          data,
+          header,
+          maxRedirects: 5,
+          maxResponseBytes: 1024,
+          method: 'POST',
+          showBody: true,
+          timeout: 30,
+        }),
+        args: { resourceUrl: 'https://service.example/resource' },
+      },
+      inflow(),
+      new MemoryStorage(),
+    );
+    expect(fetchCall).toHaveBeenCalledWith(expect.objectContaining({ headers: expected }));
+    if (data === undefined) expect(fetchCall.mock.calls[0]?.[0]).not.toHaveProperty('body');
+    else expect(fetchCall).toHaveBeenCalledWith(expect.objectContaining({ body: data }));
+  });
+
+  it('rejects an explicit empty content type without replacing it or dispatching', async () => {
+    const fetchCall = vi.fn(fetchScenario.run);
+    fetchScenario.run = fetchCall;
+    await expect(
+      __testing.runFetch(
+        {
+          ...context({
+            data: '{}',
+            header: ['Content-Type:'],
+            maxRedirects: 5,
+            maxResponseBytes: 1024,
+            method: 'POST',
+            showBody: true,
+            timeout: 30,
+          }),
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        new MemoryStorage(),
+      ),
+    ).rejects.toThrow('INVALID_HEADER');
+    expect(fetchCall).not.toHaveBeenCalled();
+  });
+
   it('supplies InFlow Grant context through the generic Agent provider', async () => {
     fetchScenario.run = async (rawInput: unknown) => {
       const input = rawInput as {

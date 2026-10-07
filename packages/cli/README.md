@@ -536,6 +536,9 @@ The `resolved` object includes URLs only for commands listed in the Service's `c
 inflow aep fetch https://service.example/private --format json
 ```
 
+`--data` defaults to `Content-Type: application/json`. An explicit `--header` overrides the content type regardless of
+header-name casing. The body is sent unchanged; use an explicit content type for non-JSON data.
+
 Fetch preserves the original method, headers, replayable body, redirect and response bounds, and output controls. When
 authenticated AEP access reaches a legitimate payment `402`, the command exits successfully with
 `payment_required.protocols` and copyable `payment_required.commands` so callers can continue with `mpp pay` or

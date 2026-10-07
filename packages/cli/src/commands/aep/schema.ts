@@ -12,7 +12,10 @@ export const fetchOptions = z.object({
   credentialId: z.string().optional().describe('Use this stored credential identifier.'),
   grantType: z.string().optional().describe('Use or request this advertised session credential type.'),
   method: z.string().default('GET').describe('HTTP method for the resource request.'),
-  data: z.string().optional().describe('Replayable JSON or text request body.'),
+  data: z
+    .string()
+    .optional()
+    .describe('Replayable request body. Defaults to application/json unless --header overrides Content-Type.'),
   header: z.array(z.string()).default([]).describe('Repeatable request header in "Name: Value" format.'),
   interval: z.coerce.number().optional().describe('Approval polling cadence in seconds.'),
   timeout: z.coerce.number().default(900).describe('Total request and approval deadline in seconds.'),
