@@ -85,17 +85,17 @@ importers:
         specifier: ^0.5.0
         version: 0.5.0
       '@inflowpayai/mpp':
-        specifier: ^0.10.1
-        version: 0.10.1(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.11.0
+        version: 0.11.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/mpp-buyer':
-        specifier: ^0.7.3
-        version: 0.7.3(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.8.0
+        version: 0.8.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/x402':
-        specifier: ^0.10.0
-        version: 0.10.0(@x402/core@2.27.0)
+        specifier: ^0.11.0
+        version: 0.11.0(@x402/core@2.27.0)
       '@inflowpayai/x402-buyer':
-        specifier: ^0.10.0
-        version: 0.10.0(@x402/core@2.27.0)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))
+        specifier: ^0.11.0
+        version: 0.11.0(@x402/core@2.27.0)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))
       '@modelcontextprotocol/server':
         specifier: 2.0.0-alpha.4
         version: 2.0.0-alpha.4
@@ -156,17 +156,17 @@ importers:
         specifier: ^0.5.0
         version: 0.5.0
       '@inflowpayai/mpp':
-        specifier: ^0.10.1
-        version: 0.10.1(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.11.0
+        version: 0.11.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/mpp-buyer':
-        specifier: ^0.7.3
-        version: 0.7.3(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.8.0
+        version: 0.8.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
       '@inflowpayai/x402':
-        specifier: ^0.10.0
-        version: 0.10.0(@x402/core@2.27.0)
+        specifier: ^0.11.0
+        version: 0.11.0(@x402/core@2.27.0)
       '@inflowpayai/x402-buyer':
-        specifier: ^0.10.0
-        version: 0.10.0(@x402/core@2.27.0)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))
+        specifier: ^0.11.0
+        version: 0.11.0(@x402/core@2.27.0)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))
       '@offering-protocol/agent':
         specifier: ^0.4.5
         version: 0.4.5(@types/json-schema@7.0.15)
@@ -846,8 +846,8 @@ packages:
   '@hyperjump/uri@1.3.6':
     resolution: {integrity: sha512-9a2/wOIp666Veq1a8QctYPRtyFHH0p1yw8Nt/DEf06M+eDpwBpeuc2rGqqjBthENTOy1NyJ/xhSiDtkjU5LfKA==}
 
-  '@inflowpayai/mpp-buyer@0.7.3':
-    resolution: {integrity: sha512-esPkB+n3ajR/12JVz/hKuiX4UQBvcfF+JcpYu7mtlan5jBysr5OuzNWhKNP8yAbMik09CbPVTzIiUUca4tq11A==}
+  '@inflowpayai/mpp-buyer@0.8.0':
+    resolution: {integrity: sha512-vTuCciu7s97sVqYY9JcROCmlHL+P3sxwYfDlRAHQ7C+Lm8i6YOcBU/y0kOaxQMbFYUXgCWNcp9OV4QhsqvoO1Q==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': '>=1.25.0'
@@ -856,14 +856,14 @@ packages:
       '@modelcontextprotocol/sdk':
         optional: true
 
-  '@inflowpayai/mpp@0.10.1':
-    resolution: {integrity: sha512-q9/QBDPwcvNrfaQgFmrWZLJV9TZCk2GkEaB6NMs8fzvMIT25dWwpOxwfGEdhwvnJv1RU/U1ZcB7Ux8ZBl4Tekw==}
+  '@inflowpayai/mpp@0.11.0':
+    resolution: {integrity: sha512-frbKPkf88f3x22ST7aRvw6yLICQfjZlDVsM2cjKuN4KO/6kU8ZXCvX9qJTtuAP5lbdtksGyNNp+KIuy+85IgrA==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       mppx: ^0.8.17
 
-  '@inflowpayai/x402-buyer@0.10.0':
-    resolution: {integrity: sha512-Xm438pm9vw4DVgXoPvxxfq9c/ZYAp538VGDjkp96L4VyiYUB00ET0/opUSX3ul03vPaNnuSmW4MX1tSNzH9ZgA==}
+  '@inflowpayai/x402-buyer@0.11.0':
+    resolution: {integrity: sha512-Gd+KWZpsEuiwww+ZHvnBx03475+0/AA5L4iYgymDTvSC3sren/uc0L2EFUb1OHDcDkaxs+FkeYar1+OAEz77Fg==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@x402/core': ^2.27.0
@@ -875,8 +875,8 @@ packages:
       viem:
         optional: true
 
-  '@inflowpayai/x402@0.10.0':
-    resolution: {integrity: sha512-h4dVf/9hirKKDgUDkJfYwRHZsYdXs0QD+eTZGpWkFz4wF1xakvCGyssrJUwx22CmsvLqH6D6fLL3/5+sQwXPQA==}
+  '@inflowpayai/x402@0.11.0':
+    resolution: {integrity: sha512-1Tklngb1kxoD9gaUARCbf/tN770Igf389NRBeKDWf1nobxuaEpgDDmJFNCvvxMEitgD6bXTxNiXditF9XcNarg==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@x402/core': ^2.27.0
@@ -3708,24 +3708,24 @@ snapshots:
 
   '@hyperjump/uri@1.3.6': {}
 
-  '@inflowpayai/mpp-buyer@0.7.3(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))':
+  '@inflowpayai/mpp-buyer@0.8.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))':
     dependencies:
-      '@inflowpayai/mpp': 0.10.1(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
+      '@inflowpayai/mpp': 0.11.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))
       mppx: 0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))
 
-  '@inflowpayai/mpp@0.10.1(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))':
+  '@inflowpayai/mpp@0.11.0(mppx@0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3)))':
     dependencies:
       mppx: 0.8.19(typescript@5.9.3)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))
 
-  '@inflowpayai/x402-buyer@0.10.0(@x402/core@2.27.0)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))':
+  '@inflowpayai/x402-buyer@0.11.0(@x402/core@2.27.0)(viem@2.56.8(typescript@5.9.3)(zod@4.4.3))':
     dependencies:
-      '@inflowpayai/x402': 0.10.0(@x402/core@2.27.0)
+      '@inflowpayai/x402': 0.11.0(@x402/core@2.27.0)
       '@x402/core': 2.27.0
       bs58: 6.0.0
     optionalDependencies:
       viem: 2.56.8(typescript@5.9.3)(zod@4.4.3)
 
-  '@inflowpayai/x402@0.10.0(@x402/core@2.27.0)':
+  '@inflowpayai/x402@0.11.0(@x402/core@2.27.0)':
     dependencies:
       '@x402/core': 2.27.0
 
