@@ -158,7 +158,7 @@ describe('runCombinedInspectPipeline', () => {
       data: '{"query":"gpu"}',
       headers: {
         Accept: 'application/json',
-        'Accept-Payment': 'inflow/charge, inflow/subscription, tempo/charge',
+        'Accept-Payment': 'inflow/charge, inflow/subscription, tempo/charge, card/charge',
       },
       method: 'POST',
     });

@@ -748,6 +748,292 @@ describe('cli smoke', () => {
     },
   );
 
+  it.each(['ready', 'pending', 'missing-merchant', 'failed'] as const)(
+    'runs the built CLI CARD flow: %s',
+    async (state) => {
+      const instrumentId = '11111111-1111-4111-8111-111111111111';
+      const challenge = {
+        id: 'vic-card',
+        method: 'card',
+        intent: 'charge',
+        realm: 'seller.test',
+        request: encode({
+          amount: '100',
+          currency: 'usd',
+          recipient: 'acct_test',
+          methodDetails: {
+            acceptedNetworks: ['visa'],
+            merchantName: 'Advertised Store',
+            encryptionJwk: { kty: 'RSA', alg: 'RSA-OAEP-256', use: 'enc', kid: 'test', n: 'AQAB', e: 'AQAB' },
+          },
+        }),
+      };
+      const credential = encode({
+        challenge,
+        payload: {
+          encryptedPayload: 'encrypted-purchase-secret',
+          network: 'visa',
+          panLastFour: '4242',
+          panExpirationMonth: '12',
+          panExpirationYear: '2099',
+        },
+      });
+      const submissions: unknown[] = [];
+      let replays = 0;
+      let polls = 0;
+      await withSeller(
+        (req, res) => {
+          const json = (value: unknown) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(value));
+          };
+          if (req.url === '/v1/transactions/mpp') {
+            let body = '';
+            req.on('data', (chunk: Buffer) => {
+              body += chunk.toString();
+            });
+            req.on('end', () => {
+              submissions.push(JSON.parse(body));
+              json(
+                state === 'failed'
+                  ? {
+                      state: 'failed',
+                      transactionId: 'vic-tx',
+                      problem: {
+                        type: 'about:blank',
+                        status: 503,
+                        title: 'Unavailable',
+                        detail:
+                          'The CARD credential issuance outcome is unknown. Do not start another payment; contact InFlow support with this transaction ID.',
+                      },
+                    }
+                  : state === 'pending'
+                    ? { state: 'pending', transactionId: 'vic-tx', approvalId: 'vic-approval' }
+                    : { state: 'ready', transactionId: 'vic-tx', credential },
+              );
+            });
+            return;
+          }
+          if (req.url === '/v1/transactions/vic-tx/mpp') {
+            polls += 1;
+            json({ state: 'ready', transactionId: 'vic-tx', credential });
+            return;
+          }
+          if (req.headers.authorization === `Payment ${credential}`) {
+            replays += 1;
+            json({ answer: 'paid content' });
+            return;
+          }
+          res.writeHead(402, { 'WWW-Authenticate': renderChallengeHeader(challenge) });
+          res.end();
+        },
+        async (url) => {
+          const env = { INFLOW_API_KEY: 'test-api-key', INFLOW_BASE_URL: new URL(url).origin };
+          const flags =
+            state === 'missing-merchant'
+              ? []
+              : [
+                  '--merchant-name',
+                  'Legal Store',
+                  '--merchant-url',
+                  'https://merchant.test',
+                  '--merchant-country',
+                  'US',
+                  '--instrument-id',
+                  instrumentId,
+                ];
+          const result = await run(['mpp', 'pay', url, '--payment-method', 'card', '--format', 'json', ...flags], env);
+          expect(result.exitCode, result.stderr).toBe(state === 'failed' || state === 'missing-merchant' ? 1 : 0);
+          expect(result.stdout).not.toContain(credential);
+          expect(result.stdout + result.stderr).not.toContain('encrypted-purchase-secret');
+          if (state === 'missing-merchant') {
+            expect(result.stdout + result.stderr).toContain('CARD_MERCHANT_REQUIRED');
+            expect(result.stdout + result.stderr).toContain('--merchant-url');
+            expect(result.stdout + result.stderr).toContain('--merchant-country');
+            expect(submissions).toEqual([]);
+          } else {
+            expect(submissions).toEqual([
+              {
+                challenge,
+                options: {
+                  instrumentId,
+                  merchant: { name: 'Legal Store', url: 'https://merchant.test', countryCode: 'US' },
+                },
+              },
+            ]);
+          }
+          if (state === 'pending') {
+            expect(result.stdout).toContain('vic-approval');
+            expect(replays).toBe(0);
+            const fetched = await run(['mpp', 'fetch', 'vic-tx', url, '--format', 'json'], env);
+            expect(fetched.exitCode, fetched.stderr).toBe(0);
+            expect(fetched.stdout).toContain('paid content');
+            expect(fetched.stdout + fetched.stderr).not.toContain(credential);
+            expect(polls).toBe(1);
+            expect(submissions).toHaveLength(1);
+          }
+          if (state === 'ready') {
+            expect(result.stdout).toContain('<redacted>');
+            expect(result.stdout).toContain('paid content');
+          }
+          if (state === 'failed') {
+            expect(result.stdout + result.stderr).toContain('Do not start another payment');
+            expect(result.stdout + result.stderr).toContain('Transaction vic-tx:');
+          }
+          expect(replays).toBe(state === 'ready' || state === 'pending' ? 1 : 0);
+        },
+      );
+    },
+  );
+
+  it.each(['mpp', 'x402'])('%s pay forwards an explicit linked card to the platform', async (protocol) => {
+    const instrumentId = '11111111-1111-4111-8111-111111111111';
+    const submissions: unknown[] = [];
+    await withSeller(
+      (req, res) => {
+        if (req.url === '/v1/transactions/x402-supported') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ kinds: [{ scheme: 'instrument', network: 'inflow:1', x402Version: 2 }] }));
+          return;
+        }
+        if (req.url === `/v1/transactions/${protocol}`) {
+          let body = '';
+          req.on('data', (chunk: Buffer) => {
+            body += chunk.toString();
+          });
+          req.on('end', () => {
+            submissions.push(JSON.parse(body));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                state: 'pending',
+                transactionId: 'transaction',
+                approvalId: 'approval',
+                approvalStatus: 'PENDING',
+              }),
+            );
+          });
+          return;
+        }
+        const headers =
+          protocol === 'mpp'
+            ? {
+                'WWW-Authenticate': renderChallengeHeader({
+                  id: 'card',
+                  realm: 'seller.test',
+                  method: 'inflow',
+                  intent: 'charge',
+                  request: encode({ amount: '1', currency: 'USD', methodDetails: { rail: 'instrument' } }),
+                }),
+              }
+            : {
+                'PAYMENT-REQUIRED': encodePaymentRequiredHeader({
+                  x402Version: 2,
+                  resource: { url: `http://${req.headers.host ?? 'localhost'}/api` },
+                  accepts: [
+                    {
+                      scheme: 'instrument',
+                      network: 'inflow:1',
+                      asset: 'USD',
+                      amount: '1000000000000000000',
+                      payTo: '33333333-3333-4333-8333-333333333333',
+                      maxTimeoutSeconds: 300,
+                      extra: {},
+                    },
+                  ],
+                }),
+              };
+        res.writeHead(402, headers);
+        res.end();
+      },
+      async (url) => {
+        const result = await run(
+          [protocol, 'pay', url, '--instrument-id', instrumentId, '--format', 'json', '--interval', '0'],
+          { INFLOW_API_KEY: 'test-api-key', INFLOW_BASE_URL: new URL(url).origin },
+        );
+        expect(result.exitCode, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(submissions).toHaveLength(1);
+        expect(submissions[0]).toMatchObject(protocol === 'mpp' ? { options: { instrumentId } } : { instrumentId });
+        expect(result.stdout).toContain('transaction');
+      },
+    );
+  });
+
+  it.each(['mpp', 'x402'])('%s fetch returns bank verification without starting another purchase', async (protocol) => {
+    const transactionId = '11111111-1111-4111-8111-111111111111';
+    const challenge = {
+      id: 'card',
+      method: 'inflow',
+      intent: 'charge',
+      realm: 'seller.test',
+      request: encode({ amount: '1', currency: 'USD', methodDetails: { rail: 'instrument' } }),
+    };
+    const credential = encode({ challenge, payload: { transactionId }, source: 'did:web:buyer.test' });
+    const paymentPayload = {
+      x402Version: 2,
+      accepted: {
+        scheme: 'instrument',
+        network: 'inflow:1',
+        asset: 'USD',
+        amount: '1000000000000000000',
+        payTo: transactionId,
+        maxTimeoutSeconds: 300,
+        extra: {},
+      },
+      payload: { transactionId },
+    };
+    let purchases = 0;
+    let replays = 0;
+    let probes = 0;
+    await withSeller(
+      (req, res) => {
+        const origin = `http://${req.headers.host ?? 'localhost'}`;
+        let body: unknown;
+        if (req.url === `/v1/transactions/${transactionId}/${protocol}`) {
+          body =
+            protocol === 'mpp'
+              ? { state: 'ready', transactionId, credential }
+              : { status: 'PENDING', encodedPayload: encode(paymentPayload), paymentPayload };
+        } else if (req.url === `/v1/transactions/${transactionId}`) {
+          body = {
+            transactionId,
+            status: 'PENDING',
+            nextAction: { type: 'authenticate_card', url: `${origin}/transactions/${transactionId}/verify/` },
+          };
+        } else if (req.url === '/v1/transactions/x402-supported') {
+          body = { kinds: [{ scheme: 'instrument', network: 'inflow:1', x402Version: 2 }] };
+        } else if (req.url === `/v1/transactions/${protocol}`) {
+          purchases++;
+        } else if (req.url === '/paywalled') {
+          if (req.headers[protocol === 'mpp' ? 'authorization' : 'payment-signature'] !== undefined) replays++;
+          else probes++;
+          res.writeHead(402);
+          res.end('verification required');
+          return;
+        } else {
+          res.writeHead(404);
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(body));
+      },
+      async (url) => {
+        const result = await run([protocol, 'fetch', transactionId, url, '--format', 'json', '--interval', '0'], {
+          INFLOW_API_KEY: 'test-key',
+          INFLOW_BASE_URL: new URL(url).origin,
+        });
+        expect(result.exitCode, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(result.stdout).toContain('verification-required');
+        expect(result.stdout).toContain('verification_url');
+        expect(result.stdout).not.toContain('encoded_payload');
+        expect(purchases).toBe(0);
+        expect(replays).toBe(1);
+        expect(probes).toBe(1);
+      },
+    );
+  });
+
   it('mpp pay --format json propagates a delegated generator NO_FILTERED_MATCH error', async () => {
     const header = renderChallengeHeader({
       id: 'chal-1',

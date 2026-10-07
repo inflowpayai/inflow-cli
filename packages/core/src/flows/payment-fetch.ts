@@ -1,6 +1,9 @@
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { buildBodyAttachment, type BodyAttachment } from './x402-pay.js';
 import { isSuccessStatus } from './x402-shared.js';
+import type { PaymentStatusResponse } from '@inflowpayai/mpp';
+import { pollAsync } from '../utils/async-poll.js';
+import { dashboardHostFor } from '../x402/dashboard-url.js';
 
 export const PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE = 'PAYMENT_REPLAY_OUTCOME_UNKNOWN';
 export const PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE =
@@ -60,6 +63,27 @@ export interface PaymentReplayResult extends BodyAttachment {
   headers: Headers;
 }
 
+export interface CardVerification {
+  transactionId: string;
+  verificationUrl: string;
+  url: string;
+  method: string;
+  waiting: boolean;
+  reason: 'action-required' | 'timeout' | 'stopped';
+}
+
+export type CardVerificationEvent =
+  { type: 'verification-required'; verification: CardVerification } | { type: 'verification-completed' };
+
+export interface CardVerificationOptions {
+  apiBaseUrl: string;
+  getStatus: () => Promise<PaymentStatusResponse>;
+  interval: number;
+  maxAttempts: number;
+  timeout: number;
+  signal?: AbortSignal;
+}
+
 export interface SellerRequestInput {
   url: string;
   method: string;
@@ -101,8 +125,7 @@ export async function sellerRequest(
   return (transport ?? defaultSellerRequestTransport).request(input);
 }
 
-export async function replayPaymentRequest(input: PaymentReplayInput): Promise<PaymentReplayResult> {
-  let result: SellerProbeResult;
+async function requestPaymentReplay(input: PaymentReplayInput): Promise<SellerProbeResult> {
   try {
     const options: SellerRequestInput = {
       additionalAuthenticationHeaders: {
@@ -114,11 +137,14 @@ export async function replayPaymentRequest(input: PaymentReplayInput): Promise<P
       ...(input.transactionId !== undefined ? { transactionId: input.transactionId } : {}),
       url: input.url,
     };
-    result = await sellerRequest(input.sellerTransport, options);
+    return await sellerRequest(input.sellerTransport, options);
   } catch (err) {
     if (err instanceof SellerAuthenticationError) throw err;
     throw new PaymentReplayOutcomeUnknownError(err);
   }
+}
+
+async function finishPaymentReplay(input: PaymentReplayInput, result: SellerProbeResult): Promise<PaymentReplayResult> {
   const attachment = await buildBodyAttachment(result.bytes, input.showBody, input.outputFile);
   return {
     status: result.status,
@@ -127,4 +153,120 @@ export async function replayPaymentRequest(input: PaymentReplayInput): Promise<P
     headers: result.headers,
     ...attachment,
   };
+}
+
+export async function replayPaymentRequest(input: PaymentReplayInput): Promise<PaymentReplayResult> {
+  return finishPaymentReplay(input, await requestPaymentReplay(input));
+}
+
+function verificationUrl(response: PaymentStatusResponse, transactionId: string, apiBaseUrl: string): string {
+  const action = response.nextAction;
+  let url: URL;
+  try {
+    url = new URL(action?.url ?? '');
+  } catch {
+    throw new SellerAuthenticationError(
+      'INVALID_CARD_VERIFICATION',
+      'The platform returned an invalid card verification URL.',
+    );
+  }
+  const base = new URL(apiBaseUrl);
+  const protocol =
+    base.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname) ? 'http:' : 'https:';
+  if (
+    action?.type !== 'authenticate_card' ||
+    url.protocol !== protocol ||
+    url.host !== dashboardHostFor(apiBaseUrl) ||
+    url.pathname !== `/transactions/${encodeURIComponent(transactionId)}/verify/` ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.search !== '' ||
+    url.hash !== ''
+  ) {
+    throw new SellerAuthenticationError(
+      'INVALID_CARD_VERIFICATION',
+      'The platform returned an invalid card verification URL.',
+    );
+  }
+  return url.href;
+}
+
+export async function* replayWithCardVerification(
+  input: PaymentReplayInput,
+  options?: CardVerificationOptions,
+): AsyncGenerator<CardVerificationEvent | { type: 'replay-response'; response: PaymentReplayResult }> {
+  if (options?.signal?.aborted) return;
+  let response = await requestPaymentReplay(input);
+  if (!isSuccessStatus(response.status) && options !== undefined && input.transactionId !== undefined) {
+    const transactionId = input.transactionId.toLowerCase();
+    const read = async (): Promise<PaymentStatusResponse> => {
+      options.signal?.throwIfAborted();
+      let status: PaymentStatusResponse;
+      try {
+        status = await options.getStatus();
+      } catch (cause) {
+        if (options.signal?.aborted) throw cause;
+        throw new SellerAuthenticationError(
+          'PAYMENT_STATUS_UNAVAILABLE',
+          'Unable to check the submitted card payment. Resume the original transaction; do not start another payment.',
+        );
+      }
+      options.signal?.throwIfAborted();
+      if (status.transactionId.toLowerCase() !== transactionId) {
+        throw new SellerAuthenticationError(
+          'INVALID_CARD_VERIFICATION',
+          'The platform returned a different payment transaction.',
+        );
+      }
+      return status;
+    };
+    const initial = await read();
+    if (initial.nextAction !== undefined && ['PENDING', 'PROCESSING'].includes(initial.status)) {
+      const verification: CardVerification = {
+        transactionId,
+        verificationUrl: verificationUrl(initial, transactionId, options.apiBaseUrl),
+        url: input.url,
+        method: input.method,
+        waiting: options.interval > 0,
+        reason: 'action-required',
+      };
+      yield { type: 'verification-required', verification };
+      if (!verification.waiting) return;
+      let first = true;
+      for await (const outcome of pollAsync({
+        fn: () => {
+          if (first) {
+            first = false;
+            return Promise.resolve(initial);
+          }
+          return read();
+        },
+        isTerminal: (value) => !['PENDING', 'PROCESSING'].includes(value.status),
+        interval: options.interval,
+        maxAttempts: options.maxAttempts,
+        timeout: options.timeout,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      })) {
+        options.signal?.throwIfAborted();
+        if (outcome.value.nextAction !== undefined) verificationUrl(outcome.value, transactionId, options.apiBaseUrl);
+        if (outcome.reason !== undefined) {
+          yield { type: 'verification-required', verification: { ...verification, waiting: false, reason: 'timeout' } };
+          return;
+        }
+        if (!outcome.terminal) continue;
+        if (outcome.value.status !== 'SETTLED') {
+          throw new SellerAuthenticationError(
+            'CARD_PAYMENT_FAILED',
+            `Card payment ${transactionId} ended with status ${outcome.value.status}. No replacement payment was started.`,
+          );
+        }
+        options.signal?.throwIfAborted();
+        yield { type: 'verification-completed' };
+        options.signal?.throwIfAborted();
+        response = await requestPaymentReplay(input);
+        break;
+      }
+    }
+  }
+  yield { type: 'replay-response', response: await finishPaymentReplay(input, response) };
 }

@@ -5,6 +5,13 @@ export const payArgs = z.object({
 });
 
 export const payOptions = z.object({
+  instrumentId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'Use this linked card (UUID) and only Instrument offers. When omitted, an Instrument payment uses your primary card.',
+    ),
   scheme: z
     .string()
     .optional()

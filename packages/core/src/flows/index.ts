@@ -356,7 +356,9 @@ export function augmentX402(x402Resource: IX402Resource, resolvedApiBaseUrl: str
   augmented.supported = async () => runX402Supported({ x402: x402Resource });
   augmented.pay = (input) =>
     wrapEmittingPipeline<PayEvent>(async (emit) => {
-      const client = await x402Resource.client();
+      const client = await x402Resource.client(
+        input.instrumentId === undefined ? undefined : { instrumentId: input.instrumentId },
+      );
       return runPayPipeline(
         {
           ...input,
@@ -380,7 +382,7 @@ export function augmentX402(x402Resource: IX402Resource, resolvedApiBaseUrl: str
   augmented.fetch = (input) => ({
     events: (async function* () {
       const client = await x402Resource.client();
-      yield* runX402Fetch({ ...input, client }).events;
+      yield* runX402Fetch({ ...input, client, apiBaseUrl: resolvedApiBaseUrl }).events;
     })(),
   });
   augmented.cancel = async (input) => runX402Cancel({ x402: x402Resource, approvalId: input.approvalId });
@@ -429,7 +431,7 @@ export function augmentMpp(
   augmented.fetch = (input) => ({
     events: (async function* () {
       const client = await mppResource.client();
-      yield* runMppFetch({ ...input, client }).events;
+      yield* runMppFetch({ ...input, client, apiBaseUrl: resolvedApiBaseUrl }).events;
     })(),
   });
   augmented.cancel = async (input) => runMppCancel({ mpp: mppResource, approvalId: input.approvalId });

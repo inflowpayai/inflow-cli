@@ -11,6 +11,19 @@ import {
 } from '../../../../src/commands/mpp/schema.js';
 
 describe('mpp schema', () => {
+  it('exposes merchant inputs on pay but not subscribe', () => {
+    const inputs = { merchantName: 'Store', merchantUrl: 'https://store.test', merchantCountry: 'US' };
+    expect(payOptions.parse(inputs)).toMatchObject(inputs);
+    expect(subscribeOptions.shape).not.toHaveProperty('merchantName');
+    expect(subscribeOptions.shape).not.toHaveProperty('merchantUrl');
+    expect(subscribeOptions.shape).not.toHaveProperty('merchantCountry');
+  });
+  it('accepts an Instrument UUID and rejects malformed card selectors', () => {
+    const instrumentId = '11111111-1111-4111-8111-111111111111';
+    expect(payOptions.parse({ instrumentId }).instrumentId).toBe(instrumentId);
+    expect(payOptions.safeParse({ instrumentId: '' }).success).toBe(false);
+    expect(payOptions.safeParse({ instrumentId: 'primary' }).success).toBe(false);
+  });
   it('applies pay option defaults', () => {
     const parsed = payOptions.parse({});
     expect(parsed.method).toBe('GET');

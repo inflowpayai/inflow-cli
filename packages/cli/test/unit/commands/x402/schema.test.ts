@@ -13,6 +13,12 @@ import {
 } from '../../../../src/commands/x402/schema.js';
 
 describe('payArgs / payOptions', () => {
+  it('validates optional instrument IDs', () => {
+    const instrumentId = '11111111-1111-4111-8111-111111111111';
+    expect(payOptions.parse({ instrumentId }).instrumentId).toBe(instrumentId);
+    expect(() => payOptions.parse({ instrumentId: '' })).toThrow();
+    expect(() => payOptions.parse({ instrumentId: 'invalid' })).toThrow();
+  });
   it('requires a url positional', () => {
     expect(() => payArgs.parse({})).toThrow();
     expect(payArgs.parse({ url: 'https://example.com' })).toEqual({ url: 'https://example.com' });

@@ -24,7 +24,8 @@ import {
 import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
-import { useEffect, useReducer, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
+import { CardVerificationView } from '../payment-verification.js';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { openUrl } from '../../utils/open-url.js';
 import { AuthenticationApprovalView, type AuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
@@ -75,6 +76,8 @@ export const PayView: React.FC<PayViewProps> = ({
   const [cancelling, setCancelling] = useState(false);
   const [cancellationFailed, setCancellationFailed] = useState(false);
   const { finish } = useFlowExit(onComplete);
+  const controllerRef = useRef<AbortController | undefined>(undefined);
+  const stoppedRef = useRef(false);
 
   useInput(
     (_input, key) => {
@@ -109,10 +112,15 @@ export const PayView: React.FC<PayViewProps> = ({
     // `signOptions.signal` from `prepareInflowPayment` into `awaitPayload`, so aborting it stops the long-poll (and its
     // open socket) immediately — otherwise the poll keeps the process alive until its sign timeout (~60s).
     const controller = new AbortController();
+    controllerRef.current = controller;
     let cancelled = false;
-    const runDeps: PayPipelineDeps = { ...deps, signOptions: { ...deps.signOptions, signal: controller.signal } };
+    const runDeps: PayPipelineDeps = {
+      ...deps,
+      interval: deps.interval && deps.interval > 0 ? deps.interval : 5,
+      signOptions: { ...deps.signOptions, signal: controller.signal },
+    };
     void runPayPipeline(runDeps, (event: PayEvent) => {
-      if (!cancelled) dispatch(event);
+      if (!cancelled && !stoppedRef.current) dispatch(event);
     });
     return () => {
       cancelled = true;
@@ -122,6 +130,7 @@ export const PayView: React.FC<PayViewProps> = ({
 
   useEffect(() => {
     if (
+      (phase.kind === 'verification' && !phase.verification.waiting) ||
       phase.kind === 'success' ||
       phase.kind === 'replay-rejected' ||
       phase.kind === 'no-payment-final' ||
@@ -154,6 +163,23 @@ export const PayView: React.FC<PayViewProps> = ({
       </Box>
     );
   }
+
+  if (phase.kind === 'verification')
+    return (
+      <CardVerificationView
+        protocol="x402"
+        verification={phase.verification}
+        onStop={() => {
+          stoppedRef.current = true;
+          controllerRef.current?.abort();
+          dispatch({
+            type: 'verification-required',
+            verification: { ...phase.verification, waiting: false, reason: 'stopped' },
+          });
+        }}
+      />
+    );
+  if (phase.kind === 'resuming') return <Text>Verification complete. Fetching the original purchase...</Text>;
 
   if (phase.kind === 'no-payment') {
     return (

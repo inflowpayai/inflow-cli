@@ -19,6 +19,9 @@ function flattenKinds(response: MppSupportedResponse): SupportedRow[] {
   const rows: SupportedRow[] = [];
   for (const kind of response.kinds) {
     for (const intent of kind.intents) {
+      if (intent.rails.length === 0) {
+        rows.push({ method: kind.method, intent: intent.intent, rail: '—', currencies: '—' });
+      }
       for (const rail of intent.rails) {
         rows.push({
           method: kind.method,

@@ -12,6 +12,18 @@ export const payOptions = z.object({
     .string()
     .optional()
     .describe('Only consider challenges on this settlement rail (e.g. "balance", "instrument").'),
+  merchantName: z
+    .string()
+    .optional()
+    .describe('CARD merchant business name. Defaults to the selected CARD challenge merchant name.'),
+  merchantUrl: z
+    .string()
+    .optional()
+    .describe('CARD merchant business website, as an absolute HTTP or HTTPS URL. Required for CARD.'),
+  merchantCountry: z
+    .string()
+    .optional()
+    .describe('CARD merchant two-letter country code (e.g. US). Required for CARD; not your billing country.'),
   method: z.string().default('GET').describe('HTTP method for the seller request.'),
   data: z
     .string()
@@ -36,9 +48,10 @@ export const payOptions = z.object({
     .describe('Polling deadline in seconds. Default 900s (matches the server-side approval expiry).'),
   instrumentId: z
     .string()
+    .uuid()
     .optional()
     .describe(
-      'Funding instrument id (UUID) for an instrument-rail challenge. The buyer does not choose the rail - it is derived from the seller challenge; this is the only buyer-supplied payment option.',
+      'Use this linked card (UUID) for CARD or inflow Instrument charges. When omitted, either method uses your primary card.',
     ),
   showBody: z
     .boolean()
@@ -72,7 +85,7 @@ export const subscribeOptions = z.object({
     .describe(
       'Subscription option ID or full fingerprint from `mpp inspect` or `inspect`. Required when multiple options are available.',
     ),
-  ...payOptions.omit({ intent: true }).shape,
+  ...payOptions.omit({ intent: true, merchantName: true, merchantUrl: true, merchantCountry: true }).shape,
 });
 
 export const statusArgs = z.object({

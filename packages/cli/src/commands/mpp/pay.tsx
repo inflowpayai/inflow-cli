@@ -22,10 +22,12 @@ import {
 import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import type React from 'react';
-import { useEffect, useReducer, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
+import { CardVerificationView } from '../payment-verification.js';
 import { useFlowExit } from '../../hooks/use-flow-exit.js';
 import { openUrl } from '../../utils/open-url.js';
 import { AuthenticationApprovalView, type AuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
+import { displayAmount } from './challenge-presentation.js';
 
 export {
   buildBodyAttachment,
@@ -70,6 +72,8 @@ export const PayView: React.FC<PayViewProps> = ({
   const [cancelling, setCancelling] = useState(false);
   const [cancellationFailed, setCancellationFailed] = useState(false);
   const { finish } = useFlowExit(onComplete);
+  const controllerRef = useRef<AbortController | undefined>(undefined);
+  const stoppedRef = useRef(false);
 
   const created = phase.kind === 'created' ? phase.created : undefined;
   const approvalUrl = created?.approvalUrl;
@@ -105,10 +109,15 @@ export const PayView: React.FC<PayViewProps> = ({
     // Abort the inline `pending → ready` poll when the view tears down (Escape/unmount) so the process can exit
     // promptly instead of waiting out the poll deadline.
     const controller = new AbortController();
+    controllerRef.current = controller;
     let cancelled = false;
-    const runDeps: MppPayPipelineDeps = { ...deps, signal: controller.signal };
+    const runDeps: MppPayPipelineDeps = {
+      ...deps,
+      interval: deps.interval > 0 ? deps.interval : 5,
+      signal: controller.signal,
+    };
     void runMppPayPipeline(runDeps, (event: MppPayEvent) => {
-      if (!cancelled) dispatch(event);
+      if (!cancelled && !stoppedRef.current) dispatch(event);
     });
     return () => {
       cancelled = true;
@@ -118,6 +127,7 @@ export const PayView: React.FC<PayViewProps> = ({
 
   useEffect(() => {
     if (
+      (phase.kind === 'verification' && !phase.verification.waiting) ||
       phase.kind === 'success' ||
       phase.kind === 'seller-rejected' ||
       phase.kind === 'no-payment-final' ||
@@ -151,6 +161,23 @@ export const PayView: React.FC<PayViewProps> = ({
     );
   }
 
+  if (phase.kind === 'verification')
+    return (
+      <CardVerificationView
+        protocol="mpp"
+        verification={phase.verification}
+        onStop={() => {
+          stoppedRef.current = true;
+          controllerRef.current?.abort();
+          dispatch({
+            type: 'verification-required',
+            verification: { ...phase.verification, waiting: false, reason: 'stopped' },
+          });
+        }}
+      />
+    );
+  if (phase.kind === 'resuming') return <Text>Verification complete. Fetching the original purchase...</Text>;
+
   if (phase.kind === 'no-payment') {
     return (
       <Box>
@@ -165,7 +192,7 @@ export const PayView: React.FC<PayViewProps> = ({
     return (
       <Box>
         <Text color="cyan">
-          <Spinner type="dots" /> Fulfilling {phase.challenge.amount ?? ''} {phase.challenge.currency ?? ''}{' '}
+          <Spinner type="dots" /> Fulfilling {displayAmount(phase.challenge)} {phase.challenge.currency ?? ''}{' '}
           challenge...
         </Text>
       </Box>

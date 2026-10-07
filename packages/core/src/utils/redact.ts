@@ -17,6 +17,8 @@ export const REDACTED_BODY_FIELDS = new Set([
   'signature',
   'signingRequestId',
   'tapEvidenceId',
+  'credential',
+  'encryptedPayload',
 ]);
 
 /** @internal */

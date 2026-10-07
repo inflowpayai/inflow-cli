@@ -384,6 +384,8 @@ describe('InflowApiClient — verbose logging', () => {
         status: 200,
         bodyJson: {
           signature: 'secret-signature',
+          credential: 'secret-payment-credential',
+          encryptedPayload: 'secret-encrypted-card',
           signatureInput: 'public-signature-input',
           signingRequestId: 'secret-request-id',
           tapEvidenceId: 'secret-evidence-id',
@@ -403,6 +405,8 @@ describe('InflowApiClient — verbose logging', () => {
 
     const joined = lines.join('\n');
     expect(joined).not.toContain('secret-signature');
+    expect(joined).not.toContain('secret-payment-credential');
+    expect(joined).not.toContain('secret-encrypted-card');
     expect(joined).not.toContain('secret-request-id');
     expect(joined).not.toContain('secret-evidence-id');
     expect(joined).toContain('public-signature-input');

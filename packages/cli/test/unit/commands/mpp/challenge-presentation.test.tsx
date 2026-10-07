@@ -5,6 +5,29 @@ import { describe, expect, it } from 'vitest';
 import { MppChallengePresentation } from '../../../../src/commands/mpp/challenge-presentation.js';
 
 describe('MppChallengePresentation', () => {
+  it('identifies CARD amounts as cents, including when the amount is missing', () => {
+    const result = render(
+      <MppChallengePresentation
+        challenges={[
+          { id: 'card', realm: 'seller.test', method: 'card', intent: 'charge', amount: '100', currency: 'usd' },
+          { id: 'missing', realm: 'seller.test', method: 'card', intent: 'charge', currency: 'usd' },
+          { id: 'unsupported', realm: 'seller.test', method: 'card', intent: 'charge', amount: '500', currency: 'jpy' },
+        ]}
+      />,
+    );
+    expect(result.lastFrame()).toContain('100 cents');
+    expect(result.lastFrame()).not.toContain('500 cents');
+    expect(result.lastFrame()).toContain('—');
+    result.unmount();
+  });
+  it('labels the Instrument rail as a linked card', () => {
+    const { lastFrame } = render(
+      <MppChallengePresentation
+        challenges={[{ id: 'card', realm: 'seller.test', method: 'inflow', intent: 'charge', rail: 'instrument' }]}
+      />,
+    );
+    expect(lastFrame()).toContain('Linked card');
+  });
   it('compares charge and subscription options before expanding each subscription', () => {
     const challenges: DecodedChallenge[] = [
       {

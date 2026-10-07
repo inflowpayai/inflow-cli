@@ -56,6 +56,14 @@ describe('filterPayableChallenges', () => {
     expect(out.map((c) => c.method)).toEqual(['inflow', 'tempo']);
   });
 
+  it('supports CARD charges but not CARD subscriptions', () => {
+    const charge = challenge('card');
+    expect(filterPayableChallenges([charge, { ...charge, intent: 'subscription' }])).toEqual([charge]);
+    expect(resolveAcceptPaymentProbeOptions({ method: 'GET', headers: {} }, { paymentMethod: 'card' }).headers).toEqual(
+      { 'Accept-Payment': 'card/charge' },
+    );
+  });
+
   it('returns empty when no supported challenge method is present', () => {
     expect(filterPayableChallenges([challenge('other')])).toEqual([]);
   });
@@ -141,7 +149,7 @@ describe('resolveAcceptPaymentProbeOptions', () => {
     const outByIntent = resolveAcceptPaymentProbeOptions(baseOptions({}), { intent: 'charge' });
     const outBySubscription = resolveAcceptPaymentProbeOptions(baseOptions({}), { intent: 'subscription' });
     expect(outByMethod.headers['Accept-Payment']).toBe('inflow/charge, inflow/subscription');
-    expect(outByIntent.headers['Accept-Payment']).toBe('inflow/charge, tempo/charge');
+    expect(outByIntent.headers['Accept-Payment']).toBe('inflow/charge, tempo/charge, card/charge');
     expect(outBySubscription.headers['Accept-Payment']).toBe('inflow/subscription');
   });
 

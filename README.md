@@ -196,6 +196,11 @@ The three protocol layers are composable rather than mandatory on every request.
 executable Actions. AEP establishes Service access when required. MPP or x402 completes payment when the selected
 endpoint returns a payment challenge. Start with `inflow inspect` when the required layers are not yet known.
 
+To pay with a linked card, choose [ordinary Instrument payments](packages/cli/README.md#ordinary-linked-card-payments)
+or [MPP CARD with a VIC allowance](packages/cli/README.md#card-payments), according to the seller's offer. Cards and
+allowances are managed in your InFlow dashboard. Both paths use your selected card or your primary card, not an InFlow
+USD wallet balance.
+
 For public OpenAPI discovery, no login is needed:
 
 ```bash

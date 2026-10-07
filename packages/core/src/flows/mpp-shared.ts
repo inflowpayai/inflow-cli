@@ -25,9 +25,13 @@ export function isSuccessStatus(status: number): boolean {
   return status >= 200 && status < 300;
 }
 
-/** Keep only the challenges minted for methods the InFlow buyer can fulfil (`inflow` and `tempo`). */
 export function filterPayableChallenges(challenges: readonly MppChallenge[]): MppChallenge[] {
-  return challenges.filter((challenge) => challenge.method === METHOD_INFLOW || challenge.method === METHOD_TEMPO);
+  return challenges.filter(
+    (challenge) =>
+      challenge.method === METHOD_INFLOW ||
+      challenge.method === METHOD_TEMPO ||
+      (challenge.method === 'card' && challenge.intent === INTENT_CHARGE),
+  );
 }
 
 const ACCEPT_PAYMENT_HEADER_NAME = 'accept-payment';
@@ -35,6 +39,7 @@ const SUPPORTED_ACCEPT_PAYMENT_CAPABILITIES = [
   { method: METHOD_INFLOW, intent: INTENT_CHARGE },
   { method: METHOD_INFLOW, intent: INTENT_SUBSCRIPTION },
   { method: METHOD_TEMPO, intent: INTENT_CHARGE },
+  { method: 'card', intent: INTENT_CHARGE },
 ] as const;
 
 function formatAcceptPaymentCapability(capability: { method: string; intent: string }): string {

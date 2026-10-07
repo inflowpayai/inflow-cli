@@ -7,7 +7,9 @@ import {
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
   PaymentReplayOutcomeUnknownError,
-  replayPaymentRequest,
+  replayWithCardVerification,
+  type CardVerificationEvent,
+  type PaymentReplayResult,
   SellerAuthenticationError,
   type SellerRequestTransport,
 } from './payment-fetch.js';
@@ -42,6 +44,7 @@ export interface X402FetchRejected {
 }
 
 export type X402FetchEvent =
+  | CardVerificationEvent
   | { type: 'snapshot'; response: X402PayloadResponse }
   | { type: 'replaying'; response: X402PayloadResponse }
   | { type: 'replayed'; result: X402FetchSuccess }
@@ -49,6 +52,7 @@ export type X402FetchEvent =
   | { type: 'errored'; code: string; message: string; retryable?: boolean };
 
 export interface X402FetchInput {
+  apiBaseUrl?: string;
   client: X402InflowClient;
   transactionId: string;
   url: string;
@@ -163,20 +167,38 @@ export function runX402Fetch(input: X402FetchInput): X402FetchRun {
     }
 
     yield { type: 'replaying', response: signed };
-    let replay;
+    let replay: PaymentReplayResult | undefined;
     try {
-      replay = await replayPaymentRequest({
-        url: input.url,
-        method: input.probeOptions.method,
-        headers: input.probeOptions.headers,
-        ...(input.probeOptions.data !== undefined ? { data: input.probeOptions.data } : {}),
-        paymentHeaderName: HEADERS.PAYMENT_SIGNATURE,
-        paymentHeaderValue: signed.encodedPayload,
-        showBody: input.showBody,
-        ...(input.outputFile !== undefined ? { outputFile: input.outputFile } : {}),
-        ...(input.sellerTransport !== undefined ? { sellerTransport: input.sellerTransport } : {}),
-        transactionId: input.transactionId,
-      });
+      for await (const event of replayWithCardVerification(
+        {
+          url: input.url,
+          method: input.probeOptions.method,
+          headers: input.probeOptions.headers,
+          ...(input.probeOptions.data !== undefined ? { data: input.probeOptions.data } : {}),
+          paymentHeaderName: HEADERS.PAYMENT_SIGNATURE,
+          paymentHeaderValue: signed.encodedPayload,
+          showBody: input.showBody,
+          ...(input.outputFile !== undefined ? { outputFile: input.outputFile } : {}),
+          ...(input.sellerTransport !== undefined ? { sellerTransport: input.sellerTransport } : {}),
+          transactionId: input.transactionId,
+        },
+        signed.paymentPayload?.accepted.scheme === 'instrument'
+          ? {
+              apiBaseUrl: input.apiBaseUrl ?? 'https://api.inflowpay.ai',
+              getStatus: () =>
+                input.client.getPaymentStatus(input.transactionId, {
+                  ...(input.signal === undefined ? {} : { signal: input.signal }),
+                }),
+              interval: input.interval,
+              maxAttempts: input.maxAttempts,
+              timeout: input.timeout,
+              ...(input.signal === undefined ? {} : { signal: input.signal }),
+            }
+          : undefined,
+      )) {
+        if (event.type === 'replay-response') replay = event.response;
+        else yield event;
+      }
     } catch (err) {
       if (err instanceof SellerAuthenticationError) {
         yield {
@@ -200,6 +222,7 @@ export function runX402Fetch(input: X402FetchInput): X402FetchRun {
       return;
     }
 
+    if (replay === undefined) return;
     const base = {
       protocol: 'x402' as const,
       transactionId: input.transactionId,

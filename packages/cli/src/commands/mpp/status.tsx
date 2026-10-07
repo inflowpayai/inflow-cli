@@ -86,12 +86,10 @@ export const MppStatusView: React.FC<MppStatusProps> = ({
   }
 
   if (phase.kind === 'ready') {
-    const credential = phase.response.credential ?? '';
-    const preview = credential.length > 32 ? `${credential.slice(0, 32)}...` : credential;
     return (
       <Box flexDirection="column">
         <Text color="green">✓ Ready</Text>
-        <Text>{`credential: ${preview}`}</Text>
+        <Text>Payment credential available.</Text>
         {phase.response.expires !== undefined ? <Text dimColor>{`expires: ${phase.response.expires}`}</Text> : null}
       </Box>
     );

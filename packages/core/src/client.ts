@@ -51,15 +51,15 @@ class AepResource implements IAepResource {
 
 /**
  * Lazy handle for the buyer-side x402 client (`@inflowpayai/x402-buyer`). The underlying `createInflowClient` is an
- * async operation (it fetches the server's signer capability cache); `client()` returns the same shared `Promise` on
- * every call.
+ * async operation (it fetches the server's signer capability cache). Calls without an explicit Instrument share a
+ * cached client.
  *
  * The {@link Inflow} class exposes the augmented {@link IX402} (this interface plus the high-level x402 operations) — not
  * this minimal one — but the minimal shape is exported for callers writing functions that only need the raw client.
  */
 export interface IX402Resource {
-  /** Lazy-construct the underlying buyer client. Cached after first call. */
-  client(): Promise<X402BuyerClient>;
+  /** The default client is cached; explicit card selection creates a separate client. */
+  client(options?: { instrumentId?: string }): Promise<X402BuyerClient>;
 }
 
 class X402Resource implements IX402Resource {
@@ -67,9 +67,12 @@ class X402Resource implements IX402Resource {
 
   constructor(private readonly opts: SignerOptions) {}
 
-  client(): Promise<X402BuyerClient> {
+  client(options?: { instrumentId?: string }): Promise<X402BuyerClient> {
+    if (options?.instrumentId !== undefined) {
+      return createInflowClient({ ...this.opts, prefer: ['instrument'], instrument: { id: options.instrumentId } });
+    }
     if (!this.cached) {
-      this.cached = createInflowClient(this.opts);
+      this.cached = createInflowClient({ ...this.opts, prefer: ['balance', 'exact', 'instrument'] });
     }
     return this.cached;
   }

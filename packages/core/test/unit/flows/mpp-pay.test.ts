@@ -28,6 +28,241 @@ const SELLER = 'https://seller.test/api';
 const INFLOW = 'https://mpp.test';
 const server = setupServer();
 
+const cardRequest = {
+  amount: '100',
+  currency: 'usd',
+  recipient: 'acct_test',
+  methodDetails: {
+    acceptedNetworks: ['visa'],
+    merchantName: 'Example Store',
+    encryptionJwk: { kty: 'RSA', alg: 'RSA-OAEP-256', use: 'enc', kid: 'test', n: 'AQAB', e: 'AQAB' },
+  },
+};
+const cardChallenge: MppChallenge = {
+  id: 'card-charge',
+  realm: 'seller.test',
+  method: 'card',
+  intent: 'charge',
+  request: encode(cardRequest),
+};
+const cardPayload = {
+  encryptedPayload: 'opaque-encrypted-purchase',
+  network: 'visa',
+  panLastFour: '4242',
+  panExpirationMonth: '12',
+  panExpirationYear: '2099',
+};
+const cardCredential = encode({ challenge: cardChallenge, payload: cardPayload });
+const merchantOptions = { merchantUrl: 'https://merchant.test', merchantCountry: 'US' };
+
+function serveCard(
+  offered = cardChallenge,
+  response: Record<string, unknown> = { state: 'ready', transactionId: 'card-tx', credential: cardCredential },
+) {
+  const submissions: unknown[] = [];
+  const replays: string[] = [];
+  server.use(
+    http.get(SELLER, ({ request }) => {
+      const authorization = request.headers.get('authorization');
+      if (authorization !== null) {
+        replays.push(authorization);
+        return new HttpResponse('CARD-DELIVERABLE');
+      }
+      return new HttpResponse(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(offered) } });
+    }),
+    http.post(`${INFLOW}/v1/transactions/mpp`, async ({ request }) => {
+      submissions.push(await request.json());
+      return HttpResponse.json(response);
+    }),
+  );
+  return { submissions, replays };
+}
+
+describe('CARD payments through the SDK HTTP client', () => {
+  it.each([undefined, '11111111-1111-4111-8111-111111111111'])(
+    'forwards merchant and optional instrument %s without rewriting the credential',
+    async (instrumentId) => {
+      const observed = serveCard();
+      const input = deps({ ...merchantOptions, ...(instrumentId === undefined ? {} : { instrumentId }) });
+      const before = structuredClone({ probeOptions: input.probeOptions, merchantUrl: input.merchantUrl });
+      const events = await collect(input);
+      expect(events.at(-1)).toMatchObject({ type: 'replayed', result: { body: 'CARD-DELIVERABLE' } });
+      expect(observed.submissions).toEqual([
+        {
+          challenge: cardChallenge,
+          options: {
+            merchant: { name: 'Example Store', url: 'https://merchant.test', countryCode: 'US' },
+            ...(instrumentId === undefined ? {} : { instrumentId }),
+          },
+        },
+      ]);
+      expect(observed.replays).toEqual([`Payment ${cardCredential}`]);
+      expect({ probeOptions: input.probeOptions, merchantUrl: input.merchantUrl }).toEqual(before);
+    },
+  );
+
+  it('honors an explicitly supplied merchant name', async () => {
+    const { submissions } = serveCard();
+    await collect(deps({ ...merchantOptions, merchantName: 'Merchant Legal Name', paymentMethodFilter: 'card' }));
+    expect(submissions[0]).toMatchObject({ options: { merchant: { name: 'Merchant Legal Name' } } });
+  });
+
+  it.each([
+    { input: {}, missing: ['merchant.url (--merchant-url)', 'merchant.countryCode (--merchant-country)'] },
+    { input: { ...merchantOptions, merchantName: ' ' }, missing: ['merchant.name (--merchant-name)'] },
+    { input: { merchantCountry: 'US' }, missing: ['merchant.url (--merchant-url)'] },
+    { input: { merchantUrl: 'https://merchant.test' }, missing: ['merchant.countryCode (--merchant-country)'] },
+  ])('reports exact missing fields before creating a transaction: %j', async ({ input, missing }) => {
+    const observed = serveCard();
+    const events = await collect(deps(input));
+    expect(events.at(-1)).toMatchObject({ type: 'errored', code: 'CARD_MERCHANT_REQUIRED' });
+    const last = events.at(-1);
+    if (last?.type !== 'errored') throw new Error('Expected merchant validation error');
+    for (const field of missing) expect(last.message).toContain(field);
+    expect(observed.submissions).toEqual([]);
+    expect(observed.replays).toEqual([]);
+  });
+
+  it.each([
+    { merchantUrl: '/checkout' },
+    { merchantUrl: 'file:///tmp/card' },
+    { merchantCountry: 'USA' },
+    { merchantName: 'x'.repeat(201) },
+    { instrumentId: 'invalid' },
+  ])('rejects invalid CARD options before creating a transaction: %j', async (input) => {
+    const { submissions } = serveCard();
+    expect((await collect(deps({ ...merchantOptions, ...input }))).at(-1)).toMatchObject({
+      type: 'errored',
+      code: 'INVALID_PAYMENT_OPTIONS',
+    });
+    expect(submissions).toEqual([]);
+  });
+
+  it.each([
+    { paymentMethodFilter: 'inflow', ...merchantOptions },
+    { paymentMethodFilter: 'card', railFilter: 'instrument' },
+    { paymentMethodFilter: 'card', intentFilter: 'subscription' },
+    { paymentMethodFilter: 'card', subscriptionId: 'sub' },
+  ])('rejects conflicting selections before probing: %j', async (input) => {
+    expect(await collect(deps(input))).toEqual([
+      expect.objectContaining({ type: 'errored', code: 'INVALID_PAYMENT_OPTIONS' }),
+    ]);
+  });
+
+  it.each([{ amount: '49' }, { amount: '100.5' }, { currency: 'eur' }])(
+    'rejects unsupported CARD requests: %j',
+    async (overrides) => {
+      const { submissions } = serveCard({ ...cardChallenge, request: encode({ ...cardRequest, ...overrides }) });
+      expect((await collect(deps(merchantOptions))).at(-1)).toMatchObject({
+        type: 'errored',
+        code: 'INVALID_CARD_CHALLENGE',
+      });
+      expect(submissions).toEqual([]);
+    },
+  );
+
+  it('reports a malformed CARD request without creating a transaction', async () => {
+    const { submissions } = serveCard({ ...cardChallenge, request: 'not-json' });
+    expect((await collect(deps(merchantOptions))).at(-1)).toMatchObject({
+      type: 'errored',
+      code: 'INVALID_CARD_CHALLENGE',
+    });
+    expect(submissions).toEqual([]);
+  });
+
+  it('does not invent a transaction ID when the server rejects CARD before creation', async () => {
+    serveCard(cardChallenge, {
+      state: 'failed',
+      problem: { type: 'about:blank', title: 'Invalid request', status: 400 },
+    });
+    expect((await collect(deps(merchantOptions))).at(-1)).toEqual({
+      type: 'errored',
+      code: 'PAYMENT_FAILED',
+      message: 'Invalid request',
+    });
+  });
+
+  it('retains the transaction ID when a failed CARD response has no problem', async () => {
+    serveCard(cardChallenge, { state: 'failed', transactionId: 'card-tx' });
+    expect((await collect(deps(merchantOptions))).at(-1)).toEqual({
+      type: 'errored',
+      code: 'PAYMENT_FAILED',
+      message: 'Transaction card-tx: MPP transaction failed.',
+    });
+  });
+
+  it.each([
+    'not-a-credential',
+    encode({ challenge: { ...cardChallenge, id: 'another-purchase' }, payload: cardPayload }),
+    encode({ challenge: cardChallenge, payload: { encryptedPayload: 'secret' } }),
+  ])('does not replay an invalid or mismatched credential', async (credential) => {
+    const observed = serveCard(cardChallenge, { state: 'ready', transactionId: 'card-tx', credential });
+    const last = (await collect(deps(merchantOptions))).at(-1);
+    expect(last).toMatchObject({
+      type: 'errored',
+      code: 'INVALID_CARD_CREDENTIAL',
+    });
+    if (last?.type !== 'errored') throw new Error('Expected credential validation error');
+    expect(last.message).toContain('card-tx');
+    expect(observed.replays).toEqual([]);
+    expect(observed.submissions).toHaveLength(1);
+  });
+
+  it('returns the existing approval without minting or replaying when nonblocking', async () => {
+    const observed = serveCard(cardChallenge, { state: 'pending', transactionId: 'card-tx', approvalId: 'approval' });
+    const events = await collect(deps({ ...merchantOptions, awaitPayment: false }));
+    expect(events.at(-1)).toMatchObject({
+      type: 'created',
+      created: { state: 'pending', transactionId: 'card-tx', approvalId: 'approval' },
+    });
+    expect(observed.submissions).toHaveLength(1);
+    expect(observed.replays).toEqual([]);
+  });
+
+  it('polls the same transaction and preserves uncertain issuance instructions', async () => {
+    const observed = serveCard(cardChallenge, { state: 'pending', transactionId: 'card-tx', approvalId: 'approval' });
+    const detail =
+      'The CARD credential issuance outcome is unknown. Do not start another payment; contact InFlow support with this transaction ID.';
+    server.use(
+      http.get(`${INFLOW}/v1/transactions/card-tx/mpp`, () =>
+        HttpResponse.json({
+          state: 'failed',
+          transactionId: 'card-tx',
+          problem: { type: 'about:blank', title: 'Unavailable', status: 503, detail },
+        }),
+      ),
+    );
+    expect((await collect(deps(merchantOptions))).at(-1)).toEqual({
+      type: 'errored',
+      code: 'PAYMENT_FAILED',
+      message: `Transaction card-tx: ${detail}`,
+    });
+    expect(observed.submissions).toHaveLength(1);
+    expect(observed.replays).toEqual([]);
+  });
+
+  it('does not follow a payment-bearing redirect or create a replacement purchase', async () => {
+    const { submissions } = serveCard();
+    let paymentRequests = 0;
+    server.use(
+      http.get(SELLER, ({ request }) => {
+        if (request.headers.has('authorization')) {
+          paymentRequests += 1;
+          return new HttpResponse(null, { status: 307, headers: { Location: 'https://untrusted.test/collect' } });
+        }
+        return new HttpResponse(null, {
+          status: 402,
+          headers: { 'WWW-Authenticate': renderChallengeHeader(cardChallenge) },
+        });
+      }),
+    );
+    const events = await collect(deps(merchantOptions));
+    expect(events.at(-1)).toMatchObject({ type: 'rejected', result: { responseStatus: 307 } });
+    expect(submissions).toHaveLength(1);
+    expect(paymentRequests).toBe(1);
+  });
+});
+
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());

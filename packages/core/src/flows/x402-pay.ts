@@ -21,7 +21,10 @@ import {
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
   PaymentReplayOutcomeUnknownError,
-  replayPaymentRequest,
+  replayWithCardVerification,
+  type CardVerification,
+  type CardVerificationEvent,
+  type PaymentReplayResult,
   SellerAuthenticationError,
   sellerRequest,
   type SellerRequestTransport,
@@ -101,6 +104,8 @@ export interface PayResultReplayRejected extends PayResultBase {
 }
 
 export type PayPhase =
+  | { kind: 'resuming' }
+  | { kind: 'verification'; verification: CardVerification }
   | { kind: 'probing' }
   | { kind: 'no-payment'; probe: SellerProbeResult }
   | { kind: 'matching'; decoded: DecodedHeader }
@@ -125,6 +130,7 @@ export type PayPhase =
   | { kind: 'error'; code: string; message: string };
 
 export type PayEvent =
+  | CardVerificationEvent
   | { type: 'probed'; probe: SellerProbeResult }
   | { type: 'decoded'; decoded: DecodedHeader }
   | { type: 'matched'; decoded: DecodedHeader; requirement: PaymentRequirements }
@@ -149,6 +155,10 @@ export type PayEvent =
 
 export function reducePay(state: PayPhase, event: PayEvent): PayPhase {
   switch (event.type) {
+    case 'verification-completed':
+      return { kind: 'resuming' };
+    case 'verification-required':
+      return { kind: 'verification', verification: event.verification };
     case 'probed':
       return { kind: 'no-payment', probe: event.probe };
     case 'decoded':
@@ -185,6 +195,10 @@ export function reducePay(state: PayPhase, event: PayEvent): PayPhase {
 }
 
 export interface PayPipelineDeps {
+  interval?: number;
+  maxAttempts?: number;
+  timeout?: number;
+  instrumentId?: string;
   client: X402InflowClient;
   apiBaseUrl: string;
   probeOptions: SellerProbeOptions;
@@ -341,6 +355,14 @@ function cloneDecoded(input: PaymentRequired): DecodedHeader {
  */
 export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEvent) => void): Promise<void> {
   try {
+    if (deps.instrumentId !== undefined && deps.schemeFilter !== undefined && deps.schemeFilter !== 'instrument') {
+      emit({
+        type: 'errored',
+        code: 'INVALID_PAYMENT_OPTIONS',
+        message: '--instrument-id cannot be combined with a non-instrument --scheme.',
+      });
+      return;
+    }
     const probe = await sellerRequest(deps.sellerTransport, { url: deps.url, ...deps.probeOptions });
     if (probe.status !== 402) {
       // Probe came back non-402. Only 2xx means "seller served the resource without requiring payment"; anything else
@@ -391,13 +413,18 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
     emit({ type: 'decoded', decoded: cloneDecoded(decoded) });
 
     const filters: AcceptsFilters = {
-      ...(deps.schemeFilter !== undefined ? { scheme: deps.schemeFilter } : {}),
+      ...(deps.instrumentId !== undefined
+        ? { scheme: 'instrument' }
+        : deps.schemeFilter !== undefined
+          ? { scheme: deps.schemeFilter }
+          : {}),
       ...(deps.networkFilter !== undefined ? { network: deps.networkFilter } : {}),
       ...(deps.assetFilter !== undefined ? { asset: deps.assetFilter } : {}),
       ...(deps.assetNameFilter !== undefined ? { assetName: deps.assetNameFilter } : {}),
     };
     const filtered = filterAccepts(decoded, filters);
     const anyFilterSet =
+      deps.instrumentId !== undefined ||
       deps.schemeFilter !== undefined ||
       deps.networkFilter !== undefined ||
       deps.assetFilter !== undefined ||
@@ -463,20 +490,38 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
       network: requirement.network,
     });
 
-    let replay;
+    let replay: PaymentReplayResult | undefined;
     try {
-      replay = await replayPaymentRequest({
-        url: deps.url,
-        method: deps.probeOptions.method,
-        headers: deps.probeOptions.headers,
-        ...(deps.probeOptions.data !== undefined ? { data: deps.probeOptions.data } : {}),
-        paymentHeaderName: HEADERS.PAYMENT_SIGNATURE,
-        paymentHeaderValue: encoded.encodedPayload,
-        showBody: deps.showBody,
-        ...(deps.outputFile !== undefined ? { outputFile: deps.outputFile } : {}),
-        ...(deps.sellerTransport !== undefined ? { sellerTransport: deps.sellerTransport } : {}),
-        transactionId: prepared.transactionId,
-      });
+      for await (const event of replayWithCardVerification(
+        {
+          url: deps.url,
+          method: deps.probeOptions.method,
+          headers: deps.probeOptions.headers,
+          ...(deps.probeOptions.data !== undefined ? { data: deps.probeOptions.data } : {}),
+          paymentHeaderName: HEADERS.PAYMENT_SIGNATURE,
+          paymentHeaderValue: encoded.encodedPayload,
+          showBody: deps.showBody,
+          ...(deps.outputFile !== undefined ? { outputFile: deps.outputFile } : {}),
+          ...(deps.sellerTransport !== undefined ? { sellerTransport: deps.sellerTransport } : {}),
+          transactionId: prepared.transactionId,
+        },
+        requirement.scheme === 'instrument'
+          ? {
+              apiBaseUrl: deps.apiBaseUrl,
+              getStatus: () =>
+                deps.client.getPaymentStatus(prepared.transactionId, {
+                  ...(deps.signOptions.signal === undefined ? {} : { signal: deps.signOptions.signal }),
+                }),
+              interval: deps.interval ?? 5,
+              maxAttempts: deps.maxAttempts ?? 0,
+              timeout: deps.timeout ?? 900,
+              ...(deps.signOptions.signal === undefined ? {} : { signal: deps.signOptions.signal }),
+            }
+          : undefined,
+      )) {
+        if (event.type === 'replay-response') replay = event.response;
+        else emit(event);
+      }
     } catch (err) {
       if (err instanceof SellerAuthenticationError) {
         emit({ type: 'errored', code: err.code, message: err.message });
@@ -492,6 +537,7 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
       }
       throw err;
     }
+    if (replay === undefined) return;
     const {
       contentType: replayContentType,
       headers: replayHeaders,

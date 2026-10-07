@@ -41,6 +41,28 @@ afterEach(() => {
 });
 
 describe('InspectView', () => {
+  it('labels an Instrument offer as a linked card', async () => {
+    const document = decodePaymentRequiredHeader(multiAcceptHeader());
+    const header = encodePaymentRequiredHeader({
+      ...document,
+      accepts: document.accepts.map((offer) => ({ ...offer, scheme: 'instrument', asset: 'USD' })),
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('', { status: 402, headers: { 'PAYMENT-REQUIRED': header } }),
+    );
+    const onComplete = vi.fn();
+    const view = render(
+      <InspectView
+        url="https://seller.test"
+        method="GET"
+        deps={{ url: 'https://seller.test', probeOptions: { method: 'GET', headers: {} } }}
+        onComplete={onComplete}
+      />,
+    );
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(view.lastFrame()).toContain('Linked card');
+    view.unmount();
+  });
   it('explains why a Permit2-only endpoint has no available offers', async () => {
     const document = decodePaymentRequiredHeader(multiAcceptHeader());
     const header = encodePaymentRequiredHeader({

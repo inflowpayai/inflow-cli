@@ -43,7 +43,7 @@ function formatAsset(asset: string): string {
 }
 
 const COLUMNS: ReadonlyArray<TableColumn<InspectRow>> = [
-  { header: 'Scheme', cell: (r) => r.scheme },
+  { header: 'Scheme', cell: (r) => (r.scheme === 'instrument' ? 'Linked card' : r.scheme) },
   { header: 'Network', cell: (r) => r.network },
   { header: 'Amount', cell: (r) => r.amount },
   { header: 'Asset', cell: (r) => formatAsset(r.asset) },
