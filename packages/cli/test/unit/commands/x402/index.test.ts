@@ -59,7 +59,7 @@ function payCtx(overrides: Record<string, unknown> = {}) {
 }
 
 describe('initialPayFrame', () => {
-  it('includes _next.command and POST_PAY_INSTRUCTION when interval=0', () => {
+  it('includes a continuation without copying request headers or body when interval=0', () => {
     const frame = initialPayFrame(preparedEvent(), payCtx());
     expect(frame['transaction_id']).toBe('txn_1');
     expect(frame['approval_id']).toBe('appr_1');
@@ -74,19 +74,20 @@ describe('initialPayFrame', () => {
       tool: string;
       input: Record<string, unknown>;
     };
-    expect(next.command).toContain('x402 fetch txn_1 https://seller/api');
+    expect(next.command).toBeUndefined();
+    expect(next).toHaveProperty('requires_original_request_options', true);
     expect(next.tool).toBe('x402_fetch');
     expect(next.input).toMatchObject({
       transactionId: 'txn_1',
       resourceUrl: 'https://seller/api',
       method: 'POST',
-      header: ['X-Test: yes'],
-      data: '{"hello":true}',
       interval: 5,
-      maxAttempts: 60,
+      maxAttempts: 0,
       timeout: 900,
       showBody: true,
     });
+    expect(next.input).not.toHaveProperty('header');
+    expect(next.input).not.toHaveProperty('data');
     expect(next.poll_interval_seconds).toBe(5);
     expect(frame['instruction']).toContain('Present the approval_url');
   });
@@ -98,7 +99,7 @@ describe('initialPayFrame', () => {
   });
 
   it('uses maxAttempts > 0 in the next command when supplied', () => {
-    const frame = initialPayFrame(preparedEvent(), payCtx({ maxAttempts: 120 }));
+    const frame = initialPayFrame(preparedEvent(), payCtx({ maxAttempts: 120, data: undefined, header: [] }));
     const next = frame['_next'] as { command: string };
     expect(next.command).toContain('--max-attempts 120');
   });

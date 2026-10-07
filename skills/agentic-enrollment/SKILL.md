@@ -142,6 +142,12 @@ The CLI presents the InFlow approval and polls it inside the same invocation. A 
 timeout is terminal for that enrollment attempt. Do not resume or reuse an interrupted enrollment; start a new Enroll
 only when the user asks again. Existing enrollment is detected and must not create a duplicate registration.
 
+Without `--interval`, an agent-mode Enroll or Grant can return a pending approval and `_next`. Present `approval_url`
+to the user, then call the InFlow MCP tool named in `_next.tool` with the values in `_next.input`. For shell use,
+prefix `_next.command` with `inflow`. These inputs retain the approval ID, Service reference, and requested grant
+type and scopes where applicable. Resume that approval; do not issue a fresh request. If the original call is still
+polling, keep it running instead of starting another call. The resume call waits for approval; it does not approve.
+
 Check current state without treating missing enrollment as a hard failure:
 
 ```bash
@@ -187,7 +193,7 @@ credential revocation do not prompt the user for approval.
 
 When an approval is pending:
 
-- Present the approval URL when returned and keep polling in the original command.
+- Present the approval URL when returned. Keep an inline call running, or follow `_next` when the command returns a pending approval.
 - On decline, report the decline and stop.
 - On interruption, allow the CLI to cancel its wait; do not create a replacement request automatically.
 - On timeout, ask whether the user wants to try a new operation.

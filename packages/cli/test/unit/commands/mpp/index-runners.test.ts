@@ -3,6 +3,7 @@ import { Inflow, InflowApiError, MemoryStorage, SecureStorageError } from '@infl
 import { encode, type MppChallenge, type MppClient, renderChallengeHeader } from '@inflowpayai/mpp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing, createMppCli } from '../../../../src/commands/mpp/index.js';
+import { fetchArgs, fetchOptions, payOptions } from '../../../../src/commands/mpp/schema.js';
 
 const {
   runPayCommand,
@@ -386,9 +387,21 @@ describe('mpp agent runners', () => {
       ) as MppClient['getTransaction'],
     });
     const { inflow, storage } = authed(client);
+    const pending = __testing.createdFrameFromEvent(
+      {
+        transactionId: 'tx-1',
+        state: 'pending',
+        approvalId: 'ap-1',
+        approvalUrl: 'https://app/approvals/ap-1',
+        challenge: { id: 'chal-inflow-charge', realm: 'mpp.test', method: 'inflow', intent: 'charge' },
+      },
+      agentCtx({ url: SELLER }, payOptions.parse({ header: ['Authorization: caller'] })),
+    );
+    const next = pending['_next'] as { tool: string; input: Record<string, unknown> };
+    expect(next.tool).toBe('mpp_fetch');
     const ctx = agentCtx(
-      { transactionId: 'tx-1', resourceUrl: SELLER },
-      { method: 'GET', header: ['Authorization: caller'], interval: 0, maxAttempts: 0, timeout: 900, showBody: true },
+      fetchArgs.parse(next.input),
+      fetchOptions.parse({ ...next.input, header: ['Authorization: caller'] }),
     );
 
     const frames = await drain(runFetchCommand(ctx as never, inflow, storage));

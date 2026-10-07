@@ -12,6 +12,7 @@ import { encodePaymentRequiredHeader } from '@x402/core/http';
 import type { PaymentRequired } from '@x402/core/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing } from '../../../../src/commands/x402/index.js';
+import { fetchArgs, fetchOptions, payOptions } from '../../../../src/commands/x402/schema.js';
 
 const {
   runPayCommand,
@@ -400,16 +401,23 @@ describe('runPayCommand (agent mode)', () => {
         }),
       ),
     });
-    const ctx = agentContext(
-      { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
+    const requirement = makePaymentRequired().accepts[0];
+    if (requirement === undefined) throw new Error('Test requires a payment offer');
+    const pending = __testing.initialPayFrame(
       {
-        method: 'GET',
-        header: ['PAYMENT-SIGNATURE: caller'],
-        interval: 0,
-        maxAttempts: 0,
-        timeout: 900,
-        showBody: true,
+        type: 'prepared',
+        decoded: makePaymentRequired(),
+        requirement,
+        prepared: makePrepared(),
+        approvalUrl: 'https://app/approvals/appr_1',
       },
+      agentContext({ url: 'https://seller/api' }, payOptions.parse({ header: ['PAYMENT-SIGNATURE: caller'] })),
+    );
+    const next = pending['_next'] as { tool: string; input: Record<string, unknown> };
+    expect(next.tool).toBe('x402_fetch');
+    const ctx = agentContext(
+      fetchArgs.parse(next.input),
+      fetchOptions.parse({ ...next.input, header: ['PAYMENT-SIGNATURE: caller'] }),
     );
     const { inflow, storage } = authedResources(client);
     vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as ICliCapabilitiesResource, 'has').mockResolvedValue(true);

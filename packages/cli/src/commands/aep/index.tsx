@@ -510,6 +510,8 @@ function pendingEnrollFrame(
   approval: { approvalId: string; retryAfterSeconds: number },
   inflow: Inflow,
   serviceDid: string,
+  serviceReference: string,
+  options: { maxAttempts: number; timeout: number },
 ): Record<string, unknown> {
   const interval = approval.retryAfterSeconds;
   return sanitizeDeep({
@@ -521,6 +523,9 @@ function pendingEnrollFrame(
     state: 'pending',
     retry_after_seconds: interval,
     _next: {
+      command: `aep enroll ${shellArg(serviceReference)} --approval-id ${shellArg(approval.approvalId)} --interval ${interval} --max-attempts ${options.maxAttempts} --timeout ${options.timeout}`,
+      tool: 'aep_enroll',
+      input: { serviceReference, approvalId: approval.approvalId, interval, ...options },
       poll_interval_seconds: interval,
       until: 'enrollment completes',
     },
@@ -532,6 +537,9 @@ function pendingGrantFrame(
   inflow: Inflow,
   serviceDid: string,
   grantType: string,
+  serviceReference: string,
+  scope: string[],
+  timeout: number,
 ): Record<string, unknown> {
   const interval = approval.retryAfterSeconds;
   return sanitizeDeep({
@@ -544,6 +552,13 @@ function pendingGrantFrame(
     state: 'pending',
     retry_after_seconds: interval,
     _next: {
+      command: [
+        `aep grant ${shellArg(serviceReference)} --approval-id ${shellArg(approval.approvalId)}`,
+        `--grant-type ${shellArg(grantType)} --interval ${interval} --timeout ${timeout}`,
+        ...scope.map((value) => `--scope ${shellArg(value)}`),
+      ].join(' '),
+      tool: 'aep_grant',
+      input: { serviceReference, approvalId: approval.approvalId, grantType, scope, interval, timeout },
       poll_interval_seconds: interval,
       until: 'credential grant completes',
     },
@@ -1050,6 +1065,8 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
             { approvalId: error.approvalId, retryAfterSeconds: error.retryAfterSeconds },
             inflow,
             inspect.document.service.did,
+            c.args.serviceReference,
+            { maxAttempts: options.maxAttempts, timeout: options.timeout },
           ),
         );
       }
@@ -1290,6 +1307,9 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
             inflow,
             inspect.document.service.did,
             grantType,
+            c.args.serviceReference,
+            scopes,
+            timeout,
           ),
         );
       }

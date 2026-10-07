@@ -40,7 +40,7 @@ InFlow runs as a **standalone CLI** or an **MCP server**.
 - `inflow --llms` (or `--llms-full` for parameter detail) - discover all commands. `inflow <command> --schema` for a single command's JSON Schema.
 - `inflow --skill` - print this playbook (no frontmatter) to stdout. Use it to paste into the system-prompt field of an MCP host that doesn't natively load skills: `inflow --skill | pbcopy`.
 - Default output is `toon`. Override with `--format <fmt>`; for programmatic parsing prefer `json` (single document) or `jsonl` (line-delimited).
-- Multi-step flows return `_next.command` - run it to continue.
+- Deferred payments return `_next.tool` and `_next.input` for the InFlow MCP server. For shell use, prefix `_next.command` with `inflow` when supplied. If `requires_original_request_options` is true, restore the original `data` and `header` arguments before calling Fetch; they are deliberately omitted from the response.
 - `--auth <path>` identifies a legacy plaintext credential file for deletion; it is not a credential backend.
 - `--api-key <key>` or `INFLOW_API_KEY=<key>` is an alternative to device-flow auth.
 
@@ -239,7 +239,7 @@ inflow <mpp|x402> pay https://api.foo.dev/dataset.csv --interval 5 --max-attempt
 
 **Polling discipline.** Persist `transaction_id` as soon as `pay` returns it. Then:
 
-- Run `_next.command`, or call `_next.tool` with `_next.input`, immediately. Don't wait for the user to confirm before polling starts.
+- Present the approval URL, then resume with the InFlow MCP tool named in `_next.tool` using the values in `_next.input`, or run `inflow` followed by `_next.command`. Restore original request arguments when required. Fetch waits for the user's approval; it cannot approve for them. Do not start a second poll while the original command is still waiting.
 - If polling is interrupted - network drop, session bounce, user kills the agent - resume with `inflow <mpp|x402> fetch <transaction_id> <url> --interval 5 --max-attempts 180`. Only create a new transaction if the original expired (`PAYMENT_EXPIRED` for MPP, `APPROVAL_TIMEOUT` for x402), was denied/cancelled, or its credential is already consumed.
 - If `POLLING_TIMEOUT` fires before approval, ask the user whether to keep waiting or cancel - don't silently restart the poll.
 - If >12 minutes elapsed without a user response (≈3 min before the 15-minute approval window closes), surface that explicitly so they can act before the window closes.
@@ -313,7 +313,7 @@ inflow mpp subscribe <url> --option-id <option_id> --interval 5 --max-attempts 1
 
 The user approves the immutable recurring terms. Successful activation settles the first period. Later access uses `subscriptions fetch`, which obtains a fresh credential for the current seller challenge.
 
-If the host cannot wait for approval, omit `--interval`, retain the returned `transaction_id`, and run the returned `_next.command`. `mpp fetch` polls, activates the subscription, and returns the resource. After activation, use `subscriptions fetch <subscription_id> <url>`; the server decides whether the current billing period is already paid or requires one new charge.
+If the host cannot wait for approval, omit `--interval`, retain the returned `transaction_id`, and follow the returned `_next` using the two-step payment instructions above. `mpp fetch` polls, activates the subscription, and returns the resource. After activation, use `subscriptions fetch <subscription_id> <url>`; the server decides whether the current billing period is already paid or requires one new charge.
 
 Manage the buyer's subscriptions with:
 

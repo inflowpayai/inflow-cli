@@ -26,7 +26,7 @@ import { useMemo } from 'react';
 import { assertSessionGuard } from '../../utils/assert-session.js';
 import { authenticatedApiError } from '../../utils/api-error.js';
 import { mcpTool } from '../../mcp-metadata.js';
-import { buildPaymentFetchNextCommand } from '../../utils/payment-fetch-command.js';
+import { buildPaymentFetchContinuation } from '../../utils/payment-fetch-command.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import {
   type AepApprovalDisplay,
@@ -377,7 +377,6 @@ function noPaymentFrameFromResult(result: MppPayResultNoPayment): Record<string,
 
 function createdFrameFromEvent(created: MppPayCreated, c: PayContext): Record<string, unknown> {
   const pending = created.state === 'pending';
-  const max = c.options.maxAttempts > 0 ? c.options.maxAttempts : 60;
   const frame: Record<string, unknown> = {
     transaction_id: created.transactionId,
     state: created.state,
@@ -389,33 +388,13 @@ function createdFrameFromEvent(created: MppPayCreated, c: PayContext): Record<st
   if (created.retryAfterSeconds !== undefined) frame['retry_after_seconds'] = created.retryAfterSeconds;
   if (created.expires !== undefined) frame['expires'] = created.expires;
   if (pending && c.options.interval <= 0) {
-    frame['_next'] = {
-      command: buildPaymentFetchNextCommand({
-        protocol: 'mpp',
-        transactionId: created.transactionId,
-        resourceUrl: c.args.url,
-        method: c.options.method,
-        interval: 5,
-        maxAttempts: max,
-        showBody: c.options.showBody,
-        ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
-      }),
-      tool: 'mpp_fetch',
-      input: {
-        transactionId: created.transactionId,
-        resourceUrl: c.args.url,
-        method: c.options.method,
-        header: c.options.header,
-        ...(c.options.data !== undefined ? { data: c.options.data } : {}),
-        interval: 5,
-        maxAttempts: max,
-        timeout: c.options.timeout,
-        showBody: c.options.showBody,
-        ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
-      },
-      poll_interval_seconds: 5,
-      until: 'resource fetch completes',
-    };
+    frame['_next'] = buildPaymentFetchContinuation({
+      protocol: 'mpp',
+      transactionId: created.transactionId,
+      resourceUrl: c.args.url,
+      ...c.options,
+      interval: 5,
+    });
   }
   return frame;
 }
