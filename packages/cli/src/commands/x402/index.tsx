@@ -1,5 +1,6 @@
 import { chmodSync, writeFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
+import { cardVerificationFrame } from '../payment-verification.js';
 import {
   type AuthStorage,
   createTapFetch,
@@ -81,6 +82,7 @@ interface PayContext {
     maxAttempts: number;
     timeout: number;
     paymentId?: string | undefined;
+    instrumentId?: string | undefined;
     showBody: boolean;
     outputFile?: string | undefined;
     payloadFile?: string | undefined;
@@ -321,6 +323,10 @@ function buildPayPipelineInput(
     probeOptions,
     url: c.args.url,
     signOptions: buildSignOptions(c.options),
+    interval: c.options.interval,
+    maxAttempts: c.options.maxAttempts,
+    timeout: c.options.timeout,
+    ...(c.options.instrumentId !== undefined ? { instrumentId: c.options.instrumentId } : {}),
     showBody: c.options.showBody,
     ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
     ...(c.options.scheme !== undefined ? { schemeFilter: c.options.scheme } : {}),
@@ -436,7 +442,9 @@ async function* runPayCommand(
   }
 
   if (!c.agent && !c.formatExplicit) {
-    const client = await inflow.x402.client();
+    const client = await inflow.x402.client(
+      c.options.instrumentId === undefined ? undefined : { instrumentId: c.options.instrumentId },
+    );
     const captured: { finalPhase: PayPhase | null } = { finalPhase: null };
     await renderInkUntilExit(
       <PayViewWithAuthentication
@@ -475,6 +483,10 @@ async function* runPayCommand(
   });
 
   for await (const event of run.events) {
+    if (event.type === 'verification-required') {
+      yield sanitizeDeep(cardVerificationFrame('x402', event.verification, c.options));
+      continue;
+    }
     if (event.type === 'short-circuited') {
       yield sanitizeDeep(noPaymentFrameFromResult(event.result));
       return;
@@ -529,7 +541,7 @@ async function* runFetchCommand(
             transactionId: c.args.transactionId,
             url: c.args.resourceUrl,
             probeOptions,
-            interval: c.options.interval,
+            interval: c.options.interval > 0 ? c.options.interval : 5,
             maxAttempts: c.options.maxAttempts,
             timeout: c.options.timeout,
             showBody: c.options.showBody,
@@ -576,6 +588,10 @@ async function* runFetchCommand(
   });
 
   for await (const event of run.events) {
+    if (event.type === 'verification-required') {
+      yield sanitizeDeep(cardVerificationFrame('x402', event.verification, c.options));
+      continue;
+    }
     if (event.type === 'replayed') {
       yield sanitizeDeep(fetchFrameFromResult(event.result));
       return;

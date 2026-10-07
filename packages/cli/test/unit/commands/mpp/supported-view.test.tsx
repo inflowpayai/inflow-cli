@@ -24,6 +24,18 @@ function supported(): MppSupportedResponse {
 }
 
 describe('SupportedView', () => {
+  it('shows CARD even though it has no settlement rails', async () => {
+    const result = render(
+      <SupportedView
+        load={() => Promise.resolve({ kinds: [{ method: 'card', intents: [{ intent: 'charge', rails: [] }] }] })}
+        onComplete={vi.fn()}
+      />,
+    );
+    await vi.waitFor(() => expect(result.lastFrame()).toContain('card'));
+    expect(result.lastFrame()).toContain('charge');
+    expect(result.lastFrame()).toContain('—');
+    result.unmount();
+  });
   it('renders a method/intent/rail/currencies table', async () => {
     const { lastFrame, unmount } = render(
       <SupportedView load={() => Promise.resolve(supported())} onComplete={vi.fn()} />,

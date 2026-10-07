@@ -1,5 +1,10 @@
 import {
   HEADERS,
+  cardChargeRequestSchema,
+  cardCredentialPayloadSchema,
+  cardPaymentOptionsSchema,
+  encode,
+  type CardPaymentOptions,
   type InflowPaymentOptions,
   type MppChallenge,
   type MppClient,
@@ -22,12 +27,15 @@ import {
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
   PaymentReplayOutcomeUnknownError,
-  replayPaymentRequest,
+  replayWithCardVerification,
+  type CardVerification,
+  type CardVerificationEvent,
+  type PaymentReplayResult,
   SellerAuthenticationError,
   sellerRequest,
   type SellerRequestTransport,
 } from './payment-fetch.js';
-import { type DecodedChallenge, summarizeChallenge } from './mpp-decode.js';
+import { decodeChallengeRequest, type DecodedChallenge, summarizeChallenge } from './mpp-decode.js';
 import { buildBodyAttachment } from './x402-pay.js';
 import {
   buildNoFilteredMatchMessage,
@@ -117,6 +125,8 @@ export interface MppPayCreated {
 }
 
 export type MppPayPhase =
+  | { kind: 'resuming' }
+  | { kind: 'verification'; verification: CardVerification }
   | { kind: 'probing' }
   | { kind: 'no-payment'; probe: MppPayResultNoPayment }
   | { kind: 'decoded'; challenge: DecodedChallenge }
@@ -128,6 +138,8 @@ export type MppPayPhase =
   | { kind: 'error'; code: string; message: string };
 
 export type MppPayEvent =
+  | CardVerificationEvent
+  | { type: 'replaying'; created: MppPayCreated; credential: string }
   | { type: 'decoded'; challenge: DecodedChallenge }
   | { type: 'created'; created: MppPayCreated }
   | { type: 'replayed'; result: MppPayResultSuccess }
@@ -137,6 +149,12 @@ export type MppPayEvent =
 
 export function reduceMppPay(state: MppPayPhase, event: MppPayEvent): MppPayPhase {
   switch (event.type) {
+    case 'verification-completed':
+      return { kind: 'resuming' };
+    case 'verification-required':
+      return { kind: 'verification', verification: event.verification };
+    case 'replaying':
+      return { kind: 'replaying', created: event.created, credential: event.credential };
     case 'decoded':
       return { kind: 'decoded', challenge: event.challenge };
     case 'created':
@@ -161,8 +179,10 @@ export interface MppPayPipelineDeps {
   apiBaseUrl: string;
   url: string;
   probeOptions: SellerProbeOptions;
-  /** Funding instrument id for an instrument-rail challenge. The buyer does not choose the rail — only this selector. */
   instrumentId?: string;
+  merchantName?: string;
+  merchantUrl?: string;
+  merchantCountry?: string;
   /** Caller-supplied `--payment-method` filter — matches a challenge's `method`. Empty filtered set ⇒ NO_FILTERED_MATCH. */
   paymentMethodFilter?: string;
   /** Caller-supplied `--intent` filter — matches a challenge's `intent`. */
@@ -260,9 +280,40 @@ async function resolveTransaction(
  */
 export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: MppPayEvent) => void): Promise<void> {
   try {
+    const hasMerchant =
+      deps.merchantName !== undefined || deps.merchantUrl !== undefined || deps.merchantCountry !== undefined;
+    const paymentMethod = deps.paymentMethodFilter ?? (hasMerchant ? 'card' : undefined);
+    if (
+      (hasMerchant || paymentMethod === 'card') &&
+      (paymentMethod !== 'card' ||
+        deps.subscriptionId !== undefined ||
+        deps.railFilter !== undefined ||
+        (deps.intentFilter !== undefined && deps.intentFilter !== 'charge'))
+    ) {
+      emit({
+        type: 'errored',
+        code: 'INVALID_PAYMENT_OPTIONS',
+        message: 'Merchant flags require a CARD charge. CARD does not use a settlement rail or subscription.',
+      });
+      return;
+    }
+    if (
+      deps.instrumentId !== undefined &&
+      (deps.subscriptionId !== undefined ||
+        (deps.railFilter !== undefined && deps.railFilter !== 'instrument') ||
+        (paymentMethod !== undefined && paymentMethod !== 'inflow' && paymentMethod !== 'card') ||
+        (deps.intentFilter !== undefined && deps.intentFilter !== 'charge'))
+    ) {
+      emit({
+        type: 'errored',
+        code: 'INVALID_PAYMENT_OPTIONS',
+        message: '--instrument-id requires a CARD charge or an inflow charge on the instrument rail.',
+      });
+      return;
+    }
     const probeOptions = resolveAcceptPaymentProbeOptions(deps.probeOptions, {
-      paymentMethod: deps.paymentMethodFilter,
-      intent: deps.intentFilter,
+      paymentMethod,
+      intent: deps.instrumentId !== undefined ? 'charge' : deps.intentFilter,
     });
     const probe = await sellerRequest(deps.sellerTransport, { url: deps.url, ...probeOptions });
     if (probe.status !== 402) {
@@ -314,12 +365,18 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
     }
 
     const filters: ChallengeFilters = {
-      ...(deps.paymentMethodFilter !== undefined ? { paymentMethod: deps.paymentMethodFilter } : {}),
+      ...(paymentMethod !== undefined ? { paymentMethod } : {}),
       ...(deps.intentFilter !== undefined ? { intent: deps.intentFilter } : {}),
       ...(deps.currencyFilter !== undefined ? { currency: deps.currencyFilter } : {}),
       ...(deps.railFilter !== undefined ? { rail: deps.railFilter } : {}),
+      ...(deps.instrumentId !== undefined ? { intent: 'charge' } : {}),
     };
-    const selected = filterChallenges(supportedChallenges, filters);
+    const selected = filterChallenges(supportedChallenges, filters).filter(
+      (challenge) =>
+        deps.instrumentId === undefined ||
+        challenge.method === 'card' ||
+        (challenge.method === 'inflow' && decodeChallengeRequest(challenge)?.methodDetails?.rail === 'instrument'),
+    );
     if (hasAnyChallengeFilter(filters) && selected.length === 0) {
       emit({
         type: 'errored',
@@ -368,7 +425,51 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
 
     let challenge = resolvedChallenges[0] as MppChallenge;
 
-    const options: InflowPaymentOptions = deps.instrumentId !== undefined ? { instrumentId: deps.instrumentId } : {};
+    let options: InflowPaymentOptions | CardPaymentOptions =
+      deps.instrumentId !== undefined ? { instrumentId: deps.instrumentId } : {};
+    const expectedChallenge = encode(challenge);
+    if (challenge.method === 'card') {
+      const request = cardChargeRequestSchema.safeParse(decodeChallengeRequest(challenge));
+      if (!request.success) {
+        emit({
+          type: 'errored',
+          code: 'INVALID_CARD_CHALLENGE',
+          message:
+            'CARD requires a supported USD/Visa charge of at least 50 cents with a merchant name and public encryption key.',
+        });
+        return;
+      }
+      const merchant = {
+        name: deps.merchantName ?? request.data.methodDetails.merchantName,
+        url: deps.merchantUrl,
+        countryCode: deps.merchantCountry,
+      };
+      const fields = [
+        ['name', '--merchant-name', merchant.name],
+        ['url', '--merchant-url', merchant.url],
+        ['countryCode', '--merchant-country', merchant.countryCode],
+      ] as const;
+      const missing = fields.filter(([, , value]) => value === undefined || value.trim() === '');
+      if (missing.length > 0) {
+        emit({
+          type: 'errored',
+          code: 'CARD_MERCHANT_REQUIRED',
+          message: `CARD requires ${missing.map(([field, flag]) => `merchant.${field} (${flag})`).join(', ')}. Supply the merchant's business details, not your billing details, and run the command again. No transaction was created.`,
+        });
+        return;
+      }
+      const parsed = cardPaymentOptionsSchema.safeParse({ ...options, merchant });
+      if (!parsed.success) {
+        emit({
+          type: 'errored',
+          code: 'INVALID_PAYMENT_OPTIONS',
+          message:
+            'CARD requires a merchant name of at most 200 characters, an absolute HTTP or HTTPS merchant URL, a two-letter merchant country code, and an optional instrument UUID.',
+        });
+        return;
+      }
+      options = parsed.data;
+    }
 
     let created: MppTransactionResponse;
     let paymentTransactionId: string | undefined;
@@ -403,7 +504,9 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
           throw new Error('Subscription credential did not include a transaction id.');
         }
         paymentTransactionId = transactionId;
+        emit({ type: 'decoded', challenge: summarizeChallenge(challenge) });
       } else {
+        emit({ type: 'decoded', challenge: summarizeChallenge(challenge) });
         created = await deps.client.createTransaction({
           challenge,
           options,
@@ -416,8 +519,6 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
       emit({ type: 'errored', code: mapped.code, message: mapped.message });
       return;
     }
-
-    emit({ type: 'decoded', challenge: summarizeChallenge(challenge) });
 
     const createdFrame: MppPayCreated = {
       transactionId: created.transactionId ?? '',
@@ -454,10 +555,14 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
     }
 
     if (resolved.state === 'failed') {
+      const detail = resolved.problem?.detail ?? resolved.problem?.title ?? 'MPP transaction failed.';
       emit({
         type: 'errored',
         code: 'PAYMENT_FAILED',
-        message: resolved.problem?.detail ?? resolved.problem?.title ?? 'MPP transaction failed.',
+        message:
+          challenge.method === 'card' && createdFrame.transactionId !== ''
+            ? `Transaction ${createdFrame.transactionId}: ${detail}`
+            : detail,
       });
       return;
     }
@@ -475,20 +580,60 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
     }
 
     const credential = resolved.credential;
-    let replay;
+    if (challenge.method === 'card') {
+      let valid = false;
+      try {
+        const decoded = decodeCredential(credential);
+        valid =
+          encode(decoded.challenge) === expectedChallenge &&
+          cardCredentialPayloadSchema.safeParse(decoded.payload).success;
+      } catch {
+        // Decode failures must not expose the credential in an error message.
+      }
+      if (!valid) {
+        emit({
+          type: 'errored',
+          code: 'INVALID_CARD_CREDENTIAL',
+          message: `The CARD credential is invalid or does not match the requested challenge. No credential was sent to the seller. Contact InFlow support with transaction ${createdFrame.transactionId}; do not start another payment.`,
+        });
+        return;
+      }
+    }
+    emit({ type: 'replaying', created: createdFrame, credential });
+    let replay: PaymentReplayResult | undefined;
     try {
-      replay = await replayPaymentRequest({
-        url: deps.url,
-        method: probeOptions.method,
-        headers: probeOptions.headers,
-        ...(probeOptions.data !== undefined ? { data: probeOptions.data } : {}),
-        paymentHeaderName: HEADERS.AUTHORIZATION,
-        paymentHeaderValue: `${SCHEME_PAYMENT} ${credential}`,
-        showBody: deps.showBody,
-        ...(deps.outputFile !== undefined ? { outputFile: deps.outputFile } : {}),
-        ...(deps.sellerTransport !== undefined ? { sellerTransport: deps.sellerTransport } : {}),
-        ...(paymentTransactionId === undefined ? {} : { transactionId: paymentTransactionId }),
-      });
+      for await (const event of replayWithCardVerification(
+        {
+          url: deps.url,
+          method: probeOptions.method,
+          headers: probeOptions.headers,
+          ...(probeOptions.data !== undefined ? { data: probeOptions.data } : {}),
+          paymentHeaderName: HEADERS.AUTHORIZATION,
+          paymentHeaderValue: `${SCHEME_PAYMENT} ${credential}`,
+          showBody: deps.showBody,
+          ...(deps.outputFile !== undefined ? { outputFile: deps.outputFile } : {}),
+          ...(deps.sellerTransport !== undefined ? { sellerTransport: deps.sellerTransport } : {}),
+          ...(paymentTransactionId === undefined ? {} : { transactionId: paymentTransactionId }),
+        },
+        createdFrame.challenge.method === 'inflow' &&
+          challenge.intent === 'charge' &&
+          createdFrame.challenge.rail === 'instrument'
+          ? {
+              apiBaseUrl: deps.apiBaseUrl,
+              getStatus: () =>
+                deps.client.getPaymentStatus(createdFrame.transactionId, {
+                  ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+                }),
+              interval: deps.interval,
+              maxAttempts: deps.maxAttempts,
+              timeout: deps.timeout,
+              ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+            }
+          : undefined,
+      )) {
+        if (event.type === 'replay-response') replay = event.response;
+        else emit(event);
+      }
     } catch (err) {
       if (err instanceof SellerAuthenticationError) {
         emit({ type: 'errored', code: err.code, message: err.message });
@@ -504,6 +649,7 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
       }
       throw err;
     }
+    if (replay === undefined) return;
     const {
       contentType: replayContentType,
       headers: replayHeaders,

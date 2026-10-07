@@ -48,6 +48,58 @@ function deps(): MppPayPipelineDeps {
 }
 
 describe('PayView', () => {
+  it.each(['card', 'inflow'])('shows the %s amount while creation is in progress', async (method) => {
+    const request =
+      method === 'card'
+        ? {
+            amount: '100',
+            currency: 'usd',
+            recipient: 'acct_test',
+            methodDetails: {
+              merchantName: 'Store',
+              acceptedNetworks: ['visa'],
+              encryptionJwk: { kty: 'RSA', alg: 'RSA-OAEP-256', use: 'enc', kid: 'test', n: 'AQAB', e: 'AQAB' },
+            },
+          }
+        : {};
+    const offered = { ...challenge(), method, request: encode(request) };
+    let finishCreation: (() => void) | undefined;
+    const creation = new Promise<void>((resolve) => {
+      finishCreation = resolve;
+    });
+    server.use(
+      http.get(
+        SELLER,
+        () => new HttpResponse(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(offered) } }),
+      ),
+      http.post(`${INFLOW}/v1/transactions/mpp`, async () => {
+        await creation;
+        return HttpResponse.json({ state: 'pending', transactionId: 'tx-1', approvalId: 'ap-9' });
+      }),
+    );
+    const view = render(
+      <PayView
+        url={SELLER}
+        method="GET"
+        deps={{
+          ...deps(),
+          interval: 0,
+          awaitPayment: false,
+          ...(method === 'card' ? { merchantUrl: 'https://store.test', merchantCountry: 'US' } : {}),
+        }}
+        onComplete={vi.fn()}
+      />,
+    );
+    try {
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('Fulfilling'));
+      expect(view.lastFrame()).toContain(method === 'card' ? '100 cents usd' : '—');
+      finishCreation?.();
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('Approval required'));
+    } finally {
+      finishCreation?.();
+      view.unmount();
+    }
+  });
   it('renders the paid frame after a complete pay pipeline', async () => {
     server.use(
       http.get(SELLER, ({ request }) => {
@@ -168,12 +220,28 @@ describe('PayView', () => {
     unmount();
   });
 
-  it('waits for remote approval cancellation before completing', async () => {
+  it.each(['inflow', 'card'])('waits for remote %s approval cancellation before completing', async (method) => {
+    const offered =
+      method === 'card'
+        ? {
+            ...challenge(),
+            method,
+            request: encode({
+              amount: '100',
+              currency: 'usd',
+              recipient: 'acct_test',
+              methodDetails: {
+                merchantName: 'Store',
+                acceptedNetworks: ['visa'],
+                encryptionJwk: { kty: 'RSA', alg: 'RSA-OAEP-256', use: 'enc', kid: 'test', n: 'AQAB', e: 'AQAB' },
+              },
+            }),
+          }
+        : challenge();
     server.use(
       http.get(
         SELLER,
-        () =>
-          new HttpResponse(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(challenge()) } }),
+        () => new HttpResponse(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(offered) } }),
       ),
       http.post(`${INFLOW}/v1/transactions/mpp`, () =>
         HttpResponse.json({ state: 'pending', transactionId: 'tx-1', approvalId: 'ap-9', retryAfterSeconds: 5 }),
@@ -191,7 +259,11 @@ describe('PayView', () => {
       <PayView
         url={SELLER}
         method="GET"
-        deps={{ ...deps(), awaitPayment: false }}
+        deps={{
+          ...deps(),
+          awaitPayment: false,
+          ...(method === 'card' ? { merchantUrl: 'https://store.test', merchantCountry: 'US' } : {}),
+        }}
         onCancel={onCancel}
         onComplete={onComplete}
       />,

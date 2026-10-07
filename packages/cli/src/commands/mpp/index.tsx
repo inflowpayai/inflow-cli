@@ -1,5 +1,6 @@
 import { chmodSync, writeFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
+import { cardVerificationFrame } from '../payment-verification.js';
 import {
   type AuthStorage,
   type DecodedChallenge,
@@ -19,7 +20,12 @@ import {
   type SellerProbeOptions,
   type SellerRequestTransport,
 } from '@inflowpayai/inflow-core';
-import { INTENT_SUBSCRIPTION, type MppSupportedResponse, type MppTransactionResponse } from '@inflowpayai/mpp';
+import {
+  decodeCredential,
+  INTENT_SUBSCRIPTION,
+  type MppSupportedResponse,
+  type MppTransactionResponse,
+} from '@inflowpayai/mpp';
 import { Cli } from 'incur';
 import type React from 'react';
 import { useMemo } from 'react';
@@ -90,6 +96,9 @@ interface PayContext {
     maxAttempts: number;
     timeout: number;
     instrumentId?: string | undefined;
+    merchantName?: string | undefined;
+    merchantUrl?: string | undefined;
+    merchantCountry?: string | undefined;
     showBody: boolean;
     outputFile?: string | undefined;
     credentialFile?: string | undefined;
@@ -189,6 +198,14 @@ function decorateCredentialField(
     chmodSync(absolute, 0o600);
     frame['credential_saved_to'] = absolute;
     return;
+  }
+  try {
+    if (decodeCredential(credential).challenge.method === 'card') {
+      frame['credential'] = '<redacted>';
+      return;
+    }
+  } catch {
+    // Other payment methods can return opaque credentials.
   }
   frame['credential'] = credential;
 }
@@ -330,6 +347,9 @@ function buildPayPipelineInput(
     maxAttempts: c.options.maxAttempts,
     timeout: c.options.timeout,
     ...(c.options.instrumentId !== undefined ? { instrumentId: c.options.instrumentId } : {}),
+    ...(c.options.merchantName !== undefined ? { merchantName: c.options.merchantName } : {}),
+    ...(c.options.merchantUrl !== undefined ? { merchantUrl: c.options.merchantUrl } : {}),
+    ...(c.options.merchantCountry !== undefined ? { merchantCountry: c.options.merchantCountry } : {}),
     ...(c.options.paymentMethod !== undefined ? { paymentMethodFilter: c.options.paymentMethod } : {}),
     ...(c.options.intent !== undefined ? { intentFilter: c.options.intent } : {}),
     ...(c.options.currency !== undefined ? { currencyFilter: c.options.currency } : {}),
@@ -513,6 +533,10 @@ export async function* runPayCommand(
   });
 
   for await (const event of run.events) {
+    if (event.type === 'verification-required') {
+      yield sanitizeDeep(cardVerificationFrame('mpp', event.verification, c.options));
+      continue;
+    }
     if (event.type === 'short-circuited') {
       yield sanitizeDeep(noPaymentFrameFromResult(event.result));
       return;
@@ -588,7 +612,7 @@ export async function* runFetchCommand(
             transactionId: c.args.transactionId,
             url: c.args.resourceUrl,
             probeOptions,
-            interval: c.options.interval,
+            interval: c.options.interval > 0 ? c.options.interval : 5,
             maxAttempts: c.options.maxAttempts,
             timeout: c.options.timeout,
             showBody: c.options.showBody,
@@ -635,6 +659,10 @@ export async function* runFetchCommand(
   });
 
   for await (const event of run.events) {
+    if (event.type === 'verification-required') {
+      yield sanitizeDeep(cardVerificationFrame('mpp', event.verification, c.options));
+      continue;
+    }
     if (event.type === 'replayed') {
       yield sanitizeDeep(fetchFrameFromResult(event.result));
       return;

@@ -45,12 +45,14 @@ describe('MppStatusView', () => {
     result.unmount();
   });
 
-  it('renders Ready with a truncated credential preview', async () => {
+  it('renders Ready without credential material', async () => {
     const { lastFrame, unmount } = view(() =>
       Promise.resolve({ transactionId: 'tx-1', state: 'ready', credential: 'c'.repeat(64) }),
     );
     await new Promise((r) => setTimeout(r, 50));
     expect(lastFrame() ?? '').toContain('Ready');
+    expect(lastFrame()).toContain('Payment credential available');
+    expect(lastFrame()).not.toContain('cccc');
     unmount();
   });
 

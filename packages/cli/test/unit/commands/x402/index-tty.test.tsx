@@ -156,6 +156,16 @@ afterAll(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('x402 TTY runners (renderInkUntilExit paths)', () => {
+  it('passes the explicit card to the client in interactive mode', async () => {
+    const { inflow, storage } = authedResources(makeClient());
+    const clientSpy = vi.spyOn(inflow.x402, 'client').mockResolvedValue(makeClient());
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+    const instrumentId = '11111111-1111-4111-8111-111111111111';
+    const ctx = ttyCtx({ url: 'https://seller/api' }, { ...PAY_OPTIONS, instrumentId });
+    await drain(runPayCommand(ctx, inflow, storage, 'https://api.inflowpay.ai'));
+    expect(clientSpy).toHaveBeenCalledWith({ instrumentId });
+    expect(ctx.error).not.toHaveBeenCalled();
+  });
   it('runPayCommand renders to completion on a successful pay and never calls c.error', async () => {
     const header = encodePaymentRequiredHeader(makePaymentRequired());
     const fetchSpy = vi.spyOn(globalThis, 'fetch');

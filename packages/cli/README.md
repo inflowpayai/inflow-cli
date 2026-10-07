@@ -606,7 +606,7 @@ once and decodes both MPP and x402 challenges from the same 402 response — so 
 inspecting. This is the recommended first step: read `detected` to decide which rail owns the next action.
 
 Endpoint probing uses `--method`, `--data`, and `--header` and is deliberately unfiltered. For filtered probes or full
-per-protocol detail (pay-to, timeout, extras, challenge ids / digests), use [`inflow mpp inspect`](#mpp-inspect) /
+per-protocol detail (pay-to, timeout, extras, challenge ids / digests), use [`inflow mpp inspect`](#mpp) /
 [`inflow x402 inspect`](#x402-inspect).
 
 TTY renders a `detected:` summary line, then ODP, AEP, MPP, and x402 sections. Each section shows details or a dim "none
@@ -696,7 +696,14 @@ the `PAYMENT-REQUIRED` header, picks an `accepts[]` entry the InFlow buyer can s
 transaction + approval, surfaces the approval URL, waits for the user to approve, then replays the protected request
 with the AEP credential and signed `PAYMENT-SIGNATURE` header when both are required.
 
+Among matching offers, the CLI prefers `balance`, then `exact`, then `instrument` (a linked card). To pay with a
+specific linked card, use `--instrument-id <uuid>`. This selects only Instrument offers. Use `--scheme instrument`
+without an Instrument ID to use your primary card. A rejected payment does not cause the CLI to try another funding
+source.
+
 #### Useful flags
+
+`--instrument-id <uuid>` selects a linked card for this payment. It cannot be combined with a non-Instrument `--scheme`.
 
 | Flag                             | Default | Notes                                                                                                                                                                                                                                          |
 | -------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -886,9 +893,10 @@ inflow x402 fetch txn_abc123 https://seller.example.com/api/widgets --interval 5
 ```
 
 Loads the transaction state, waits for a signed payload when `--interval` is set, completes any required AEP
-authentication, and sends one credential-bearing seller replay with `PAYMENT-SIGNATURE` plus a non-colliding AEP
-credential when needed. Terminal declined, cancelled, failed, and expired states stop before seller contact. Fetch
-output never exposes the encoded payload or AEP credential material.
+authentication, and sends a credential-bearing seller request with `PAYMENT-SIGNATURE` plus a non-colliding AEP
+credential when needed. Terminal failure states without a signed payload stop before seller contact. Ordinary Instrument
+payments can continue through [bank verification](#bank-verification-for-linked-card-payments) and one additional
+request after settlement. Fetch output never exposes the encoded payload or AEP credential material.
 
 ### `x402 cancel`
 
@@ -966,13 +974,87 @@ Differences from `x402`:
 
 - The seller's challenge pins the settlement rail, so the buyer does not choose a scheme/network/asset the way x402
   does. Instead the buyer narrows _which advertised challenge_ to fulfil (see the flags below), then optionally names a
-  funding instrument.
+  funding instrument. `--instrument-id <uuid>` selects a linked card for either a CARD charge or an `inflow` charge on
+  the `instrument` rail. Use `--payment-method card` for Visa Intelligent Commerce, or
+  `--payment-method inflow --rail instrument` for ordinary card processing. Either uses your primary card when the
+  Instrument ID is omitted. A rejected payment does not cause the CLI to try another funding source.
 - `fetch` attaches the base64url credential as `Authorization: Payment <credential>` and never exposes it in Fetch
   output. If AEP authentication is required, the replay also carries a non-colliding AEP credential such as
   `AEP-Authorization`. Subscription fetches obtain a fresh, short-lived credential for the seller's current challenge;
   no standing subscription credential is stored locally. `status` can still show or save a one-time payment credential
   for diagnostics.
-- A 402 carrying no `inflow`-method challenge fails with `NO_INFLOW_MATCH`.
+- A 402 carrying no supported method fails with `NO_INFLOW_MATCH`. Supported methods are `inflow`, `tempo`, and CARD
+  charges (`card`).
+
+### Ordinary linked-card payments
+
+Link a card under Instruments in the dashboard for the account's environment: [sandbox](https://sandbox.inflowpay.ai) or
+[production](https://app.inflowpay.ai). The seller must offer USD payments through MPP `inflow` on the `instrument`
+rail, or the x402 `instrument` scheme. These payments require at least USD 0.50 in whole cents, but no VIC allowance or
+InFlow USD balance.
+
+Choose the command matching the seller's offer:
+
+```bash
+inflow mpp pay https://merchant.example/report --payment-method inflow --rail instrument
+inflow x402 pay https://merchant.example/report --scheme instrument
+```
+
+Both use your primary card. Add `--instrument-id <uuid>` to select another linked card; an unavailable selection fails
+without using a different card. The selection belongs to that purchase, so `fetch` does not take an Instrument ID or
+change the funding source. Use the same transaction to
+[continue bank verification](#bank-verification-for-linked-card-payments) if required. The CLI does not collect card
+numbers or create VIC allowances.
+
+### CARD payments
+
+CARD uses a linked Visa card and a verified open allowance configured in the InFlow dashboard. Ordinary `inflow`
+Instrument payments do not use that allowance. Neither path requires an InFlow USD wallet balance.
+
+Create and verify the allowance under Instruments for the selected card before paying. It must be unexpired and cover
+the USD purchase. `mpp supported` advertises platform capabilities; it does not confirm that your card or allowance is
+ready. The allowance is not merchant-bound; merchant details are supplied for each purchase credential.
+
+Provide the merchant's business website and two-letter country code. The merchant name defaults to the selected CARD
+challenge's advertised name; `--merchant-name` supplies an explicit name. Do not use your own billing details or assume
+the payment endpoint is the merchant's website. Merchant flags select CARD when `--payment-method` is omitted.
+
+```bash
+inflow mpp pay https://merchant.example/report --payment-method card \
+  --merchant-name 'Example Store' --merchant-url https://merchant.example \
+  --merchant-country US --format json
+```
+
+Add `--instrument-id <uuid>` to use a specific linked card instead of your primary card. CARD is a one-time USD/Visa
+payment with a minimum of USD 0.50; it has no settlement rail. Do not pass `--rail`. CARD challenge amounts are integer
+cents: `"100"` means USD 1.00. Structured output retains that wire value, while terminal amounts identify cents.
+
+Missing merchant fields produce `CARD_MERCHANT_REQUIRED`, naming the missing fields and flags before creating a
+transaction. Invalid merchant values or conflicting flags produce `INVALID_PAYMENT_OPTIONS`; an unsupported CARD request
+produces `INVALID_CARD_CHALLENGE`. There are no interactive merchant-input prompts.
+
+When approval is required, agent mode returns the existing `transaction_id`, `approval_id`, `approval_url`, and `_next`
+fetch instructions. Approve in the dashboard or mobile app, then resume using the same transaction:
+
+```bash
+inflow mpp fetch <transactionId> https://merchant.example/report --interval 5 --format json
+```
+
+Keep the original request method, body, and headers when resuming. A positive `--interval` on `pay` waits and fetches
+inline. Fetch uses the saved purchase and does not take merchant flags or an Instrument ID. Do not run `pay` again to
+resume approval or credential issuance. In an interactive terminal, Escape during approval requests cancellation and
+waits for the server's response. Escape during `status` or `fetch` stops waiting; it does not cancel an approved
+payment.
+
+Normal `pay` and `status` structured output uses `credential: "<redacted>"` for CARD; terminal status does not display
+credential material. Fetch sends the credential without printing it. Explicit `--credential-file <path>` on `pay` or
+`status` exports the credential with file mode `0o600`; treat the file as a secret. `mpp decode` is a diagnostic command
+that displays decoded input, so do not paste payment credentials into agent conversations.
+
+`INVALID_CARD_CREDENTIAL` stops before sending an invalid or mismatched credential to the seller. If issuance is
+uncertain, preserve the transaction ID and follow the server's instructions. If delivery returns
+`PAYMENT_REPLAY_OUTCOME_UNKNOWN`, the seller may have received the credential. Do not automatically repeat the payment
+or create a replacement purchase in either case.
 
 #### Challenge-selection flags (`pay` and `inspect`)
 
@@ -980,13 +1062,56 @@ These narrow the seller's advertised challenge set; each is independent and AND-
 command fails with `NO_FILTERED_MATCH`. (`x402`'s `--scheme`/`--network`/`--asset`/`--asset-name` have no MPP analog —
 the rail is fixed by the seller, so the buyer filters by method/intent/currency/rail instead.)
 
-| Flag                     | Notes                                                                                                                                                                     |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--payment-method <m>`   | Only consider challenges with this payment method (e.g. `inflow`).                                                                                                        |
-| `--intent <intent>`      | Only consider challenges with this intent (e.g. `charge`).                                                                                                                |
-| `--currency <CODE>`      | Only consider challenges in this currency (e.g. `USDC`). Disambiguates when the seller offers the `inflow` method in more than one currency.                              |
-| `--rail <rail>`          | Only consider challenges on this settlement rail (e.g. `balance`, `instrument`).                                                                                          |
-| `--instrument-id <uuid>` | Funding instrument id for an instrument-rail (fiat) challenge. The only option that selects _how_ to fund rather than which challenge — the rail itself is seller-pinned. |
+| Flag                   | Notes                                                                                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--payment-method <m>` | Only consider challenges with this payment method (e.g. `inflow`).                                                                           |
+| `--intent <intent>`    | Only consider challenges with this intent (e.g. `charge`).                                                                                   |
+| `--currency <CODE>`    | Only consider challenges in this currency (e.g. `USDC`). Disambiguates when the seller offers the `inflow` method in more than one currency. |
+| `--rail <rail>`        | Only consider challenges on this settlement rail (e.g. `balance`, `instrument`).                                                             |
+
+`--instrument-id` and the three `--merchant-*` flags belong to `pay`, not `inspect` or `fetch`. They configure the
+purchase rather than filtering an inspection result. CARD merchant flags are described above.
+
+## Bank verification for linked-card payments
+
+An approved card payment can still require verification by your bank. This is separate from the InFlow Approval. For MPP
+`inflow` Instrument charges and x402 `instrument` payments, the CLI displays the authenticated dashboard verification
+URL. Press Enter to open it. Press Escape to stop waiting without cancelling the submitted payment.
+
+This browser continuation is for ordinary Instrument payments, not the VIC allowance or purchase-credential flow.
+`mpp status` reports credential readiness; `x402 status` reports signing state. Neither alone proves that a card charge
+settled. Use the verification continuation returned by `pay` or `fetch` rather than treating a ready credential as a
+receipt.
+
+While waiting, the CLI reads the original transaction's status. After confirmed settlement it retries the original
+seller request once with the same payment credential, method, body, and headers. It does not create another purchase or
+switch cards. A connection failure after sending the credential remains `PAYMENT_REPLAY_OUTCOME_UNKNOWN` and is not
+automatically retried.
+
+In structured output, bank verification produces these fields:
+
+| Field              | Meaning                                                                                                         |
+| ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `outcome`          | `verification-required`. This is not a successful payment result.                                               |
+| `protocol`         | `mpp` or `x402`.                                                                                                |
+| `transaction_id`   | The original InFlow transaction.                                                                                |
+| `verification_url` | The dashboard URL to open in a browser; no Stripe client secret is exposed.                                     |
+| `waiting`          | Whether this command is continuing to poll.                                                                     |
+| `reason`           | `action-required`, or `timeout` when a waiting limit is reached.                                                |
+| `_next`            | Present only when `waiting` is false. Identifies Fetch and the arguments for resuming the original transaction. |
+
+In agent mode, `--interval 0` returns the verification information without waiting. A positive interval waits up to
+`--timeout` or `--max-attempts`. Interactive commands use a five-second interval when no positive interval is supplied.
+Use `--format jsonl` to receive the verification URL while a command is still waiting; `json` and `toon` buffer the
+result until the command returns. Do not start another Fetch while `waiting` is true. After the wait stops, resume with
+`inflow mpp fetch` or `inflow x402 fetch`, using the original transaction ID, resource URL, method, body, headers, and
+output options—not another `pay` command. Continuation output does not echo your body or headers; when those are needed,
+it omits a copyable command and sets `_next.requires_original_request_options` to `true`. The input retains the polling
+limits, timeout, and output options.
+
+`INVALID_CARD_VERIFICATION` rejects an unexpected transaction or dashboard URL. `PAYMENT_STATUS_UNAVAILABLE` means the
+submitted payment could not be checked; resume that transaction instead of starting over. `CARD_PAYMENT_FAILED` reports
+a terminal payment status after verification. A second seller rejection is returned without further replay.
 
 ## `subscriptions`
 
@@ -1030,7 +1155,7 @@ probe/decode/match codes carry the same meaning as in the `x402` table above; th
 | `INVALID_402`             | Seller returned 402 without a parseable `WWW-Authenticate: Payment` challenge.                                                                                |
 | `DECODE_FAILED`           | Challenge / credential / receipt parse failed.                                                                                                                |
 | `UNEXPECTED_PROBE_STATUS` | Seller returned a non-2xx, non-402 status during the probe. Raised by `pay` and `inspect`.                                                                    |
-| `NO_INFLOW_MATCH`         | The 402 carried no `inflow`-method challenge the buyer can fulfil.                                                                                            |
+| `NO_INFLOW_MATCH`         | The 402 carried no supported `inflow`, `tempo`, or `card` challenge.                                                                                          |
 | `NO_FILTERED_MATCH`       | `--payment-method` / `--intent` / `--currency` / `--rail` excluded every challenge. The message lists the challenges the seller actually advertised.          |
 | `PAYMENT_NOT_ACCEPTED`    | The seller still returned non-2xx on the replayed (`Authorization: Payment`) request. The transaction was ready but the seller did not honour the credential. |
 | `PAYMENT_FAILED`          | The transaction reached a terminal `failed` state, or the pay pipeline could not produce a credential.                                                        |

@@ -1,11 +1,20 @@
-import { HEADERS, type MppClient, type MppTransactionResponse, SCHEME_PAYMENT } from '@inflowpayai/mpp';
+import {
+  decodeCredential,
+  HEADERS,
+  type MppClient,
+  type MppTransactionResponse,
+  SCHEME_PAYMENT,
+} from '@inflowpayai/mpp';
+import { summarizeChallenge } from './mpp-decode.js';
 import { buildSettlement, mapMppError, type MppPaySettlement } from './mpp-pay.js';
 import { runMppStatus } from './mpp-status.js';
 import {
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
   PaymentReplayOutcomeUnknownError,
-  replayPaymentRequest,
+  replayWithCardVerification,
+  type CardVerificationEvent,
+  type PaymentReplayResult,
   SellerAuthenticationError,
   type SellerRequestTransport,
 } from './payment-fetch.js';
@@ -41,6 +50,7 @@ export interface MppFetchRejected {
 }
 
 export type MppFetchEvent =
+  | CardVerificationEvent
   | { type: 'snapshot'; response: MppTransactionResponse }
   | { type: 'replaying'; response: MppTransactionResponse }
   | { type: 'replayed'; result: MppFetchSuccess }
@@ -48,6 +58,7 @@ export type MppFetchEvent =
   | { type: 'errored'; code: string; message: string; retryable?: boolean };
 
 export interface MppFetchInput {
+  apiBaseUrl?: string;
   client: MppClient;
   transactionId: string;
   url: string;
@@ -161,20 +172,45 @@ export function runMppFetch(input: MppFetchInput): MppFetchRun {
     }
 
     yield { type: 'replaying', response: ready };
-    let replay;
+    let replay: PaymentReplayResult | undefined;
     try {
-      replay = await replayPaymentRequest({
-        url: input.url,
-        method: input.probeOptions.method,
-        headers: input.probeOptions.headers,
-        ...(input.probeOptions.data !== undefined ? { data: input.probeOptions.data } : {}),
-        paymentHeaderName: HEADERS.AUTHORIZATION,
-        paymentHeaderValue: `${SCHEME_PAYMENT} ${ready.credential}`,
-        showBody: input.showBody,
-        ...(input.outputFile !== undefined ? { outputFile: input.outputFile } : {}),
-        ...(input.sellerTransport !== undefined ? { sellerTransport: input.sellerTransport } : {}),
-        transactionId: input.transactionId,
-      });
+      let instrument = false;
+      try {
+        const challenge = summarizeChallenge(decodeCredential(ready.credential).challenge);
+        instrument = challenge.method === 'inflow' && challenge.intent === 'charge' && challenge.rail === 'instrument';
+      } catch {
+        /* Opaque credentials are replayed without card continuation. */
+      }
+      for await (const event of replayWithCardVerification(
+        {
+          url: input.url,
+          method: input.probeOptions.method,
+          headers: input.probeOptions.headers,
+          ...(input.probeOptions.data !== undefined ? { data: input.probeOptions.data } : {}),
+          paymentHeaderName: HEADERS.AUTHORIZATION,
+          paymentHeaderValue: `${SCHEME_PAYMENT} ${ready.credential}`,
+          showBody: input.showBody,
+          ...(input.outputFile !== undefined ? { outputFile: input.outputFile } : {}),
+          ...(input.sellerTransport !== undefined ? { sellerTransport: input.sellerTransport } : {}),
+          transactionId: input.transactionId,
+        },
+        instrument
+          ? {
+              apiBaseUrl: input.apiBaseUrl ?? 'https://api.inflowpay.ai',
+              getStatus: () =>
+                input.client.getPaymentStatus(input.transactionId, {
+                  ...(input.signal === undefined ? {} : { signal: input.signal }),
+                }),
+              interval: input.interval,
+              maxAttempts: input.maxAttempts,
+              timeout: input.timeout,
+              ...(input.signal === undefined ? {} : { signal: input.signal }),
+            }
+          : undefined,
+      )) {
+        if (event.type === 'replay-response') replay = event.response;
+        else yield event;
+      }
     } catch (err) {
       if (err instanceof SellerAuthenticationError) {
         yield {
@@ -198,6 +234,7 @@ export function runMppFetch(input: MppFetchInput): MppFetchRun {
       return;
     }
 
+    if (replay === undefined) return;
     const base = {
       protocol: 'mpp' as const,
       transactionId: input.transactionId,

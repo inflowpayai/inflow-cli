@@ -7,12 +7,18 @@ function orDash(value: string | undefined): string {
   return value === undefined || value === '' ? '—' : value;
 }
 
+export function displayAmount(challenge: DecodedChallenge): string {
+  return challenge.method === 'card' && challenge.currency === 'usd' && challenge.amount !== undefined
+    ? `${challenge.amount} cents`
+    : orDash(challenge.amount);
+}
+
 const CHALLENGE_COLUMNS: ReadonlyArray<TableColumn<DecodedChallenge>> = [
   { header: 'Method', cell: (challenge) => challenge.method },
   { header: 'Intent', cell: (challenge) => challenge.intent },
-  { header: 'Amount', cell: (challenge) => orDash(challenge.amount) },
+  { header: 'Amount', cell: displayAmount },
   { header: 'Currency', cell: (challenge) => orDash(challenge.currency) },
-  { header: 'Rail', cell: (challenge) => orDash(challenge.rail) },
+  { header: 'Rail', cell: (challenge) => (challenge.rail === 'instrument' ? 'Linked card' : orDash(challenge.rail)) },
 ];
 
 interface DetailRow {

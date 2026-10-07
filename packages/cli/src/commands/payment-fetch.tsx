@@ -1,5 +1,6 @@
 import type {
   MppFetchEvent,
+  CardVerification,
   MppFetchRejected,
   MppFetchSuccess,
   X402FetchEvent,
@@ -12,10 +13,12 @@ import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { useFlowExit } from '../hooks/use-flow-exit.js';
 import { AuthenticationApprovalView, type AuthenticationApprovalDisplay } from './payment-authentication-approval.js';
+import { CardVerificationView } from './payment-verification.js';
 
 export type PaymentFetchResult = MppFetchSuccess | MppFetchRejected | X402FetchSuccess | X402FetchRejected;
 
 export type PaymentFetchPhase =
+  | { kind: 'verification'; verification: CardVerification }
   | { kind: 'waiting' }
   | { kind: 'replaying' }
   | { kind: 'completed'; result: MppFetchSuccess | X402FetchSuccess }
@@ -98,6 +101,14 @@ export const PaymentFetchView: React.FC<PaymentFetchViewProps> = ({
       try {
         for await (const event of events(controller.signal)) {
           if (cancelledRef.current) return;
+          if (event.type === 'verification-required') {
+            setPhase({ kind: 'verification', verification: event.verification });
+            continue;
+          }
+          if (event.type === 'verification-completed') {
+            setPhase({ kind: 'replaying' });
+            continue;
+          }
           if (event.type === 'replaying') {
             setPhase({ kind: 'replaying' });
             continue;
@@ -138,7 +149,12 @@ export const PaymentFetchView: React.FC<PaymentFetchViewProps> = ({
   }, [events]);
 
   useEffect(() => {
-    if (phase.kind !== 'waiting' && phase.kind !== 'replaying') finish(phase);
+    if (
+      phase.kind !== 'waiting' &&
+      phase.kind !== 'replaying' &&
+      !(phase.kind === 'verification' && phase.verification.waiting)
+    )
+      finish(phase);
   }, [phase, finish]);
 
   if (phase.kind === 'waiting') {
@@ -164,6 +180,22 @@ export const PaymentFetchView: React.FC<PaymentFetchViewProps> = ({
       </Box>
     );
   }
+
+  if (phase.kind === 'verification')
+    return (
+      <CardVerificationView
+        protocol={protocol === 'MPP' ? 'mpp' : 'x402'}
+        verification={phase.verification}
+        onStop={() => {
+          cancelledRef.current = true;
+          controllerRef.current?.abort();
+          setPhase({
+            kind: 'verification',
+            verification: { ...phase.verification, waiting: false, reason: 'stopped' },
+          });
+        }}
+      />
+    );
 
   if (phase.kind === 'cancelled') return <Text dimColor>Stopped waiting for payment.</Text>;
 

@@ -456,7 +456,7 @@ describe('runPayCommand (agent mode)', () => {
     );
   });
 
-  it('runFetchCommand renders the human fetch path for signed transactions', async () => {
+  it.each([0, 1])('runFetchCommand renders the human fetch path with interval %s', async (interval) => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(
@@ -479,7 +479,7 @@ describe('runPayCommand (agent mode)', () => {
       agent: false,
       formatExplicit: false,
       args: { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
-      options: { method: 'GET', header: [], interval: 0, maxAttempts: 0, timeout: 900, showBody: true },
+      options: { method: 'GET', header: [], interval, maxAttempts: 0, timeout: 900, showBody: true },
       error: vi.fn(),
     };
     const { inflow, storage } = authedResources(client);

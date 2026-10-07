@@ -357,6 +357,8 @@ export {
   type PaymentInspectionBlocked,
   PaymentInspectionBlockedError,
   type PaymentReplayInput,
+  type CardVerification,
+  type CardVerificationEvent,
   type PaymentReplayResult,
   SellerAuthenticationError,
   type SellerRequestInput,
