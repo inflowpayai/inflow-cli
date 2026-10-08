@@ -70,7 +70,7 @@ export class SourceDiscovery {
     }
     const candidates = new Set([`${url.origin}/openapi.json`, `${url.origin}/v1/openapi.json`]);
     if (native.status === 200) {
-      const odp = parseAgentServiceDocument(native.value);
+      const odp = this.odp(native).document;
       if (odp.http.openapi !== undefined) candidates.add(publicDocumentUrl(odp.http.openapi.url, native.finalUrl).href);
     }
     const x402 = await this.documents.get(`${url.origin}/.well-known/x402.json`, options);
@@ -111,9 +111,11 @@ export class SourceDiscovery {
     return sanitizeDeep(result);
   }
 
-  private odp(document: SourceDocument): SourceDiscoveryResult {
+  private odp(document: SourceDocument): Extract<SourceDiscoveryResult, { sourceType: 'odp' }> {
     if (document.status !== 200)
       throw new SourceDiscoveryError('SOURCE_UNAVAILABLE', 'The ODP document is unavailable.');
+    if (document.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/odp+json')
+      throw new SourceDiscoveryError('SOURCE_UNAVAILABLE', 'The ODP document response media type is invalid.');
     return { sourceType: 'odp', sourceUrl: document.sourceUrl, document: parseAgentServiceDocument(document.value) };
   }
 

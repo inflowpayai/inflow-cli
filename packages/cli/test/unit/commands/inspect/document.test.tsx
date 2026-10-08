@@ -65,18 +65,21 @@ function setup(native = false) {
       url.pathname === '/openapi.json'
         ? Response.json(api)
         : native && url.pathname === '/.well-known/odp'
-          ? Response.json({
-              odp_version: '1.0',
-              name: 'Weather',
-              description: 'Weather reports',
-              language: 'en',
-              localizations: ['en'],
-              http: { endpoint_base: '/odp' },
-              operations: [
-                { name: 'list-offerings', authentication: 'not-required' },
-                { name: 'get-offering', authentication: 'not-required' },
-              ],
-            })
+          ? Response.json(
+              {
+                odp_version: '1.0',
+                name: 'Weather',
+                description: 'Weather reports',
+                language: 'en',
+                localizations: ['en'],
+                http: { endpoint_base: '/odp' },
+                operations: [
+                  { name: 'list-offerings', authentication: 'not-required' },
+                  { name: 'get-offering', authentication: 'not-required' },
+                ],
+              },
+              { headers: { 'Content-Type': 'application/odp+json' } },
+            )
           : new Response(null, { status: 404 }),
     ),
   );

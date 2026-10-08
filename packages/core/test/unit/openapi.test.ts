@@ -59,6 +59,100 @@ function setup(routes: Record<string, () => Response>, cache = new MemoryCache()
 }
 
 describe('public source discovery', () => {
+  it.each([undefined, 'application/json', 'text/html', 'application/odp+json, application/json'])(
+    'rejects ODP media type %s for origins, exact URLs, and advertised OpenAPI discovery',
+    async (contentType) => {
+      const state = setup({
+        [`${origin}/.well-known/odp`]: () => {
+          const response = Response.json(odp);
+          if (contentType === undefined) response.headers.delete('content-type');
+          else response.headers.set('content-type', contentType);
+          return response;
+        },
+        [`${origin}/custom.json`]: () => Response.json(contract),
+      });
+      for (const [url, options] of [
+        [origin, {}],
+        [`${origin}/.well-known/odp`, {}],
+        [origin, { format: 'openapi' }],
+      ] as const)
+        await expect(state.discovery.inspect(url, options)).rejects.toThrow('media type');
+    },
+  );
+
+  it('accepts case-insensitive ODP media types with parameters and refetches legacy cache entries', async () => {
+    const state = setup({
+      [`${origin}/.well-known/odp`]: () =>
+        Response.json(odp, { headers: { 'Content-Type': 'Application/ODP+JSON; charset=utf-8' } }),
+    });
+    const url = `${origin}/.well-known/odp`;
+    state.cache.set('document', url, {
+      sourceUrl: url,
+      finalUrl: url,
+      headers: { etag: '"legacy"' },
+      status: 200,
+      value: odp,
+      cacheable: true,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    });
+    expect(await state.discovery.inspect(origin)).toMatchObject({ sourceType: 'odp' });
+    expect(state.fetch).toHaveBeenCalledTimes(1);
+    expect(new Headers(state.fetch.mock.calls[0]?.[1].headers).has('if-none-match')).toBe(false);
+    expect(await state.discovery.inspect(origin)).toMatchObject({ sourceType: 'odp' });
+    expect(state.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('advertises ODP on discovery, redirects, and revalidation without sending credentials', async () => {
+    const fetch = vi.fn((url: URL, init: RequestInit) => {
+      const headers = new Headers(init.headers);
+      expect(init).toMatchObject({ credentials: 'omit', redirect: 'manual' });
+      expect([...headers.keys()].sort()).toEqual(
+        headers.has('if-none-match') ? ['accept', 'if-none-match'] : ['accept'],
+      );
+      if (!headers.get('accept')?.split(', ').includes('application/odp+json'))
+        return Promise.resolve(new Response(null, { status: 406 }));
+      if (url.origin === origin)
+        return Promise.resolve(new Response(null, { status: 302, headers: { Location: 'https://cdn.example/odp' } }));
+      if (headers.get('if-none-match') === '"odp"') return Promise.resolve(new Response(null, { status: 304 }));
+      return Promise.resolve(
+        Response.json(odp, {
+          headers: { 'Content-Type': 'application/odp+json', ETag: '"odp"', 'Cache-Control': 'no-cache' },
+        }),
+      );
+    });
+    const discovery = new SourceDiscovery(new PublicSourceDocuments(new MemoryCache(), fetch));
+    expect(await discovery.inspect(origin)).toMatchObject({ sourceType: 'odp' });
+    expect(await discovery.inspect(`${origin}/.well-known/odp`, { refresh: true })).toMatchObject({
+      sourceType: 'odp',
+    });
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(new Headers(fetch.mock.calls[3]?.[1].headers).get('if-none-match')).toBe('"odp"');
+  });
+
+  it('validates media type updates on ODP cache revalidation', async () => {
+    let revalidate = false;
+    const state = setup({
+      [`${origin}/.well-known/odp`]: () =>
+        revalidate
+          ? new Response(null, { status: 304, headers: { 'Content-Type': 'application/json' } })
+          : Response.json(odp, { headers: { 'Content-Type': 'application/odp+json', ETag: '"odp"' } }),
+    });
+    await state.discovery.inspect(origin);
+    revalidate = true;
+    await expect(state.discovery.inspect(origin, { refresh: true })).rejects.toThrow('media type');
+  });
+
+  it('does not apply ODP response media type requirements to OpenAPI documents', async () => {
+    const state = setup({
+      [`${origin}/openapi.json`]: () => {
+        const response = Response.json(contract);
+        response.headers.delete('content-type');
+        return response;
+      },
+    });
+    expect(await state.discovery.inspect(`${origin}/openapi.json`)).toMatchObject({ sourceType: 'openapi' });
+  });
+
   it('discovers /v1/openapi.json anonymously, caches locations, refreshes, and sanitizes display values', async () => {
     const state = setup({
       [`${origin}/v1/openapi.json`]: () => Response.json({ ...contract, info: { title: '\u001b[31mSearch' } }),
@@ -77,12 +171,13 @@ describe('public source discovery', () => {
     for (const [, init] of state.fetch.mock.calls) {
       expect(init).toMatchObject({ credentials: 'omit', redirect: 'manual' });
       expect(Object.keys(init.headers ?? {})).toEqual(['Accept']);
+      expect(new Headers(init.headers).get('accept')?.split(', ')).toContain('application/json');
     }
   });
 
   it('prefers native ODP, but explicit OpenAPI discovery follows its advertised link', async () => {
     const state = setup({
-      [`${origin}/.well-known/odp`]: () => Response.json(odp),
+      [`${origin}/.well-known/odp`]: () => Response.json(odp, { headers: { 'Content-Type': 'application/odp+json' } }),
       [`${origin}/custom.json`]: () => Response.json(contract),
     });
     expect(await state.discovery.inspect(origin)).toMatchObject({ sourceType: 'odp' });
