@@ -35,7 +35,7 @@ export class PublicSourceDocuments {
     ]);
     let url = publicDocumentUrl(sourceUrl);
     for (let redirects = 0; ; redirects++) {
-      const headers: Record<string, string> = { Accept: 'application/json, application/*+json' };
+      const headers: Record<string, string> = { Accept: 'application/odp+json, application/json, application/*+json' };
       if (cached !== undefined && cached.finalUrl === url.href) {
         if (cached.headers['etag']) headers['If-None-Match'] = cached.headers['etag'];
         if (cached.headers['last-modified']) headers['If-Modified-Since'] = cached.headers['last-modified'];
@@ -50,10 +50,11 @@ export class PublicSourceDocuments {
         continue;
       }
       const received: Record<string, string> = {};
-      for (const name of ['cache-control', 'etag', 'last-modified', 'date', 'age', 'expires']) {
+      for (const name of ['content-type', 'cache-control', 'etag', 'last-modified', 'date', 'age', 'expires']) {
         const value = response.headers.get(name);
         if (value !== null) received[name] = value;
       }
+      if (response.status !== 304) received['content-type'] ??= '';
       if (response.status === 304) {
         await response.body?.cancel();
         if (cached === undefined || cached.finalUrl !== url.href)
@@ -113,6 +114,7 @@ function isDocument(value: unknown): value is SourceDocument {
     typeof value['cacheable'] === 'boolean' &&
     typeof value['status'] === 'number' &&
     isRecord(value['headers']) &&
+    typeof value['headers']['content-type'] === 'string' &&
     Object.values(value['headers']).every((item) => typeof item === 'string')
   );
 }
