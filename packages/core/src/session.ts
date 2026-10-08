@@ -1,6 +1,5 @@
 import { InflowAuthenticationError } from './errors.js';
 import type { IAuthResource } from './resources/interfaces.js';
-import type { AuthTokens } from './types/index.js';
 import type { AuthStorage } from './utils/storage.js';
 
 export interface GetAccessTokenOptions {
@@ -12,31 +11,32 @@ export type AccessTokenProvider = (options?: GetAccessTokenOptions) => Promise<s
 const EXPIRY_BUFFER_MS = 60_000;
 
 export function createAccessTokenProvider(authResource: IAuthResource, authStorage: AuthStorage): AccessTokenProvider {
-  let inFlightRefresh: Promise<AuthTokens> | null = null;
+  const inFlightRefresh = new Map<string, Promise<string>>();
 
   return async ({ forceRefresh = false } = {}) => {
-    const auth = authStorage.getAuth();
+    const auth = authStorage.getAuthSession();
     if (!auth) {
       throw new InflowAuthenticationError('Not authenticated. Run "inflow auth login" first.');
     }
 
-    const isExpired = auth.expires_at !== undefined && Date.now() >= auth.expires_at - EXPIRY_BUFFER_MS;
+    const isExpired = auth.expiresAt !== undefined && Date.now() >= auth.expiresAt - EXPIRY_BUFFER_MS;
 
     if (!forceRefresh && !isExpired) {
-      return auth.access_token;
+      return authStorage.getAuthToken(auth.id, 'access');
     }
 
-    if (inFlightRefresh !== null) {
-      const refreshed = await inFlightRefresh;
-      return refreshed.access_token;
+    let refresh = inFlightRefresh.get(auth.id);
+    if (refresh === undefined) {
+      refresh = authResource
+        .refreshToken(authStorage.getAuthToken(auth.id, 'refresh'))
+        .then((refreshed) => {
+          return authStorage.setAuth(refreshed, auth.id);
+        })
+        .finally(() => {
+          inFlightRefresh.delete(auth.id);
+        });
+      inFlightRefresh.set(auth.id, refresh);
     }
-
-    inFlightRefresh = authResource.refreshToken(auth.refresh_token).finally(() => {
-      inFlightRefresh = null;
-    });
-
-    const refreshed = await inFlightRefresh;
-    authStorage.setAuth(refreshed);
-    return refreshed.access_token;
+    return authStorage.getAuthToken(await refresh, 'access');
   };
 }

@@ -4,6 +4,7 @@ import type { IAuthResource } from '../../src/resources/interfaces.js';
 import { createAccessTokenProvider } from '../../src/session.js';
 import type { AuthTokens } from '../../src/types/index.js';
 import { MemoryStorage } from '../../src/utils/storage.js';
+import { runAuthLogout } from '../../src/flows/auth-logout.js';
 
 function makeAuthResource(refresh: () => Promise<AuthTokens>): {
   resource: IAuthResource;
@@ -27,6 +28,61 @@ const initialTokens: AuthTokens = {
 };
 
 describe('createAccessTokenProvider', () => {
+  it.each(['logout', 'replacement'] as const)('rejects all pending refresh callers after %s', async (change) => {
+    const storage = new MemoryStorage({ ...initialTokens, expires_at: 0 });
+    let resolvePending = (_tokens: AuthTokens): void => {
+      throw new Error('Refresh has not started');
+    };
+    const pending = {
+      promise: new Promise<AuthTokens>((resolve) => {
+        resolvePending = resolve;
+      }),
+    };
+    const { resource } = makeAuthResource(() => pending.promise);
+    const provide = createAccessTokenProvider(resource, storage);
+    const results = Promise.allSettled([provide(), provide()]);
+    if (change === 'logout') await runAuthLogout({ authResource: resource, authStorage: storage });
+    else storage.setAuth({ ...initialTokens, access_token: 'replacement' });
+    resolvePending({ ...initialTokens, access_token: 'stale' });
+    expect(
+      (await results).every(
+        (result) => result.status === 'rejected' && result.reason instanceof InflowAuthenticationError,
+      ),
+    ).toBe(true);
+    expect(storage.getAuth()?.access_token ?? null).toBe(change === 'logout' ? null : 'replacement');
+  });
+
+  it('does not share refreshes between different sessions', async () => {
+    const storage = new MemoryStorage({ ...initialTokens, expires_at: 0 });
+    let resolveOld = (_tokens: AuthTokens): void => {
+      throw new Error('Refresh has not started');
+    };
+    const old = {
+      promise: new Promise<AuthTokens>((resolve) => {
+        resolveOld = resolve;
+      }),
+    };
+    const { resource, refreshSpy } = makeAuthResource(() => old.promise);
+    const provide = createAccessTokenProvider(resource, storage);
+    const oldResult = Promise.allSettled([provide()]);
+    storage.setAuth({ ...initialTokens, access_token: 'new', expires_at: 0 });
+    refreshSpy.mockResolvedValueOnce({ ...initialTokens, access_token: 'new-refreshed' });
+    expect(await provide()).toBe('new-refreshed');
+    resolveOld({ ...initialTokens, access_token: 'stale' });
+    expect((await oldResult)[0].status).toBe('rejected');
+    expect(storage.getAuth()?.access_token).toBe('new-refreshed');
+  });
+
+  it('reads only the access secret on the unexpired path', async () => {
+    const storage = new MemoryStorage(initialTokens);
+    const read = vi.spyOn(storage, 'getAuthToken');
+    const fullRead = vi.spyOn(storage, 'getAuth');
+    const { resource } = makeAuthResource(() => Promise.resolve(initialTokens));
+    expect(await createAccessTokenProvider(resource, storage)()).toBe('access-1');
+    expect(read).toHaveBeenCalledOnce();
+    expect(read).toHaveBeenCalledWith(expect.any(String), 'access');
+    expect(fullRead).not.toHaveBeenCalled();
+  });
   it('throws InflowAuthenticationError when storage is empty', async () => {
     const storage = new MemoryStorage();
     const { resource } = makeAuthResource(() => Promise.resolve(initialTokens));

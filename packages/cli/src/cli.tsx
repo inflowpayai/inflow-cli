@@ -184,12 +184,17 @@ async function main(): Promise<void> {
   const apiKeyFromEnv = process.env['INFLOW_API_KEY'];
   const hasDirectApiKey = (apiKeyFromFlag?.length ?? 0) > 0 || (apiKeyFromEnv?.length ?? 0) > 0;
   let hasInitializedVault = true;
+  let daemonPrepared = false;
+  let credentialsPrepared = false;
   if (shouldReconcileVaultDaemon(process.argv, hasDirectApiKey)) {
     const status = await readVaultStatusWithoutStarting(vaultOptions);
     hasInitializedVault = status.lockState !== 'not_initialized';
-    if (status.daemonRunning) await ensureLocalVaultDaemon(vaultOptions);
+    if (status.daemonRunning) {
+      await ensureLocalVaultDaemon(vaultOptions);
+      daemonPrepared = true;
+    }
   }
-  if (shouldStartVaultDaemon(process.argv, { hasDirectApiKey, hasInitializedVault, isAgent })) {
+  if (!daemonPrepared && shouldStartVaultDaemon(process.argv, { hasDirectApiKey, hasInitializedVault, isAgent })) {
     await ensureLocalVaultDaemon(vaultOptions);
   }
   if (
@@ -197,6 +202,7 @@ async function main(): Promise<void> {
     (hasInitializedVault || commandPath(process.argv)[0] === 'auth')
   ) {
     await ensureLocalVaultUnlocked({ mode: isAgent ? 'agent' : 'human', vaultOptions });
+    credentialsPrepared = true;
   }
 
   const secretStore = new SyncVaultSecretStore(vaultOptions);
@@ -230,6 +236,14 @@ async function main(): Promise<void> {
       });
     }
     throw credentialReadError;
+  }
+  async function prepareCredentials(mode: 'agent' | 'human'): Promise<void> {
+    const mcp = process.argv.includes('--mcp');
+    if (!mcp && credentialsPrepared) return;
+    if ((await readVaultStatusWithoutStarting(vaultOptions)).lockState !== 'not_initialized') {
+      await ensureLocalVaultUnlocked({ mode, vaultOptions });
+    }
+    if (!mcp) credentialsPrepared = true;
   }
   function readSavedConnection(): {
     environment?: 'production' | 'sandbox';
@@ -333,12 +347,7 @@ async function main(): Promise<void> {
     if (needsVault) assertMcpCredentials();
     if (needsVault) {
       try {
-        if ((await readVaultStatusWithoutStarting(vaultOptions)).lockState !== 'not_initialized') {
-          await ensureLocalVaultUnlocked({
-            mode: context.agent || context.formatExplicit ? 'agent' : 'human',
-            vaultOptions,
-          });
-        }
+        await prepareCredentials(context.agent || context.formatExplicit ? 'agent' : 'human');
         if (credentialReadError !== undefined) throw credentialReadError;
       } catch (error) {
         const mapped = authenticatedApiError(error);
@@ -424,9 +433,7 @@ async function main(): Promise<void> {
     'inspect',
     createInspectCommand(inflow, authStorage, odp, undefined, async () => {
       assertMcpCredentials();
-      if ((await readVaultStatusWithoutStarting(vaultOptions)).lockState !== 'not_initialized') {
-        await ensureLocalVaultUnlocked({ mode: isAgent ? 'agent' : 'human', vaultOptions });
-      }
+      await prepareCredentials(isAgent ? 'agent' : 'human');
     }),
   );
 

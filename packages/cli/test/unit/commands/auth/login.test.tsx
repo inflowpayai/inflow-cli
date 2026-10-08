@@ -214,7 +214,7 @@ describe('Login', () => {
     const callOrder: string[] = [];
     const setAuthSpy = vi.spyOn(storage, 'setAuth').mockImplementation((tokens) => {
       callOrder.push('setAuth');
-      MemoryStorage.prototype.setAuth.call(storage, tokens);
+      return MemoryStorage.prototype.setAuth.call(storage, tokens);
     });
     const auth = makeAuthResource({ pollSequence: [sampleTokens] });
     auth.revokeToken.mockImplementation(() => {
