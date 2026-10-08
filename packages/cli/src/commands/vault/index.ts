@@ -526,7 +526,6 @@ function daemonEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 async function canUseDaemon(client: LocalVaultClient, options: LocalVaultDaemonClientOptions): Promise<boolean> {
   try {
-    await client.status();
     const info = await client.info();
     return isCompatibleDaemon(info, options, process.execPath);
   } catch (cause) {

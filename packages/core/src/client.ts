@@ -194,7 +194,7 @@ export class Inflow {
       new TapResource(this.platformApi, () => {
         if (dataConfig.authMode.type === 'apiKey' || dataConfig.authMode.type === 'anonymous') return false;
         if (options.accessToken !== undefined || options.getAccessToken !== undefined) return true;
-        return options.authStorage?.getAuth() != null;
+        return options.authStorage?.getAuthSession() != null;
       }),
     );
 

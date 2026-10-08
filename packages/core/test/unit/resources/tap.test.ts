@@ -23,20 +23,50 @@ describe('TAP resource', () => {
     }
   });
 
-  it('rechecks stored login state and does not classify unreadable credentials as absent', () => {
+  it('rechecks stored login metadata without reading secrets', () => {
     const storage = new MemoryStorage();
     const inflow = new Inflow({ authStorage: storage });
     expect(inflow.tap.canSign()).toBe(false);
     storage.setAuth({ access_token: 'token', refresh_token: 'refresh', expires_in: 3600, token_type: 'Bearer' });
     expect(inflow.tap.canSign()).toBe(true);
     expect(new Inflow({ apiKey: 'key', authStorage: storage }).tap.canSign()).toBe(false);
-    const locked = new Error('locked');
-    vi.spyOn(storage, 'getAuth').mockImplementation(() => {
-      throw locked;
-    });
-    expect(() => inflow.tap.canSign()).toThrow(locked);
+    const read = vi.spyOn(storage, 'getAuthToken');
+    const fullRead = vi.spyOn(storage, 'getAuth');
+    expect(inflow.tap.canSign()).toBe(true);
+    expect(read).not.toHaveBeenCalled();
+    expect(fullRead).not.toHaveBeenCalled();
+    storage.clearAuth();
+    expect(inflow.tap.canSign()).toBe(false);
     expect(new Inflow({ accessToken: 'token' }).tap.canSign()).toBe(true);
     expect(new Inflow({ getAccessToken: () => Promise.resolve('token') }).tap.canSign()).toBe(true);
+  });
+
+  it('does not send a request or downgrade to unsigned when the credential read is locked', async () => {
+    const storage = new MemoryStorage({
+      access_token: 'token',
+      refresh_token: 'refresh',
+      expires_in: 3600,
+      token_type: 'Bearer',
+    });
+    const locked = new Error('locked');
+    vi.spyOn(storage, 'getAuthToken').mockImplementation(() => {
+      throw locked;
+    });
+    const platform = vi.fn<typeof globalThis.fetch>();
+    const remote = vi.fn<typeof globalThis.fetch>();
+    const inflow = new Inflow({ authStorage: storage, fetch: platform });
+    const request = createTapFetch({
+      capabilities: {
+        has: () => Promise.resolve(true),
+        get: () => Promise.resolve({ features: ['visa_tap'], minimumSupportedVersion: '' }),
+      },
+      tap: inflow.tap,
+      operation: 'odp.browse',
+      fetch: remote,
+    });
+    await expect(request('https://service.example/.well-known/odp')).rejects.toMatchObject({ name: 'TapSigningError' });
+    expect(platform).not.toHaveBeenCalled();
+    expect(remote).not.toHaveBeenCalled();
   });
 
   it('refreshes expired device tokens for signing and never downgrades rejected authentication', async () => {

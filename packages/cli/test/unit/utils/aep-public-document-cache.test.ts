@@ -12,12 +12,16 @@ function authStorageOnly(): AuthStorage {
     deleteConfig: () => Promise.resolve(),
     getApiKey: () => null,
     getAuth: () => null,
+    getAuthSession: () => null,
+    getAuthToken: () => {
+      throw new Error('No session');
+    },
     getConnection: () => null,
     getPath: () => 'memory',
     getPendingDeviceAuth: () => null,
     isAuthenticated: () => false,
     setApiKey: () => undefined,
-    setAuth: () => undefined,
+    setAuth: () => 'session',
     setConnection: () => undefined,
     setPendingDeviceAuth: () => undefined,
   };

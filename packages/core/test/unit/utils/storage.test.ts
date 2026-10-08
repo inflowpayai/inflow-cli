@@ -64,6 +64,66 @@ describe('Storage (file-backed)', () => {
     return new Storage({ cwd: tmpDir, secretStore: new SyncMemorySecretStore() });
   }
 
+  it('reads session metadata without secrets and reads only the selected token', () => {
+    const secrets = new CountingSecretStore();
+    const storage = new Storage({ cwd: tmpDir, secretStore: secrets });
+    expect(storage.getAuthSession()).toBeNull();
+    const id = storage.setAuth(sampleAuth);
+    expect(storage.getAuthSession()?.id).toBe(id);
+    expect(secrets.readReferences).toEqual([]);
+    expect(storage.getAuthToken(id, 'access')).toBe('a');
+    expect(storage.getAuthToken(id, 'refresh')).toBe('r');
+    expect(secrets.readReferences.map((reference) => reference.purpose)).toEqual([
+      'auth-access-token',
+      'auth-refresh-token',
+    ]);
+    storage.clearAuth();
+    expect(() => storage.getAuthToken(id, 'access')).toThrow('session changed');
+    expect(() => storage.setAuth(sampleAuth, id)).toThrow('session changed');
+    expect(storage.getAuthSession()).toBeNull();
+  });
+
+  it('conditionally replaces a session and rejects stale writes from another storage instance', () => {
+    const secrets = new CountingSecretStore();
+    const first = new Storage({ cwd: tmpDir, secretStore: secrets });
+    const second = new Storage({ cwd: tmpDir, secretStore: secrets });
+    const id = first.setAuth(sampleAuth);
+    const next = second.setAuth({ ...sampleAuth, access_token: 'next' }, id);
+    expect(next).not.toBe(id);
+    expect(() => first.setAuth({ ...sampleAuth, access_token: 'stale' }, id)).toThrow('session changed');
+    expect(first.getAuthToken(next, 'access')).toBe('next');
+    expect(() => first.getAuthToken(id, 'access')).toThrow('session changed');
+  });
+
+  it('rejects a session changed during secret retrieval', () => {
+    const secrets = new CountingSecretStore();
+    const storage = new Storage({ cwd: tmpDir, secretStore: secrets });
+    const id = storage.setAuth(sampleAuth);
+    const original = secrets.read.bind(secrets);
+    vi.spyOn(secrets, 'read').mockImplementation((reference) => {
+      const bytes = original(reference);
+      storage.clearAuth();
+      return bytes;
+    });
+    expect(() => storage.getAuthToken(id, 'access')).toThrow('session changed');
+  });
+
+  it('rejects logout during refresh secret creation before committing metadata', () => {
+    const secrets = new CountingSecretStore();
+    const first = new Storage({ cwd: tmpDir, secretStore: secrets });
+    const second = new Storage({ cwd: tmpDir, secretStore: secrets });
+    const id = first.setAuth(sampleAuth);
+    second.getAuthSession();
+    const create = secrets.create.bind(secrets);
+    vi.spyOn(secrets, 'create').mockImplementation((reference, value) => {
+      create(reference, value);
+      if (reference.purpose === 'auth-refresh-token') second.clearAuth();
+    });
+    expect(() => first.setAuth({ ...sampleAuth, access_token: 'stale' }, id)).toThrow('session changed');
+    expect(first.getAuthSession()).toBeNull();
+    expect(secrets.deleted).toHaveLength(4);
+  });
+
   it('writes the SQLite database with 0o600 permissions', () => {
     const s = secureStorage();
     s.setAuth(sampleAuth);
@@ -622,6 +682,22 @@ describe('Storage (file-backed)', () => {
 });
 
 describe('MemoryStorage', () => {
+  it('invalidates session identifiers even when replacement tokens are identical', () => {
+    const storage = new MemoryStorage();
+    const id = storage.setAuth(sampleAuth);
+    const copy = storage.getAuth();
+    if (copy === null) throw new Error('Expected stored authentication');
+    copy.access_token = 'mutated';
+    expect(storage.getAuthToken(id, 'access')).toBe('a');
+    expect(storage.getAuthToken(id, 'refresh')).toBe('r');
+    const replacement = storage.setAuth(sampleAuth);
+    expect(replacement).not.toBe(id);
+    expect(() => storage.getAuthToken(id, 'access')).toThrow('session changed');
+    expect(() => storage.setAuth(sampleAuth, id)).toThrow('session changed');
+    storage.clearAuth();
+    expect(() => storage.getAuthToken(replacement, 'refresh')).toThrow('session changed');
+  });
+
   it('has same surface and in-process semantics', () => {
     const s = new MemoryStorage();
     expect(s.getPath()).toBe('memory');

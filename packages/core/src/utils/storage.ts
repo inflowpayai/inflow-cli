@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { lstatSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { InflowConfigurationError } from '../errors.js';
+import { InflowAuthenticationError, InflowConfigurationError } from '../errors.js';
 import type { AuthTokens } from '../types/index.js';
 import type {
   AepCredentialDeleteSelector,
@@ -37,8 +37,10 @@ export interface ConnectionSettings {
 }
 
 export interface AuthStorage {
+  getAuthSession(): { id: string; expiresAt?: number } | null;
+  getAuthToken(sessionId: string, kind: 'access' | 'refresh'): string;
   getAuth(): AuthTokens | null;
-  setAuth(auth: AuthTokens): void;
+  setAuth(auth: AuthTokens, expectedSessionId?: string): string;
   clearAuth(): void;
   isAuthenticated(): boolean;
   getApiKey(): string | null;
@@ -185,29 +187,55 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
     };
   }
 
-  setAuth(auth: AuthTokens): void {
+  getAuthSession(): { id: string; expiresAt?: number } | null {
+    this.initialize();
+    const stored = this.repository.getSetting(AUTH_SETTING)?.payload;
+    return isStoredAuth(stored)
+      ? { id: stored.accessToken.reference, ...(stored.expiresAt === undefined ? {} : { expiresAt: stored.expiresAt }) }
+      : null;
+  }
+
+  getAuthToken(sessionId: string, kind: 'access' | 'refresh'): string {
+    this.initialize();
+    const stored = this.repository.getSetting(AUTH_SETTING)?.payload;
+    if (!isStoredAuth(stored) || stored.accessToken.reference !== sessionId) throw changedSession();
+    const token = readUtf8(this.secretStore, kind === 'access' ? stored.accessToken : stored.refreshToken);
+    if (this.getAuthSession()?.id !== sessionId) throw changedSession();
+    return token;
+  }
+
+  setAuth(auth: AuthTokens, expectedSessionId?: string): string {
     this.initialize();
     const persisted = withComputedExpiry(auth);
-    const previous = this.repository.getSetting(AUTH_SETTING)?.payload;
+    let previous: unknown;
     const accessToken = createOpaqueSecretReference('auth-access-token');
     const refreshToken = createOpaqueSecretReference('auth-refresh-token');
     const created = [accessToken, refreshToken];
     try {
       this.lifecycle.create(accessToken, utf8(persisted.access_token), null, { setting: AUTH_SETTING });
       this.lifecycle.create(refreshToken, utf8(persisted.refresh_token), null, { setting: AUTH_SETTING });
-      this.repository.upsertSetting(AUTH_SETTING, {
-        accessToken,
-        refreshToken,
-        tokenType: persisted.token_type,
-        expiresIn: persisted.expires_in,
-        ...(persisted.scope === undefined ? {} : { scope: persisted.scope }),
-        ...(persisted.expires_at === undefined ? {} : { expiresAt: persisted.expires_at }),
-      } satisfies StoredAuth);
+      this.repository.writeTransactionSync(() => {
+        previous = this.repository.getSetting(AUTH_SETTING)?.payload;
+        if (
+          expectedSessionId !== undefined &&
+          (!isStoredAuth(previous) || previous.accessToken.reference !== expectedSessionId)
+        )
+          throw changedSession();
+        this.repository.upsertSetting(AUTH_SETTING, {
+          accessToken,
+          refreshToken,
+          tokenType: persisted.token_type,
+          expiresIn: persisted.expires_in,
+          ...(persisted.scope === undefined ? {} : { scope: persisted.scope }),
+          ...(persisted.expires_at === undefined ? {} : { expiresAt: persisted.expires_at }),
+        } satisfies StoredAuth);
+      });
     } catch (cause) {
       this.discardSecrets(created);
       throw cause;
     }
     if (isStoredAuth(previous)) this.discardSecrets([previous.accessToken, previous.refreshToken]);
+    return accessToken.reference;
   }
 
   clearAuth(): void {
@@ -521,6 +549,7 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
 }
 
 export class MemoryStorage implements AuthStorage, AepStateStorage, PublicDocumentStateStorage {
+  private sessionId = createOpaqueSecretReference('auth-session').reference;
   private aep: AepPersistedState | null = null;
   private discoveryDocuments: AepPublicDocumentCacheRecord[] = [];
   private openApiDocuments: AepPublicDocumentCacheRecord[] = [];
@@ -534,11 +563,28 @@ export class MemoryStorage implements AuthStorage, AepStateStorage, PublicDocume
   }
 
   getAuth(): AuthTokens | null {
-    return this.auth;
+    return this.auth === null ? null : { ...this.auth };
   }
 
-  setAuth(auth: AuthTokens): void {
+  getAuthSession(): { id: string; expiresAt?: number } | null {
+    return this.auth === null
+      ? null
+      : {
+          id: this.sessionId,
+          ...(this.auth.expires_at === undefined ? {} : { expiresAt: this.auth.expires_at }),
+        };
+  }
+
+  getAuthToken(sessionId: string, kind: 'access' | 'refresh'): string {
+    if (this.auth === null || sessionId !== this.sessionId) throw changedSession();
+    return kind === 'access' ? this.auth.access_token : this.auth.refresh_token;
+  }
+
+  setAuth(auth: AuthTokens, expectedSessionId?: string): string {
+    if (expectedSessionId !== undefined && this.getAuthSession()?.id !== expectedSessionId) throw changedSession();
     this.auth = withComputedExpiry(auth);
+    this.sessionId = createOpaqueSecretReference('auth-session').reference;
+    return this.sessionId;
   }
 
   clearAuth(): void {
@@ -638,6 +684,10 @@ export class MemoryStorage implements AuthStorage, AepStateStorage, PublicDocume
   async deleteConfig(): Promise<void> {
     return Promise.resolve();
   }
+}
+
+function changedSession(): InflowAuthenticationError {
+  return new InflowAuthenticationError('The authentication session changed. Retry with the current session.');
 }
 
 function utf8(value: string): Uint8Array {

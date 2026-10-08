@@ -17,6 +17,12 @@ discovery and operation calls use the public HTTP transport without TAP.
 
 ## What's in here
 
+Authentication storage separates session metadata from secret reads. `getAuthSession()` returns an opaque session
+identifier and expiration time; `getAuthToken()` reads one secret for that session and rejects a changed session.
+`setAuth(tokens, expectedSessionId)` checks the expected session atomically when saving refreshed tokens and returns the
+new session identifier. Custom `AuthStorage` implementations must preserve these checks so an in-flight refresh cannot
+restore a logged-out session or overwrite a replacement login. Secret reads must still enforce vault locking.
+
 The package exposes three things:
 
 1. **Augmented resource handles** — one per command group, hung off the `Inflow` instance. Each handle carries both the
