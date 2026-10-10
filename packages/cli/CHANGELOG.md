@@ -1,5 +1,90 @@
 # @inflowpayai/inflow
 
+## 0.14.0
+
+### Minor Changes
+
+- [#160](https://github.com/inflowpayai/inflow-cli/pull/160)
+  [`d9170f5`](https://github.com/inflowpayai/inflow-cli/commit/d9170f5c7535e1483227ad28959c13fa1a516482) Thanks
+  [@nkavian](https://github.com/nkavian)! - Support linked-card selection for MPP and x402 payments. Prefer balance and
+  exact offers before x402 Instrument offers, and constrain explicit instrument selection without falling back to
+  another funding method.
+
+  Guide buyers through bank verification and resume the original MPP or x402 Instrument purchase after settlement.
+  Stopping a verification wait does not cancel the submitted payment. Structured output includes the verification URL
+  and original-transaction continuation details without exposing payment credentials or request headers.
+
+  Return bank-verification continuations only when polling has stopped, preserving polling limits and output options.
+
+- [#160](https://github.com/inflowpayai/inflow-cli/pull/160)
+  [`d9170f5`](https://github.com/inflowpayai/inflow-cli/commit/d9170f5c7535e1483227ad28959c13fa1a516482) Thanks
+  [@nkavian](https://github.com/nkavian)! - Support MPP CARD payments with merchant details, linked-card selection,
+  approval and fetch continuation. Redact CARD credentials in normal output and document safe recovery from uncertain
+  issuance or delivery.
+
+### Patch Changes
+
+- [#157](https://github.com/inflowpayai/inflow-cli/pull/157)
+  [`5b764de`](https://github.com/inflowpayai/inflow-cli/commit/5b764def922deca65d710ef078b6ae2fd7169331) Thanks
+  [@mnebliienko](https://github.com/mnebliienko)! - Default standalone AEP fetch bodies to JSON before signing and
+  dispatch, while preserving explicit content types and body bytes.
+
+- [#163](https://github.com/inflowpayai/inflow-cli/pull/163)
+  [`21b7b52`](https://github.com/inflowpayai/inflow-cli/commit/21b7b525d24bfcaabf1a024f36818711cf728250) Thanks
+  [@nkavian](https://github.com/nkavian)! - Clear temporary credential buffers after reading from the vault.
+
+- [#154](https://github.com/inflowpayai/inflow-cli/pull/154)
+  [`2f31e52`](https://github.com/inflowpayai/inflow-cli/commit/2f31e52725a6258fb05a752ab77f0c8cd0076685) Thanks
+  [@nkavian](https://github.com/nkavian)! - Recover from incompatible macOS vault daemons by identifying their listening
+  process without opening a connection that the daemon can reject before identification completes.
+
+- [#161](https://github.com/inflowpayai/inflow-cli/pull/161)
+  [`af37c55`](https://github.com/inflowpayai/inflow-cli/commit/af37c5588dbe2001b5e0512c857b9109da82022b) Thanks
+  [@nkavian](https://github.com/nkavian)! - Advertise application/odp+json when inspecting public service documents so
+  ODP services with strict content negotiation do not reject discovery with HTTP 406. Validate ODP response media types
+  without restricting OpenAPI documents or their JSON references.
+
+- [#159](https://github.com/inflowpayai/inflow-cli/pull/159)
+  [`15979f3`](https://github.com/inflowpayai/inflow-cli/commit/15979f3cdd15badcbc9f41ad75e40241d1349fd5) Thanks
+  [@nkavian](https://github.com/nkavian)! - Update the InFlow MPP and x402 SDK dependencies to their latest published
+  releases.
+
+- [#156](https://github.com/inflowpayai/inflow-cli/pull/156)
+  [`81a9e60`](https://github.com/inflowpayai/inflow-cli/commit/81a9e6021af332d05ba940c4e36c92b6969e6243) Thanks
+  [@nkavian](https://github.com/nkavian)! - Align MPP and x402 inspection with AEP Service origin validation.
+
+- [#163](https://github.com/inflowpayai/inflow-cli/pull/163)
+  [`21b7b52`](https://github.com/inflowpayai/inflow-cli/commit/21b7b525d24bfcaabf1a024f36818711cf728250) Thanks
+  [@nkavian](https://github.com/nkavian)! - Resolve saved API keys when requests are made so retained clients follow
+  credential changes.
+
+- [#163](https://github.com/inflowpayai/inflow-cli/pull/163)
+  [`21b7b52`](https://github.com/inflowpayai/inflow-cli/commit/21b7b525d24bfcaabf1a024f36818711cf728250) Thanks
+  [@nkavian](https://github.com/nkavian)! - Reduce repeated vault authentication overhead by reusing connections within
+  CLI commands and MCP sessions, while preserving existing security checks and improving vault lifecycle reliability on
+  macOS, Linux, and Windows. Keep signed macOS packaging from invalidating the development CLI's native module.
+
+- [#158](https://github.com/inflowpayai/inflow-cli/pull/158)
+  [`c61853d`](https://github.com/inflowpayai/inflow-cli/commit/c61853d90704132979b2793dd5c33b306ce56afb) Thanks
+  [@nkavian](https://github.com/nkavian)! - Make AEP enrollment and grant approvals resumable through structured MCP
+  tool inputs. Preserve payment Fetch limits and output options, omit request bodies and headers from continuation
+  responses, and require restoring those original arguments before resuming sensitive requests.
+
+- [#163](https://github.com/inflowpayai/inflow-cli/pull/163)
+  [`21b7b52`](https://github.com/inflowpayai/inflow-cli/commit/21b7b525d24bfcaabf1a024f36818711cf728250) Thanks
+  [@nkavian](https://github.com/nkavian)! - Update the InFlow MPP and x402 SDK dependencies to their latest releases.
+
+- [#163](https://github.com/inflowpayai/inflow-cli/pull/163)
+  [`21b7b52`](https://github.com/inflowpayai/inflow-cli/commit/21b7b525d24bfcaabf1a024f36818711cf728250) Thanks
+  [@nkavian](https://github.com/nkavian)! - Use explicitly advertised OpenAPI URLs without probing conventional
+  locations.
+
+- [#162](https://github.com/inflowpayai/inflow-cli/pull/162)
+  [`0e4c0a8`](https://github.com/inflowpayai/inflow-cli/commit/0e4c0a8123c97573bd112ab1b79b9634c53115ff) Thanks
+  [@nkavian](https://github.com/nkavian)! - Reduce redundant vault preparation and credential reads while preserving
+  connection verification and lock enforcement. Reject token refresh results for sessions that were logged out or
+  replaced.
+
 ## 0.13.0
 
 ### Minor Changes
