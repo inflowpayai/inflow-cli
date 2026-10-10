@@ -46,7 +46,7 @@ inflow --llms-full
 | - | - |
 | Find Services and indexed Collections | `inflow directory search` |
 | Find matching Service and Collection names | `inflow directory suggest` |
-| Discover the document format at an origin | `inflow inspect` |
+| Inspect Service protocols and HTTP requirements | `inflow inspect` |
 | Inspect one Service and its operations | `inflow odp inspect` |
 | Browse or search Collection groupings | `inflow odp collections list/search/get` |
 | Browse, search, or retrieve products | `inflow odp offerings list/search/get` |
@@ -173,13 +173,14 @@ the server failed to perform the operation: do not automatically retry. Inspect 
 
 ## Inspect before navigating an ODP Service
 
-`inflow inspect <origin>` performs public ODP-first discovery with OpenAPI fallback. Exact `/.well-known/odp`,
-`/.well-known/x402.json`, and paths containing `openapi` are read as documents, without login or endpoint invocation.
-Use `--refresh` to revalidate. The JSON result has `outcome: "document-inspected"`, `source`, and `document`; OpenAPI
-also has `operation_count`, while ODP has `service_origin`. For arbitrary document paths use `openapi operations list`.
-Other URL paths are endpoint probes. Explicit `--method`, `--data`, or `--header` selects endpoint probing even for an
-origin or document-looking path. Do not pass these options when you only want to read a document. Document failures do
-not fall back to probing. Authentication declarations are not proof that execution is available or payment is supported.
+`inflow inspect <origin>` performs combined inspection and ODP-first discovery with OpenAPI fallback. Exact
+`/.well-known/odp`, `/.well-known/x402.json`, and paths containing `openapi.json` are read as documents, without login or
+endpoint invocation. Use `--refresh` to revalidate. Document JSON results have `outcome: "document-inspected"`, `source`,
+and `document`; OpenAPI also has `operation_count`, while ODP has `service_origin`. For arbitrary document paths use
+`openapi operations list`. Other URL paths are endpoint probes. A non-GET `--method`, `--data`, or `--header` selects
+endpoint probing even for a document-looking path. Omitting `--method` and specifying `--method GET` are equivalent.
+Document failures do not fall back to probing. Authentication declarations are not proof that execution is available or
+payment is supported.
 
 Inspect the selected Service before choosing catalog commands:
 

@@ -114,7 +114,7 @@ describe('vault startup decisions', () => {
     ['vault status', ['vault', 'status'], true],
     ['vault unlock', ['vault', 'unlock'], false],
     ['top inspect', ['inspect'], false],
-    ['top inspect origin', ['inspect', 'https://service.test'], false],
+    ['top inspect origin', ['inspect', 'https://service.test'], true],
     ['top inspect endpoint', ['inspect', 'https://service.test/resource'], true],
   ] as const)('starts daemon for %s when required', (_label, args, expected) => {
     expect(shouldStartVaultDaemon(argv(...args))).toBe(expected);
@@ -138,7 +138,7 @@ describe('vault startup decisions', () => {
     ['odp inspect', ['odp', 'inspect'], false],
     ['vault unlock', ['vault', 'unlock'], false],
     ['top inspect', ['inspect'], false],
-    ['top inspect origin', ['inspect', 'https://service.test'], false],
+    ['top inspect origin', ['inspect', 'https://service.test'], true],
     ['top inspect endpoint', ['inspect', 'https://service.test/resource'], true],
   ] as const)('reconciles a running daemon for %s when required', (_label, args, expected) => {
     expect(shouldReconcileVaultDaemon(argv(...args))).toBe(expected);
@@ -180,7 +180,7 @@ describe('vault startup decisions', () => {
     ['user get', ['user', 'get'], true],
     ['vault unlock', ['vault', 'unlock'], false],
     ['top inspect', ['inspect'], false],
-    ['top inspect origin', ['inspect', 'https://service.test'], false],
+    ['top inspect origin', ['inspect', 'https://service.test'], true],
     ['top inspect endpoint', ['inspect', 'https://service.test/resource'], true],
   ] as const)('unlocks vault for human %s when required', (_label, args, expected) => {
     expect(shouldUnlockVault(argv(...args))).toBe(expected);

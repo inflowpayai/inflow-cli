@@ -571,11 +571,11 @@ included in error output.
 
 The URL selects public document inspection or endpoint probing:
 
-- An origin or `/` path discovers ODP first, then OpenAPI when ODP is absent.
-- `/.well-known/odp`, `/.well-known/x402.json`, and paths containing `openapi` (case-insensitive) are inspected as
+- An origin or `/` path uses combined inspection and discovers ODP first, then OpenAPI when ODP is absent.
+- `/.well-known/odp`, `/.well-known/x402.json`, and paths containing `openapi.json` (case-insensitive) are inspected as
   documents. An exact-document failure is reported without falling back to an endpoint probe.
-- Other paths retain endpoint probing. Explicit `--method`, `--data`, or `--header` selects probing regardless of path,
-  including `--method GET`.
+- Other paths retain endpoint probing. A non-GET `--method`, `--data`, or `--header` selects probing regardless of path.
+  Omitting `--method` and specifying `--method GET` are equivalent.
 
 Public document inspection requires no login or vault access and invokes no advertised operation. Use `--refresh` to
 revalidate documents and rediscover origin candidates. Multiple OpenAPI candidates require an exact URL. For documents
@@ -592,8 +592,8 @@ Document JSON output contains `outcome: "document-inspected"`, `source: { type, 
 title, version, operations, server choices, parameters, authentication declarations, and limitations. These declarations
 do not prove that an endpoint is free or payable; actual payment challenges are checked only by endpoint probing.
 Discovery failures use `SOURCE_NOT_FOUND`, `SOURCE_AMBIGUOUS` (with candidate URLs in its message), or
-`SOURCE_UNAVAILABLE`; other document failures use `INSPECT_DOCUMENT_FAILED`. `--refresh` on an endpoint probe returns
-`INSPECT_REFRESH_REQUIRES_DOCUMENT`.
+`SOURCE_UNAVAILABLE`; other document failures use `INSPECT_DOCUMENT_FAILED`. `--refresh` on an endpoint probe other than
+an origin GET returns `INSPECT_REFRESH_REQUIRES_DOCUMENT`.
 
 ### Endpoint probing
 
