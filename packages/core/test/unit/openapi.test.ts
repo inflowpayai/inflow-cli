@@ -205,6 +205,101 @@ describe('public source discovery', () => {
     }
   });
 
+  describe.each(['odp', 'x402'] as const)('advertised %s OpenAPI document', (source) => {
+    const advertised = 'https://documents.example/api.json';
+    const advertisement = `${origin}/.well-known/${source === 'odp' ? 'odp' : 'x402.json'}`;
+    const routes = {
+      [advertisement]: () =>
+        source === 'odp'
+          ? Response.json(
+              { ...odp, http: { ...odp.http, openapi: { url: advertised } } },
+              { headers: { 'Content-Type': 'application/odp+json' } },
+            )
+          : Response.json({ openapi: advertised }),
+      [`${origin}/openapi.json`]: () => Response.json(contract),
+      [`${origin}/v1/openapi.json`]: () => new Response(null, { status: 401 }),
+    };
+    const expectedUrls =
+      source === 'odp' ? [advertisement, advertised] : [`${origin}/.well-known/odp`, advertisement, advertised];
+
+    it('uses only the advertised URL, including cache hits and refreshes', async () => {
+      const state = setup({ ...routes, [advertised]: () => Response.json(contract) });
+      expect(await state.discovery.inspect(origin, { format: 'openapi' })).toMatchObject({
+        sourceType: 'openapi',
+        sourceUrl: advertised,
+      });
+      expect(state.fetch.mock.calls.map(([url]) => url.href)).toEqual(expectedUrls);
+      await state.discovery.inspect(origin, { format: 'openapi' });
+      expect(state.fetch.mock.calls.map(([url]) => url.href)).toEqual(expectedUrls);
+      await state.discovery.inspect(origin, { format: 'openapi', refresh: true });
+      expect(state.fetch.mock.calls.map(([url]) => url.href)).toEqual([...expectedUrls, ...expectedUrls]);
+      for (const [, init] of state.fetch.mock.calls) {
+        expect(init.credentials).toBe('omit');
+        expect(Object.keys(init.headers ?? {})).toEqual(['Accept']);
+      }
+    });
+
+    it.each([401, 404, 503, 'invalid-json', 'invalid-openapi'])(
+      'reports advertised document failure %s without fallback',
+      async (failure) => {
+        const state = setup({
+          ...routes,
+          [advertised]: () =>
+            typeof failure === 'number'
+              ? new Response(null, { status: failure })
+              : failure === 'invalid-json'
+                ? new Response('not json')
+                : Response.json({}),
+        });
+        await expect(state.discovery.inspect(origin, { format: 'openapi' })).rejects.toThrow();
+        expect(state.fetch.mock.calls.map(([url]) => url.href)).toEqual(expectedUrls);
+        expect(state.cache.get('location', `openapi:${origin}`)).toBeUndefined();
+      },
+    );
+  });
+
+  it('resolves advertised links against redirected discovery URLs without caching private locations', async () => {
+    const discoveryUrl = 'https://documents.example/discovery/odp';
+    const state = setup({
+      [`${origin}/.well-known/odp`]: () => new Response(null, { status: 302, headers: { Location: discoveryUrl } }),
+      [discoveryUrl]: () =>
+        Response.json(
+          { ...odp, http: { ...odp.http, openapi: { url: '/api.json' } } },
+          { headers: { 'Content-Type': 'application/odp+json', 'Cache-Control': 'no-store' } },
+        ),
+      'https://documents.example/api.json': () => Response.json(contract),
+    });
+    expect(await state.discovery.inspect(origin, { format: 'openapi' })).toMatchObject({
+      sourceUrl: 'https://documents.example/api.json',
+    });
+    expect(state.fetch.mock.calls.map(([url]) => url.href)).toEqual([
+      `${origin}/.well-known/odp`,
+      discoveryUrl,
+      'https://documents.example/api.json',
+    ]);
+    expect(state.cache.get('location', `openapi:${origin}`)).toBeUndefined();
+  });
+
+  it('uses conventional locations when ODP does not advertise OpenAPI', async () => {
+    const state = setup({
+      [`${origin}/.well-known/odp`]: () =>
+        Response.json(
+          { ...odp, http: { endpoint_base: '/odp' } },
+          { headers: { 'Content-Type': 'application/odp+json' } },
+        ),
+      [`${origin}/openapi.json`]: () => Response.json(contract),
+    });
+    expect(await state.discovery.inspect(origin, { format: 'openapi' })).toMatchObject({
+      sourceUrl: `${origin}/openapi.json`,
+    });
+    expect(state.fetch.mock.calls.map(([url]) => url.pathname)).toEqual([
+      '/.well-known/odp',
+      '/.well-known/x402.json',
+      '/openapi.json',
+      '/v1/openapi.json',
+    ]);
+  });
+
   it('reports all candidates, does not choose the last exact document, and rediscovers after expiry', async () => {
     const state = setup({
       [`${origin}/openapi.json`]: () => Response.json(contract),

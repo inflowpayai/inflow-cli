@@ -6,6 +6,7 @@ import { SecureStorageError } from './errors.js';
 import type { VaultBackend } from './vault-backend.js';
 import { handleVaultIpcRequest, type VaultDaemonInfo } from './vault-daemon-handler.js';
 import type { VaultSocketPeer, VaultSocketPeerVerifier } from './vault-peer-verifier.js';
+import { VaultSocketReader } from './vault-socket-reader.js';
 import {
   VAULT_IPC_MAX_MESSAGE_BYTES,
   clearVaultIpcBytes,
@@ -46,11 +47,44 @@ export type StartVaultSocketServerOptions =
 
 export function createVaultSocketConnectionHandler(
   options: StartVaultSocketServerOptions,
-): (socket: Socket, peer?: VaultSocketPeer) => void {
+): ((socket: Socket, peer?: VaultSocketPeer) => void) & { close(): Promise<void> } {
   const requestQueue = new VaultBackendRequestQueue();
-  return (socket, peer) => {
-    void handleSocket(socket, options, requestQueue, peer);
+  const connections = new Map<Socket, Promise<void>>();
+  const users = new Map<string, number>();
+  let closed = false;
+  const admit = (peer: VaultSocketPeer | undefined): (() => void) => {
+    const key = peer === undefined ? 'local' : (peer.principal ?? `uid:${peer.uid}`);
+    const count = users.get(key) ?? 0;
+    if (count >= 32) {
+      throw new SecureStorageError('secure_storage_unavailable', 'The InFlow vault connection limit was reached.');
+    }
+    users.set(key, count + 1);
+    return () => {
+      const remaining = (users.get(key) ?? 1) - 1;
+      if (remaining === 0) users.delete(key);
+      else users.set(key, remaining);
+    };
   };
+  return Object.assign(
+    (socket: Socket, peer?: VaultSocketPeer): void => {
+      if (closed || connections.size >= 128) {
+        socket.destroy();
+        return;
+      }
+      const operation = handleSocket(socket, options, requestQueue, admit, peer).finally(() => {
+        connections.delete(socket);
+      });
+      connections.set(socket, operation);
+    },
+    {
+      async close(): Promise<void> {
+        closed = true;
+        const active = [...connections.entries()];
+        for (const [socket] of active) socket.destroy();
+        await Promise.all(active.map(([, operation]) => operation));
+      },
+    },
+  );
 }
 
 export async function startVaultSocketServer(options: StartVaultSocketServerOptions): Promise<VaultSocketServer> {
@@ -64,7 +98,10 @@ export async function startVaultSocketServer(options: StartVaultSocketServerOpti
     close: async () => {
       if (closed) return;
       closed = true;
-      await closeServer(server, options.listenFd === undefined ? options.socketPath : undefined);
+      await Promise.all([
+        closeServer(server, options.listenFd === undefined ? options.socketPath : undefined),
+        handleConnection.close(),
+      ]);
     },
     socketPath: options.socketPath,
   };
@@ -79,19 +116,18 @@ export async function sendVaultIpcRequest(
   await connectAndVerify(socket, peerVerifier);
   const response = readOneFrame(socket);
   const requestFrame = encodeVaultIpcMessage(request);
-  await writeFrame(socket, requestFrame);
-  return response.then((frame) => {
-    try {
-      const decoded = decodeVaultIpcFrame(frame);
-      if (!('ok' in decoded)) {
-        throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC response is malformed.');
-      }
-      socket.end();
-      return decoded;
-    } finally {
-      frame.fill(0);
+  try {
+    const [, frame] = await Promise.all([writeFrame(socket, requestFrame), response]);
+    const decoded = decodeVaultIpcFrame(frame);
+    if (!('ok' in decoded)) {
+      throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC response is malformed.');
     }
-  });
+    return decoded;
+  } finally {
+    socket.destroy();
+    const frame = await response.catch(() => undefined);
+    frame?.fill(0);
+  }
 }
 
 export function inspectVaultSocketPeer(
@@ -175,34 +211,58 @@ async function handleSocket(
   socket: Socket,
   options: StartVaultSocketServerOptions,
   requestQueue: VaultBackendRequestQueue,
+  admit: (peer: VaultSocketPeer | undefined) => () => void,
   verifiedPeer?: VaultSocketPeer,
 ): Promise<void> {
+  socket.pause();
+  const reader = new VaultSocketReader(socket);
+  let release: (() => void) | undefined;
   try {
-    const peer = verifiedPeer ?? (await options.peerVerifier?.(socket));
+    const peer = verifiedPeer ?? (await verifyConnection(socket, options.peerVerifier));
+    if (socket.destroyed) return;
+    release = admit(peer);
     const multiTenant = options.backendForPeer !== undefined;
-    const backend = resolveBackend(options, peer);
-    const frame = await readOneFrame(socket);
-    const decoded = decodeVaultIpcFrame(frame);
-    if (!('method' in decoded)) {
-      throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC request is malformed.');
+    if (multiTenant && peer === undefined) {
+      throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');
     }
-    try {
-      const response = await requestQueue.run(backend, () =>
-        handleVaultIpcRequest(backend, decoded, options.daemonInfo, {
-          allowDaemonShutdown: !multiTenant,
-        }),
-      );
-      const responseFrame = encodeVaultIpcMessage(response);
-      clearVaultIpcBytes(response);
-      socket.end(responseFrame, () => {
-        responseFrame.fill(0);
-        if (!multiTenant && response.ok && (decoded.method === 'daemon.shutdown' || decoded.method === 'vault.reset')) {
-          void Promise.resolve(options.onShutdown?.()).catch(() => undefined);
+    const queueKey = options.backendForPeer === undefined ? options.backend : (peer?.principal ?? `uid:${peer?.uid}`);
+    for (;;) {
+      const incoming = reader.read();
+      socket.resume();
+      const frame = await incoming;
+      if (frame === undefined) break;
+      let decoded: ReturnType<typeof decodeVaultIpcFrame> | undefined;
+      try {
+        decoded = decodeVaultIpcFrame(frame);
+        if (!('method' in decoded)) {
+          throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC request is malformed.');
         }
-      });
-    } finally {
-      clearVaultIpcBytes(decoded);
-      frame.fill(0);
+        const request = decoded;
+        const response = await requestQueue.run(queueKey, () => {
+          if (socket.destroyed) {
+            throw new SecureStorageError('secure_storage_unavailable', 'The InFlow vault connection was closed.');
+          }
+          return handleVaultIpcRequest(resolveBackend(options, peer), request, options.daemonInfo, {
+            allowDaemonShutdown: !multiTenant,
+          });
+        });
+        let responseFrame: Buffer;
+        try {
+          responseFrame = encodeVaultIpcMessage(response);
+        } finally {
+          clearVaultIpcBytes(response);
+        }
+        await writeFrame(socket, responseFrame);
+        if (!multiTenant && response.ok && (decoded.method === 'daemon.shutdown' || decoded.method === 'vault.reset')) {
+          void Promise.resolve()
+            .then(() => options.onShutdown?.())
+            .catch(() => undefined);
+          break;
+        }
+      } finally {
+        if (decoded !== undefined) clearVaultIpcBytes(decoded);
+        frame.fill(0);
+      }
     }
   } catch (cause) {
     const response: VaultIpcResponse = {
@@ -214,18 +274,76 @@ async function handleSocket(
       ok: false,
       version: 1,
     };
-    const responseFrame = encodeVaultIpcMessage(response);
-    socket.end(responseFrame, () => {
-      responseFrame.fill(0);
-      socket.destroy();
-    });
+    if (!socket.destroyed) await writeFrame(socket, encodeVaultIpcMessage(response)).catch(() => undefined);
+  } finally {
+    reader.dispose();
+    await finishSocket(socket);
+    release?.();
   }
 }
 
-class VaultBackendRequestQueue {
-  private readonly tails = new WeakMap<VaultBackend, Promise<void>>();
+function finishSocket(socket: Socket): Promise<void> {
+  if (socket.closed) return Promise.resolve();
+  return new Promise((resolve) => {
+    const onError = (): void => {
+      socket.destroy();
+    };
+    const discard = (bytes: Buffer): void => {
+      bytes.fill(0);
+    };
+    const timer = setTimeout(() => socket.destroy(), 1_000);
+    timer.unref();
+    socket.on('error', onError);
+    socket.on('data', discard);
+    socket.once('close', () => {
+      clearTimeout(timer);
+      socket.off('error', onError);
+      socket.off('data', discard);
+      resolve();
+    });
+    socket.end();
+    socket.resume();
+  });
+}
 
-  async run<T>(backend: VaultBackend, operation: () => Promise<T>): Promise<T> {
+function verifyConnection(
+  socket: Socket,
+  verifier: VaultSocketPeerVerifier | undefined,
+): Promise<VaultSocketPeer | undefined> {
+  return new Promise((resolve, reject) => {
+    const onClose = (): void => {
+      finish(new SecureStorageError('secure_storage_unavailable', 'The InFlow vault connection was closed.'));
+    };
+    const timer = setTimeout(() => {
+      finish(new SecureStorageError('secure_storage_unavailable', 'Vault peer verification timed out.'));
+      socket.destroy();
+    }, 10_000);
+    timer.unref();
+    const finish = (cause?: Error, peer?: VaultSocketPeer): void => {
+      clearTimeout(timer);
+      socket.off('close', onClose);
+      if (cause !== undefined) reject(cause);
+      else resolve(peer);
+    };
+    socket.once('close', onClose);
+    Promise.resolve()
+      .then(() => verifier?.(socket))
+      .then(
+        (peer) => finish(undefined, peer),
+        (cause: unknown) =>
+          finish(
+            cause instanceof Error
+              ? cause
+              : new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.'),
+          ),
+      );
+  });
+}
+
+class VaultBackendRequestQueue {
+  private readonly tails = new Map<VaultBackend | string, Promise<void>>();
+
+  async run<T>(backend: VaultBackend | string, operation: () => Promise<T>): Promise<T> {
     const previous = this.tails.get(backend) ?? Promise.resolve();
     let release = (): void => undefined;
     const current = new Promise<void>((resolve) => {
@@ -252,16 +370,22 @@ function resolveBackend(options: StartVaultSocketServerOptions, peer: VaultSocke
 
 function writeFrame(socket: Socket, frame: Buffer): Promise<void> {
   return new Promise((resolve, reject) => {
-    const onError = (cause: Error): void => {
+    const finish = (cause?: Error | null): void => {
+      clearTimeout(timer);
+      socket.off('close', onClose);
       frame.fill(0);
-      reject(cause);
+      if (cause) reject(cause);
+      else resolve();
     };
-    socket.once('error', onError);
-    socket.write(frame, () => {
-      socket.off('error', onError);
-      frame.fill(0);
-      resolve();
-    });
+    const onClose = (): void =>
+      finish(new SecureStorageError('secure_storage_unavailable', 'The InFlow vault connection was closed.'));
+    const timer = setTimeout(() => {
+      socket.destroy();
+      finish(new SecureStorageError('secure_storage_unavailable', 'The InFlow vault connection timed out.'));
+    }, 10_000);
+    timer.unref();
+    socket.once('close', onClose);
+    socket.write(frame, finish);
   });
 }
 
@@ -322,6 +446,9 @@ function readOneFrame(socket: Socket): Promise<Buffer> {
     socket.on('data', onData);
     socket.on('error', onError);
     socket.on('end', onEnd);
+    socket.once('close', () => {
+      settle(new SecureStorageError('secure_storage_unavailable', 'The InFlow vault connection was closed.'));
+    });
   });
 }
 

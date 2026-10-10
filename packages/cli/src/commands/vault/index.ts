@@ -16,7 +16,7 @@ import {
   usesLinuxVaultService,
   vaultFilePaths,
 } from '@inflowpayai/inflow-core';
-import { Cli } from 'incur';
+import { Cli, Errors } from 'incur';
 import { mcpTool } from '../../mcp-metadata.js';
 import { emptyOptions, policySetOptions, resetOptions } from './schema.js';
 
@@ -25,6 +25,15 @@ interface VaultCommandContext {
   formatExplicit: boolean;
   options: Record<string, unknown>;
   error: (err: { code: string; message: string }) => never;
+}
+
+function vaultCommandContext(context: Omit<VaultCommandContext, 'error'>): VaultCommandContext {
+  return {
+    ...context,
+    error(error): never {
+      throw new Errors.IncurError(error);
+    },
+  };
 }
 
 interface VaultDeps {
@@ -42,11 +51,13 @@ type VaultClientLike = Pick<
 type ResetVaultClientLike = Pick<LocalVaultClient, 'info' | 'reset' | 'shutdown' | 'status'>;
 type UnlockVaultClientLike = Pick<LocalVaultClient, 'status' | 'unlock'>;
 type UnlockVaultDeps = {
+  preparedClient?: UnlockVaultClientLike;
   ensureDaemon: () => Promise<UnlockVaultClientLike>;
   readPassphrase: (prompt: string, context: VaultCommandContext) => Promise<Buffer>;
 };
 type ResetVaultDeps = {
   client: ResetVaultClientLike;
+  sharedService: boolean;
   executablePath: string;
   now: () => number;
   removeLocalState: (paths: ReturnType<typeof vaultFilePaths>) => Promise<void>;
@@ -54,6 +65,8 @@ type ResetVaultDeps = {
 };
 type ReadVaultStatusDeps = {
   client: Pick<LocalVaultClient, 'status'>;
+  sharedService: boolean;
+  ensureDaemon: () => Promise<Pick<LocalVaultClient, 'status'>>;
   recoverPeerFailure: (cause: unknown, options: LocalVaultDaemonClientOptions) => Promise<void>;
   sidecarExists: (path: string) => Promise<boolean>;
 };
@@ -211,33 +224,64 @@ export interface LocalVaultDaemonClientOptions {
   buildId?: string;
   cliVersion?: string;
   rootDirectory?: string;
+  client?: LocalVaultClient;
+  invalidateSessions?: () => void;
+  resetLocalState?: () => void;
 }
 
 export type LocalVaultUnlockMode = 'agent' | 'human';
 
+function vaultClient(options: LocalVaultDaemonClientOptions): LocalVaultClient {
+  return (
+    options.client ??
+    new LocalVaultClient({
+      ...options,
+      expectedDaemon: {
+        buildId: options.buildId ?? null,
+        cliVersion: options.cliVersion ?? null,
+        executablePath: process.execPath,
+      },
+    })
+  );
+}
+
 /* v8 ignore next */
 export async function resetLocalVault(options: LocalVaultDaemonClientOptions = {}): Promise<void> {
-  await resetLocalVaultWithDeps(options, {
-    client: new LocalVaultClient(options),
-    executablePath: process.execPath,
-    now: Date.now,
-    removeLocalState: removeVaultLocalState,
-    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-  });
+  const client = vaultClient(options);
+  try {
+    await resetLocalVaultWithDeps(options, {
+      client,
+      sharedService: options.rootDirectory === undefined && (usesLinuxVaultService() || process.platform === 'win32'),
+      executablePath: process.execPath,
+      now: Date.now,
+      removeLocalState: removeVaultLocalState,
+      sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    });
+  } finally {
+    if (options.client === undefined) client.dispose();
+  }
 }
 
 export async function ensureLocalVaultUnlocked(options: {
   mode: LocalVaultUnlockMode;
+  preparedClient?: UnlockVaultClientLike;
   vaultOptions?: LocalVaultDaemonClientOptions;
 }): Promise<void> {
-  await ensureLocalVaultUnlockedWithDeps(options.mode, {
-    ensureDaemon: () => ensureLocalVaultDaemon(options.vaultOptions ?? {}),
-    readPassphrase,
-  });
+  let owned: LocalVaultClient | undefined;
+  const preparedClient = options.preparedClient ?? (owned = await ensureLocalVaultDaemon(options.vaultOptions ?? {}));
+  try {
+    await ensureLocalVaultUnlockedWithDeps(options.mode, {
+      preparedClient,
+      ensureDaemon: () => ensureLocalVaultDaemon(options.vaultOptions ?? {}),
+      readPassphrase,
+    });
+  } finally {
+    if (options.vaultOptions?.client === undefined) owned?.dispose();
+  }
 }
 
 async function ensureLocalVaultUnlockedWithDeps(mode: LocalVaultUnlockMode, deps: UnlockVaultDeps): Promise<void> {
-  const client = await deps.ensureDaemon();
+  const client = deps.preparedClient ?? (await deps.ensureDaemon());
   const before = await client.status();
   if (before.lockState === 'unlocked') return;
   if (mode === 'agent') {
@@ -288,7 +332,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}) {
     options: emptyOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
-      return runVaultStatus(c, defaultDeps(options));
+      return runVaultStatus(vaultCommandContext(c), defaultDeps(options));
     },
   });
 
@@ -298,7 +342,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}) {
     options: emptyOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
-      return runVaultUnlock(c, defaultDeps(options));
+      return runVaultUnlock(vaultCommandContext(c), defaultDeps(options));
     },
   });
 
@@ -308,7 +352,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}) {
     options: emptyOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
-      return runVaultLock(c, defaultDeps(options));
+      return runVaultLock(vaultCommandContext(c), defaultDeps(options));
     },
   });
 
@@ -318,7 +362,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}) {
     options: emptyOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
-      return runVaultPolicy(c, defaultDeps(options));
+      return runVaultPolicy(vaultCommandContext(c), defaultDeps(options));
     },
   });
 
@@ -328,7 +372,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}) {
     options: policySetOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
-      return runVaultPolicySet(c, defaultDeps(options));
+      return runVaultPolicySet(vaultCommandContext(c), defaultDeps(options));
     },
   });
 
@@ -338,7 +382,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}) {
     options: emptyOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
-      return runVaultChangePassphrase(c, defaultDeps(options));
+      return runVaultChangePassphrase(vaultCommandContext(c), defaultDeps(options));
     },
   });
 
@@ -348,7 +392,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}) {
     options: resetOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
-      return runVaultReset(c, defaultDeps(options));
+      return runVaultReset(vaultCommandContext(c), defaultDeps(options));
     },
   });
 
@@ -377,13 +421,22 @@ function executableIdentityPath(executablePath: string): string {
 
 async function resetLocalVaultWithDeps(options: LocalVaultDaemonClientOptions, deps: ResetVaultDeps): Promise<void> {
   const daemon = await existingDaemonState(options, deps.client, deps.executablePath);
+  if (deps.sharedService && daemon !== 'compatible') {
+    throw new SecureStorageError(
+      'secure_storage_unavailable',
+      'A compatible InFlow vault service is required to reset the vault.',
+    );
+  }
+  options.invalidateSessions?.();
   if (daemon === 'compatible') {
     await deps.client.reset();
-    await waitForDaemonShutdown(deps);
+    if (!deps.sharedService) await waitForDaemonShutdown(deps);
+    options.resetLocalState?.();
     return;
   }
   if (daemon === 'incompatible') await shutdownReachableDaemon(deps);
   await deps.removeLocalState(vaultFilePaths(options.rootDirectory));
+  options.resetLocalState?.();
 }
 
 async function existingDaemonState(
@@ -428,11 +481,18 @@ async function waitForDaemonShutdown(deps: ResetVaultDeps): Promise<void> {
 export async function readVaultStatusWithoutStarting(
   options: LocalVaultDaemonClientOptions = {},
 ): Promise<VaultStatus> {
-  return readVaultStatusWithoutStartingWithDeps(options, {
-    client: new LocalVaultClient(options),
-    recoverPeerFailure: recoverVaultPeerVerificationFailure,
-    sidecarExists: vaultSidecarExists,
-  });
+  const client = vaultClient(options);
+  try {
+    return await readVaultStatusWithoutStartingWithDeps(options, {
+      client,
+      sharedService: options.rootDirectory === undefined && (usesLinuxVaultService() || process.platform === 'win32'),
+      ensureDaemon: () => ensureLocalVaultDaemon({ ...options, client }),
+      recoverPeerFailure: recoverVaultPeerVerificationFailure,
+      sidecarExists: vaultSidecarExists,
+    });
+  } finally {
+    if (options.client === undefined) client.dispose();
+  }
 }
 
 async function readVaultStatusWithoutStartingWithDeps(
@@ -448,6 +508,7 @@ async function readVaultStatusWithoutStartingWithDeps(
       throw cause;
     }
   }
+  if (deps.sharedService) return (await deps.ensureDaemon()).status();
   return {
     daemonRunning: false,
     lockState: (await deps.sidecarExists(vaultFilePaths(options.rootDirectory).sidecar)) ? 'locked' : 'not_initialized',
@@ -466,7 +527,19 @@ async function vaultSidecarExists(path: string): Promise<boolean> {
 
 /* v8 ignore start */
 export async function ensureLocalVaultDaemon(options: LocalVaultDaemonClientOptions = {}): Promise<LocalVaultClient> {
-  const client = new LocalVaultClient(options);
+  const client = vaultClient(options);
+  try {
+    return await ensureLocalVaultDaemonWithClient(options, client);
+  } catch (cause) {
+    if (options.client === undefined) client.dispose();
+    throw cause;
+  }
+}
+
+async function ensureLocalVaultDaemonWithClient(
+  options: LocalVaultDaemonClientOptions,
+  client: LocalVaultClient,
+): Promise<LocalVaultClient> {
   try {
     if (await canUseDaemon(client, options)) return client;
   } catch (cause) {

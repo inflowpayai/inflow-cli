@@ -13,7 +13,7 @@ const platformName = process.platform === 'darwin' ? 'darwin' : process.platform
 const source = join(repoRoot, `packages/core/native/vault_peer_${platformName}.c`);
 const secureMemorySource = join(repoRoot, 'packages/core/native/vault_secure_memory.c');
 const cryptoSource = join(repoRoot, 'packages/core/native/vault_crypto_native.c');
-const outputDirectory = join(repoRoot, 'packages/core/native/build');
+const outputDirectory = resolve(process.env.INFLOW_VAULT_NATIVE_BUILD_DIR ?? join(repoRoot, 'packages/core/native/build'));
 const output = join(outputDirectory, `vault_peer_${platformName}.node`);
 
 mkdirSync(outputDirectory, { recursive: true });

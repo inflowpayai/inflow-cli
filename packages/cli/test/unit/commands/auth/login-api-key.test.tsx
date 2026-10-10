@@ -87,7 +87,7 @@ describe('LoginApiKey', () => {
     expect(storage.getApiKey()).toBe('ifk-valid');
     expect(storage.getAuth()).toBeNull();
     expect(storage.getConnection()).toEqual({ environment: 'sandbox' });
-    expect(onComplete).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
     unmount();
   });
 

@@ -440,6 +440,31 @@ describe('runAuthLogout (agent mode)', () => {
 });
 
 describe('runAuthLogin (agent mode) — api-key save path', () => {
+  it('reads the saved key after unlocking instead of requiring a key in the command context', async () => {
+    const storage = new MemoryStorage();
+    const auth = makeAuthResource(storage);
+    const user = makeUserResource();
+    const yields = await drainGenerator(
+      runAuthLogin(
+        makeContext({ clientName: 'Test', interval: 0, maxAttempts: 0, timeout: 300 }),
+        {
+          authResource: auth.resource,
+          userResource: user.resource,
+          authStorage: storage,
+          ensureVaultUnlocked: () => {
+            storage.setApiKey('saved-after-unlock');
+            return Promise.resolve();
+          },
+        },
+        { ...defaultAuthCtx, apiKeySource: 'saved' },
+      ),
+    );
+    expect(auth.initiateDeviceAuth).not.toHaveBeenCalled();
+    expect(user.retrieve).toHaveBeenCalledOnce();
+    expect(yields[0]).toMatchObject({ authenticated: true, method: 'api_key' });
+    expect(storage.getApiKey()).toBe('saved-after-unlock');
+  });
+
   it('skips the device flow and persists the api key + connection on a successful probe', async () => {
     const ctx = makeContext({
       clientName: 'Test',

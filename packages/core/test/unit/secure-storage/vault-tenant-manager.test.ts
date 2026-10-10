@@ -20,6 +20,33 @@ describe('multi-tenant vault backend manager', () => {
     tmpDir = undefined;
   });
 
+  it('reads and persists independent policies before either tenant is unlocked', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-tenants-'));
+    manager = new MultiTenantVaultBackendManager({ rootDirectory: tmpDir });
+    const tenantA = manager.backendForPeer(peer(1001));
+    const tenantB = manager.backendForPeer(peer(1002));
+    const baseline = await tenantB.getPolicy();
+
+    await expect(tenantA.getPolicy()).resolves.toEqual(baseline);
+    await tenantA.setPolicy({ idleTimeoutSeconds: 321, lockOnSleep: false });
+    await expect(tenantA.status()).resolves.toMatchObject({ lockState: 'not_initialized' });
+    await expect(tenantA.getSecret({ expectedKind: 'inflow_api_key', reference: REFERENCE })).rejects.toMatchObject({
+      secureStorageCode: 'vault_locked',
+    });
+    await expect(tenantB.getPolicy()).resolves.toEqual(baseline);
+    await manager.close();
+
+    manager = new MultiTenantVaultBackendManager({ rootDirectory: tmpDir });
+    await expect(manager.backendForPeer(peer(1001)).getPolicy()).resolves.toEqual({
+      idleTimeoutSeconds: 321,
+      lockOnSleep: false,
+    });
+    await expect(manager.backendForPeer(peer(1002)).getPolicy()).resolves.toEqual(baseline);
+    await expect(manager.backendForPeer(peer(1001)).status()).resolves.toMatchObject({
+      lockState: 'not_initialized',
+    });
+  });
+
   it('isolates vault state selected from verified operating-system user identities', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-tenants-'));
     manager = new MultiTenantVaultBackendManager({ rootDirectory: tmpDir });

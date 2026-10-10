@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
   const transport = {
     completeServiceStop: vi.fn(),
     markServiceReady: vi.fn(),
+    requestServiceStop: vi.fn(),
     runServiceDispatcher: vi.fn(),
     serviceControlState: vi.fn(),
   };

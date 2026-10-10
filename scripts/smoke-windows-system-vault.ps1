@@ -64,7 +64,7 @@ public static class InFlowMitigationProbe {
       return bytesAvailable == 0 ? 0 : 1;
     }
     int error = Marshal.GetLastWin32Error();
-    if (error == 109 || error == 232) return 2;
+    if (error == 109 || error == 232 || error == 233) return 2;
     throw new Win32Exception(error);
   }
 }

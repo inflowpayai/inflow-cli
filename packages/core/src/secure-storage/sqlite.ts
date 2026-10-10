@@ -475,6 +475,23 @@ export class SecureSqliteRepository {
     return this.transaction(work);
   }
 
+  clearData(): void {
+    this.transaction(() => {
+      this.db().exec(`
+        DELETE FROM secret_lifecycle;
+        DELETE FROM aep_credentials;
+        DELETE FROM aep_identities;
+        DELETE FROM auth_sessions;
+        DELETE FROM pending_auth;
+        DELETE FROM connection_profiles;
+        DELETE FROM principals;
+        DELETE FROM public_documents;
+        DELETE FROM settings;
+        DELETE FROM vault_records;
+      `);
+    });
+  }
+
   upsertSetting(name: string, payload: unknown): void {
     this.transaction(() => {
       this.db()

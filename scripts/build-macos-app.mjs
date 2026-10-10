@@ -31,6 +31,9 @@ const version = packageVersion();
 const bundleIdentifier = process.env.INFLOW_BUNDLE_IDENTIFIER ?? 'ai.inflowpay.cli';
 const artifactRoot = resolve(process.env.INFLOW_MACOS_ARTIFACT_DIR ?? join(repoRoot, 'dist/macos'));
 const buildRoot = join(artifactRoot, 'build');
+const nativeBuildDirectory = join(buildRoot, 'native');
+const nativeBuildPath = join(nativeBuildDirectory, 'vault_peer_darwin.node');
+const nativeBuildEnv = { ...process.env, INFLOW_VAULT_NATIVE_BUILD_DIR: nativeBuildDirectory };
 const appPath = join(artifactRoot, `${packageName}.app`);
 const executablePath = join(appPath, 'Contents/MacOS/inflow');
 const linkedExecutablePath = join(artifactRoot, 'bin/inflow');
@@ -67,9 +70,9 @@ mkdirSync(join(appPath, 'Contents/MacOS'), { recursive: true });
 mkdirSync(resourcesPath, { recursive: true });
 
 run('pnpm', ['--filter', '@inflowpayai/inflow-core', 'build']);
-run(process.execPath, ['scripts/build-vault-peer-native.mjs']);
+run(process.execPath, ['scripts/build-vault-peer-native.mjs'], { env: nativeBuildEnv });
 signVaultPeerBuild();
-run('pnpm', ['--filter', '@inflowpayai/inflow', 'build:standalone']);
+run('pnpm', ['--filter', '@inflowpayai/inflow', 'build:standalone'], { env: nativeBuildEnv });
 run(process.execPath, ['scripts/verify-standalone-runtime.mjs']);
 
 mkdirSync(dirname(standaloneBundlePath), { recursive: true });
@@ -179,10 +182,7 @@ function packageDirectoryRoot(packageName, fallbacks = []) {
 
 function copyVaultPeerRuntime() {
   mkdirSync(nativeRuntimePath, { recursive: true });
-  copyFileSync(
-    join(repoRoot, 'packages/core/native/build/vault_peer_darwin.node'),
-    join(nativeRuntimePath, 'vault_peer_darwin.node'),
-  );
+  copyFileSync(nativeBuildPath, join(nativeRuntimePath, 'vault_peer_darwin.node'));
 }
 
 function signVaultPeerBuild() {
@@ -192,7 +192,7 @@ function signVaultPeerBuild() {
     identity,
     ...timestampArgs(),
     ...runtimeArgs(),
-    join(repoRoot, 'packages/core/native/build/vault_peer_darwin.node'),
+    nativeBuildPath,
   ]);
 }
 
@@ -434,7 +434,7 @@ function discoverDeveloperIdApplicationIdentities() {
 
 function run(command, commandArgs, options = {}) {
   try {
-    execFileSync(command, commandArgs, { cwd: repoRoot, stdio: 'inherit' });
+    execFileSync(command, commandArgs, { cwd: repoRoot, env: options.env ?? process.env, stdio: 'inherit' });
   } catch (error) {
     if (options.optional) return;
     throw error;

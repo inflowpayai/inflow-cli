@@ -130,8 +130,11 @@ URL. Paste it into a browser by hand to continue.
 inflow auth logout
 ```
 
-Attempts eligible remote credential revocation, stops the local vault daemon, and removes local authentication,
-encrypted vault, user metadata, and public cache state. Idempotent: safe to call when already logged out.
+Attempts eligible remote credential revocation and removes local authentication, encrypted vault, user metadata, and
+public cache state. A standalone vault daemon stops; an installed shared service stays running for other users.
+Idempotent: safe to call when already logged out.
+
+After logout or vault reset, reconnect MCP sessions that use saved credentials.
 
 ### `auth status`
 

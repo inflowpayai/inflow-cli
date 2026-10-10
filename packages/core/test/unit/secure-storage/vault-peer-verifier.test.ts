@@ -218,6 +218,35 @@ describe('vault peer verifier', () => {
     ).toMatchObject({ secureStorageCode: 'secure_storage_peer_verification_failed' });
   });
 
+  it.each(['EPEERPID', 'EPEERUID', 'EPEERPATH'])('rejects native peer inspection failure %s', (code) => {
+    const deps = dependencies({
+      currentUserId: 501,
+      peer: { path: '/usr/bin/inflow', pid: 123, uid: 501 },
+      realpaths: new Map(),
+    });
+    const native = deps.loadNativeModule();
+    const cause = Object.assign(new Error('Socket is not connected'), { code });
+    native.peerInfo.mockImplementation(() => {
+      throw cause;
+    });
+    deps.loadNativeModule.mockReturnValue(native);
+    const verifier = createVaultSocketPeerVerifier(
+      {
+        expectedExecutablePath: '/usr/bin/inflow',
+        nativeModulePath: '/native/vault_peer_darwin.node',
+        requireSignature: true,
+      },
+      deps,
+    );
+    const verify = vi.fn(() => verifier(socketWithFd(42)));
+    expect(verify).toThrow(SecureStorageError);
+    expect(verify.mock.results[0]?.value).toMatchObject({
+      secureStorageCode: 'secure_storage_peer_verification_failed',
+      cause,
+    });
+    expect(deps.verifySignature).not.toHaveBeenCalled();
+  });
+
   it('accepts same-user same-executable Linux peers without a signing check', () => {
     Object.defineProperty(process, 'platform', { value: 'linux' });
     const verified = vi.fn();

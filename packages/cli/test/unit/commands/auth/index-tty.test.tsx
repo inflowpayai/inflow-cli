@@ -188,9 +188,10 @@ describe('InteractiveLoginShell', () => {
 });
 
 describe('runAuthLogin (tty mode)', () => {
-  it('delegates rendering to renderInkUntilExit when not in agent mode', async () => {
+  it.each([false, true])('delegates interactive login rendering with a saved API key: %s', async (savedKey) => {
     renderMock.mockResolvedValueOnce(undefined);
     const storage = new MemoryStorage();
+    if (savedKey) storage.setApiKey('saved-interactive-key');
     const ctx = {
       agent: false,
       formatExplicit: false,
@@ -211,11 +212,14 @@ describe('runAuthLogin (tty mode)', () => {
         userResource: userStub(),
         authStorage: storage,
       },
-      defaultAuthCtx,
+      { ...defaultAuthCtx, apiKeySource: savedKey ? 'saved' : undefined },
     );
     const out: unknown[] = [];
     for await (const y of gen) out.push(y);
     expect(renderMock).toHaveBeenCalledOnce();
+    if (savedKey) {
+      expect(renderMock.mock.calls[0]?.[0]).toMatchObject({ props: { apiKey: 'saved-interactive-key' } });
+    }
     expect(out).toEqual([]);
   });
 });

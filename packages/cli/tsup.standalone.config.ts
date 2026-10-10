@@ -100,7 +100,9 @@ function computeVaultPeerNativeSha256(): string {
     throw new Error(`Native vault peer verification is unavailable on ${process.platform}.`);
   }
   const platformName = process.platform === 'win32' ? 'windows' : process.platform;
-  const nativePath = resolve(repoRoot, `packages/core/native/build/vault_peer_${platformName}.node`);
+  const nativeDirectory =
+    process.env['INFLOW_VAULT_NATIVE_BUILD_DIR'] ?? resolve(repoRoot, 'packages/core/native/build');
+  const nativePath = resolve(nativeDirectory, `vault_peer_${platformName}.node`);
   if (!existsSync(nativePath)) {
     throw new Error(`Native vault peer verifier is missing at ${nativePath}.`);
   }

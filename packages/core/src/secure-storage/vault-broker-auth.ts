@@ -221,13 +221,20 @@ function currentUserId(): number {
 function writeBytes(socket: Socket, bytes: Buffer): Promise<void> {
   return new Promise((resolve, reject) => {
     const onError = (cause: Error): void => {
+      cleanup();
       reject(cause);
     };
-    socket.once('error', onError);
-    socket.write(bytes, (cause) => {
+    const cleanup = (): void => {
       socket.off('error', onError);
-      if (cause === undefined || cause === null) resolve();
-      else reject(cause instanceof Error ? cause : new Error('Vault broker authentication write failed.'));
+      socket.off('close', cleanup);
+    };
+    socket.once('error', onError);
+    socket.once('close', cleanup);
+    socket.write(bytes, (cause) => {
+      if (cause === undefined || cause === null) {
+        cleanup();
+        resolve();
+      } else reject(cause instanceof Error ? cause : new Error('Vault broker authentication write failed.'));
     });
   });
 }
