@@ -24,7 +24,7 @@ import { acceptToFrame } from '../x402/inspect.js';
 import { CombinedInspectView, detectedProtocols } from './combined-inspect-view.js';
 import { inspectArgs, inspectOptions } from './schema.js';
 import { isDocumentInspect } from './routing.js';
-import { inspectDocument } from './document.js';
+import { discoverOrigin, inspectDocument, type OriginDiscovery } from './document.js';
 import { SourceDiscovery } from '@inflowpayai/inflow-core';
 
 interface InspectCommandContext {
@@ -37,7 +37,13 @@ interface InspectCommandContext {
     data?: string | undefined;
     header: string[];
   };
-  error: (options: { code: string; message: string; retryable?: boolean; exitCode?: number }) => never;
+  error: (options: {
+    code: string;
+    message: string;
+    retryable?: boolean;
+    exitCode?: number;
+    details?: unknown;
+  }) => never;
 }
 
 interface InspectCommandDefinition {
@@ -257,6 +263,7 @@ export async function runCombinedInspectCommand(
   inflow?: Inflow,
   authStorage?: AuthStorage,
   odpResource?: Pick<IOdpResource, 'inspect'>,
+  discovery?: OriginDiscovery,
 ): Promise<Record<string, unknown> | undefined> {
   const aepFetch =
     inflow === undefined
@@ -370,6 +377,7 @@ export async function runCombinedInspectCommand(
         url={c.args.url}
         method={c.options.method ?? 'GET'}
         deps={deps}
+        discovery={discovery}
         onComplete={(phase) => {
           captured.finalPhase = phase;
         }}
@@ -378,7 +386,11 @@ export async function runCombinedInspectCommand(
     if (captured.finalPhase !== null) {
       const phase = captured.finalPhase;
       if (phase.kind === 'error') {
-        c.error({ code: phase.code, message: phase.message });
+        c.error({
+          code: phase.code,
+          message: phase.message,
+          ...(discovery === undefined ? {} : { details: sanitizeDeep({ discovery }) }),
+        });
       }
     }
     return undefined;
@@ -403,12 +415,22 @@ export async function runCombinedInspectCommand(
   const { kind, payload } = captured.finalEvent;
   if (kind === 'error') {
     const err = payload as { code: string; message: string };
-    return c.error({ code: err.code, message: err.message });
+    return c.error({
+      code: err.code,
+      message: err.message,
+      ...(discovery === undefined ? {} : { details: sanitizeDeep({ discovery }) }),
+    });
   }
   if (kind === 'inspected') {
-    return sanitizeDeep(buildCombinedFrame(payload as CombinedInspectResult));
+    return sanitizeDeep({
+      ...buildCombinedFrame(payload as CombinedInspectResult),
+      ...(discovery === undefined ? {} : { discovery }),
+    });
   }
-  return sanitizeDeep(buildNoPaymentFrame(payload as CombinedInspectNoPayment));
+  return sanitizeDeep({
+    ...buildNoPaymentFrame(payload as CombinedInspectNoPayment),
+    ...(discovery === undefined ? {} : { discovery }),
+  });
 }
 
 export function createInspectCommand(
@@ -437,7 +459,15 @@ export function createInspectCommand(
     ],
     async run(c: InspectCommandContext) {
       if (isDocumentInspect(c.args.url, c.options)) return inspectDocument(c, discovery);
-      if (c.options.refresh)
+      let origin: string | undefined;
+      try {
+        const url = new URL(c.args.url);
+        if (url.pathname === '/' && (c.options.method ?? 'GET') === 'GET' && c.options.data === undefined)
+          origin = url.origin;
+      } catch {
+        /* Endpoint validation reports malformed URLs. */
+      }
+      if (c.options.refresh && origin === undefined)
         return c.error({
           code: 'INSPECT_REFRESH_REQUIRES_DOCUMENT',
           message: '--refresh applies to document inspection, not endpoint probes.',
@@ -449,7 +479,9 @@ export function createInspectCommand(
         if (mapped !== undefined) return c.error(mapped);
         throw error;
       }
-      return runCombinedInspectCommand(c, inflow, authStorage, odpResource);
+      const discovered =
+        origin === undefined ? undefined : await discoverOrigin(origin, c.options.refresh ?? false, discovery);
+      return runCombinedInspectCommand(c, inflow, authStorage, odpResource, discovered);
     },
   };
 }

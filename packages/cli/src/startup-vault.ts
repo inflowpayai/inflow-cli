@@ -10,6 +10,9 @@ export function commandPath(argv: readonly string[], maxDepth = 2): string[] {
     '--auth-base-url',
     '--base-url',
     '--environment',
+    '--method',
+    '--data',
+    '--header',
     '--format',
     '--output',
     '--skill',
@@ -113,14 +116,13 @@ export function isPublicDocumentInspect(argv: readonly string[]): boolean {
   const [group, target] = commandPath(argv);
   if (group !== 'inspect' || target === undefined) return false;
   if (
-    argv
-      .slice(2)
-      .some((value) =>
-        ['--method', '--data', '--header'].some((flag) => value === flag || value.startsWith(`${flag}=`)),
-      )
+    argv.slice(2).some((value) => ['--data', '--header'].some((flag) => value === flag || value.startsWith(`${flag}=`)))
   )
     return false;
-  return isDocumentInspect(target, { header: [] });
+  const assignedMethod = argv.find((value) => value.startsWith('--method='))?.slice('--method='.length);
+  const methodIndex = argv.indexOf('--method');
+  const method = assignedMethod ?? (methodIndex < 0 ? undefined : argv[methodIndex + 1]);
+  return isDocumentInspect(target, { method, header: [] });
 }
 
 function isOneOf(value: string | undefined, ...choices: readonly string[]): boolean {

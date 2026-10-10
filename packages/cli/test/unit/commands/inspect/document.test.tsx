@@ -15,7 +15,12 @@ import {
   runCombinedInspectCommand,
   type InspectCommandContext,
 } from '../../../../src/commands/inspect/index.js';
-import { DocumentView, inspectDocument } from '../../../../src/commands/inspect/document.js';
+import {
+  DocumentView,
+  OriginDiscoveryView,
+  discoverOrigin,
+  inspectDocument,
+} from '../../../../src/commands/inspect/document.js';
 import { isDocumentInspect } from '../../../../src/commands/inspect/routing.js';
 import {
   isPublicDocumentInspect,
@@ -93,19 +98,40 @@ function context(url = 'https://weather.test/openapi.json'): InspectCommandConte
     agent: true,
     formatExplicit: true,
     error: (error) => {
-      throw Object.assign(new Error(error.message), { code: error.code });
+      throw Object.assign(new Error(error.message), error);
     },
   };
 }
 
 describe('automatic inspection routing', () => {
   it.each([
-    'https://example.com',
-    'https://example.com/',
-    'https://example.com/?v=1',
+    ['https://example.com', true],
+    ['https://example.com/?q=search', true],
+    ['https://example.com/openapi-tools/search', true],
+    ['https://example.com/openapi.json?version=1', false],
+    ['https://example.com/.well-known/odp', false],
+  ])('keeps implicit and explicit GET vault decisions equivalent for %s', (url, needsVault) => {
+    for (const args of [
+      ['inspect', url],
+      ['inspect', url, '--method', 'GET'],
+      ['inspect', '--method', 'GET', url],
+      ['inspect', '--method=GET', url],
+    ]) {
+      const argv = ['node', 'inflow', ...args];
+      for (const decision of [
+        shouldStartVaultDaemon,
+        shouldReconcileVaultDaemon,
+        shouldUnlockVault,
+        shouldConfigureOdpServiceTransport,
+      ])
+        expect(decision(argv)).toBe(needsVault);
+    }
+  });
+  it.each([
     'https://example.com/.well-known/odp',
     'https://example.com/.well-known/x402.json',
     'https://example.com/v1/OpenAPI.JSON',
+    'https://example.com/openapi.json?version=1',
   ])('routes %s as a public document', (url) => {
     expect(isDocumentInspect(url, { header: [] })).toBe(true);
     const argv = ['node', 'inflow', 'inspect', url];
@@ -120,6 +146,10 @@ describe('automatic inspection routing', () => {
   });
   it.each([
     'https://example.com/data',
+    'https://example.com',
+    'https://example.com/',
+    'https://example.com/?v=1',
+    'https://example.com/openapi-tools/search',
     'https://example.com/.well-known/aep',
     'https://example.com/.well-known/other',
     'not a url',
@@ -156,6 +186,111 @@ describe('automatic inspection routing', () => {
 });
 
 describe('public document inspection', () => {
+  it.each(['not a URL', 'https://weather.test/'])('rejects unsupported refresh without discovering %s', async (url) => {
+    const inspect = vi.fn();
+    await expect(
+      createInspectCommand(new Inflow(), undefined, undefined, { inspect }).run({
+        ...context(url),
+        options: { method: 'POST', header: [], refresh: true },
+      }),
+    ).rejects.toMatchObject({ code: 'INSPECT_REFRESH_REQUIRES_DOCUMENT' });
+    expect(inspect).not.toHaveBeenCalled();
+  });
+  it.each([true, false])('retains discovery with live HTTP results and failures (agent=%s)', async (agent) => {
+    const source = await setup().discovery.inspect('https://weather.test');
+    const discovery = { source };
+    if (!agent)
+      vi.spyOn(renderer, 'renderInkUntilExit').mockImplementation(async (element) => {
+        const view = render(element);
+        try {
+          await vi.waitFor(() => expect(view.lastFrame()).toContain('OpenAPI document'));
+          expect(view.lastFrame()).not.toContain('No operation was called');
+        } finally {
+          view.unmount();
+        }
+      });
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    for (const status of [200, 402, 500]) {
+      fetch.mockResolvedValue(new Response('response', { status }));
+      const result = runCombinedInspectCommand(
+        { ...context('https://weather.test'), agent, formatExplicit: agent },
+        undefined,
+        undefined,
+        undefined,
+        discovery,
+      );
+      if (status === 500) await expect(result).rejects.toMatchObject({ details: { discovery } });
+      else if (agent) await expect(result).resolves.toMatchObject({ status, discovery });
+      else await expect(result).resolves.toBeUndefined();
+    }
+  });
+  it.each([undefined, 'GET'])(
+    'reads an exact document with its query without credentials (method=%s)',
+    async (method) => {
+      const { discovery, fetch } = setup();
+      const prepare = vi.fn();
+      const command = createInspectCommand(new Inflow(), undefined, undefined, discovery, prepare);
+      const result = await command.run({
+        ...context('https://weather.test/openapi.json?v=2'),
+        options: { method, header: [] },
+      });
+      expect(result).toMatchObject({ outcome: 'document-inspected' });
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(fetch.mock.calls[0]?.[0].search).toBe('?v=2');
+      expect(prepare).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([undefined, 'GET'])('prepares credentials before origin network requests (method=%s)', async (method) => {
+    const inspect = vi.fn();
+    const prepare = vi.fn().mockRejectedValue(new Error('locked'));
+    const command = createInspectCommand(new Inflow(), undefined, undefined, { inspect }, prepare);
+    await expect(command.run({ ...context('https://weather.test'), options: { method, header: [] } })).rejects.toThrow(
+      'locked',
+    );
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'GET'])('preserves endpoint output when origin discovery fails (method=%s)', async (method) => {
+    const inflow = new Inflow({ authStorage: new MemoryStorage() });
+    vi.spyOn(inflow.odp, 'inspect').mockRejectedValue(new Error('No ODP'));
+    vi.spyOn(inflow.aep, 'inspect').mockRejectedValue(new Error('No AEP'));
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() => Promise.resolve(new Response('public', { status: 200 })));
+    const inspect = vi.fn().mockRejectedValue(new SourceDiscoveryError('SOURCE_NOT_FOUND', 'No document.'));
+    const result = await createInspectCommand(inflow, undefined, undefined, { inspect }).run({
+      ...context('https://weather.test/?q=hello'),
+      options: { method, header: [], refresh: true },
+    });
+    expect(result).toMatchObject({
+      outcome: 'no-payment-required',
+      method: 'GET',
+      status: 200,
+      discovery: { error: { code: 'SOURCE_NOT_FOUND' } },
+    });
+    expect(inspect).toHaveBeenCalledWith('https://weather.test', expect.objectContaining({ refresh: true }));
+    expect(fetch).toHaveBeenCalledWith('https://weather.test/?q=hello', expect.objectContaining({ method: 'GET' }));
+  });
+
+  it('renders origin discovery without duplicating ODP and sanitizes failures', async () => {
+    expect(render(<OriginDiscoveryView discovery={undefined} />).lastFrame()).toBe('');
+    const native = await setup(true).discovery.inspect('https://weather.test');
+    expect(render(<OriginDiscoveryView discovery={{ source: native }} />).lastFrame()).toBe('');
+    const openapi = await setup().discovery.inspect('https://weather.test');
+    expect(render(<OriginDiscoveryView discovery={{ source: openapi }} />).lastFrame()).toContain('OpenAPI document');
+    for (const error of [
+      new Error('private'),
+      new SourceDiscoveryError('SOURCE_AMBIGUOUS', '\u001b[31mChoose.', ['https://weather.test/openapi.json']),
+    ]) {
+      const result = await discoverOrigin('https://weather.test', false, { inspect: vi.fn().mockRejectedValue(error) });
+      const frame = render(<OriginDiscoveryView discovery={result} />).lastFrame();
+      expect(frame).toContain('Document discovery:');
+      expect(frame).not.toContain('private');
+      expect(JSON.stringify(result)).not.toContain('\\u001b');
+    }
+  });
   it('renders a shell-quoted JSON body in the generated command reference', async () => {
     const cli = Cli.create('inflow');
     cli.command('inspect', createInspectCommand(new Inflow()));
@@ -186,26 +321,31 @@ describe('public document inspection', () => {
     expect(fetch).toHaveBeenCalledWith('https://weather.test/weather', expect.objectContaining({ method: 'GET' }));
     if (agent) expect(result).toMatchObject({ method: 'GET', status: 200, outcome: 'no-payment-required' });
   });
-  it.each([false, true])('discovers an origin without probing or accessing credentials (native=%s)', async (native) => {
-    const { discovery, fetch } = setup(native);
-    const storage = new MemoryStorage();
-    const inflow = new Inflow({ authStorage: storage });
-    const probe = vi.spyOn(inflow.odp, 'inspect').mockRejectedValue(new Error('Must not probe'));
-    const cli = Cli.create('inflow');
-    cli.command('inspect', createInspectCommand(inflow, storage, undefined, discovery));
-    const stdout = vi.fn();
-    await cli.serve(['inspect', 'https://weather.test', '--format', 'json'], { stdout, exit: vi.fn() });
-    const result = JSON.parse(stdout.mock.calls.flat().join('')) as {
-      outcome: string;
-      source: { type: string };
-      operation_count?: number;
-    };
-    expect(result).toMatchObject({ outcome: 'document-inspected' });
-    expect(result.source.type).toBe(native ? 'odp' : 'openapi');
-    expect(probe).not.toHaveBeenCalled();
-    expect(fetch.mock.calls.every(([url]) => url.pathname !== '/' && url.pathname !== '/weather')).toBe(true);
-    if (!native) expect(result.operation_count).toBe(1);
-  });
+  it.each([false, true])(
+    'adds origin discovery without replacing the default GET probe (native=%s)',
+    async (native) => {
+      const { discovery, fetch } = setup(native);
+      const storage = new MemoryStorage();
+      const inflow = new Inflow({ authStorage: storage });
+      const probe = vi.spyOn(inflow.odp, 'inspect').mockRejectedValue(new Error('No ODP'));
+      vi.spyOn(inflow.aep, 'inspect').mockRejectedValue(new Error('No AEP'));
+      vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(new Response('public', { status: 200 })));
+      const prepare = vi.fn().mockResolvedValue(undefined);
+      const cli = Cli.create('inflow');
+      cli.command('inspect', createInspectCommand(inflow, storage, undefined, discovery, prepare));
+      const stdout = vi.fn();
+      await cli.serve(['inspect', 'https://weather.test', '--format', 'json'], { stdout, exit: vi.fn() });
+      const result = JSON.parse(stdout.mock.calls.flat().join('')) as {
+        outcome: string;
+        discovery: { source: SourceDiscoveryResult };
+      };
+      expect(result).toMatchObject({ outcome: 'no-payment-required', method: 'GET', status: 200 });
+      expect(result.discovery.source.sourceType).toBe(native ? 'odp' : 'openapi');
+      expect(probe).toHaveBeenCalledOnce();
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(fetch.mock.calls.every(([url]) => url.pathname !== '/' && url.pathname !== '/weather')).toBe(true);
+    },
+  );
   it('fetches an exact document once and does not fall back on failure', async () => {
     const { discovery, fetch } = setup();
     const result = await inspectDocument(context(), discovery);
@@ -259,7 +399,7 @@ describe('public document inspection', () => {
       },
     } satisfies SourceDiscoveryResult;
     expect(render(<DocumentView result={result} />).lastFrame()).toContain('Weather');
-    expect(render(<DocumentView result={result} />).lastFrame()).toContain('None');
+    expect(render(<DocumentView result={result} />).lastFrame()).toContain('Operations');
     expect(
       render(
         <DocumentView
@@ -289,7 +429,7 @@ describe('public document inspection', () => {
     const inspect = vi.spyOn(discovery, 'inspect');
     await expect(
       createInspectCommand(new Inflow({ authStorage: new MemoryStorage() }), undefined, undefined, discovery).run({
-        ...context(),
+        ...context('https://weather.test/weather'),
         options: { method: 'GET', header: [], refresh: true },
       }),
     ).rejects.toMatchObject({ code: 'INSPECT_REFRESH_REQUIRES_DOCUMENT' });

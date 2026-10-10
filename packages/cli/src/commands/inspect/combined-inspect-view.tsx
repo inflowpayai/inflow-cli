@@ -20,6 +20,7 @@ import { Table, type TableColumn } from '../../utils/table.js';
 import { AepDetailsTable } from '../aep/views.js';
 import { MppChallengePresentation } from '../mpp/challenge-presentation.js';
 import { OdpDetailsTable } from '../odp/service.js';
+import { OriginDiscoveryView, type OriginDiscovery } from './document.js';
 
 function orDash(value: string | undefined): string {
   return value === undefined || value === '' ? '—' : value;
@@ -394,13 +395,20 @@ const X402SectionView: React.FC<{ section: X402Section }> = ({ section }) => {
 };
 
 export interface CombinedInspectViewProps {
+  discovery?: OriginDiscovery | undefined;
   url: string;
   method: string;
   deps: CombinedInspectPipelineDeps;
   onComplete: (final: CombinedInspectPhase) => void;
 }
 
-export const CombinedInspectView: React.FC<CombinedInspectViewProps> = ({ url, method, deps, onComplete }) => {
+export const CombinedInspectView: React.FC<CombinedInspectViewProps> = ({
+  url,
+  method,
+  deps,
+  onComplete,
+  discovery,
+}) => {
   const initial: CombinedInspectPhase = { kind: 'probing' };
   const [phase, dispatch] = useReducer(reduceCombinedInspect, initial);
   const { finish } = useFlowExit(onComplete);
@@ -450,6 +458,7 @@ export const CombinedInspectView: React.FC<CombinedInspectViewProps> = ({ url, m
             <AepSectionView section={result.aep} />
           </Box>
         )}
+        <OriginDiscoveryView discovery={discovery} />
       </Box>
     );
   }
@@ -459,6 +468,7 @@ export const CombinedInspectView: React.FC<CombinedInspectViewProps> = ({ url, m
       <Box flexDirection="column">
         <Text color="red">✗ {phase.code}</Text>
         <Text color="red">{phase.message}</Text>
+        <OriginDiscoveryView discovery={discovery} />
       </Box>
     );
   }
@@ -491,6 +501,7 @@ export const CombinedInspectView: React.FC<CombinedInspectViewProps> = ({ url, m
           <X402SectionView section={result.x402} />
         </Box>
       )}
+      <OriginDiscoveryView discovery={discovery} />
     </Box>
   );
 };
