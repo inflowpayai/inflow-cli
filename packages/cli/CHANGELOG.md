@@ -1,5 +1,14 @@
 # @inflowpayai/inflow
 
+## 0.14.1
+
+### Patch Changes
+
+- [#164](https://github.com/inflowpayai/inflow-cli/pull/164)
+  [`562f515`](https://github.com/inflowpayai/inflow-cli/commit/562f515c6810521b6a4a6fcb9e6f94f9bdeba168) Thanks
+  [@nkavian](https://github.com/nkavian)! - Restore combined inspection and consistent GET behavior for service URLs
+  while preserving public document discovery.
+
 ## 0.14.0
 
 ### Minor Changes
