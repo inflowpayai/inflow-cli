@@ -189,6 +189,73 @@ function closeServer(server: Server): Promise<void> {
 }
 
 describe('cli smoke', () => {
+  it.skipIf(process.platform === 'linux' && packagedExecutable === undefined).each(['input close', 'SIGTERM'] as const)(
+    '--mcp retains its control client across tools and exits on %s',
+    async (termination) => {
+      const env = {
+        ...process.env,
+        HOME: authDir,
+        XDG_DATA_HOME: join(authDir, '.local', 'share'),
+        INFLOW_API_KEY: '',
+        INFLOW_AUTH_FILE: authFile,
+        NO_UPDATE_NOTIFIER: '1',
+      };
+      const initialized = await run(['vault', 'policy', '--format', 'json'], env);
+      expect(initialized.exitCode, `${initialized.stdout}\n${initialized.stderr}`).toBe(0);
+      const child = spawn(
+        packagedExecutable ?? process.execPath,
+        packagedExecutable === undefined ? [cliBin, '--mcp'] : ['--mcp'],
+        {
+          env,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      );
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      const closed = new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', resolve);
+      });
+      try {
+        for (const [id, name] of [
+          [1, 'vault_status'],
+          [2, 'vault_policy'],
+          [3, 'vault_status'],
+        ] as const) {
+          child.stdin.write(
+            `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: {} } })}\n`,
+          );
+          await vi.waitFor(
+            () => {
+              const response = stdout
+                .split('\n')
+                .filter((line) => line.trim().length > 0)
+                .map((line) => JSON.parse(line) as { id?: number; result?: { isError?: boolean } })
+                .find((entry) => entry.id === id);
+              expect(response?.result).toBeDefined();
+              expect(response?.result?.isError).not.toBe(true);
+            },
+            { timeout: packagedExecutable === undefined ? 5000 : 30_000 },
+          );
+        }
+        if (termination === 'input close') child.stdin.end();
+        else child.kill('SIGTERM');
+        expect(await closed).toBe(termination === 'input close' ? 0 : 130);
+        expect(stderr).not.toContain('connection is closed');
+      } finally {
+        if (child.exitCode === null) child.kill('SIGTERM');
+        await closed;
+      }
+    },
+    packagedExecutable === undefined ? 15_000 : 60_000,
+  );
+
   it('AEP fetch sends JSON data without an explicit content-type header', async () => {
     const body = '{ "query": "OpenAI official documentation", "num_results": 1 }\n';
     const received: Array<{ body: string; contentType: string | undefined }> = [];
@@ -280,7 +347,7 @@ describe('cli smoke', () => {
       try {
         const policy = await run(['vault', 'policy', '--format', 'json'], env);
         expect(policy.exitCode, `${policy.stdout}\n${policy.stderr}`).toBe(0);
-        expect(parseAgentJson(policy.stdout)).toEqual(expect.any(Object));
+        expect(parseAgentJson(policy.stdout)).toEqual({ idle_timeout_seconds: 28800, lock_on_sleep: true });
 
         const reset = await run(['vault', 'reset', '--force', '--format', 'json'], env);
         expect(reset.exitCode, `${reset.stdout}\n${reset.stderr}`).toBe(0);
@@ -380,6 +447,7 @@ describe('cli smoke', () => {
       };
       const coreUrl = new URL('../../../core/dist/index.js', import.meta.url).href;
       const execute = promisify(execFile);
+      const runCommand = (args: string[], environment = env) => run(args, environment, 10_000);
       const vaultScript = (body: string) =>
         execute(
           process.execPath,
@@ -395,7 +463,7 @@ describe('cli smoke', () => {
           { env: { ...process.env, ...env }, timeout: 10_000 },
         );
       try {
-        expect((await run(['vault', 'policy', '--format', 'json'], env)).exitCode).toBe(0);
+        expect((await runCommand(['vault', 'policy', '--format', 'json'])).exitCode).toBe(0);
         await vaultScript(`
           await client.unlock(Buffer.from('test-inspection-only-passphrase'));
           new Storage({ configPath: process.env.INFLOW_AUTH_FILE }).setAuth({
@@ -418,7 +486,7 @@ describe('cli smoke', () => {
           ['inspect', 'https://service.test/resource'],
         ]) {
           await vaultScript('await client.shutdown();');
-          const result = await run([...command, '--format', 'json'], env);
+          const result = await runCommand([...command, '--format', 'json']);
           expect(result.exitCode).not.toBe(0);
           expect(`${result.stdout}${result.stderr}`).toContain('VAULT_LOCKED');
           expect(`${result.stdout}${result.stderr}`).toContain('inflow vault unlock');
@@ -501,7 +569,7 @@ describe('cli smoke', () => {
             const stopped = await callMcp('balances_list', {}, environment);
             expect(stopped).toContain('reconnect the InFlow MCP server');
             expect(received).toHaveLength(3);
-            expect((await run(['vault', 'status', '--format', 'json'], env)).exitCode).toBe(0);
+            expect((await runCommand(['vault', 'status', '--format', 'json'])).exitCode).toBe(0);
             await unlock();
             await vaultScript(`
               const secrets = new SyncVaultSecretStore();
@@ -521,7 +589,7 @@ describe('cli smoke', () => {
               ['balances', 'list'],
               ['inspect', `${new URL(url).origin}/resource`],
             ]) {
-              const failure = await run([...args, '--format', 'json'], environment);
+              const failure = await runCommand([...args, '--format', 'json'], environment);
               expect(failure.exitCode).not.toBe(0);
               expect(`${failure.stdout}${failure.stderr}`).toContain('A referenced vault secret is missing.');
               expect(requests).toBe(requestsBeforeFailure);
@@ -529,12 +597,165 @@ describe('cli smoke', () => {
           },
         );
       } finally {
-        const reset = await run(['vault', 'reset', '--force', '--format', 'json'], env);
+        const reset = await runCommand(['vault', 'reset', '--force', '--format', 'json']);
         expect(reset.exitCode).toBe(0);
         rmSync(root, { recursive: true, force: true });
       }
     },
-    60_000,
+    120_000,
+  );
+
+  it.skipIf(process.platform !== 'darwin' || packagedExecutable !== undefined).each([
+    { custom: false, logout: false },
+    { custom: true, logout: false },
+    { custom: false, logout: true },
+    { custom: true, logout: true },
+  ])(
+    'invalidates saved MCP credentials after reset/logout: %j',
+    async ({ custom, logout }) => {
+      const root = realpathSync(mkdtempSync(join('/private/tmp', 'inflow-reset-mcp-')));
+      const env = {
+        HOME: root,
+        XDG_DATA_HOME: join(root, 'data'),
+        INFLOW_AUTH_FILE: custom ? join(root, 'auth.json') : undefined,
+        INFLOW_API_KEY: undefined,
+      };
+      const coreUrl = new URL('../../../core/dist/index.js', import.meta.url).href;
+      const initialize = async () => {
+        expect((await run(['vault', 'policy', '--format', 'json'], env)).exitCode).toBe(0);
+        await promisify(execFile)(
+          process.execPath,
+          [
+            '--input-type=module',
+            '-e',
+            `
+        import { LocalVaultClient, Storage, SyncVaultSecretStore } from ${JSON.stringify(coreUrl)};
+        const client = new LocalVaultClient();
+        const secrets = new SyncVaultSecretStore();
+        try {
+          await client.unlock(Buffer.from('synthetic-reset-test-factor'));
+          new Storage({ ...(process.env.INFLOW_AUTH_FILE ? {configPath: process.env.INFLOW_AUTH_FILE} : {}), secretStore: secrets }).setApiKey('synthetic-saved-key');
+        } finally { client.dispose(); secrets.dispose(); }
+      `,
+          ],
+          { env: { ...process.env, ...env }, timeout: 10_000 },
+        );
+      };
+      const reset = async () => {
+        const args = logout ? ['auth', 'logout'] : ['vault', 'reset', '--force'];
+        const result = await run([...args, '--format', 'json'], env);
+        expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      };
+      const assertAuthenticated = (response: string) => {
+        const envelope = JSON.parse(response) as { result: { isError?: boolean; content: { text: string }[] } };
+        expect(envelope.result.isError).not.toBe(true);
+        expect(JSON.parse(envelope.result.content[0]?.text ?? 'null')).toMatchObject([
+          { authenticated: true, auth_method: 'api_key' },
+        ]);
+      };
+      try {
+        await initialize();
+        const before = await callMcp('auth_status', {}, env);
+        assertAuthenticated(before);
+        const rejected = await callMcp('auth_status', {}, env, async () => {
+          await reset();
+          await initialize();
+        });
+        expect(JSON.parse(rejected)).toMatchObject({ result: { isError: true } });
+        expect(rejected).toContain('Reconnect the InFlow MCP server before using saved credentials.');
+        const fresh = await callMcp('auth_status', {}, env);
+        assertAuthenticated(fresh);
+        const explicit = await callMcp('auth_status', {}, { ...env, INFLOW_API_KEY: 'synthetic-explicit-key' }, reset);
+        assertAuthenticated(explicit);
+      } finally {
+        const result = await run(['vault', 'reset', '--force', '--format', 'json'], env);
+        expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform !== 'darwin' || packagedExecutable !== undefined).each(['replace', 'lock'])(
+    'reads saved MCP API keys at request time: %s',
+    async (operation) => {
+      const root = realpathSync(mkdtempSync(join('/private/tmp', 'inflow-provider-mcp-')));
+      const env = {
+        HOME: root,
+        XDG_DATA_HOME: join(root, 'data'),
+        INFLOW_AUTH_FILE: join(root, 'auth.json'),
+        INFLOW_API_KEY: undefined,
+      };
+      const coreUrl = new URL('../../../core/dist/index.js', import.meta.url).href;
+      const setKey = async (key: string) => {
+        await promisify(execFile)(
+          process.execPath,
+          [
+            '--input-type=module',
+            '-e',
+            `
+          import { LocalVaultClient, Storage, SyncVaultSecretStore } from ${JSON.stringify(coreUrl)};
+          const client = new LocalVaultClient();
+          const secrets = new SyncVaultSecretStore();
+          try {
+            await client.unlock(Buffer.from('synthetic-provider-test-factor'));
+            new Storage({ configPath: process.env.INFLOW_AUTH_FILE, secretStore: secrets }).setApiKey(${JSON.stringify(key)});
+          } finally { client.dispose(); secrets.dispose(); }
+        `,
+          ],
+          { env: { ...process.env, ...env }, timeout: 10_000 },
+        );
+      };
+      const keys: Array<string | undefined> = [];
+      try {
+        expect((await run(['vault', 'policy', '--format', 'json'], env)).exitCode).toBe(0);
+        await setKey('synthetic-original-key');
+        await withSeller(
+          (req, res) => {
+            keys.push(req.headers['x-api-key']?.toString());
+            res.setHeader('Content-Type', 'application/json');
+            res.end(
+              JSON.stringify({
+                userId: 'test-user',
+                email: 'test@example.test',
+                firstName: null,
+                lastName: null,
+                username: null,
+                mobile: null,
+                locale: 'EN_US',
+                timezone: 'UTC',
+                created: '2026-01-01T00:00:00Z',
+                updated: '2026-01-01T00:00:00Z',
+              }),
+            );
+          },
+          async (url) => {
+            const response = await callMcp(
+              'auth_status',
+              { probe: true },
+              { ...env, INFLOW_BASE_URL: url },
+              async () => {
+                if (operation === 'replace') await setKey('synthetic-replacement-key');
+                else expect((await run(['vault', 'lock', '--format', 'json'], env)).exitCode).toBe(0);
+              },
+            );
+            if (operation === 'replace') {
+              expect(JSON.parse(response)).not.toMatchObject({ result: { isError: true } });
+              expect(keys).toEqual(['synthetic-replacement-key']);
+            } else {
+              expect(JSON.parse(response)).toMatchObject({ result: { isError: true } });
+              expect(response).toContain('The InFlow vault is locked.');
+              expect(keys).toEqual([]);
+            }
+          },
+        );
+      } finally {
+        const result = await run(['vault', 'reset', '--force', '--format', 'json'], env);
+        expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    30_000,
   );
 
   it('mpp decode --format json emits a DECODE_FAILED error envelope on garbage input', async () => {

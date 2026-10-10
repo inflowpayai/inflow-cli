@@ -84,10 +84,10 @@ jobs:
           sudo swapoff -a
           sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/usr/bin/inflow pnpm smoke:linux-system-vault
 
-      - name: Test installed Linux inspection commands
+      - name: Test installed Linux inspection and MCP lifecycle
         run: |
           INFLOW_SMOKE_EXECUTABLE=/usr/bin/inflow pnpm --filter @inflowpayai/inflow exec vitest run \
-            test/integration/cli-smoke.test.ts -t 'filters .* offers with' --coverage.enabled=false
+            test/integration/cli-smoke.test.ts -t 'filters .* offers with|retains its control client' --coverage.enabled=false
 
       - name: Test Debian package lifecycle
         run: |

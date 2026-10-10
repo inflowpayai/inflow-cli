@@ -1,9 +1,10 @@
-import { createServer, type Server } from 'node:net';
+import { createServer, type Server, type Socket } from 'node:net';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing, LocalVaultClient } from '../../../src/secure-storage/vault-client.js';
+import { VaultSocketReader } from '../../../src/secure-storage/vault-socket-reader.js';
 import {
   decodeVaultIpcFrame,
   encodeVaultIpcMessage,
@@ -14,8 +15,11 @@ import {
 describe('LocalVaultClient', () => {
   let server: Server | undefined;
   let tmpDir: string | undefined;
+  const sockets = new Set<Socket>();
 
   afterEach(async () => {
+    for (const socket of sockets) socket.destroy();
+    sockets.clear();
     await closeServer(server);
     server = undefined;
     if (tmpDir !== undefined) rmSync(tmpDir, { force: true, recursive: true });
@@ -84,6 +88,113 @@ describe('LocalVaultClient', () => {
     await expect(client.unlock(Buffer.from('123456'))).rejects.toMatchObject({
       secureStorageCode: 'secure_storage_secret_missing',
     });
+  });
+
+  it('checks compatibility on the connected daemon before protected operations and after reconnect', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
+    let buildId = 'expected';
+    const methods: string[] = [];
+    await listenWithResponder(tmpDir, (message) => {
+      methods.push(message.method);
+      return {
+        id: message.id,
+        ok: true,
+        result:
+          message.method === 'daemon.info'
+            ? { buildId, cliVersion: 'test', executablePath: process.execPath, pid: 123 }
+            : {},
+        version: 1,
+      };
+    });
+    const expectedDaemon = { buildId: 'expected', cliVersion: 'test', executablePath: process.execPath };
+    const client = new LocalVaultClient({ rootDirectory: tmpDir, expectedDaemon });
+    expectedDaemon.buildId = 'caller mutation';
+    try {
+      await client.lock();
+      await client.lock();
+      expect(methods).toEqual(['daemon.info', 'vault.lock', 'vault.lock']);
+      for (const socket of sockets) socket.destroy();
+      buildId = 'replacement';
+      await vi.waitFor(async () => {
+        expect((await client.info()).buildId).toBe('replacement');
+      });
+      await expect(client.lock()).rejects.toThrow('incompatible');
+      expect(methods.filter((method) => method === 'vault.lock')).toHaveLength(2);
+      await expect(client.shutdown()).resolves.toBeUndefined();
+    } finally {
+      client.dispose();
+    }
+    await expect(client.status()).rejects.toThrow('closed');
+  });
+
+  it.each(['buildId', 'cliVersion', 'executablePath'])(
+    'rejects a mismatched %s before sending protected data',
+    async (field) => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
+      const methods: string[] = [];
+      await listenWithResponder(tmpDir, (message) => {
+        methods.push(message.method);
+        return {
+          id: message.id,
+          ok: true,
+          result: {
+            buildId: 'expected',
+            cliVersion: 'test',
+            executablePath: process.execPath,
+            pid: 123,
+            [field]: 'mismatch',
+          },
+          version: 1,
+        };
+      });
+      const client = new LocalVaultClient({
+        rootDirectory: tmpDir,
+        expectedDaemon: { buildId: 'expected', cliVersion: 'test', executablePath: process.execPath },
+      });
+      try {
+        await expect(client.unlock(Buffer.from('123456'))).rejects.toThrow('incompatible');
+      } finally {
+        client.dispose();
+      }
+      expect(methods).toEqual(['daemon.info']);
+    },
+  );
+
+  it('preserves peer refusal before a request identifier is available', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
+    await listenWithResponder(tmpDir, () => ({
+      id: 'unknown',
+      ok: false,
+      error: { code: 'secure_storage_peer_verification_failed', message: 'Vault peer verification failed.' },
+      version: 1,
+    }));
+    const client = new LocalVaultClient({ rootDirectory: tmpDir });
+    try {
+      await expect(client.status()).rejects.toMatchObject({
+        secureStorageCode: 'secure_storage_peer_verification_failed',
+      });
+    } finally {
+      client.dispose();
+    }
+  });
+
+  it('fails closed when daemon information cannot be read', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
+    await listenWithResponder(tmpDir, (message) => ({
+      id: message.id,
+      ok: false,
+      error: { code: 'secure_storage_unavailable', message: 'no metadata' },
+      version: 1,
+    }));
+    const client = new LocalVaultClient({
+      rootDirectory: tmpDir,
+      expectedDaemon: { buildId: null, cliVersion: null, executablePath: process.execPath },
+    });
+    try {
+      await expect(client.lock()).rejects.toThrow('could not be identified');
+    } finally {
+      client.dispose();
+    }
   });
 
   it('rejects an unlock response when an independent status request remains locked', async () => {
@@ -328,17 +439,23 @@ describe('LocalVaultClient', () => {
     const socketPath = join(rootDirectory, 'run', 'vault.sock');
     mkdirSync(join(rootDirectory, 'run'));
     server = createServer((socket) => {
-      const chunks: Buffer[] = [];
-      socket.on('data', (chunk: Buffer) => {
-        chunks.push(chunk);
-        const frame = Buffer.concat(chunks);
-        if (frame.byteLength < 4) return;
-        const length = frame.readUInt32BE(0);
-        if (frame.byteLength < length + 4) return;
-        const parsed = decodeVaultIpcFrame(frame.subarray(0, length + 4));
-        if (!('method' in parsed)) throw new Error('expected request');
-        socket.end(encodeVaultIpcMessage(respond(parsed)));
+      sockets.add(socket);
+      const reader = new VaultSocketReader(socket);
+      socket.on('error', () => undefined);
+      socket.on('close', () => {
+        sockets.delete(socket);
+        reader.dispose();
       });
+      void (async () => {
+        while (!socket.destroyed) {
+          const frame = await reader.read();
+          if (frame === undefined) return;
+          const parsed = decodeVaultIpcFrame(frame);
+          frame.fill(0);
+          if (!('method' in parsed)) throw new Error('expected request');
+          socket.write(encodeVaultIpcMessage(respond(parsed)));
+        }
+      })().catch(() => socket.destroy());
     });
     await new Promise<void>((resolve, reject) => {
       server?.once('error', reject);

@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { SecureStorageError, type SecureStorageErrorCode } from './errors.js';
 import type { VaultPolicy, VaultStatus } from './vault-backend.js';
 import { createLinuxVaultBrokerPeerVerifier } from './vault-broker-auth.js';
@@ -9,13 +11,15 @@ import {
   shouldRequireVaultPeerVerification,
   type VaultSocketPeerVerifier,
 } from './vault-peer-verifier.js';
-import { sendVaultIpcRequest } from './vault-socket.js';
+import type { VaultIpcMethod } from './vault-ipc.js';
 import { assertUnlockFactor, equalBytes, VAULT_SALT_BYTES } from './vault-crypto.js';
 import { deriveVaultWrappingKey } from './vault-protected-key.js';
-import { sendWindowsVaultIpcRequest } from './vault-windows-transport.js';
+import { WindowsVaultConnection } from './vault-windows-transport.js';
+import { VaultControlConnection } from './vault-control-connection.js';
 
 export interface LocalVaultClientOptions {
   rootDirectory?: string;
+  expectedDaemon?: Omit<LocalVaultDaemonInfo, 'pid'>;
 }
 
 export interface LocalVaultDaemonInfo {
@@ -28,10 +32,42 @@ export interface LocalVaultDaemonInfo {
 export class LocalVaultClient {
   private readonly rootDirectory: string | undefined;
   private readonly socketPath: string;
+  private readonly connection: VaultControlConnection | WindowsVaultConnection;
+  private disposed = false;
 
   constructor(options: LocalVaultClientOptions = {}) {
     this.rootDirectory = options.rootDirectory;
     this.socketPath = vaultFilePaths(options.rootDirectory).socket;
+    const expected = options.expectedDaemon === undefined ? undefined : { ...options.expectedDaemon };
+    const verifyDaemon =
+      expected === undefined
+        ? undefined
+        : (value: Record<string, unknown>) => {
+            const info = parseInfo(value);
+            if (
+              info.buildId !== expected.buildId ||
+              info.cliVersion !== expected.cliVersion ||
+              executablePath(info.executablePath) !== executablePath(expected.executablePath)
+            ) {
+              throw new SecureStorageError(
+                'secure_storage_unavailable',
+                'The InFlow vault daemon is incompatible with this CLI.',
+              );
+            }
+          };
+    this.connection =
+      process.platform === 'win32' && this.rootDirectory === undefined
+        ? new WindowsVaultConnection(this.socketPath, verifyDaemon)
+        : new VaultControlConnection(
+            this.socketPath,
+            () => createClientPeerVerifier(this.socketPath, this.rootDirectory),
+            verifyDaemon,
+          );
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.connection.dispose();
   }
 
   async changePassphrase(currentUnlockFactor: Uint8Array, nextUnlockFactor: Uint8Array): Promise<void> {
@@ -138,23 +174,18 @@ export class LocalVaultClient {
   }
 
   private async request(
-    method: Parameters<typeof sendVaultIpcRequest>[1]['method'],
+    method: VaultIpcMethod,
     params: Record<string, unknown> = {},
   ): Promise<Record<string, unknown>> {
+    if (this.disposed)
+      throw new SecureStorageError('secure_storage_unavailable', 'The InFlow vault connection is closed.');
     const request = {
       id: `req_${randomUUID().replaceAll('-', '')}`,
       method,
       params,
       version: 1 as const,
     };
-    const response =
-      process.platform === 'win32' && this.rootDirectory === undefined
-        ? sendWindowsVaultIpcRequest(this.socketPath, request)
-        : await sendVaultIpcRequest(
-            this.socketPath,
-            request,
-            createClientPeerVerifier(this.socketPath, this.rootDirectory),
-          );
+    const response = await this.connection.request(request);
     if (!response.ok && response.error.code === 'secure_storage_peer_verification_failed') {
       throw new SecureStorageError(codeFromResponse(response.error.code), response.error.message);
     }
@@ -165,6 +196,14 @@ export class LocalVaultClient {
       throw new SecureStorageError(codeFromResponse(response.error.code), response.error.message);
     }
     return response.result;
+  }
+}
+
+function executablePath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
   }
 }
 

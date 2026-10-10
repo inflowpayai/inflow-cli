@@ -289,19 +289,15 @@ async function* runAuthLogin(
   const connection = connectionFromContext(ctx);
   await deps.ensureVaultUnlocked?.(c.agent || c.formatExplicit ? 'agent' : 'human');
 
-  if (ctx.apiKey !== undefined && ctx.apiKey.length > 0) {
+  const apiKey = ctx.apiKey ?? (ctx.apiKeySource === 'saved' ? deps.authStorage.getApiKey() : undefined);
+  if (apiKey !== undefined && apiKey !== null && apiKey.length > 0) {
     if (!c.agent && !c.formatExplicit) {
       await renderInkUntilExit(
-        <LoginApiKey
-          apiKey={ctx.apiKey}
-          auth={deps.authResource}
-          connection={connection}
-          onComplete={() => undefined}
-        />,
+        <LoginApiKey apiKey={apiKey} auth={deps.authResource} connection={connection} onComplete={() => undefined} />,
       );
       return;
     }
-    const frame = await runApiKeyLogin(c, deps, ctx.apiKey, connection);
+    const frame = await runApiKeyLogin(c, deps, apiKey, connection);
     if (frame !== undefined) {
       yield sanitizeDeep(frame);
     }

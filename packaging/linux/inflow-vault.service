@@ -6,8 +6,6 @@ After=inflow-vault.socket
 [Service]
 Type=simple
 ExecStart=/opt/inflow/bin/inflow --daemon vault-broker
-RuntimeDirectory=inflow
-RuntimeDirectoryMode=0755
 NoNewPrivileges=yes
 CapabilityBoundingSet=CAP_SYS_PTRACE CAP_SETUID CAP_SETGID
 PrivateDevices=yes

@@ -15,6 +15,11 @@ login, it uses InFlow's signing endpoint and refreshes expired access tokens thr
 Locked credentials and signing failures stop the request; they do not trigger an unsigned retry. OpenAPI document
 discovery and operation calls use the public HTTP transport without TAP.
 
+## Vault client lifetime
+
+Reuse `LocalVaultClient` and `SyncVaultSecretStore` instances for the lifetime of a command or MCP session. Call
+`dispose()` on both when that owner finishes to release their connections and workers.
+
 ## What's in here
 
 Authentication storage separates session metadata from secret reads. `getAuthSession()` returns an opaque session

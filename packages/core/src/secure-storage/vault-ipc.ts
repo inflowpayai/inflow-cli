@@ -109,6 +109,9 @@ export function decodeVaultIpcFrame(frame: Uint8Array): VaultIpcMessage {
     throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC frame is truncated.');
   }
   const bytes = Buffer.from(frame);
+  const attachments: Buffer[] = [];
+  const retained = new Set<Uint8Array>();
+  let complete = false;
   try {
     const length = bytes.readUInt32BE(0);
     if (length > VAULT_IPC_MAX_MESSAGE_BYTES) {
@@ -124,7 +127,6 @@ export function decodeVaultIpcFrame(frame: Uint8Array): VaultIpcMessage {
     if (jsonEnd > bytes.byteLength) {
       throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC frame attachments are malformed.');
     }
-    const attachments: Buffer[] = [];
     let offset = jsonEnd;
     for (let index = 0; index < attachmentCount; index += 1) {
       if (offset + LENGTH_BYTES > bytes.byteLength) {
@@ -150,8 +152,14 @@ export function decodeVaultIpcFrame(frame: Uint8Array): VaultIpcMessage {
       throw new SecureStorageError('secure_storage_corrupt', 'Vault IPC frame attachments are malformed.');
     }
     const parsed = JSON.parse(bytes.subarray(jsonStart, jsonEnd).toString('utf8')) as unknown;
-    return parseVaultIpcMessage(decodeAttachments(parsed, attachments));
+    const message = parseVaultIpcMessage(decodeAttachments(parsed, attachments));
+    collectAttachmentReferences(message, retained);
+    complete = true;
+    return message;
   } finally {
+    for (const attachment of attachments) {
+      if (!complete || !retained.has(attachment)) attachment.fill(0);
+    }
     bytes.fill(0);
   }
 }
@@ -167,6 +175,16 @@ export function clearVaultIpcBytes(value: unknown): void {
   }
   if (!isRecord(value)) return;
   for (const item of Object.values(value)) clearVaultIpcBytes(item);
+}
+
+function collectAttachmentReferences(value: unknown, retained: Set<Uint8Array>): void {
+  if (value instanceof Uint8Array) {
+    retained.add(value);
+  } else if (Array.isArray(value)) {
+    for (const item of value) collectAttachmentReferences(item, retained);
+  } else if (isRecord(value)) {
+    for (const item of Object.values(value)) collectAttachmentReferences(item, retained);
+  }
 }
 
 function encodeAttachments(value: unknown, attachments: Uint8Array[]): unknown {

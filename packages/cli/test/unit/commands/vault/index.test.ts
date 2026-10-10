@@ -5,8 +5,21 @@ import { tmpdir } from 'node:os';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { __testing, createVaultCli } from '../../../../src/commands/vault/index.js';
-import { SecureStorageError, type VaultPolicy, type VaultStatus } from '@inflowpayai/inflow-core';
+import { Cli } from 'incur';
+import {
+  __testing,
+  createVaultCli,
+  ensureLocalVaultUnlocked,
+  readVaultStatusWithoutStarting,
+  resetLocalVault,
+} from '../../../../src/commands/vault/index.js';
+import {
+  LocalVaultClient,
+  SecureStorageError,
+  startLocalVaultDaemon,
+  type VaultPolicy,
+  type VaultStatus,
+} from '@inflowpayai/inflow-core';
 
 type ErrorShape = { code: string; message: string };
 type VaultTestClient = {
@@ -26,6 +39,7 @@ type VaultTestDeps = {
   write: ReturnType<typeof vi.fn>;
 };
 type ResetVaultTestDeps = {
+  sharedService: boolean;
   client: {
     info: ReturnType<typeof vi.fn>;
     reset: ReturnType<typeof vi.fn>;
@@ -106,6 +120,7 @@ function resetDeps(overrides: Partial<ResetVaultTestDeps> = {}): ResetVaultTestD
   };
   return {
     client,
+    sharedService: false,
     executablePath,
     now: vi.fn(() => 0),
     removeLocalState: vi.fn(() => Promise.resolve()),
@@ -115,6 +130,129 @@ function resetDeps(overrides: Partial<ResetVaultTestDeps> = {}): ResetVaultTestD
 }
 
 describe('vault command runners', () => {
+  it.each([false, true])('resets an isolated daemon with shared ownership=%s', async (shared) => {
+    const rootDirectory = mkdtempSync(join(tmpdir(), 'iv-reset-owner-'));
+    const daemon = await startLocalVaultDaemon({ rootDirectory });
+    const client = new LocalVaultClient({ rootDirectory });
+    const dispose = vi.spyOn(LocalVaultClient.prototype, 'dispose');
+    try {
+      await client.unlock(Buffer.from('isolated-reset-passphrase'));
+      await resetLocalVault({ rootDirectory, ...(shared ? { client } : {}) });
+      expect(dispose).toHaveBeenCalledTimes(shared ? 0 : 1);
+      await daemon.closed;
+    } finally {
+      dispose.mockRestore();
+      client.dispose();
+      await daemon.close();
+      rmSync(rootDirectory, { force: true, recursive: true });
+    }
+  });
+  it.skipIf(process.platform === 'win32')(
+    'preserves the shared client and disposes temporary status clients',
+    async () => {
+      const rootDirectory = mkdtempSync(join(tmpdir(), 'iv-owner-'));
+      const daemon = await startLocalVaultDaemon({ rootDirectory });
+      const client = new LocalVaultClient({ rootDirectory });
+      const dispose = vi.spyOn(LocalVaultClient.prototype, 'dispose');
+      try {
+        await client.unlock(Buffer.from('isolated-test-passphrase'));
+        await expect(readVaultStatusWithoutStarting({ rootDirectory, client })).resolves.toMatchObject({
+          lockState: 'unlocked',
+        });
+        await ensureLocalVaultUnlocked({ mode: 'agent', vaultOptions: { rootDirectory, client } });
+        expect(dispose).not.toHaveBeenCalled();
+        await expect(readVaultStatusWithoutStarting({ rootDirectory })).resolves.toMatchObject({
+          lockState: 'unlocked',
+        });
+        expect(dispose).toHaveBeenCalledTimes(1);
+        await expect(client.status()).resolves.toMatchObject({ lockState: 'unlocked' });
+      } finally {
+        dispose.mockRestore();
+        client.dispose();
+        await daemon.close();
+        rmSync(rootDirectory, { recursive: true, force: true });
+      }
+    },
+  );
+  it.skipIf(process.platform === 'win32')(
+    'checks an isolated real daemon with and without a prepared handle',
+    async () => {
+      const rootDirectory = mkdtempSync(join(tmpdir(), 'ivp-'));
+      const daemon = await startLocalVaultDaemon({ rootDirectory });
+      try {
+        const client = new LocalVaultClient({ rootDirectory });
+        await expect(
+          ensureLocalVaultUnlocked({ mode: 'agent', vaultOptions: { rootDirectory } }),
+        ).rejects.toMatchObject({ secureStorageCode: 'vault_not_initialized' });
+        await expect(
+          ensureLocalVaultUnlocked({ mode: 'agent', preparedClient: client, vaultOptions: { rootDirectory } }),
+        ).rejects.toMatchObject({ secureStorageCode: 'vault_not_initialized' });
+      } finally {
+        await daemon.close();
+        rmSync(rootDirectory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(['agent', 'human'] as const)(
+    'reuses a prepared daemon but checks current lock state in %s mode',
+    async (mode) => {
+      const harness = deps();
+      harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'unlocked' });
+      await __testing.ensureLocalVaultUnlockedWithDeps(mode, {
+        preparedClient: harness.client,
+        ensureDaemon: harness.ensureDaemon,
+        readPassphrase: harness.readPassphrase,
+      });
+      expect(harness.ensureDaemon).not.toHaveBeenCalled();
+      expect(harness.client.status).toHaveBeenCalledOnce();
+      expect(harness.readPassphrase).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects a prepared daemon that has become locked before an agent command', async () => {
+    const harness = deps();
+    await expect(
+      __testing.ensureLocalVaultUnlockedWithDeps('agent', {
+        preparedClient: harness.client,
+        ensureDaemon: harness.ensureDaemon,
+        readPassphrase: harness.readPassphrase,
+      }),
+    ).rejects.toMatchObject({ secureStorageCode: 'vault_locked' });
+    expect(harness.ensureDaemon).not.toHaveBeenCalled();
+    expect(harness.readPassphrase).not.toHaveBeenCalled();
+  });
+
+  it('prompts a human when a prepared daemon has become locked', async () => {
+    const harness = deps();
+    await __testing.ensureLocalVaultUnlockedWithDeps('human', {
+      preparedClient: harness.client,
+      ensureDaemon: harness.ensureDaemon,
+      readPassphrase: harness.readPassphrase,
+    });
+    expect(harness.ensureDaemon).not.toHaveBeenCalled();
+    expect(harness.readPassphrase).toHaveBeenCalledOnce();
+    expect(harness.client.unlock).toHaveBeenCalledOnce();
+  });
+
+  it.each(['secure_storage_peer_verification_failed', 'secure_storage_unavailable'] as const)(
+    'propagates %s from a prepared daemon without bypassing it',
+    async (code) => {
+      const harness = deps();
+      const error = new SecureStorageError(code, 'Verification failed');
+      harness.client.status.mockRejectedValueOnce(error);
+      await expect(
+        __testing.ensureLocalVaultUnlockedWithDeps('agent', {
+          preparedClient: harness.client,
+          ensureDaemon: harness.ensureDaemon,
+          readPassphrase: harness.readPassphrase,
+        }),
+      ).rejects.toBe(error);
+      expect(harness.ensureDaemon).not.toHaveBeenCalled();
+      expect(harness.readPassphrase).not.toHaveBeenCalled();
+    },
+  );
+
   it('reports vault status in agent shape', async () => {
     const harness = deps();
 
@@ -172,6 +310,8 @@ describe('vault command runners', () => {
         { rootDirectory: '/vault' },
         {
           client: { status: vi.fn(() => Promise.reject(cause)) },
+          sharedService: false,
+          ensureDaemon: vi.fn(),
           recoverPeerFailure,
           sidecarExists: vi.fn(() => Promise.resolve(true)),
         },
@@ -187,12 +327,75 @@ describe('vault command runners', () => {
         {},
         {
           client: { status: vi.fn(() => Promise.reject(cause)) },
+          sharedService: false,
+          ensureDaemon: vi.fn(),
           recoverPeerFailure: vi.fn(() => Promise.resolve()),
           sidecarExists: vi.fn(() => Promise.resolve(false)),
         },
       ),
     ).rejects.toBe(cause);
   });
+
+  it.each(['locked', 'unlocked', 'not_initialized'] as const)(
+    'reads actual shared-service status after activation: %s',
+    async (lockState) => {
+      const status = { daemonRunning: true, lockState };
+      const sidecarExists = vi.fn(() => Promise.resolve(false));
+      const ensureDaemon = vi.fn(() => Promise.resolve({ status: vi.fn(() => Promise.resolve(status)) }));
+      await expect(
+        __testing.readVaultStatusWithoutStartingWithDeps(
+          {},
+          {
+            client: {
+              status: vi.fn(() => Promise.reject(new SecureStorageError('secure_storage_unavailable', 'unavailable'))),
+            },
+            sharedService: true,
+            ensureDaemon,
+            recoverPeerFailure: vi.fn(),
+            sidecarExists,
+          },
+        ),
+      ).resolves.toEqual(status);
+      expect(ensureDaemon).toHaveBeenCalledOnce();
+      expect(sidecarExists).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['startup', 'status', 'verification'] as const)(
+    'fails closed on shared-service %s failure',
+    async (stage) => {
+      const cause = new SecureStorageError(
+        'secure_storage_peer_verification_failed',
+        'Vault peer verification failed.',
+      );
+      const sidecarExists = vi.fn(() => Promise.resolve(false));
+      const ensureDaemon = vi.fn(() =>
+        stage === 'startup' ? Promise.reject(cause) : Promise.resolve({ status: vi.fn(() => Promise.reject(cause)) }),
+      );
+      await expect(
+        __testing.readVaultStatusWithoutStartingWithDeps(
+          {},
+          {
+            client: {
+              status: vi.fn(() =>
+                Promise.reject(
+                  stage === 'verification'
+                    ? cause
+                    : new SecureStorageError('secure_storage_unavailable', 'unavailable'),
+                ),
+              ),
+            },
+            sharedService: true,
+            ensureDaemon,
+            recoverPeerFailure: vi.fn(() => Promise.reject(cause)),
+            sidecarExists,
+          },
+        ),
+      ).rejects.toBe(cause);
+      expect(sidecarExists).not.toHaveBeenCalled();
+      expect(ensureDaemon).toHaveBeenCalledTimes(stage === 'verification' ? 0 : 1);
+    },
+  );
 
   it('reports unlocked status for agent unlock when the vault is already unlocked', async () => {
     const harness = deps();
@@ -469,6 +672,64 @@ describe('vault command runners', () => {
     expect(harness.removeLocalState).not.toHaveBeenCalled();
   });
 
+  it('resets a shared tenant without waiting for or stopping the service', async () => {
+    const harness = resetDeps({ sharedService: true });
+    const invalidateSessions = vi.fn();
+    const resetLocalState = vi.fn();
+    await __testing.resetLocalVaultWithDeps(
+      { buildId: 'build-1', cliVersion: '0.9.0', invalidateSessions, resetLocalState },
+      harness,
+    );
+    expect(harness.client.status).toHaveBeenCalledOnce();
+    expect(harness.client.shutdown).not.toHaveBeenCalled();
+    expect(harness.removeLocalState).not.toHaveBeenCalled();
+    expect(invalidateSessions.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.client.reset.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(harness.client.reset.mock.invocationCallOrder[0]).toBeLessThan(
+      resetLocalState.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it.each(['unavailable', 'incompatible'])(
+    'does not clean local metadata or stop a shared service that is %s',
+    async (state) => {
+      const harness = resetDeps({ sharedService: true });
+      if (state === 'unavailable')
+        harness.client.status.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+      else
+        harness.client.info.mockResolvedValueOnce({
+          buildId: 'other',
+          cliVersion: '0.9.0',
+          executablePath: harness.executablePath,
+          pid: 123,
+        });
+      const resetLocalState = vi.fn();
+      await expect(
+        __testing.resetLocalVaultWithDeps({ buildId: 'build-1', cliVersion: '0.9.0', resetLocalState }, harness),
+      ).rejects.toThrow('compatible InFlow vault service');
+      expect(resetLocalState).not.toHaveBeenCalled();
+      expect(harness.client.reset).not.toHaveBeenCalled();
+      expect(harness.client.shutdown).not.toHaveBeenCalled();
+      expect(harness.removeLocalState).not.toHaveBeenCalled();
+    },
+  );
+
+  it('retains metadata when tenant reset fails and reports local cleanup failures', async () => {
+    const harness = resetDeps({ sharedService: true });
+    const invalidateSessions = vi.fn();
+    const resetLocalState = vi.fn();
+    const options = { buildId: 'build-1', cliVersion: '0.9.0', invalidateSessions, resetLocalState };
+    harness.client.reset.mockRejectedValueOnce(new Error('reset failed'));
+    await expect(__testing.resetLocalVaultWithDeps(options, harness)).rejects.toThrow('reset failed');
+    expect(invalidateSessions).toHaveBeenCalledOnce();
+    expect(resetLocalState).not.toHaveBeenCalled();
+    resetLocalState.mockImplementationOnce(() => {
+      throw new Error('cleanup failed');
+    });
+    await expect(__testing.resetLocalVaultWithDeps(options, harness)).rejects.toThrow('cleanup failed');
+  });
+
   it('removes local vault files directly when no daemon is reachable', async () => {
     const harness = resetDeps();
     harness.client.status.mockRejectedValueOnce(
@@ -553,6 +814,34 @@ describe('vault command runners', () => {
 
     await expect(__testing.resetLocalVaultWithDeps({}, harness)).rejects.toThrow('status failed');
     expect(harness.removeLocalState).not.toHaveBeenCalled();
+  });
+
+  it('does not reset the tenant if session invalidation fails', async () => {
+    const harness = resetDeps({ sharedService: true });
+    await expect(
+      __testing.resetLocalVaultWithDeps(
+        {
+          buildId: 'build-1',
+          cliVersion: '0.9.0',
+          invalidateSessions() {
+            throw new Error('metadata unavailable');
+          },
+        },
+        harness,
+      ),
+    ).rejects.toThrow('metadata unavailable');
+    expect(harness.client.reset).not.toHaveBeenCalled();
+    expect(harness.removeLocalState).not.toHaveBeenCalled();
+  });
+
+  it('cleans credential metadata after standalone local removal', async () => {
+    const harness = resetDeps();
+    harness.client.status.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+    const resetLocalState = vi.fn();
+    await __testing.resetLocalVaultWithDeps({ resetLocalState }, harness);
+    expect(harness.removeLocalState.mock.invocationCallOrder[0]).toBeLessThan(
+      resetLocalState.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it('continues cleanup when a stale daemon disappears during shutdown', async () => {
@@ -809,6 +1098,62 @@ describe('vault command runners', () => {
 
   it('registers the visible vault command surface', () => {
     expect(createVaultCli()).toBeDefined();
+  });
+
+  it.each([
+    ['status', 'status'],
+    ['policy', 'getPolicy'],
+    ['set-policy', 'getPolicy'],
+    ['lock', 'lock'],
+  ] as const)('reports %s failures through the real command framework', async (command, method) => {
+    const rootDirectory = mkdtempSync(join(tmpdir(), 'inflow-vault-command-'));
+    const client = new LocalVaultClient({ rootDirectory });
+    const output: string[] = [];
+    const exit = vi.fn();
+    vi.spyOn(client, 'info').mockResolvedValue({
+      buildId: null,
+      cliVersion: null,
+      executablePath: process.execPath,
+      pid: process.pid,
+    });
+    vi.spyOn(client, method).mockRejectedValue(
+      new SecureStorageError('secure_storage_io_error', 'Policy storage unavailable.'),
+    );
+    try {
+      const cli = Cli.create('inflow', { mcp: { tools: { discovery: 'direct' } } }).command(
+        createVaultCli({ client, rootDirectory }),
+      );
+      await cli.serve(['vault', command, '--format', 'json'], {
+        exit,
+        stdout: (chunk) => {
+          output.push(chunk);
+        },
+      });
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(JSON.parse(output.join(''))).toMatchObject({
+        code: 'secure_storage_io_error',
+        message: 'Policy storage unavailable.',
+      });
+      const response = await cli.fetch(
+        new Request('http://localhost/mcp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: `vault_${command}`, arguments: {} },
+          }),
+        }),
+      );
+      expect(await response.json()).toMatchObject({
+        result: { isError: true, content: [{ type: 'text', text: 'Policy storage unavailable.' }] },
+      });
+    } finally {
+      client.dispose();
+      vi.restoreAllMocks();
+      rmSync(rootDirectory, { force: true, recursive: true });
+    }
   });
 
   it('dispatches vault status through the registered command', async () => {

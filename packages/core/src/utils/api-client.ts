@@ -105,8 +105,13 @@ export class InflowApiClient {
     const defaultHeaders = this.config.defaultHeaders ?? {};
     const mode = this.config.authMode;
     switch (mode.type) {
-      case 'apiKey':
-        return { ...defaultHeaders, 'X-API-KEY': mode.apiKey };
+      case 'apiKey': {
+        const key = typeof mode.apiKey === 'function' ? await mode.apiKey() : mode.apiKey;
+        if (typeof mode.apiKey === 'function' && (typeof key !== 'string' || key.length === 0)) {
+          throw new InflowTransportError('InflowApiClient: apiKey resolved to a non-string or empty value.');
+        }
+        return { ...defaultHeaders, 'X-API-KEY': key };
+      }
       case 'dynamicBearer': {
         const token = await mode.getAccessToken();
         if (typeof token !== 'string' || token.length === 0) {

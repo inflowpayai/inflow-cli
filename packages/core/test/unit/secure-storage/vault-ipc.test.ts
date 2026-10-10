@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   VAULT_IPC_MAX_MESSAGE_BYTES,
   VAULT_IPC_METHODS,
@@ -133,6 +133,82 @@ describe('vault IPC framing', () => {
     clearVaultIpcBytes({ nested: [first, { second }], scalar: 'unchanged' });
     expect(first).toEqual(Buffer.alloc(5));
     expect(second).toEqual(Buffer.alloc(6));
+  });
+
+  it.each(['framing', 'json', 'reference', 'message', 'request', 'response'])(
+    'clears allocated attachments after a later %s failure without changing caller input',
+    (failure) => {
+      const value = { id: 'req', method: 'secret.put', params: { payload: { $inflowVaultAttachment: 0 } }, version: 1 };
+      const frame = rawFrame(
+        failure === 'reference'
+          ? { ...value, extra: { $inflowVaultAttachment: 1 } }
+          : failure === 'message'
+            ? { ...value, version: 2 }
+            : failure === 'request'
+              ? { ...value, method: 'invalid' }
+              : failure === 'response'
+                ? { id: 'req', ok: true, version: 1 }
+                : value,
+        { attachment: Buffer.from([0, 0, 0, 4, 0, 0, 65, 66]), attachmentCount: failure === 'framing' ? 2 : 1 },
+      );
+      if (failure === 'json') frame[12] = 0;
+      const original = Buffer.from(frame);
+      const allocated: Buffer[] = [];
+      const alloc = Buffer.alloc.bind(Buffer);
+      const spy = vi.spyOn(Buffer, 'alloc').mockImplementation((size) => {
+        const buffer = alloc(size);
+        allocated.push(buffer);
+        return buffer;
+      });
+      try {
+        expect(() => decodeVaultIpcFrame(frame)).toThrow();
+        expect(allocated).toHaveLength(1);
+        expect([...(allocated[0] ?? [])]).toEqual([0, 0]);
+        expect(frame).toEqual(original);
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
+  it.each(['request', 'success', 'error'])('clears discarded attachments in a valid %s', (kind) => {
+    const marker = { $inflowVaultAttachment: 0 };
+    const value =
+      kind === 'request'
+        ? {
+            id: 'req',
+            method: 'secret.put',
+            params: { nested: [marker, marker], scalar: null },
+            extra: { $inflowVaultAttachment: 1 },
+            version: 1,
+          }
+        : kind === 'success'
+          ? { id: 'req', ok: true, result: { nested: [marker] }, extra: { $inflowVaultAttachment: 1 }, version: 1 }
+          : { id: 'req', ok: false, error: { code: 'error', message: 'failure', extra: marker }, version: 1 };
+    const frame = rawFrame(value, {
+      attachment: Buffer.from([0, 0, 0, 4, 0, 0, 65, 66, 0, 0, 0, 4, 0, 0, 67, 68, 0, 0, 0, 4, 0, 0, 69, 70]),
+      attachmentCount: 3,
+    });
+    const original = Buffer.from(frame);
+    const allocated: Buffer[] = [];
+    const alloc = Buffer.alloc.bind(Buffer);
+    const spy = vi.spyOn(Buffer, 'alloc').mockImplementation((size) => {
+      const buffer = alloc(size);
+      allocated.push(buffer);
+      return buffer;
+    });
+    try {
+      const message = decodeVaultIpcFrame(frame);
+      expect(allocated).toHaveLength(3);
+      expect([...(allocated[0] ?? [])]).toEqual(kind === 'error' ? [0, 0] : [65, 66]);
+      expect([...(allocated[1] ?? [])]).toEqual([0, 0]);
+      expect([...(allocated[2] ?? [])]).toEqual([0, 0]);
+      expect(frame).toEqual(original);
+      clearVaultIpcBytes(message);
+      expect([...(allocated[0] ?? [])]).toEqual([0, 0]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

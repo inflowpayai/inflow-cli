@@ -251,6 +251,30 @@ describe('Linux vault broker authentication', () => {
     });
   });
 
+  it('handles the socket error emitted after a failed authentication write callback', async () => {
+    const pair = generateKeyPairSync('ed25519');
+    const failure = Object.assign(new Error('broken pipe'), { code: 'EPIPE' });
+    await withSocketPair(async (client, accepted) => {
+      let authenticationErrorListenerPresent = false;
+      const emitted = new Promise<void>((resolve) => {
+        accepted.on('error', () => {
+          authenticationErrorListenerPresent = accepted.listenerCount('error') > 1;
+          resolve();
+        });
+      });
+      vi.spyOn(accepted, '_write').mockImplementation((_chunk, _encoding, callback) => callback(failure));
+      const authentication = authenticateLinuxVaultBrokerClient(
+        accepted,
+        { path: '/opt/inflow/bin/inflow', pid: 1, uid: 1 },
+        pair.privateKey,
+      );
+      client.write(Buffer.concat([Buffer.from('IFB1'), Buffer.alloc(32, 7)]));
+      await expect(authentication).rejects.toBe(failure);
+      await emitted;
+      expect(authenticationErrorListenerPresent).toBe(true);
+    });
+  });
+
   async function withSocketPair<T>(run: (client: Socket, accepted: Socket) => Promise<T>): Promise<T> {
     const accepted = new Promise<Socket>((resolve) => {
       server = createServer(resolve);

@@ -139,8 +139,8 @@ class MppResource implements IMppResource {
  *
  * Credential resolution is mode-exclusive:
  *
- * - When `apiKey` (or `accessToken`, or a `getAccessToken` callback) is supplied, that credential is used verbatim by
- *   every protected resource.
+ * - When `apiKey`, `accessToken`, or `getAccessToken` is supplied, protected resources use that credential source.
+ *   API-key and access-token callbacks resolve credentials per request.
  * - When none of the above is set but `authStorage` is provided, the data resources are auto-wired with a device-token
  *   provider built from this client's own `auth` resource and the supplied storage. This is the path the CLI uses: the
  *   user runs `auth.login` once, tokens land in storage, and subsequent `balances.list()` / `depositAddresses.list()`
@@ -167,11 +167,11 @@ export class Inflow {
    */
   readonly resolvedApiBaseUrl: string;
 
-  private readonly _apiKey: string | undefined;
+  private readonly apiKeyConfigured: boolean;
   private readonly platformApi: InflowApiClient;
 
   constructor(options: InflowOptions = {}) {
-    this._apiKey = options.apiKey;
+    this.apiKeyConfigured = typeof options.apiKey === 'function' || (options.apiKey?.length ?? 0) > 0;
     this.resolvedApiBaseUrl = resolveApiBaseUrl(options);
 
     // Auth resource is built first. Its device-flow endpoints set `skipAuth: true` on their HTTP requests so they do
@@ -221,12 +221,12 @@ export class Inflow {
   }
 
   /**
-   * Whether a static API key is configured on this client. Lets callers tell which auth mode is active without poking
-   * at storage (e.g. the CLI uses this to decide whether to fall back to a stored device-flow session for the
+   * Whether an API key or provider is configured on this client. Lets callers tell which auth mode is active without
+   * poking at storage (e.g. the CLI uses this to decide whether to fall back to a stored device-flow session for the
    * `assertSession` check).
    */
   hasApiKey(): boolean {
-    return this._apiKey !== undefined && this._apiKey.length > 0;
+    return this.apiKeyConfigured;
   }
 
   platformAuthenticationHeaders(): Promise<Record<string, string>> {
@@ -264,7 +264,7 @@ export class Inflow {
       fetch: fetchImpl,
     };
 
-    if (options.apiKey !== undefined && options.apiKey.length > 0) {
+    if (typeof options.apiKey === 'function' || (options.apiKey !== undefined && options.apiKey.length > 0)) {
       return { ...connection, apiKey: options.apiKey };
     }
     if (dataOptions.getAccessToken !== undefined) {
@@ -291,7 +291,7 @@ export class Inflow {
       fetch: fetchImpl,
     };
 
-    if (options.apiKey !== undefined && options.apiKey.length > 0) {
+    if (typeof options.apiKey === 'function' || (options.apiKey !== undefined && options.apiKey.length > 0)) {
       return { ...connection, apiKey: options.apiKey };
     }
     if (dataOptions.getAccessToken !== undefined) {

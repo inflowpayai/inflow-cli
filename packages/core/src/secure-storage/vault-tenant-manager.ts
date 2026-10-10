@@ -47,6 +47,7 @@ export class MultiTenantVaultBackendManager {
 
     const paths = vaultFilePaths(path.join(this.rootDirectory, tenantId));
     const repository = new SecureSqliteRepository({ databasePath: paths.database });
+    repository.initialize();
     const backend = new LocalVaultBackend({ paths, repository });
     const lifetime = new VaultBackendLifetime(this.lifetimeOptions);
     const contextReference: { value?: VaultTenantContext } = {};

@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { randomUUID } from 'node:crypto';
 import { lstatSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -503,6 +504,36 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
     return Promise.resolve();
   }
 
+  getResetGeneration(): string | undefined {
+    const databasePath = this.databasePath();
+    const repository = new SecureSqliteRepository(databasePath === undefined ? {} : { databasePath });
+    try {
+      repository.initialize();
+      const generation = repository.getSetting('vault.reset_generation')?.payload;
+      if (generation === undefined || typeof generation === 'string') return generation;
+      throw new InflowConfigurationError('Invalid vault reset metadata.');
+    } finally {
+      repository.close();
+    }
+  }
+
+  invalidateSessions(): void {
+    this.repository.initialize();
+    this.repository.upsertSetting('vault.reset_generation', randomUUID());
+  }
+
+  resetLocalState(): void {
+    this.initialized = false;
+    this.repository.close();
+    this.repository.initialize();
+    this.repository.writeTransactionSync(() => {
+      this.repository.clearData();
+      this.repository.upsertSetting('vault.reset_generation', randomUUID());
+    });
+    deleteLegacyConfigFile(legacyConfigPathFromOptions(this.options));
+    this.initialized = true;
+  }
+
   private databasePath(): string | undefined {
     if (this.options.configPath !== undefined) {
       return databasePathFromConfigPath(this.options.configPath);
@@ -695,7 +726,12 @@ function utf8(value: string): Uint8Array {
 }
 
 function readUtf8(store: SyncSecureSecretStore, reference: SecretReference): string {
-  return Buffer.from(store.read(reference)).toString('utf8');
+  const bytes = store.read(reference);
+  try {
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8');
+  } finally {
+    bytes.fill(0);
+  }
 }
 
 function defaultSecretStore(): SyncSecureSecretStore {

@@ -18,6 +18,7 @@
 
 #include "vault_crypto_native.h"
 #include "vault_secure_memory.h"
+#include "vault_pipe_io_windows.h"
 
 #define VAULT_IPC_MAX_FRAME_BYTES (4 + 1024 * 1024)
 
@@ -32,46 +33,6 @@ static HANDLE service_stopped_event = NULL;
 static volatile LONG service_stop_requested = 0;
 static volatile LONG service_lock_requested = 0;
 static SERVICE_STATUS_HANDLE service_status_handle = NULL;
-static SRWLOCK service_io_lock = SRWLOCK_INIT;
-static HANDLE service_io_thread = NULL;
-
-static int begin_service_io(void) {
-  HANDLE thread = NULL;
-  if (!DuplicateHandle(
-          GetCurrentProcess(),
-          GetCurrentThread(),
-          GetCurrentProcess(),
-          &thread,
-          0,
-          FALSE,
-          DUPLICATE_SAME_ACCESS)) {
-    return 0;
-  }
-  AcquireSRWLockExclusive(&service_io_lock);
-  if (service_io_thread != NULL) {
-    CloseHandle(service_io_thread);
-  }
-  service_io_thread = thread;
-  ReleaseSRWLockExclusive(&service_io_lock);
-  return 1;
-}
-
-static void end_service_io(void) {
-  AcquireSRWLockExclusive(&service_io_lock);
-  if (service_io_thread != NULL) {
-    CloseHandle(service_io_thread);
-    service_io_thread = NULL;
-  }
-  ReleaseSRWLockExclusive(&service_io_lock);
-}
-
-static void cancel_service_io(void) {
-  AcquireSRWLockShared(&service_io_lock);
-  if (service_io_thread != NULL) {
-    CancelSynchronousIo(service_io_thread);
-  }
-  ReleaseSRWLockShared(&service_io_lock);
-}
 
 static napi_value make_error(napi_env env, const char *code, const char *message) {
   napi_value error_message;
@@ -106,7 +67,6 @@ static DWORD WINAPI vault_service_control(
   if (control == SERVICE_CONTROL_STOP) {
     InterlockedExchange(&service_stop_requested, 1);
     report_service_status(SERVICE_STOP_PENDING, 0, NO_ERROR, 20000);
-    cancel_service_io();
     return NO_ERROR;
   }
   if (control == SERVICE_CONTROL_POWEREVENT && event_type == PBT_APMSUSPEND) {
@@ -126,7 +86,6 @@ static void WINAPI vault_service_main(DWORD argc, LPWSTR *argv) {
   report_service_status(SERVICE_START_PENDING, 0, NO_ERROR, 20000);
   if (WaitForSingleObject(service_ready_event, 20000) != WAIT_OBJECT_0) {
     InterlockedExchange(&service_stop_requested, 1);
-    cancel_service_io();
     report_service_status(SERVICE_STOPPED, 0, ERROR_SERVICE_REQUEST_TIMEOUT, 0);
     return;
   }
@@ -283,6 +242,46 @@ static int pipe_client_identity(
   return success;
 }
 
+static int grant_peer_query_access(HANDLE object, PSID sid, DWORD permissions) {
+  PACL existing_dacl = NULL;
+  PSECURITY_DESCRIPTOR descriptor = NULL;
+  DWORD status = GetSecurityInfo(object, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION,
+      NULL, NULL, &existing_dacl, NULL, &descriptor);
+  PACL updated_dacl = NULL;
+  if (status == ERROR_SUCCESS && existing_dacl != NULL) {
+    EXPLICIT_ACCESSW access = {
+        .grfAccessPermissions = permissions,
+        .grfAccessMode = GRANT_ACCESS,
+        .grfInheritance = NO_INHERITANCE,
+        .Trustee = {
+            .TrusteeForm = TRUSTEE_IS_SID,
+            .TrusteeType = TRUSTEE_IS_UNKNOWN,
+            .ptstrName = sid,
+        },
+    };
+    status = SetEntriesInAclW(1, &access, existing_dacl, &updated_dacl);
+    if (status == ERROR_SUCCESS) {
+      status = SetSecurityInfo(object, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION,
+          NULL, NULL, updated_dacl, NULL);
+    }
+  }
+  if (updated_dacl != NULL) LocalFree(updated_dacl);
+  if (descriptor != NULL) LocalFree(descriptor);
+  return status == ERROR_SUCCESS;
+}
+
+static int allow_client_service_query(void) {
+  BYTE sid[SECURITY_MAX_SID_SIZE];
+  DWORD sid_length = sizeof(sid);
+  HANDLE token = NULL;
+  if (!CreateWellKnownSid(WinAuthenticatedUserSid, NULL, sid, &sid_length) ||
+      !OpenProcessToken(GetCurrentProcess(), READ_CONTROL | WRITE_DAC, &token)) return 0;
+  const int success = grant_peer_query_access(token, sid, TOKEN_QUERY) &&
+      grant_peer_query_access(GetCurrentProcess(), sid, PROCESS_QUERY_LIMITED_INFORMATION);
+  CloseHandle(token);
+  return success;
+}
+
 static int allow_service_process_query(void) {
   DWORD sid_length = 0;
   DWORD domain_length = 0;
@@ -313,52 +312,11 @@ static int allow_service_process_query(void) {
     free(domain);
     return 0;
   }
-  PACL existing_dacl = NULL;
-  PSECURITY_DESCRIPTOR descriptor = NULL;
-  DWORD status = GetSecurityInfo(
-      GetCurrentProcess(),
-      SE_KERNEL_OBJECT,
-      DACL_SECURITY_INFORMATION,
-      NULL,
-      NULL,
-      &existing_dacl,
-      NULL,
-      &descriptor);
-  PACL updated_dacl = NULL;
-  if (status == ERROR_SUCCESS) {
-    EXPLICIT_ACCESSW access = {
-        .grfAccessPermissions = PROCESS_QUERY_LIMITED_INFORMATION,
-        .grfAccessMode = GRANT_ACCESS,
-        .grfInheritance = NO_INHERITANCE,
-        .Trustee = {
-            .pMultipleTrustee = NULL,
-            .MultipleTrusteeOperation = NO_MULTIPLE_TRUSTEE,
-            .TrusteeForm = TRUSTEE_IS_SID,
-            .TrusteeType = TRUSTEE_IS_USER,
-            .ptstrName = service_sid,
-        },
-    };
-    status = SetEntriesInAclW(1, &access, existing_dacl, &updated_dacl);
-  }
-  if (status == ERROR_SUCCESS) {
-    status = SetSecurityInfo(
-        GetCurrentProcess(),
-        SE_KERNEL_OBJECT,
-        DACL_SECURITY_INFORMATION,
-        NULL,
-        NULL,
-        updated_dacl,
-        NULL);
-  }
-  if (updated_dacl != NULL) {
-    LocalFree(updated_dacl);
-  }
-  if (descriptor != NULL) {
-    LocalFree(descriptor);
-  }
+  const int success = grant_peer_query_access(
+      GetCurrentProcess(), service_sid, PROCESS_QUERY_LIMITED_INFORMATION);
   free(service_sid);
   free(domain);
-  return status == ERROR_SUCCESS;
+  return success;
 }
 
 static int pipe_peer_identity(
@@ -424,33 +382,10 @@ static napi_value peer_identity_value(
   return result;
 }
 
-static int read_exact(HANDLE pipe, uint8_t *buffer, DWORD length) {
-  DWORD offset = 0;
-  while (offset < length) {
-    DWORD bytes_read = 0;
-    if (!ReadFile(pipe, buffer + offset, length - offset, &bytes_read, NULL) || bytes_read == 0) {
-      return 0;
-    }
-    offset += bytes_read;
-  }
-  return 1;
-}
 
-static int write_exact(HANDLE pipe, const uint8_t *buffer, DWORD length) {
-  DWORD offset = 0;
-  while (offset < length) {
-    DWORD bytes_written = 0;
-    if (!WriteFile(pipe, buffer + offset, length - offset, &bytes_written, NULL) || bytes_written == 0) {
-      return 0;
-    }
-    offset += bytes_written;
-  }
-  return FlushFileBuffers(pipe);
-}
-
-static int read_frame(HANDLE pipe, uint8_t **frame, DWORD *frame_length) {
+static int read_frame(HANDLE pipe, uint8_t **frame, DWORD *frame_length, ULONGLONG deadline) {
   uint8_t length_bytes[4];
-  if (!read_exact(pipe, length_bytes, sizeof(length_bytes))) {
+  if (!vault_pipe_transfer(pipe, length_bytes, sizeof(length_bytes), 0, deadline)) {
     return 0;
   }
   const uint32_t body_length =
@@ -469,7 +404,7 @@ static int read_frame(HANDLE pipe, uint8_t **frame, DWORD *frame_length) {
     return 0;
   }
   memcpy(value, length_bytes, sizeof(length_bytes));
-  if (!read_exact(pipe, value + sizeof(length_bytes), body_length)) {
+  if (!vault_pipe_transfer(pipe, value + sizeof(length_bytes), body_length, 0, deadline)) {
     vault_secure_clear(value, total_length);
     free(value);
     return 0;
@@ -504,6 +439,8 @@ static int bytes_argument(napi_env env, napi_value value, uint8_t **data, size_t
   }
   return 1;
 }
+
+#include "vault_pipe_adapter_windows.h"
 
 static void close_connection(vault_pipe_connection *connection) {
   if (connection == NULL) {
@@ -544,88 +481,6 @@ static napi_value connection_result(
   return result;
 }
 
-static napi_value accept_pipe_connection(napi_env env, napi_callback_info info) {
-  size_t argc = 1;
-  napi_value argv[1];
-  wchar_t *pipe_name = NULL;
-  PSECURITY_DESCRIPTOR descriptor = NULL;
-  HANDLE pipe = INVALID_HANDLE_VALUE;
-  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc != 1 ||
-      !string_argument(env, argv[0], &pipe_name)) {
-    napi_throw(env, make_error(env, "EINVAL", "expected named pipe path"));
-    return NULL;
-  }
-  const wchar_t *security =
-      L"D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)";
-  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-          security, SDDL_REVISION_1, &descriptor, NULL)) {
-    free(pipe_name);
-    napi_throw(env, make_error(env, "EPIPESECURITY", "named pipe security initialization failed"));
-    return NULL;
-  }
-  SECURITY_ATTRIBUTES attributes = {
-      .nLength = sizeof(attributes),
-      .lpSecurityDescriptor = descriptor,
-      .bInheritHandle = FALSE,
-  };
-  pipe = CreateNamedPipeW(
-      pipe_name,
-      PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
-      PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-      1,
-      VAULT_IPC_MAX_FRAME_BYTES,
-      VAULT_IPC_MAX_FRAME_BYTES,
-      0,
-      &attributes);
-  LocalFree(descriptor);
-  free(pipe_name);
-  if (pipe == INVALID_HANDLE_VALUE) {
-    napi_throw(env, make_error(env, "EPIPECREATE", "named pipe creation failed"));
-    return NULL;
-  }
-  if (!begin_service_io()) {
-    CloseHandle(pipe);
-    napi_throw(env, make_error(env, "EPIPECANCEL", "named pipe cancellation initialization failed"));
-    return NULL;
-  }
-  if (!ConnectNamedPipe(pipe, NULL) && GetLastError() != ERROR_PIPE_CONNECTED) {
-    end_service_io();
-    CloseHandle(pipe);
-    napi_throw(env, make_error(env, "EPIPECONNECT", "named pipe connection failed"));
-    return NULL;
-  }
-
-  ULONG pid = 0;
-  uint8_t handshake[sizeof(vault_pipe_handshake)];
-  wchar_t *path = NULL;
-  wchar_t *sid = NULL;
-  DWORD path_length = 0;
-  if (!read_exact(pipe, handshake, sizeof(handshake)) ||
-      memcmp(handshake, vault_pipe_handshake, sizeof(handshake)) != 0) {
-    end_service_io();
-    CloseHandle(pipe);
-    napi_throw(env, make_error(env, "EPIPEHANDSHAKE", "named pipe authentication handshake failed"));
-    return NULL;
-  }
-  end_service_io();
-  if (!pipe_peer_identity(pipe, 1, &pid, &path, &path_length, &sid)) {
-    free(path);
-    free(sid);
-    CloseHandle(pipe);
-    napi_throw(env, make_error(env, "EPIPEPEER", "named pipe client verification failed"));
-    return NULL;
-  }
-
-  napi_value result = connection_result(env, pipe, pid, path, path_length, sid);
-  free(path);
-  free(sid);
-  if (result == NULL) {
-    CloseHandle(pipe);
-    napi_throw(env, make_error(env, "ENOMEM", "named pipe connection allocation failed"));
-    return NULL;
-  }
-  return result;
-}
 
 static vault_pipe_connection *connection_argument(napi_env env, napi_value value) {
   vault_pipe_connection *connection = NULL;
@@ -663,7 +518,8 @@ static napi_value begin_pipe_session(napi_env env, napi_callback_info info) {
   }
   vault_pipe_connection *connection = connection_argument(env, argv[0]);
   if (connection == NULL ||
-      !write_exact(connection->handle, vault_pipe_handshake, sizeof(vault_pipe_handshake))) {
+      !vault_pipe_transfer(connection->handle, (uint8_t *)vault_pipe_handshake,
+          sizeof(vault_pipe_handshake), 1, GetTickCount64() + 10000)) {
     napi_throw(env, make_error(env, "EPIPEHANDSHAKE", "named pipe authentication handshake failed"));
     return NULL;
   }
@@ -672,65 +528,6 @@ static napi_value begin_pipe_session(napi_env env, napi_callback_info info) {
   return result;
 }
 
-static napi_value read_pipe_request(napi_env env, napi_callback_info info) {
-  size_t argc = 1;
-  napi_value argv[1];
-  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc != 1) {
-    napi_throw(env, make_error(env, "EINVAL", "expected named pipe connection"));
-    return NULL;
-  }
-  vault_pipe_connection *connection = connection_argument(env, argv[0]);
-  uint8_t *frame = NULL;
-  DWORD frame_length = 0;
-  if (connection == NULL) {
-    napi_throw(env, make_error(env, "EPIPEREAD", "named pipe request failed"));
-    return NULL;
-  }
-  if (!begin_service_io()) {
-    napi_throw(env, make_error(env, "EPIPECANCEL", "named pipe cancellation initialization failed"));
-    return NULL;
-  }
-  const int success = read_frame(connection->handle, &frame, &frame_length);
-  end_service_io();
-  if (!success) {
-    napi_throw(env, make_error(env, "EPIPEREAD", "named pipe request failed"));
-    return NULL;
-  }
-  napi_value result;
-  napi_create_buffer_copy(env, frame_length, frame, NULL, &result);
-  vault_secure_clear(frame, frame_length);
-  free(frame);
-  return result;
-}
-
-static napi_value write_pipe_response(napi_env env, napi_callback_info info) {
-  size_t argc = 2;
-  napi_value argv[2];
-  vault_pipe_connection *connection = NULL;
-  uint8_t *frame = NULL;
-  size_t frame_length = 0;
-  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc != 2 ||
-      (connection = connection_argument(env, argv[0])) == NULL ||
-      !bytes_argument(env, argv[1], &frame, &frame_length)) {
-    napi_throw(env, make_error(env, "EINVAL", "expected named pipe connection and frame"));
-    return NULL;
-  }
-  if (!begin_service_io()) {
-    napi_throw(env, make_error(env, "EPIPECANCEL", "named pipe cancellation initialization failed"));
-    return NULL;
-  }
-  const int success = write_exact(connection->handle, frame, (DWORD)frame_length);
-  end_service_io();
-  DisconnectNamedPipe(connection->handle);
-  close_connection(connection);
-  if (!success) {
-    napi_throw(env, make_error(env, "EPIPEWRITE", "named pipe response failed"));
-    return NULL;
-  }
-  napi_value result;
-  napi_get_undefined(env, &result);
-  return result;
-}
 
 static napi_value connect_pipe(napi_env env, napi_callback_info info) {
   size_t argc = 1;
@@ -766,11 +563,11 @@ static napi_value connect_pipe(napi_env env, napi_callback_info info) {
     if (WaitNamedPipeW(pipe_name, 250)) {
       pipe = CreateFileW(
           pipe_name,
-          GENERIC_READ | GENERIC_WRITE,
+          GENERIC_READ | FILE_WRITE_DATA,
           0,
           NULL,
           OPEN_EXISTING,
-          SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+          FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
           NULL);
       if (pipe != INVALID_HANDLE_VALUE) {
         break;
@@ -823,8 +620,9 @@ static napi_value exchange_pipe_request(napi_env env, napi_callback_info info) {
   }
   uint8_t *response = NULL;
   DWORD response_length = 0;
-  if (!write_exact(connection->handle, request, (DWORD)request_length) ||
-      !read_frame(connection->handle, &response, &response_length)) {
+  const ULONGLONG deadline = GetTickCount64() + 10000;
+  if (!vault_pipe_transfer(connection->handle, request, (DWORD)request_length, 1, deadline) ||
+      !read_frame(connection->handle, &response, &response_length, deadline)) {
     napi_throw(env, make_error(env, "EPIPEEXCHANGE", "named pipe request failed"));
     return NULL;
   }
@@ -1008,7 +806,7 @@ static napi_value peer_info(napi_env env, napi_callback_info info) {
 static napi_value run_service_dispatcher(napi_env env, napi_callback_info info) {
   size_t argc = 0;
   if (napi_get_cb_info(env, info, &argc, NULL, NULL, NULL) != napi_ok || argc != 0 ||
-      !initialize_service_events()) {
+      !initialize_service_events() || !allow_client_service_query()) {
     napi_throw(env, make_error(env, "ESERVICE", "Windows service initialization failed"));
     return NULL;
   }
@@ -1070,8 +868,26 @@ static napi_value complete_service_stop(napi_env env, napi_callback_info info) {
   return result;
 }
 
+static napi_value request_service_stop(napi_env env, napi_callback_info info) {
+  size_t argc = 0;
+  if (napi_get_cb_info(env, info, &argc, NULL, NULL, NULL) != napi_ok || argc != 0) {
+    napi_throw(env, make_error(env, "EINVAL", "expected no arguments"));
+    return NULL;
+  }
+  InterlockedExchange(&service_stop_requested, 1);
+  napi_value result;
+  napi_get_undefined(env, &result);
+  return result;
+}
+
 static napi_value init(napi_env env, napi_value exports) {
-  napi_value accept_pipe_connection_function;
+  napi_property_descriptor dispatcher_methods[] = {
+      {"startPipeDispatcher", NULL, start_pipe_dispatcher, NULL, NULL, NULL, napi_default, NULL},
+      {"stopPipeDispatcher", NULL, stop_pipe_dispatcher, NULL, NULL, NULL, napi_default, NULL},
+      {"submitPipeDispatcher", NULL, submit_pipe_dispatcher, NULL, NULL, NULL, napi_default, NULL},
+      {"pipeDispatcherState", NULL, pipe_dispatcher_state, NULL, NULL, NULL, napi_default, NULL},
+  };
+  if (napi_define_properties(env, exports, sizeof(dispatcher_methods) / sizeof(dispatcher_methods[0]), dispatcher_methods) != napi_ok) return NULL;
   napi_value begin_pipe_session_function;
   napi_value close_pipe_connection_function;
   napi_value connect_pipe_function;
@@ -1079,18 +895,10 @@ static napi_value init(napi_env env, napi_value exports) {
   napi_value exchange_pipe_request_function;
   napi_value mark_service_ready_function;
   napi_value peer_info_function;
-  napi_value read_pipe_request_function;
+  napi_value request_service_stop_function;
   napi_value run_service_dispatcher_function;
   napi_value service_control_state_function;
   napi_value verify_authenticode_function;
-  napi_value write_pipe_response_function;
-  napi_create_function(
-      env,
-      "acceptPipeConnection",
-      NAPI_AUTO_LENGTH,
-      accept_pipe_connection,
-      NULL,
-      &accept_pipe_connection_function);
   napi_create_function(
       env,
       "beginPipeSession",
@@ -1123,11 +931,11 @@ static napi_value init(napi_env env, napi_value exports) {
   napi_create_function(env, "peerInfo", NAPI_AUTO_LENGTH, peer_info, NULL, &peer_info_function);
   napi_create_function(
       env,
-      "readPipeRequest",
+      "requestServiceStop",
       NAPI_AUTO_LENGTH,
-      read_pipe_request,
+      request_service_stop,
       NULL,
-      &read_pipe_request_function);
+      &request_service_stop_function);
   napi_create_function(
       env,
       "runServiceDispatcher",
@@ -1151,31 +959,22 @@ static napi_value init(napi_env env, napi_value exports) {
       &service_control_state_function);
   napi_create_function(
       env,
-      "writePipeResponse",
-      NAPI_AUTO_LENGTH,
-      write_pipe_response,
-      NULL,
-      &write_pipe_response_function);
-  napi_create_function(
-      env,
       "verifyAuthenticode",
       NAPI_AUTO_LENGTH,
       verify_authenticode,
       NULL,
       &verify_authenticode_function);
-  napi_set_named_property(env, exports, "acceptPipeConnection", accept_pipe_connection_function);
   napi_set_named_property(env, exports, "beginPipeSession", begin_pipe_session_function);
   napi_set_named_property(env, exports, "closePipeConnection", close_pipe_connection_function);
   napi_set_named_property(env, exports, "connectPipe", connect_pipe_function);
   napi_set_named_property(env, exports, "completeServiceStop", complete_service_stop_function);
   napi_set_named_property(env, exports, "exchangePipeRequest", exchange_pipe_request_function);
   napi_set_named_property(env, exports, "peerInfo", peer_info_function);
-  napi_set_named_property(env, exports, "readPipeRequest", read_pipe_request_function);
+  napi_set_named_property(env, exports, "requestServiceStop", request_service_stop_function);
   napi_set_named_property(env, exports, "runServiceDispatcher", run_service_dispatcher_function);
   napi_set_named_property(env, exports, "markServiceReady", mark_service_ready_function);
   napi_set_named_property(env, exports, "serviceControlState", service_control_state_function);
   napi_set_named_property(env, exports, "verifyAuthenticode", verify_authenticode_function);
-  napi_set_named_property(env, exports, "writePipeResponse", write_pipe_response_function);
   if (register_vault_secure_memory(env, exports) != napi_ok) {
     return NULL;
   }

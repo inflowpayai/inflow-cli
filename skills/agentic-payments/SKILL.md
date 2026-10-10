@@ -171,7 +171,13 @@ inflow <mpp|x402> supported
 inflow balances list
 ```
 
-`inflow inspect` returns what the seller accepts under its `mpp` and `x402` keys - the price is each challenge's `amount` field (raw atomic units for x402; the asset is the on-chain contract address, not a symbol). `decode` parses a single raw header you already hold (and also accepts a base64url credential / receipt). `supported` returns what the account can pay with; `balances list` returns `available` per currency. Run the commands to see the exact shapes.
+`inflow inspect` returns what the seller accepts under its `mpp` and `x402` keys. Interpret amounts and assets according
+to the payment method or scheme: blockchain payments identify the asset by its network-specific identifier, such as a
+token contract address or mint, and use that asset's atomic units. InFlow x402 `balance` and `instrument` payments use
+currency codes such as `USDC` or `USD` and amounts scaled to 18 decimal places (`"1000000000000000000"` means one unit
+of the currency). Do not interpret x402 Instrument amounts as CARD's integer cents. `decode` parses a single raw header
+you already hold (and also accepts a base64url credential / receipt). `supported` returns what the account can pay with;
+`balances list` returns `available` per currency. Run the commands to see the exact shapes.
 
 For CARD, MPP `inflow` Instrument, or x402 `instrument` offers, skip wallet balance checks and funding instructions.
 Follow [Paying with a linked card](#paying-with-a-linked-card). For balance-funded crypto payments, decide whether you

@@ -3,11 +3,12 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { chmodSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { createServer, Socket, type Server } from 'node:net';
+import { createConnection, createServer, Socket, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
+import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
 import { sendVaultIpcRequest } from '../../../src/secure-storage/vault-socket.js';
 import {
   __testing,
@@ -22,7 +23,13 @@ import {
   type LocalVaultDaemon,
   type LocalVaultDaemonRuntime,
 } from '../../../src/secure-storage/vault-daemon.js';
-import type { VaultIpcResponse } from '../../../src/secure-storage/vault-ipc.js';
+import {
+  decodeVaultIpcFrame,
+  encodeVaultIpcMessage,
+  type VaultIpcRequest,
+  type VaultIpcResponse,
+} from '../../../src/secure-storage/vault-ipc.js';
+import { VaultSocketReader } from '../../../src/secure-storage/vault-socket-reader.js';
 
 describe('local vault daemon lifecycle', () => {
   let daemon: LocalVaultDaemon | undefined;
@@ -38,6 +45,15 @@ describe('local vault daemon lifecycle', () => {
   it('serves generic vault IPC over the configured socket', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-daemon-'));
     daemon = await startLocalVaultDaemon({ buildId: 'build-1', cliVersion: '0.9.0', rootDirectory: tmpDir });
+
+    await expect(
+      sendVaultIpcRequest(daemon.socketPath, {
+        id: 'req_policy',
+        method: 'vault.getPolicy',
+        params: {},
+        version: 1,
+      }),
+    ).resolves.toMatchObject({ ok: true, result: { idleTimeoutSeconds: 28800, lockOnSleep: true } });
 
     await expect(
       sendVaultIpcRequest(daemon.socketPath, {
@@ -74,6 +90,28 @@ describe('local vault daemon lifecycle', () => {
     });
 
     expect(vaultReferenceFromPut(putResponse)).toMatch(/^vlt_[0-9a-f]{32}$/);
+  });
+
+  it('closes its database when another daemon already owns the socket', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-daemon-'));
+    daemon = await startLocalVaultDaemon({ rootDirectory: tmpDir });
+    const close = vi.spyOn(SecureSqliteRepository.prototype, 'close');
+    try {
+      await expect(startLocalVaultDaemon({ rootDirectory: tmpDir })).rejects.toMatchObject({
+        code: 'secure_storage_unavailable',
+      });
+      expect(close).toHaveBeenCalledOnce();
+      await expect(
+        sendVaultIpcRequest(daemon.socketPath, {
+          id: 'policy_after_rejected_start',
+          method: 'vault.getPolicy',
+          params: {},
+          version: 1,
+        }),
+      ).resolves.toMatchObject({ ok: true, result: { idleTimeoutSeconds: 28800, lockOnSleep: true } });
+    } finally {
+      close.mockRestore();
+    }
   });
 
   it('serves isolated tenants without allowing a client to stop the Linux service', async () => {
@@ -130,6 +168,49 @@ describe('local vault daemon lifecycle', () => {
         version: 1,
       }),
     ).resolves.toMatchObject({ ok: true, result: { lockState: 'not_initialized' } });
+  });
+
+  it('enforces a lock from another connection on a retained connection to the real vault', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-daemon-'));
+    daemon = await startLocalVaultDaemon({ rootDirectory: tmpDir });
+    const socket = createConnection(daemon.socketPath);
+    const reader = new VaultSocketReader(socket);
+    const exchange = async (
+      method: VaultIpcRequest['method'],
+      params: Record<string, unknown> = {},
+    ): Promise<VaultIpcResponse> => {
+      const response = reader.read();
+      socket.write(encodeVaultIpcMessage({ id: method, method, params, version: 1 }));
+      const frame = await response;
+      if (frame === undefined) throw new Error('Unexpected vault disconnect');
+      const decoded = decodeVaultIpcFrame(frame);
+      frame.fill(0);
+      if (!('ok' in decoded)) throw new Error('Unexpected request from vault');
+      return decoded;
+    };
+    try {
+      await expect(
+        exchange('vault.unlock', { salt: Buffer.alloc(16), wrappingKey: Buffer.alloc(32) }),
+      ).resolves.toMatchObject({ ok: true });
+      const stored = await exchange('secret.put', {
+        expectedKind: 'inflow_api_key',
+        payload: Buffer.from('isolated-test-secret'),
+      });
+      const params = { expectedKind: 'inflow_api_key', reference: vaultReferenceFromPut(stored) };
+      await expect(exchange('secret.get', params)).resolves.toMatchObject({
+        ok: true,
+        result: { payload: Buffer.from('isolated-test-secret') },
+      });
+      await sendVaultIpcRequest(daemon.socketPath, { id: 'other-lock', method: 'vault.lock', params: {}, version: 1 });
+      await expect(exchange('secret.get', params)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'vault_locked' },
+      });
+      await expect(exchange('vault.status')).resolves.toMatchObject({ ok: true, result: { lockState: 'locked' } });
+    } finally {
+      reader.dispose();
+      socket.destroy();
+    }
   });
 
   it('accepts exactly one named systemd socket owned by the current service process', () => {

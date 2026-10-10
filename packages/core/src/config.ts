@@ -14,7 +14,7 @@ export interface InflowOptions {
   clientName?: string;
   cliClientId?: string;
   defaultHeaders?: Record<string, string>;
-  apiKey?: string;
+  apiKey?: string | (() => Promise<string>);
   accessToken?: string;
   getAccessToken?: AccessTokenProvider;
   authStorage?: AuthStorage;
@@ -32,7 +32,7 @@ export interface ResolvedInflowSdkConfig {
   cliClientId: string | undefined;
   defaultHeaders: Record<string, string> | undefined;
   authMode:
-    | { type: 'apiKey'; apiKey: string }
+    | { type: 'apiKey'; apiKey: string | (() => Promise<string>) }
     | { type: 'dynamicBearer'; getAccessToken: AccessTokenProvider }
     | { type: 'staticBearer'; accessToken: string }
     | { type: 'anonymous' };

@@ -16,6 +16,7 @@ export interface SecureSecretStore {
 export interface SyncSecureSecretStore {
   create(reference: SecretReference, value: Uint8Array): void;
   delete(reference: SecretReference): void;
+  /** Returns an owned copy that the caller must clear after use. */
   read(reference: SecretReference): Uint8Array;
 }
 

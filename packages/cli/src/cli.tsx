@@ -2,9 +2,10 @@ import process from 'node:process';
 import { isMainThread, workerData } from 'node:worker_threads';
 import {
   OpenApiCollections,
-  type AuthStorage,
   createTapFetch,
   Inflow,
+  InflowAuthenticationError,
+  LocalVaultClient,
   runLinuxTransferredVaultService,
   runLinuxVaultBroker,
   runLocalVaultDaemon,
@@ -180,50 +181,105 @@ async function main(): Promise<void> {
   normalizeFormatAssignments(process.argv);
   showDirectorySearchHelpForEmptyInput(process.argv);
   const isAgent = isAgentInvocation(process.argv, process.stdout.isTTY);
-  const vaultOptions: LocalVaultDaemonClientOptions = { buildId: cliBuildId, cliVersion };
+  const controlClient = new LocalVaultClient({
+    expectedDaemon: { buildId: cliBuildId, cliVersion, executablePath: process.execPath },
+  });
+  const secretStore = new SyncVaultSecretStore({
+    expectedDaemon: { buildId: cliBuildId, cliVersion, executablePath: process.execPath },
+  });
+  const closeControlClient = (): void => {
+    controlClient.dispose();
+    secretStore.dispose();
+  };
+  let activeCommands = 0;
+  let inputClosed = false;
+  const closeControlInput = (): void => {
+    inputClosed = true;
+    if (activeCommands === 0) closeControlClient();
+  };
+  process.once('exit', closeControlClient);
+  if (process.argv.includes('--mcp')) {
+    process.stdin.once('end', closeControlInput);
+    process.stdin.once('close', closeControlInput);
+  }
+  const vaultOptions: LocalVaultDaemonClientOptions = { buildId: cliBuildId, cliVersion, client: controlClient };
   const apiKeyFromEnv = process.env['INFLOW_API_KEY'];
   const hasDirectApiKey = (apiKeyFromFlag?.length ?? 0) > 0 || (apiKeyFromEnv?.length ?? 0) > 0;
   let hasInitializedVault = true;
-  let daemonPrepared = false;
+  let preparedDaemon: Awaited<ReturnType<typeof ensureLocalVaultDaemon>> | undefined;
   let credentialsPrepared = false;
   if (shouldReconcileVaultDaemon(process.argv, hasDirectApiKey)) {
     const status = await readVaultStatusWithoutStarting(vaultOptions);
     hasInitializedVault = status.lockState !== 'not_initialized';
     if (status.daemonRunning) {
-      await ensureLocalVaultDaemon(vaultOptions);
-      daemonPrepared = true;
+      preparedDaemon = await ensureLocalVaultDaemon(vaultOptions);
     }
   }
-  if (!daemonPrepared && shouldStartVaultDaemon(process.argv, { hasDirectApiKey, hasInitializedVault, isAgent })) {
-    await ensureLocalVaultDaemon(vaultOptions);
+  if (
+    preparedDaemon === undefined &&
+    shouldStartVaultDaemon(process.argv, { hasDirectApiKey, hasInitializedVault, isAgent })
+  ) {
+    preparedDaemon = await ensureLocalVaultDaemon(vaultOptions);
   }
   if (
     shouldUnlockVault(process.argv, { hasDirectApiKey, isAgent }) &&
     (hasInitializedVault || commandPath(process.argv)[0] === 'auth')
   ) {
-    await ensureLocalVaultUnlocked({ mode: isAgent ? 'agent' : 'human', vaultOptions });
+    await ensureLocalVaultUnlocked({
+      mode: isAgent ? 'agent' : 'human',
+      ...(preparedDaemon === undefined ? {} : { preparedClient: preparedDaemon }),
+      vaultOptions,
+    });
     credentialsPrepared = true;
   }
 
-  const secretStore = new SyncVaultSecretStore(vaultOptions);
-  const authStorage: AuthStorage = new Storage({
+  const authStorage = new Storage({
     ...(credentialFilePath === undefined ? {} : { configPath: credentialFilePath }),
     secretStore,
   });
 
+  const resetStorage = credentialFilePath === undefined ? authStorage : new Storage({ secretStore });
+  vaultOptions.invalidateSessions = () => resetStorage.invalidateSessions();
+  vaultOptions.resetLocalState = () => {
+    resetStorage.resetLocalState();
+    if (resetStorage !== authStorage) authStorage.resetLocalState();
+  };
+
   let credentialReadError: Error | undefined;
-  function readSavedApiKey(): string | undefined {
+  let resetGeneration: string | undefined;
+  let resetInvalidated = false;
+  if (process.argv.includes('--mcp') && !hasDirectApiKey) {
     try {
-      return authStorage.getApiKey() ?? undefined;
+      resetGeneration = resetStorage.getResetGeneration();
+    } catch (error) {
+      credentialReadError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  function hasSavedApiKey(): boolean {
+    try {
+      return (authStorage.getApiKey()?.length ?? 0) > 0;
     } catch (error) {
       if (process.argv.includes('--mcp') || shouldReconcileVaultDaemon(process.argv, hasDirectApiKey)) {
         credentialReadError = error instanceof Error ? error : new Error(String(error));
       }
-      return undefined;
+      return false;
     }
   }
   function assertMcpCredentials(): void {
-    if (!process.argv.includes('--mcp') || credentialReadError === undefined) return;
+    if (!process.argv.includes('--mcp') || hasDirectApiKey) return;
+    try {
+      resetInvalidated ||= resetStorage.getResetGeneration() !== resetGeneration;
+    } catch {
+      resetInvalidated = true;
+    }
+    if (resetInvalidated) {
+      throw new Errors.IncurError({
+        code: 'MCP_RECONNECT_REQUIRED',
+        message:
+          'The InFlow vault was reset or its saved credentials are unavailable. Reconnect the InFlow MCP server before using saved credentials.',
+      });
+    }
+    if (credentialReadError === undefined) return;
     if (
       credentialReadError instanceof SecureStorageError &&
       ['vault_locked', 'vault_not_initialized', 'secure_storage_unavailable'].includes(
@@ -240,7 +296,9 @@ async function main(): Promise<void> {
   async function prepareCredentials(mode: 'agent' | 'human'): Promise<void> {
     const mcp = process.argv.includes('--mcp');
     if (!mcp && credentialsPrepared) return;
-    if ((await readVaultStatusWithoutStarting(vaultOptions)).lockState !== 'not_initialized') {
+    if (!mcp && preparedDaemon !== undefined && hasInitializedVault) {
+      await ensureLocalVaultUnlocked({ mode, preparedClient: preparedDaemon, vaultOptions });
+    } else if ((await readVaultStatusWithoutStarting(vaultOptions)).lockState !== 'not_initialized') {
       await ensureLocalVaultUnlocked({ mode, vaultOptions });
     }
     if (!mcp) credentialsPrepared = true;
@@ -256,17 +314,25 @@ async function main(): Promise<void> {
       return {};
     }
   }
-  const apiKeyFromSaved =
+  const usesSavedApiKey =
     apiKeyFromFlag !== undefined || apiKeyFromEnv !== undefined || isPublicDocumentInspect(process.argv)
-      ? undefined
-      : readSavedApiKey();
-  const apiKey = apiKeyFromFlag ?? apiKeyFromEnv ?? apiKeyFromSaved;
+      ? false
+      : hasSavedApiKey();
+  const apiKey = apiKeyFromFlag ?? apiKeyFromEnv;
+  function savedApiKey(): Promise<string> {
+    assertMcpCredentials();
+    const key = authStorage.getApiKey();
+    if (key === null || key.length === 0) {
+      throw new InflowAuthenticationError('Not authenticated. Run "inflow auth login" first.');
+    }
+    return Promise.resolve(key);
+  }
   const apiKeySource: 'flag' | 'env' | 'saved' | undefined =
     apiKeyFromFlag !== undefined && apiKeyFromFlag.length > 0
       ? 'flag'
       : apiKeyFromEnv !== undefined && apiKeyFromEnv.length > 0
         ? 'env'
-        : apiKeyFromSaved !== undefined && apiKeyFromSaved.length > 0
+        : usesSavedApiKey
           ? 'saved'
           : undefined;
 
@@ -309,7 +375,7 @@ async function main(): Promise<void> {
     ...(authBaseUrl !== undefined ? { authBaseUrl } : {}),
     cliClientId,
     capabilitiesMaxAgeMs: process.argv.includes('--mcp') ? 5 * 60 * 1000 : Number.POSITIVE_INFINITY,
-    ...(apiKey !== undefined ? { apiKey } : {}),
+    ...(apiKey !== undefined ? { apiKey } : usesSavedApiKey ? { apiKey: savedApiKey } : {}),
   });
 
   if (isAgent) {
@@ -323,6 +389,7 @@ async function main(): Promise<void> {
         // best-effort; the slot expires server-side regardless
       }
       process.stderr.write(`\nReceived ${signal}; exiting.\n`);
+      closeControlClient();
       process.exit(130);
     };
     process.on('SIGINT', onSignal);
@@ -333,6 +400,16 @@ async function main(): Promise<void> {
     description: 'InFlow - agentic discovery, onboarding, and payments from your machine.',
     mcp: { tools: { discovery: 'direct' } },
     version: cliVersion,
+  });
+
+  cli.use(async (_context, next) => {
+    activeCommands += 1;
+    try {
+      return await next();
+    } finally {
+      activeCommands -= 1;
+      if (inputClosed && activeCommands === 0) closeControlClient();
+    }
   });
 
   cli.use(async (context, next) => {
@@ -348,6 +425,7 @@ async function main(): Promise<void> {
     if (needsVault) {
       try {
         await prepareCredentials(context.agent || context.formatExplicit ? 'agent' : 'human');
+        assertMcpCredentials();
         if (credentialReadError !== undefined) throw credentialReadError;
       } catch (error) {
         const mapped = authenticatedApiError(error);
@@ -434,10 +512,15 @@ async function main(): Promise<void> {
     createInspectCommand(inflow, authStorage, odp, undefined, async () => {
       assertMcpCredentials();
       await prepareCredentials(isAgent ? 'agent' : 'human');
+      assertMcpCredentials();
     }),
   );
 
   await cli.serve();
+  if (!process.argv.includes('--mcp')) {
+    closeControlClient();
+    process.off('exit', closeControlClient);
+  }
 }
 
 function showDirectorySearchHelpForEmptyInput(argv: string[]): void {

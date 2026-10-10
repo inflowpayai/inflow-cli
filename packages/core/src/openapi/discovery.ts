@@ -68,10 +68,10 @@ export class SourceDiscovery {
       this.remember(locationKey, 'odp', [native.sourceUrl], evidence);
       return sanitizeDeep(result);
     }
-    const candidates = new Set([`${url.origin}/openapi.json`, `${url.origin}/v1/openapi.json`]);
     if (native.status === 200) {
       const odp = this.odp(native).document;
-      if (odp.http.openapi !== undefined) candidates.add(publicDocumentUrl(odp.http.openapi.url, native.finalUrl).href);
+      if (odp.http.openapi !== undefined)
+        return this.advertisedOpenapi(odp.http.openapi.url, native, locationKey, evidence, options);
     }
     const x402 = await this.documents.get(`${url.origin}/.well-known/x402.json`, options);
     evidence.push(x402);
@@ -81,8 +81,9 @@ export class SourceDiscovery {
       !isRecord(x402.value['info']) &&
       typeof x402.value['openapi'] === 'string'
     ) {
-      candidates.add(publicDocumentUrl(x402.value['openapi'], x402.finalUrl).href);
+      return this.advertisedOpenapi(x402.value['openapi'], x402, locationKey, evidence, options);
     }
+    const candidates = [`${url.origin}/openapi.json`, `${url.origin}/v1/openapi.json`];
     const found: SourceDocument[] = [];
     for (const candidate of candidates) {
       const document = await this.documents.get(candidate, options);
@@ -108,6 +109,20 @@ export class SourceDiscovery {
       );
     const result = await this.openapi(selected, options);
     this.remember(locationKey, 'openapi', urls, evidence);
+    return sanitizeDeep(result);
+  }
+
+  private async advertisedOpenapi(
+    reference: string,
+    advertisement: SourceDocument,
+    locationKey: string,
+    evidence: SourceDocument[],
+    options: SourceOptions,
+  ): Promise<SourceDiscoveryResult> {
+    const url = publicDocumentUrl(reference, advertisement.finalUrl).href;
+    const document = await this.documents.get(url, options);
+    const result = await this.openapi(document, options);
+    this.remember(locationKey, 'openapi', [url], [...evidence, document]);
     return sanitizeDeep(result);
   }
 

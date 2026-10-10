@@ -73,7 +73,14 @@ export function createVaultSocketPeerVerifier(
   const native = dependencies.loadNativeModule(config.nativeModulePath);
 
   return (socket) => {
-    const peer = native.peerInfo(socketFileDescriptor(socket));
+    let peer: VaultSocketPeer;
+    try {
+      peer = native.peerInfo(socketFileDescriptor(socket));
+    } catch (cause) {
+      throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.', {
+        cause,
+      });
+    }
     if (config.expectedUserId !== undefined) {
       if (peer.uid !== config.expectedUserId) {
         throw new SecureStorageError('secure_storage_peer_verification_failed', 'Vault peer verification failed.');

@@ -64,6 +64,60 @@ describe('Storage (file-backed)', () => {
     return new Storage({ cwd: tmpDir, secretStore: new SyncMemorySecretStore() });
   }
 
+  it('invalidates other storage readers and clears metadata without retrieving or deleting secrets', () => {
+    const secrets = new FaultInjectingSecretStore();
+    const first = new Storage({ cwd: tmpDir, secretStore: secrets });
+    const second = new Storage({ cwd: tmpDir, secretStore: secrets });
+    expect(second.getResetGeneration()).toBeUndefined();
+    first.setApiKey('synthetic-key');
+    first.setAuth(sampleAuth);
+    first.setConnection({ environment: 'sandbox' });
+    secrets.failDeletes = true;
+    first.invalidateSessions();
+    const invalidation = second.getResetGeneration();
+    expect(invalidation).toEqual(expect.any(String));
+    first.resetLocalState();
+    expect(second.getResetGeneration()).not.toBe(invalidation);
+    expect(second.getApiKey()).toBeNull();
+    expect(second.getAuth()).toBeNull();
+    expect(second.getConnection()).toBeNull();
+    expect(secrets.readReferences).toEqual([]);
+    expect(secrets.deleted).toEqual([]);
+    const repository = new SecureSqliteRepository({ databasePath: join(tmpDir, 'inflow.sqlite3') });
+    try {
+      expect(repository.listSecretLifecycle('active')).toEqual([]);
+      expect(repository.listSecretLifecycle('pending')).toEqual([]);
+      expect(repository.listSecretLifecycle('deleting')).toEqual([]);
+    } finally {
+      repository.close();
+    }
+  });
+
+  it('reads a replacement database instead of keeping a reset generation from an unlinked handle', () => {
+    const first = secureStorage();
+    const reader = secureStorage();
+    first.invalidateSessions();
+    const before = reader.getResetGeneration();
+    rmSync(join(tmpDir, 'inflow.sqlite3'));
+    rmSync(join(tmpDir, 'inflow.sqlite3-wal'), { force: true });
+    rmSync(join(tmpDir, 'inflow.sqlite3-shm'), { force: true });
+    const replacement = secureStorage();
+    replacement.invalidateSessions();
+    expect(reader.getResetGeneration()).not.toBe(before);
+  });
+
+  it('rejects malformed reset metadata', () => {
+    const storage = secureStorage();
+    storage.invalidateSessions();
+    const repository = new SecureSqliteRepository({ databasePath: join(tmpDir, 'inflow.sqlite3') });
+    try {
+      repository.upsertSetting('vault.reset_generation', {});
+      expect(() => storage.getResetGeneration()).toThrow('Invalid vault reset metadata');
+    } finally {
+      repository.close();
+    }
+  });
+
   it('reads session metadata without secrets and reads only the selected token', () => {
     const secrets = new CountingSecretStore();
     const storage = new Storage({ cwd: tmpDir, secretStore: secrets });
@@ -215,6 +269,30 @@ describe('Storage (file-backed)', () => {
     expect(s.getApiKey()).toBe('inflow_live_abc');
     s.clearApiKey();
     expect(s.getApiKey()).toBeNull();
+  });
+
+  it.each([false, true])('clears the returned secret bytes after conversion (failure: %s)', (failConversion) => {
+    const secrets = new SyncMemorySecretStore();
+    const storage = new Storage({ cwd: tmpDir, secretStore: secrets });
+    const key = 'synthetic-memory-key';
+    storage.setApiKey(key);
+    const backing = Buffer.concat([Buffer.from('left'), Buffer.from(key), Buffer.from('right')]);
+    const bytes = backing.subarray(4, 4 + key.length);
+    if (failConversion) {
+      Object.defineProperty(bytes, 'buffer', {
+        get() {
+          throw new Error('conversion failed');
+        },
+      });
+    }
+    const read = vi.spyOn(secrets, 'read').mockReturnValueOnce(bytes);
+    if (failConversion) expect(() => storage.getApiKey()).toThrow('conversion failed');
+    else expect(storage.getApiKey()).toBe(key);
+    expect([...bytes]).toEqual(Array<number>(key.length).fill(0));
+    expect(backing.subarray(0, 4).toString()).toBe('left');
+    expect(backing.subarray(4 + key.length).toString()).toBe('right');
+    read.mockRestore();
+    expect(storage.getApiKey()).toBe(key);
   });
 
   it.each([

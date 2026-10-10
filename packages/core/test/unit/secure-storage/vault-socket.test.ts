@@ -27,6 +27,7 @@ import {
   type VaultIpcRequest,
 } from '../../../src/secure-storage/vault-ipc.js';
 import type { VaultSecretReference } from '../../../src/secure-storage/vault-types.js';
+import type { VaultSocketPeerVerifier } from '../../../src/secure-storage/vault-peer-verifier.js';
 
 class SocketVaultBackend implements VaultBackend {
   private active = true;
@@ -142,6 +143,271 @@ describe('vault socket transport', () => {
     for (const server of servers.splice(0)) await server.close();
     if (tmpDir !== undefined) rmSync(tmpDir, { force: true, recursive: true });
     tmpDir = undefined;
+    vi.useRealTimers();
+  });
+
+  it('closes a verified connection that stops reading a large response', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const backend = new SocketVaultBackend('x'.repeat(400_000));
+    let received: (() => void) | undefined;
+    const requested = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    const getSecret = backend.getSecret.bind(backend);
+    vi.spyOn(backend, 'getSecret').mockImplementation((input) => {
+      received?.();
+      return getSecret(input);
+    });
+    let serverSocket: Socket | undefined;
+    servers.push(
+      await startVaultSocketServer({
+        backend,
+        peerVerifier(socket) {
+          serverSocket = socket;
+          return { path: '/inflow', pid: 1, uid: 1001 };
+        },
+        socketPath,
+      }),
+    );
+    const socket = createConnection(socketPath);
+    try {
+      socket.write(
+        encodeVaultIpcMessage(
+          request('secret.get', {
+            expectedKind: 'inflow_api_key',
+            reference: 'vlt_22222222222222222222222222222222',
+          }),
+        ),
+      );
+      await requested;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (serverSocket === undefined) throw new Error('Connection was not verified');
+      expect(serverSocket.destroyed).toBe(false);
+      const closed = new Promise<void>((resolve) => serverSocket?.once('close', () => resolve()));
+      await vi.advanceTimersByTimeAsync(10_000);
+      await closed;
+      expect(serverSocket.destroyed).toBe(true);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it('verifies a reusable connection once and observes a later lock on that connection', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const peerVerifier = vi.fn(() => ({ path: '/inflow', pid: 1, uid: 1001 }));
+    servers.push(await startVaultSocketServer({ backend: new SocketVaultBackend(), peerVerifier, socketPath }));
+    const socket = createConnection(socketPath);
+    try {
+      for (const [method, result] of [
+        ['vault.status', { lockState: 'unlocked' }],
+        ['vault.lock', {}],
+        ['vault.status', { lockState: 'locked' }],
+      ] as const) {
+        const response = readRawFrame(socket);
+        socket.write(encodeVaultIpcMessage({ ...request(method), id: method }));
+        await expect(response.then(decodeVaultIpcFrame)).resolves.toMatchObject({ id: method, ok: true, result });
+      }
+      expect(peerVerifier).toHaveBeenCalledTimes(1);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it('resolves the current tenant backend for every request on a verified connection', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    let backend = new SocketVaultBackend();
+    const backendForPeer = vi.fn(() => backend);
+    servers.push(
+      await startVaultSocketServer({
+        backendForPeer,
+        peerVerifier: () => ({ path: '/inflow', pid: 1, uid: 1001 }),
+        socketPath,
+      }),
+    );
+    const socket = createConnection(socketPath);
+    try {
+      const first = readRawFrame(socket);
+      socket.write(encodeVaultIpcMessage(request('vault.status')));
+      await expect(first.then(decodeVaultIpcFrame)).resolves.toMatchObject({ result: { lockState: 'unlocked' } });
+      backend = new SocketVaultBackend();
+      backend.lock();
+      const second = readRawFrame(socket);
+      socket.write(encodeVaultIpcMessage(request('vault.status')));
+      await expect(second.then(decodeVaultIpcFrame)).resolves.toMatchObject({ result: { lockState: 'locked' } });
+      expect(backendForPeer).toHaveBeenCalledTimes(2);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it('closes idle reusable sockets during server shutdown', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const server = await startVaultSocketServer({ backend: new SocketVaultBackend(), socketPath });
+    servers.push(server);
+    const socket = createConnection(socketPath);
+    const response = readRawFrame(socket);
+    socket.write(encodeVaultIpcMessage(request('vault.status')));
+    await response;
+    const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+    await server.close();
+    await closed;
+  });
+
+  it('waits for an executing operation before completing shutdown', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const backend = new BlockingSocketVaultBackend();
+    const server = await startVaultSocketServer({ backend, socketPath });
+    servers.push(server);
+    const socket = createConnection(socketPath);
+    socket.write(encodeVaultIpcMessage(request('vault.reset')));
+    await backend.resetStarted;
+    let stopped = false;
+    const shutdown = server.close().then(() => {
+      stopped = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(stopped).toBe(false);
+    backend.finishReset();
+    await shutdown;
+    socket.destroy();
+  });
+
+  it('does not execute a queued mutation after its connection disconnects', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const backend = new BlockingSocketVaultBackend();
+    const lock = vi.spyOn(backend, 'lock');
+    let received: (() => void) | undefined;
+    let disconnected: (() => void) | undefined;
+    const queued = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    const closed = new Promise<void>((resolve) => {
+      disconnected = resolve;
+    });
+    let count = 0;
+    const server = await startVaultSocketServer({
+      backend,
+      peerVerifier(socket) {
+        if (++count === 2) {
+          socket.once('data', () => received?.());
+          socket.once('close', () => disconnected?.());
+        }
+        return { path: '/inflow', pid: 1, uid: 1001 };
+      },
+      socketPath,
+    });
+    servers.push(server);
+    const first = createConnection(socketPath);
+    const second = createConnection(socketPath);
+    try {
+      first.write(encodeVaultIpcMessage(request('vault.reset')));
+      await backend.resetStarted;
+      second.write(encodeVaultIpcMessage(request('vault.lock')));
+      await queued;
+      second.destroy();
+      await closed;
+      backend.finishReset();
+      await server.close();
+      expect(lock).not.toHaveBeenCalled();
+    } finally {
+      backend.finishReset();
+      first.destroy();
+      second.destroy();
+    }
+  });
+
+  it('rejects coalesced pipelined requests without executing either request', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const backend = new SocketVaultBackend();
+    const lock = vi.spyOn(backend, 'lock');
+    servers.push(await startVaultSocketServer({ backend, socketPath }));
+    const socket = createConnection(socketPath);
+    socket.on('error', () => undefined);
+    const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+    socket.write(
+      Buffer.concat([encodeVaultIpcMessage(request('vault.lock')), encodeVaultIpcMessage(request('vault.status'))]),
+    );
+    await closed;
+    expect(lock).not.toHaveBeenCalled();
+  });
+
+  it('limits connections per verified user and releases slots after disconnect', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    servers.push(
+      await startVaultSocketServer({
+        backend: new SocketVaultBackend(),
+        peerVerifier: () => ({ path: '/inflow', pid: 1, uid: 1001 }),
+        socketPath,
+      }),
+    );
+    const clients: Socket[] = [];
+    try {
+      for (let count = 0; count < 32; count += 1) {
+        const socket = createConnection(socketPath);
+        clients.push(socket);
+        const response = readRawFrame(socket);
+        socket.write(encodeVaultIpcMessage(request('vault.status')));
+        await expect(response.then(decodeVaultIpcFrame)).resolves.toMatchObject({ ok: true });
+      }
+      await expect(sendVaultIpcRequest(socketPath, request('vault.status'))).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'secure_storage_unavailable' },
+      });
+      const closed = clients.map((socket) => new Promise<void>((resolve) => socket.once('close', () => resolve())));
+      for (const socket of clients) socket.end();
+      await Promise.all(closed);
+      await expect(sendVaultIpcRequest(socketPath, request('vault.status'))).resolves.toMatchObject({ ok: true });
+    } finally {
+      for (const socket of clients) socket.destroy();
+    }
+  });
+
+  it('bounds unauthenticated connections and closes them without waiting for verifier completion', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const peerVerifier = vi.fn(() => new Promise<{ path: string; pid: number; uid: number }>(() => undefined));
+    const server = await startVaultSocketServer({ backend: new SocketVaultBackend(), peerVerifier, socketPath });
+    servers.push(server);
+    const clients: Socket[] = [];
+    try {
+      for (let count = 0; count < 128; count += 1) clients.push(createConnection(socketPath));
+      await vi.waitFor(() => expect(peerVerifier).toHaveBeenCalledTimes(128));
+      const excess = createConnection(socketPath);
+      clients.push(excess);
+      await new Promise<void>((resolve) => excess.once('close', () => resolve()));
+      expect(peerVerifier).toHaveBeenCalledTimes(128);
+      await server.close();
+    } finally {
+      for (const socket of clients) socket.destroy();
+    }
+  });
+
+  it('does not authorize a connection when its verifier rejects without an Error', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const backend = new SocketVaultBackend();
+    const status = vi.spyOn(backend, 'status');
+    servers.push(
+      await startVaultSocketServer({
+        backend,
+        peerVerifier: vi.fn<VaultSocketPeerVerifier>().mockRejectedValue('invalid peer'),
+        socketPath,
+      }),
+    );
+    await expect(sendVaultIpcRequest(socketPath, request('vault.status'))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'secure_storage_peer_verification_failed' },
+    });
+    expect(status).not.toHaveBeenCalled();
   });
 
   it('sends one bounded IPC request and receives one response', async () => {
@@ -568,15 +834,18 @@ describe('vault socket transport', () => {
 function readRawFrame(socket: Socket): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    socket.on('data', (chunk: Buffer) => {
+    const onData = (chunk: Buffer): void => {
       chunks.push(chunk);
       const buffer = Buffer.concat(chunks);
       if (buffer.byteLength < 4) return;
       const length = buffer.readUInt32BE(0);
       if (buffer.byteLength >= length + 4) {
+        socket.off('data', onData);
+        socket.off('error', reject);
         resolve(buffer.subarray(0, length + 4));
       }
-    });
+    };
+    socket.on('data', onData);
     socket.on('error', reject);
   });
 }

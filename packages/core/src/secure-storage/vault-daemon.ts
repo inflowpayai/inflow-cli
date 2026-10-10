@@ -86,6 +86,7 @@ interface LinuxVaultBrokerDependencies {
 export async function startLocalVaultDaemon(options: LocalVaultDaemonOptions = {}): Promise<LocalVaultDaemon> {
   const paths = vaultFilePaths(options.rootDirectory);
   const repository = new SecureSqliteRepository({ databasePath: paths.database });
+  repository.initialize();
   const backend = new LocalVaultBackend({ paths, repository });
   const lifetime = new VaultBackendLifetime(lifetimeOptions(options));
   const shutdown = { close: undefined as (() => Promise<void>) | undefined };
@@ -103,7 +104,10 @@ export async function startLocalVaultDaemon(options: LocalVaultDaemonOptions = {
         void shutdown.close?.();
       },
     ),
-  );
+  ).catch((error: unknown) => {
+    repository.close();
+    throw error;
+  });
   let isClosed = false;
   const close = async (): Promise<void> => {
     if (isClosed) return;
@@ -384,6 +388,7 @@ export async function runLinuxTransferredVaultServiceWithRuntime(
   const close = async (): Promise<void> => {
     if (closed) return;
     closed = true;
+    await handleConnection.close();
     await manager.close();
     resolveClosed();
     runtime.exit(0);
