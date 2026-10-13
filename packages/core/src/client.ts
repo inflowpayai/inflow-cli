@@ -69,10 +69,20 @@ class X402Resource implements IX402Resource {
 
   client(options?: { instrumentId?: string }): Promise<X402BuyerClient> {
     if (options?.instrumentId !== undefined) {
-      return createInflowClient({ ...this.opts, prefer: ['instrument'], instrument: { id: options.instrumentId } });
+      return createInflowClient({
+        ...this.opts,
+        prefer: ['instrument'],
+        instrument: { id: options.instrumentId },
+      }).then((client) => {
+        client.setSpendControls(false);
+        return client;
+      });
     }
     if (!this.cached) {
-      this.cached = createInflowClient({ ...this.opts, prefer: ['balance', 'exact', 'instrument'] });
+      this.cached = createInflowClient({ ...this.opts, prefer: ['balance', 'exact', 'instrument'] }).then((client) => {
+        client.setSpendControls(false);
+        return client;
+      });
     }
     return this.cached;
   }
