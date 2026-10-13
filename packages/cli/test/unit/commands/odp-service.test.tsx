@@ -37,7 +37,10 @@ const inspection: ServiceInspection = {
   capabilities: {
     enrollment: [{ name: 'aep' }],
     operations,
-    payments: [{ authentication: 'required', name: 'mpp', options: ['inflow', 'tempo'] }],
+    payments: [
+      { authentication: 'required', name: 'mpp', options: ['inflow', 'tempo'] },
+      { authentication: 'not-required', name: 'x402', options: ['arc', 'monad'] },
+    ],
     trust: [],
   },
   document: {
@@ -60,7 +63,10 @@ const inspection: ServiceInspection = {
     operations,
     protocols: {
       enrollment: [{ name: 'aep' }],
-      payments: [{ authentication: 'required', name: 'mpp', options: ['inflow', 'tempo'] }],
+      payments: [
+        { authentication: 'required', name: 'mpp', options: ['inflow', 'tempo'] },
+        { authentication: 'not-required', name: 'x402', options: ['arc', 'monad'] },
+      ],
     },
     status_url: 'https://status.compute.example/',
     support_url: '/support/',
@@ -350,6 +356,7 @@ describe('ODP Service and Collection commands', () => {
     expect(lastFrame()).toContain('get-collection (authentication required)');
     expect(lastFrame()).toContain('AEP');
     expect(lastFrame()).toContain('MPP: InFlow, Tempo (authentication required)');
+    expect(lastFrame()).toContain('x402: Arc, Monad');
     expect(lastFrame()).toContain('MCP endpoints');
     expect(lastFrame()).toContain('Catalog');
     expect(lastFrame()).toContain('Streamable HTTP');

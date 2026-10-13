@@ -117,6 +117,16 @@ export const depositAddressesHappy = http.get(`${BASE}/v1/deposit-addresses`, ()
         blockchain: 'TEMPO',
         currencies: ['USDC'],
       },
+      {
+        address: '0x2222222222222222222222222222222222222222',
+        blockchain: 'ARC',
+        currencies: ['USDC'],
+      },
+      {
+        address: '0x3333333333333333333333333333333333333333',
+        blockchain: 'MONAD',
+        currencies: ['USDC'],
+      },
     ],
     unconfigured: [{ blockchain: 'SOLANA', currencies: ['USDC'] }],
   }),

@@ -53,9 +53,9 @@
     "@inflowpayai/mpp-buyer": "^0.8.1",
     "@inflowpayai/x402": "^0.12.0",
     "@inflowpayai/x402-buyer": "^0.11.1",
-    "@offering-protocol/agent": "^0.4.5",
-    "@offering-protocol/core": "^0.3.8",
-    "@offering-protocol/directory": "^0.4.0",
+    "@offering-protocol/agent": "^0.4.6",
+    "@offering-protocol/core": "^0.4.0",
+    "@offering-protocol/directory": "^0.4.2",
     "@x402/core": "^2.27.0"
   },
   "devDependencies": {
@@ -64,9 +64,9 @@
     "@inflowpayai/mpp-buyer": "^0.8.1",
     "@inflowpayai/x402": "^0.12.0",
     "@inflowpayai/x402-buyer": "^0.11.1",
-    "@offering-protocol/agent": "^0.4.5",
-    "@offering-protocol/core": "^0.3.8",
-    "@offering-protocol/directory": "^0.4.0",
+    "@offering-protocol/agent": "^0.4.6",
+    "@offering-protocol/core": "^0.4.0",
+    "@offering-protocol/directory": "^0.4.2",
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^2.1.0",
     "@x402/core": "^2.27.0"

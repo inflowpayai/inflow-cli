@@ -84,6 +84,8 @@ describe('Inflow augmented surface', () => {
         blockchain: 'TEMPO',
         currencies: ['USDC'],
       },
+      { address: '0x2222222222222222222222222222222222222222', blockchain: 'ARC', currencies: ['USDC'] },
+      { address: '0x3333333333333333333333333333333333333333', blockchain: 'MONAD', currencies: ['USDC'] },
     ]);
     expect(out.unconfigured).toEqual([{ blockchain: 'SOLANA', currencies: ['USDC'] }]);
   });
