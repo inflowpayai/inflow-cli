@@ -1,5 +1,24 @@
 # @inflowpayai/inflow
 
+## 0.14.2
+
+### Patch Changes
+
+- [#167](https://github.com/inflowpayai/inflow-cli/pull/167)
+  [`403c509`](https://github.com/inflowpayai/inflow-cli/commit/403c509bd0c6e82a55825884217436f346b837fa) Thanks
+  [@nkavian](https://github.com/nkavian)! - Support Arc and Monad payment-option labels and filters in directory and ODP
+  discovery.
+
+- [#166](https://github.com/inflowpayai/inflow-cli/pull/166)
+  [`30ffc05`](https://github.com/inflowpayai/inflow-cli/commit/30ffc053d2512e0a2f0aa121da1fe6ef5241a2ba) Thanks
+  [@nkavian](https://github.com/nkavian)! - Disable foundation token allowlists and spending caps on CLI-owned x402
+  buyer clients.
+
+- [#167](https://github.com/inflowpayai/inflow-cli/pull/167)
+  [`403c509`](https://github.com/inflowpayai/inflow-cli/commit/403c509bd0c6e82a55825884217436f346b837fa) Thanks
+  [@nkavian](https://github.com/nkavian)! - Use the Offering Protocol production Directory API through
+  @offering-protocol/directory 0.4.2.
+
 ## 0.14.1
 
 ### Patch Changes
