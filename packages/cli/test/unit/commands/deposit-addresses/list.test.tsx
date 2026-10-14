@@ -76,7 +76,18 @@ describe('DepositAddressesList — render lifecycle', () => {
   });
 
   it('renders header + separator + one row per configured address via the canonical table', async () => {
-    const resource = resourceStub(() => Promise.resolve({ configured: [SOLANA, BASE, TEMPO], unconfigured: [] }));
+    const resource = resourceStub(() =>
+      Promise.resolve({
+        configured: [
+          SOLANA,
+          BASE,
+          TEMPO,
+          { blockchain: 'ARC', address: '0x2222222222222222222222222222222222222222', currencies: ['USDC'] },
+          { blockchain: 'MONAD', address: '0x3333333333333333333333333333333333333333', currencies: ['USDC'] },
+        ],
+        unconfigured: [],
+      }),
+    );
     const { lastFrame, unmount } = mount({
       depositAddressResource: resource,
       onComplete: NOOP,
@@ -93,6 +104,9 @@ describe('DepositAddressesList — render lifecycle', () => {
     expect(frame).toContain('SOLANA');
     expect(frame).toContain('BASE');
     expect(frame).toContain('TEMPO');
+    expect(frame).toContain('ARC');
+    expect(frame).toContain('MONAD');
+    expect(frame).not.toContain('AUSDC');
     expect(frame).toContain(SOLANA.address);
     expect(frame).toContain(BASE.address);
     expect(frame).toContain(TEMPO.address);

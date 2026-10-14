@@ -19,9 +19,11 @@ describe('DepositAddressResource', () => {
       accessToken: 'tk',
     });
     const out = await r.list();
-    expect(out.configured).toHaveLength(2);
+    expect(out.configured).toHaveLength(4);
     expect(out.configured[0]?.blockchain).toBe('BASE');
     expect(out.configured[1]?.blockchain).toBe('TEMPO');
+    expect(out.configured[2]).toMatchObject({ blockchain: 'ARC', currencies: ['USDC'] });
+    expect(out.configured[3]).toMatchObject({ blockchain: 'MONAD', currencies: ['USDC'] });
     expect(out.unconfigured[0]?.currencies).toEqual(['USDC']);
   });
 

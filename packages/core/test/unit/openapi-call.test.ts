@@ -139,39 +139,42 @@ describe('OpenAPI operation calls', () => {
     });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
-  it('reports unadvertised payment from the runtime x402 challenge', async () => {
-    const fetch = vi.fn().mockResolvedValue(
-      new Response('pay', {
+  it.each(['eip155:8453', 'eip155:5042', 'eip155:5042002', 'eip155:143', 'eip155:10143'])(
+    'hands off the runtime x402 challenge on %s without paying',
+    async (network) => {
+      const fetch = vi.fn().mockResolvedValue(
+        new Response('pay', {
+          status: 402,
+          headers: {
+            'payment-required': Buffer.from(
+              JSON.stringify({
+                x402Version: 2,
+                accepts: [
+                  {
+                    scheme: 'exact',
+                    network,
+                    amount: '10',
+                    asset: 'usdc',
+                    payTo: 'seller',
+                    maxTimeoutSeconds: 60,
+                  },
+                ],
+                resource: { url: 'https://example.com/search' },
+              }),
+            ).toString('base64'),
+          },
+        }),
+      );
+      expect(await callOpenApiOperation(await document({ responses: { '402': {} } }), input, fetch)).toMatchObject({
+        sent: true,
         status: 402,
-        headers: {
-          'payment-required': Buffer.from(
-            JSON.stringify({
-              x402Version: 2,
-              accepts: [
-                {
-                  scheme: 'exact',
-                  network: 'eip155:8453',
-                  amount: '10',
-                  asset: 'usdc',
-                  payTo: 'seller',
-                  maxTimeoutSeconds: 60,
-                },
-              ],
-              resource: { url: 'https://example.com/search' },
-            }),
-          ).toString('base64'),
-        },
-      }),
-    );
-    expect(await callOpenApiOperation(await document({ responses: { '402': {} } }), input, fetch)).toMatchObject({
-      sent: true,
-      status: 402,
-      outcome: 'payment-required',
-      payment: { protocols: ['x402'] },
-      next: [{ command: ['x402', 'pay'], options: { data: input.data, method: 'POST' } }],
-    });
-    expect(fetch).toHaveBeenCalledTimes(1);
-  });
+        outcome: 'payment-required',
+        payment: { protocols: ['x402'] },
+        next: [{ command: ['x402', 'pay'], options: { data: input.data, method: 'POST' } }],
+      });
+      expect(fetch).toHaveBeenCalledTimes(1);
+    },
+  );
   it('recognizes a real MPP challenge rendered by the SDK', async () => {
     const value = renderChallengeHeader({
       id: 'challenge',

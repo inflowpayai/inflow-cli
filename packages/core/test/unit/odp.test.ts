@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createTapFetch, Inflow } from '../../src/index.js';
-import type { ICliCapabilitiesResource, ITapResource } from '../../src/index.js';
+import type { DirectoryServiceFilters, ICliCapabilitiesResource, ITapResource } from '../../src/index.js';
 
 const serviceDocument = {
   odp_version: '1.0',
@@ -13,6 +13,7 @@ const serviceDocument = {
     { authentication: 'not-required', name: 'list-offerings' },
   ],
   http: { endpoint_base: '/odp' },
+  protocols: { payments: [{ name: 'x402', authentication: 'not-required', options: ['arc', 'monad'] }] },
 };
 
 describe('Inflow.odp', () => {
@@ -25,7 +26,10 @@ describe('Inflow.odp', () => {
       source: { type: 'odp', url: 'https://compute.example/.well-known/odp', x402_discovery: false },
       service_origin: 'https://compute.example',
       indexed_at: stamp,
-      protocols: { enrollment: [{ name: 'aep' }], payments: [{ name: 'mpp', authentication: 'required' }] },
+      protocols: {
+        enrollment: [{ name: 'aep' }],
+        payments: [{ name: 'x402', authentication: 'not-required', options: ['arc', 'monad'] }],
+      },
     };
     const fetch: typeof globalThis.fetch = (input, init) => {
       const request = new Request(input, init);
@@ -56,7 +60,8 @@ describe('Inflow.odp', () => {
     };
     const resource = new Inflow({ environment, fetch }).odp;
     const items = [];
-    for await (const item of resource.search({ query: 'compute' }).items) items.push(item);
+    const filters: DirectoryServiceFilters = { payments: [{ name: 'x402', options: ['arc', 'monad'] }] };
+    for await (const item of resource.search({ query: 'compute', filters }).items) items.push(item);
     expect(items[0]).toMatchObject({
       type: 'service',
       service: { protocols: service.protocols },
@@ -68,15 +73,16 @@ describe('Inflow.odp', () => {
     for await (const page of resource.continueSearch('/v1/directory/search?cursor=opaque', { maxPages: 1 }).pages)
       pages.push(page);
     expect(pages[0]?.items).toEqual(items);
-    await expect(resource.suggest({ prefix: 'om' })).resolves.toEqual(['Compute']);
-    const origin = environment === 'sandbox' ? 'https://sandbox.inflowpay.ai' : 'https://api.inflowpay.ai';
+    await expect(resource.suggest({ prefix: 'om', filters })).resolves.toEqual(['Compute']);
+    const origin =
+      environment === 'sandbox' ? 'https://sandbox.inflowpay.ai' : 'https://directory.offeringprotocol.org';
     expect(calls.map((request) => [request.url, request.method])).toEqual([
       [`${origin}/v1/directory/search`, 'POST'],
       [`${origin}/v1/directory/search?cursor=opaque`, 'GET'],
       [`${origin}/v1/directory/suggestions`, 'POST'],
     ]);
-    expect(await calls[0]?.json()).toEqual({ query: 'compute' });
-    expect(await calls[2]?.json()).toEqual({ prefix: 'om' });
+    expect(await calls[0]?.json()).toEqual({ query: 'compute', filters });
+    expect(await calls[2]?.json()).toEqual({ prefix: 'om', filters });
     expect(calls.every((request) => !request.headers.has('authorization'))).toBe(true);
   });
 
@@ -149,6 +155,7 @@ describe('Inflow.odp', () => {
 
     expect(calls[0]?.url).toBe('https://compute.example/.well-known/odp');
     expect(inspection.document.name).toBe('Compute');
+    expect(inspection.capabilities.payments).toEqual(serviceDocument.protocols.payments);
     const service = inflow.odp.service({ serviceUrl: 'https://compute.example' });
     const offerings = [];
     for await (const offering of service.listOfferings().items) offerings.push(offering);

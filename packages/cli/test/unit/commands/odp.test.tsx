@@ -56,6 +56,35 @@ function failingSequence(): ReturnType<IOdpResource['search']> {
 }
 
 describe('Directory commands', () => {
+  it.each([
+    { command: 'search', option: 'arc' },
+    { command: 'search', option: 'monad' },
+    { command: 'suggest', option: 'arc' },
+    { command: 'suggest', option: 'monad' },
+  ] as const)('passes the $option payment filter through $command', async ({ command, option }) => {
+    const search = vi.fn(() => sequence({ items: [] }));
+    const suggest = vi.fn(() => Promise.resolve([]));
+    await createDirectoryCli({ search, suggest, continueSearch: vi.fn() }).serve(
+      [command, 'compute', '--payment', `x402:${option}`, '--format', 'json'],
+      { exit: vi.fn(), stdout: vi.fn() },
+    );
+    expect(command === 'search' ? search : suggest).toHaveBeenCalledWith({
+      [command === 'search' ? 'query' : 'prefix']: 'compute',
+      filters: { payments: [{ name: 'x402', options: [option] }] },
+    });
+    const frame = render(
+      <SearchView
+        page={{
+          items: [],
+          facets: {
+            payment_options: [{ value: { name: 'x402', option }, count: 1 }],
+          },
+        }}
+      />,
+    ).lastFrame();
+    expect(frame).toContain(option === 'arc' ? 'Arc' : 'Monad');
+  });
+
   it('renders mixed identities without attribution and preserves metadata in JSON', async () => {
     const service: DirectoryService & {
       service_id: string;

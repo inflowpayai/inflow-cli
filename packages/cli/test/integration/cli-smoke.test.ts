@@ -764,9 +764,16 @@ describe('cli smoke', () => {
     expect(`${result.stdout}${result.stderr}`).toContain('DECODE_FAILED');
   });
 
-  it.each(['mpp', 'x402'] as const)(
-    '%s pay completes approval polling and paid replay through the built CLI',
-    async (protocol) => {
+  it.each([
+    { protocol: 'mpp', network: 'inflow:1', asset: 'USD' },
+    { protocol: 'x402', network: 'inflow:1', asset: 'USD' },
+    { protocol: 'x402', network: 'eip155:5042', asset: '0x3600000000000000000000000000000000000000' },
+    { protocol: 'x402', network: 'eip155:5042002', asset: '0x3600000000000000000000000000000000000000' },
+    { protocol: 'x402', network: 'eip155:143', asset: '0x754704bc059f8c67012fed69bc8a327a5aafb603' },
+    { protocol: 'x402', network: 'eip155:10143', asset: '0x534b2f3a21130d7a60830c2df862319e593943a3' },
+  ] as const)(
+    '$protocol pay on $network completes approval polling and paid replay through the built CLI',
+    async ({ protocol, network, asset }) => {
       const transactionId = '30b929bc-6825-49bc-b279-6c859a81fa15';
       const approvalId = 'b5c8541c-635d-4682-887b-c0bed502d9db';
       const apiKey = 'test-platform-api-key';
@@ -785,13 +792,19 @@ describe('cli smoke', () => {
         payload: { approvalId, transactionId, type: 'balance' },
       });
       const accept = {
-        scheme: 'balance',
-        network: 'inflow:1',
-        amount: '1',
-        asset: 'USD',
-        payTo: '1c239d45-3cc2-4d76-95bc-967c47e19c32',
+        scheme: network === 'inflow:1' ? 'balance' : 'exact',
+        network,
+        amount: network === 'inflow:1' ? '1' : '25000000',
+        asset,
+        payTo:
+          network === 'inflow:1'
+            ? '1c239d45-3cc2-4d76-95bc-967c47e19c32'
+            : '0x2222222222222222222222222222222222222222',
         maxTimeoutSeconds: 60,
-        extra: {},
+        extra:
+          network === 'inflow:1'
+            ? {}
+            : { assetTransferMethod: 'eip3009', assetName: 'USDC', name: 'USDC', version: '2' },
       } satisfies PaymentRequired['accepts'][number];
       const paymentPayload = { x402Version: 2, accepted: accept, payload: { transactionId } };
       const encodedPayload = Buffer.from(JSON.stringify(paymentPayload)).toString('base64');
@@ -828,7 +841,7 @@ describe('cli smoke', () => {
               res.writeHead(401);
               res.end('{}');
             } else if (protocol === 'x402' && req.method === 'GET' && req.url === '/v1/transactions/x402-supported') {
-              res.end(JSON.stringify({ kinds: [{ scheme: 'balance', network: 'inflow:1', x402Version: 2 }] }));
+              res.end(JSON.stringify({ kinds: [{ scheme: accept.scheme, network, x402Version: 2 }] }));
             } else if (req.method === 'POST' && req.url === `/v1/transactions/${protocol}`) {
               events.push('create');
               res.end(
@@ -901,6 +914,7 @@ describe('cli smoke', () => {
                   '5',
                   '--timeout',
                   '5',
+                  ...(protocol === 'x402' ? ['--network', network, '--asset', asset] : []),
                 ],
                 { INFLOW_API_KEY: apiKey, INFLOW_BASE_URL: new URL(platformUrl).origin },
                 10_000,
@@ -915,7 +929,7 @@ describe('cli smoke', () => {
                   approval_id: approvalId,
                   ...(protocol === 'mpp'
                     ? { state: 'pending', challenge: { id: challenge.id } }
-                    : { scheme: 'balance', network: 'inflow:1', resource: sellerUrl }),
+                    : { scheme: accept.scheme, network, resource: sellerUrl }),
                 },
                 {
                   outcome: 'paid',
@@ -928,8 +942,8 @@ describe('cli smoke', () => {
                     ? { challenge_id: challenge.id, intent: 'charge', credential }
                     : {
                         approval_id: approvalId,
-                        scheme: 'balance',
-                        network: 'inflow:1',
+                        scheme: accept.scheme,
+                        network,
                         encoded_payload: encodedPayload,
                       }),
                 },

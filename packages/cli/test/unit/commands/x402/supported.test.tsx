@@ -18,6 +18,10 @@ describe('SupportedView', () => {
             makeResponse([
               { scheme: 'balance', network: 'inflow:1', x402Version: 2 },
               { scheme: 'exact', network: 'eip155:8453', x402Version: 2 },
+              { scheme: 'exact', network: 'eip155:5042', x402Version: 2 },
+              { scheme: 'exact', network: 'eip155:5042002', x402Version: 2 },
+              { scheme: 'exact', network: 'eip155:143', x402Version: 2 },
+              { scheme: 'exact', network: 'eip155:10143', x402Version: 2 },
             ]),
           )
         }
@@ -32,6 +36,9 @@ describe('SupportedView', () => {
     expect(frame).toContain('inflow:1');
     expect(frame).toContain('exact');
     expect(frame).toContain('eip155:8453');
+    for (const network of ['eip155:5042', 'eip155:5042002', 'eip155:143', 'eip155:10143']) {
+      expect(frame).toContain(network);
+    }
     expect(frame).toMatch(/-{6,}\s+-{7,}/);
     expect(frame).not.toContain('Supported schemes');
     unmount();
