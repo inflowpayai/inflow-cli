@@ -1,5 +1,14 @@
 # @inflowpayai/inflow
 
+## 0.14.3
+
+### Patch Changes
+
+- [#170](https://github.com/inflowpayai/inflow-cli/pull/170)
+  [`f5690d8`](https://github.com/inflowpayai/inflow-cli/commit/f5690d80a49c2b36d0532299dbbae1ec81ce4c15) Thanks
+  [@nkavian](https://github.com/nkavian)! - Upgrade the AEP Agent SDK to 0.6.0 for protected-resource credential
+  selection, redirect isolation, and pending-approval handling fixes.
+
 ## 0.14.2
 
 ### Patch Changes
