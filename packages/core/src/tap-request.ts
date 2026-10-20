@@ -202,6 +202,8 @@ async function signedHeaders(
   input: TapHttpRequest,
 ): Promise<{ headers: Headers; signature?: TapSignatureResponse }> {
   const headers = new Headers(input.headers);
+  const url = new URL(input.url);
+  if (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) return { headers };
   if (!tap.canSign()) return { headers };
   if (!(await capabilities.has(TAP_FEATURE, input.signal === undefined ? {} : { signal: input.signal }))) {
     return { headers };

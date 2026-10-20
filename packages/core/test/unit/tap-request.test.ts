@@ -64,6 +64,85 @@ function tap(): {
 afterEach(() => vi.restoreAllMocks());
 
 describe('TAP request transport', () => {
+  it('rechecks TAP signing when loopback redirects to a remote destination', async () => {
+    const signer = tap();
+    signer.sign.mockRejectedValue(new Error('signing failed'));
+    const fetch = vi.fn<typeof globalThis.fetch>(() =>
+      Promise.resolve(
+        new Response(null, {
+          status: 307,
+          headers: { Location: 'https://seller.example/resource' },
+        }),
+      ),
+    );
+    const transport = createTapRequestTransport({ capabilities: capabilities(true), fetch, tap: signer.resource });
+    await expect(
+      transport.request({ url: 'http://localhost:3002', method: 'GET', operation: 'mpp.inspect' }),
+    ).rejects.toMatchObject({ name: 'TapSigningError' });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(signer.sign).toHaveBeenCalledWith(
+      expect.objectContaining({ targetUrl: 'https://seller.example/resource' }),
+      {},
+    );
+  });
+
+  it.each(['http://localhost:3002', 'http://127.0.0.1:3002', 'http://[::1]:3002'])(
+    'sends loopback HTTP unsigned through both transports: %s',
+    async (url) => {
+      const signer = tap();
+      signer.sign.mockRejectedValue(new InflowApiError('The TAP target URL is invalid.', { status: 400 }));
+      const capability = capabilities(true);
+      const hasCapability = vi.spyOn(capability, 'has');
+      const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(new Response('local')));
+      const options = { capabilities: capability, fetch, tap: signer.resource };
+      for (const method of ['GET', 'POST']) {
+        const body = method === 'POST' ? '{}' : undefined;
+        const headers = { 'Content-Type': 'application/json', Authorization: 'Payment test-credential' };
+        await createTapFetch({ ...options, operation: 'mpp.inspect' })(url, {
+          method,
+          ...(body === undefined ? {} : { body }),
+          headers,
+        });
+        await createTapRequestTransport(options).request({
+          url,
+          method,
+          ...(body === undefined ? {} : { body }),
+          headers,
+          operation: 'mpp.payment',
+        });
+      }
+      expect(fetch).toHaveBeenCalledTimes(4);
+      for (const [, init] of fetch.mock.calls) {
+        const headers = new Headers(init?.headers);
+        expect(headers.get('Authorization')).toBe('Payment test-credential');
+        expect(headers.has('Signature')).toBe(false);
+        expect(headers.has('Signature-Input')).toBe(false);
+      }
+      expect(signer.sign).not.toHaveBeenCalled();
+      expect(signer.finalize).not.toHaveBeenCalled();
+      expect(hasCapability).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    'https://localhost:3002',
+    'http://localhost.example:3002',
+    'http://192.168.1.2:3002',
+    'https://seller.example',
+  ])('does not bypass signing failures outside loopback HTTP: %s', async (url) => {
+    const signer = tap();
+    signer.sign.mockRejectedValue(new Error('signing failed'));
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const options = { capabilities: capabilities(true), fetch, tap: signer.resource };
+    await expect(createTapFetch({ ...options, operation: 'mpp.inspect' })(url)).rejects.toMatchObject({
+      name: 'TapSigningError',
+    });
+    await expect(
+      createTapRequestTransport(options).request({ url, method: 'GET', operation: 'mpp.payment' }),
+    ).rejects.toMatchObject({ name: 'TapSigningError' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('does not transmit requests when credential access or body signing fails', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const signer = tap();

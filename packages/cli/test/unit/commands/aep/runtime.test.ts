@@ -1,12 +1,16 @@
 import {
   AepStorage,
   Inflow,
+  InflowApiError,
   MemoryStorage,
   PaymentInspectionBlockedError,
   runInspectPipeline,
   runMppInspectPipeline,
+  runMppPayPipeline,
+  type MppPayEvent,
   type SellerAuthenticationError,
 } from '@inflowpayai/inflow-core';
+import { MppClient } from '@inflowpayai/mpp';
 import {
   AepCommandError,
   type AepAgentOptions,
@@ -119,6 +123,49 @@ afterEach(() => {
 });
 
 describe('AEP-aware seller transport', () => {
+  it('runs the MPP pay pipeline against loopback without calling TAP or creating a payment for HTTP 200', async () => {
+    const client = inflow();
+    vi.spyOn(client.tap, 'canSign').mockReturnValue(true);
+    const sign = vi
+      .spyOn(client.tap, 'sign')
+      .mockRejectedValue(new InflowApiError('The TAP target URL is invalid.', { status: 400 }));
+    vi.spyOn(client.capabilities, 'has').mockResolvedValue(true);
+    const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(new Response('local test', { status: 200 })));
+    const sellerTransport = createTapAepAwareSellerTransport({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      fetch,
+      inflow: client,
+      inspectionOperation: 'mpp.inspect',
+      paymentOperation: 'mpp.payment',
+      timeout: 30,
+    });
+    const paymentClient = new MppClient({ apiKey: 'test', baseUrl: 'https://platform.example' });
+    const create = vi.spyOn(paymentClient, 'createTransaction');
+    const emit = vi.fn<(event: MppPayEvent) => void>();
+    await runMppPayPipeline(
+      {
+        client: paymentClient,
+        apiBaseUrl: 'https://platform.example',
+        url: 'http://localhost:3002',
+        probeOptions: { method: 'GET', headers: {} },
+        sellerTransport,
+        showBody: true,
+        interval: 0,
+        maxAttempts: 1,
+        timeout: 30,
+      },
+      emit,
+    );
+    expect(emit.mock.calls[0]?.[0]).toMatchObject({
+      type: 'short-circuited',
+      result: { outcome: 'no-payment-required', status: 200 },
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(sign).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('leaves redirect acceptance to the AEP transport after signing one request attempt', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()
