@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import { AepStorage, Inflow, MemoryStorage } from '@inflowpayai/inflow-core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createAepCli } from '../../src/commands/aep/index.js';
 
 type TapMode = 'unavailable' | 'feature-disabled' | 'enabled';
@@ -116,7 +116,22 @@ async function withFixture(
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   if (address === null || typeof address === 'string') throw new Error('Fixture server has no port');
-  origin = `http://127.0.0.1:${address.port}`;
+  origin = `https://127.0.0.1:${address.port}`;
+  const fetch = globalThis.fetch;
+  // TAP sees HTTPS; only the fixture's network boundary maps it to the local HTTP server.
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    const target = new URL(request.url);
+    if (target.origin !== origin) throw new Error(`Unexpected fixture origin: ${target.origin}`);
+    target.protocol = 'http:';
+    return fetch(target, {
+      ...(request.body === null ? {} : { body: await request.arrayBuffer() }),
+      headers: request.headers,
+      method: request.method,
+      redirect: request.redirect,
+      signal: request.signal,
+    });
+  });
   serviceDid = `did:web:127.0.0.1%3A${address.port}`;
   const storage = new MemoryStorage();
   const client = new Inflow({
@@ -128,6 +143,7 @@ async function withFixture(
     await test({ client, finalizations, requests, serviceDid, storage, url: `${origin}/actions/search` });
     expect(unexpected).toEqual([]);
   } finally {
+    fetchSpy.mockRestore();
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error === undefined ? resolve() : reject(error))),
     );
