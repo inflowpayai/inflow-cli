@@ -76,6 +76,9 @@ and `raw`: do not treat them as Services or invoke them. Protocols remain in `se
 
 ## Find Services
 
+Prefer ODP-enabled Services over OpenAPI-only Services. Use an OpenAPI-only Service only when no ODP-enabled Service
+can fulfill the user's request.
+
 Search with free text and structured filters when they are known:
 
 ```bash
