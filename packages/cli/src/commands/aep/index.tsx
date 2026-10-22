@@ -646,6 +646,7 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
         credentialStore: storage.credentials,
         fetch,
         identityProvider: {
+          ...platform,
           getOrCreateIdentity: async (input) => {
             const recovered = await platform.findIdentityByServiceDid(input.serviceDid);
             if (recovered === undefined) throw new MissingIdentityError();
@@ -777,6 +778,15 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
     );
   } catch (error) {
     closeAepRenderer(waitingView);
+    if (
+      error instanceof AepPendingSignResolverError &&
+      (error.cause instanceof ApprovalDeniedError ||
+        error.cause instanceof ApprovalCancelledError ||
+        error.cause instanceof ApprovalTimeoutError ||
+        error.cause instanceof ApprovalServerError)
+    ) {
+      error = error.cause;
+    }
     if (
       error instanceof MissingIdentityError ||
       (error instanceof AepCommandError &&

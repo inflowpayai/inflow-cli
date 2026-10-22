@@ -141,6 +141,7 @@ export class InflowApiClient {
     }
 
     let response: Response;
+    let rawBody: string;
     try {
       const init: RequestInit = {
         method: opts.method,
@@ -151,6 +152,7 @@ export class InflowApiClient {
         init.body = opts.body;
       }
       response = await this.fetchImpl(opts.url, init);
+      rawBody = await response.text();
     } catch (error) {
       throw new InflowTransportError(`Request failed: ${opts.method} ${opts.url}`, { cause: error });
     } finally {
@@ -158,7 +160,6 @@ export class InflowApiClient {
       opts.externalSignal?.removeEventListener('abort', onExternalAbort);
     }
 
-    const rawBody = await response.text();
     let data: unknown = null;
     if (rawBody.length > 0) {
       try {

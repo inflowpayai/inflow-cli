@@ -2,13 +2,15 @@ import { Socket } from 'node:net';
 import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import {
   __testing,
   createSameUserVaultSocketPeerVerifier,
+  createVaultPeerVerificationConfig,
   createVaultSocketPeerVerifier,
   inspectSameUserVaultListener,
   shouldRequireVaultPeerVerification,
@@ -16,6 +18,7 @@ import {
   type VaultSocketPeer,
   type VaultPeerVerificationConfig,
   verifyVaultNativeModule,
+  verifyTransferredVaultSocketPeer,
   verifyTransferredVaultSocketPeerWithDependencies,
 } from '../../../src/secure-storage/vault-peer-verifier.js';
 
@@ -26,6 +29,77 @@ describe('vault peer verifier', () => {
   afterEach(() => {
     Object.defineProperty(process, 'platform', { value: originalPlatform });
     Object.defineProperty(process, 'execPath', { value: originalExecPath });
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    [
+      'darwin',
+      '/Applications/InFlow.app/Contents/MacOS/inflow',
+      '/Applications/InFlow.app/Contents/Resources/app/native/vault_peer_darwin.node',
+      true,
+    ],
+    ['linux', '/opt/inflow/bin/inflow', '/opt/inflow/lib/inflow/native/vault_peer_linux.node', false],
+  ] as const)(
+    'resolves the packaged %s native module with its embedded digest',
+    (platform, executable, native, signature) => {
+      Object.defineProperty(process, 'platform', { value: platform });
+      Object.defineProperty(process, 'execPath', { value: executable });
+      const digest = 'c'.repeat(64);
+      vi.stubGlobal('__VAULT_PEER_NATIVE_SHA256__', digest);
+      const config = createVaultPeerVerificationConfig(
+        {},
+        dependencies({
+          currentUserId: 1000,
+          peer: { path: executable, pid: 123, uid: 1000 },
+          realpaths: new Map([[executable, executable]]),
+        }),
+      );
+      expect(config).toMatchObject({
+        expectedExecutablePath: executable,
+        expectedNativeModuleSha256: digest,
+        nativeModulePath: native,
+        requireSignature: signature,
+        requireSameUser: true,
+      });
+    },
+  );
+
+  it('resolves a build-embedded native path relative to the verifier module', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    Object.defineProperty(process, 'execPath', { value: '/test/node' });
+    vi.stubGlobal('__VAULT_PEER_NATIVE_RELATIVE_PATH__', '../native/custom.node');
+    const config = createVaultPeerVerificationConfig(
+      {},
+      dependencies({
+        currentUserId: 1000,
+        peer: { path: '/test/node', pid: 1, uid: 1000 },
+        realpaths: new Map([['/test/node', '/test/node']]),
+      }),
+    );
+    const modulePath = fileURLToPath(new URL('../../../src/secure-storage/vault-peer-verifier.ts', import.meta.url));
+    expect(config.nativeModulePath).toBe(resolve(dirname(modulePath), '../native/custom.node'));
+    expect(config.requireSignature).toBe(false);
+  });
+
+  it('verifies the native module before checking a transferred socket attestation', () => {
+    const config = createVaultPeerVerificationConfig();
+    const verify = vi.spyOn(__testing.defaultPeerVerifierDependencies, 'verifyNativeModule');
+    const peer = { path: config.expectedExecutablePath, pid: 123, uid: 1000 };
+    const credentials = vi.fn(() => ({ pid: 123, uid: 1000 }));
+    const load = vi.spyOn(__testing.defaultPeerVerifierDependencies, 'loadNativeModule').mockReturnValue({
+      peerCredentials: credentials,
+      peerInfo: () => peer,
+    });
+    const socket = socketWithFd(42);
+    expect(verifyTransferredVaultSocketPeer(socket, peer)).toEqual(peer);
+    expect(verify).toHaveBeenCalledWith(config.nativeModulePath, expect.objectContaining({ requireSignature: false }));
+    expect(load).toHaveBeenCalledWith(config.nativeModulePath);
+    expect(verify.mock.invocationCallOrder[0]).toBeLessThan(load.mock.invocationCallOrder[0] ?? 0);
+    expect(credentials).toHaveBeenCalledWith(42);
+    credentials.mockReturnValue({ pid: 124, uid: 1000 });
+    expect(() => verifyTransferredVaultSocketPeer(socket, peer)).toThrow('Vault peer verification failed.');
   });
 
   it('requires peer verification for packaged macOS app execution', () => {

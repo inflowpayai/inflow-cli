@@ -4,6 +4,20 @@ import { Inflow, MemoryStorage, createTapFetch } from '../../../src/index.js';
 afterEach(() => vi.restoreAllMocks());
 
 describe('TAP resource', () => {
+  it.each([
+    [{ detail: 'Signing unavailable' }, 'Signing unavailable'],
+    [{ code: '', detail: 'Signing unavailable' }, 'Signing unavailable'],
+    [{ code: '', detail: '' }, 'Failed to issue TAP signature'],
+    [{ code: 7, detail: null }, 'Failed to issue TAP signature'],
+  ])('retains useful problem details without inventing a code: %j', async (body, message) => {
+    const inflow = new Inflow({
+      accessToken: 'token',
+      fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json(body, { status: 403 })),
+    });
+    const result = inflow.tap.sign({ method: 'GET', operation: 'odp.browse', targetUrl: 'https://seller.example/' });
+    await expect(result).rejects.toMatchObject({ status: 403 });
+    await expect(result).rejects.toThrow(message);
+  });
   it('uses unsigned requests for missing device credentials and API keys without calling platform APIs', async () => {
     const storage = new MemoryStorage();
     for (const options of [{}, { authStorage: storage }, { apiKey: 'key', authStorage: storage }]) {

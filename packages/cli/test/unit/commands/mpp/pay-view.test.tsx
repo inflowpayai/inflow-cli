@@ -6,8 +6,11 @@ import {
   type MppReceipt,
   renderChallengeHeader,
 } from '@inflowpayai/mpp';
-import type { MppPayPipelineDeps } from '@inflowpayai/inflow-core';
+import type { MppPayPhase, MppPayPipelineDeps } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import React from 'react';
@@ -48,6 +51,149 @@ function deps(): MppPayPipelineDeps {
 }
 
 describe('PayView', () => {
+  it.each(['stop', 'complete'] as const)(
+    'handles bank verification without creating a second payment: %s',
+    async (action) => {
+      const transactionId = '11111111-1111-4111-8111-111111111111';
+      const verificationUrl = `https://mpp.test/transactions/${transactionId}/verify/`;
+      const offered = {
+        ...challenge(),
+        request: encode({ amount: '1', currency: 'USD', methodDetails: { rail: 'instrument' } }),
+      };
+      const credential = encode({ challenge: offered, payload: { transactionId }, source: 'did:web:buyer.test' });
+      const createPayment = vi.fn(() => HttpResponse.json({ state: 'ready', credential, transactionId }));
+      let verified = false;
+      let paidRequests = 0;
+      server.use(
+        http.get(SELLER, ({ request }) => {
+          if (!request.headers.has('Authorization'))
+            return new HttpResponse(null, {
+              status: 402,
+              headers: { 'WWW-Authenticate': renderChallengeHeader(offered) },
+            });
+          paidRequests += 1;
+          return new HttpResponse(verified ? 'Purchased content' : 'Verification required', {
+            status: verified ? 200 : 402,
+          });
+        }),
+        http.post(`${INFLOW}/v1/transactions/mpp`, createPayment),
+        http.get(`${INFLOW}/v1/transactions/${transactionId}`, () =>
+          HttpResponse.json(
+            verified
+              ? { transactionId, status: 'SETTLED' }
+              : { transactionId, status: 'PENDING', nextAction: { type: 'authenticate_card', url: verificationUrl } },
+          ),
+        ),
+      );
+      const onComplete = vi.fn<(phase: MppPayPhase) => void>();
+      const onCancel = vi.fn();
+      const view = render(
+        <PayView
+          url={SELLER}
+          method="GET"
+          deps={{ ...deps(), maxAttempts: 0 }}
+          onComplete={onComplete}
+          onCancel={onCancel}
+        />,
+      );
+      try {
+        await vi.waitFor(() => expect(view.lastFrame()).toContain('Bank verification required'));
+        expect(onComplete).not.toHaveBeenCalled();
+        view.stdin.write('\r');
+        await vi.waitFor(() => expect(openUrl).toHaveBeenCalledWith(verificationUrl));
+        if (action === 'stop') view.stdin.write('\u001b');
+        else verified = true;
+        await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+        expect(onComplete.mock.calls[0]?.[0]).toMatchObject(
+          action === 'stop'
+            ? { kind: 'verification', verification: { waiting: false, reason: 'stopped', transactionId } }
+            : { kind: 'success', result: { transactionId, body: 'Purchased content' } },
+        );
+        expect(createPayment).toHaveBeenCalledOnce();
+        expect(onCancel).not.toHaveBeenCalled();
+        expect(paidRequests).toBe(action === 'stop' ? 1 : 2);
+      } finally {
+        view.unmount();
+      }
+    },
+  );
+
+  it.each([false, true])('saves response bytes without printing them (payment required: %s)', async (paid) => {
+    const directory = await mkdtemp(join(tmpdir(), 'inflow-pay-view-'));
+    const outputFile = join(directory, 'response.bin');
+    const body = new Uint8Array([0, 255, 128, 10]);
+    const createPayment = vi.fn(() => HttpResponse.json({ state: 'ready', credential: 'CRED', transactionId: 'tx-1' }));
+    server.use(
+      http.get(SELLER, ({ request }) => {
+        if (paid && request.headers.get('authorization') === null) {
+          return new HttpResponse(null, {
+            status: 402,
+            headers: { 'WWW-Authenticate': renderChallengeHeader(challenge()) },
+          });
+        }
+        return new HttpResponse(body, { headers: { 'Content-Type': 'application/octet-stream' } });
+      }),
+      http.post(`${INFLOW}/v1/transactions/mpp`, createPayment),
+    );
+    const onComplete = vi.fn<(phase: MppPayPhase) => void>();
+    const view = render(<PayView url={SELLER} method="GET" deps={{ ...deps(), outputFile }} onComplete={onComplete} />);
+    try {
+      await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+      expect(onComplete.mock.calls[0]?.[0]).toMatchObject({
+        kind: paid ? 'success' : 'no-payment-final',
+        result: { outputSavedTo: outputFile, bodySizeBytes: 4 },
+      });
+      expect(await readFile(outputFile)).toEqual(Buffer.from(body));
+      expect(view.lastFrame()).toContain('Saved to:');
+      expect(view.lastFrame()).not.toContain('response body:');
+      expect(createPayment).toHaveBeenCalledTimes(paid ? 1 : 0);
+    } finally {
+      view.unmount();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('allows retrying cancellation after a failed attempt without creating another payment', async () => {
+    const createPayment = vi.fn(() =>
+      HttpResponse.json({ state: 'pending', transactionId: 'tx-1', approvalId: 'ap-9' }),
+    );
+    server.use(
+      http.get(
+        SELLER,
+        () =>
+          new HttpResponse(null, {
+            status: 402,
+            headers: { 'WWW-Authenticate': renderChallengeHeader(challenge()) },
+          }),
+      ),
+      http.post(`${INFLOW}/v1/transactions/mpp`, createPayment),
+    );
+    const onCancel = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(undefined);
+    const onComplete = vi.fn();
+    const view = render(
+      <PayView
+        url={SELLER}
+        method="GET"
+        deps={{ ...deps(), awaitPayment: false }}
+        onCancel={onCancel}
+        onComplete={onComplete}
+      />,
+    );
+    try {
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('Approval required'));
+      view.stdin.write('\u001b');
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('Unable to cancel approval'));
+      expect(onComplete).not.toHaveBeenCalled();
+      view.stdin.write('\u001b');
+      await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+      expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ code: 'APPROVAL_CANCELLED' }));
+      expect(onCancel.mock.calls).toEqual([['ap-9'], ['ap-9']]);
+      expect(createPayment).toHaveBeenCalledOnce();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it.each(['card', 'inflow'])('shows the %s amount while creation is in progress', async (method) => {
     const request =
       method === 'card'
@@ -161,7 +307,7 @@ describe('PayView', () => {
     unmount();
   });
 
-  it('renders the seller-rejected frame when the replay is non-2xx', async () => {
+  it.each([false, true])('renders a seller rejection with response body visibility=%s', async (showBody) => {
     server.use(
       http.get(SELLER, ({ request }) => {
         const auth = request.headers.get('authorization');
@@ -175,9 +321,12 @@ describe('PayView', () => {
         HttpResponse.json({ state: 'ready', credential: 'CRED', transactionId: 'tx-1' }),
       ),
     );
-    const { lastFrame, unmount } = render(<PayView url={SELLER} method="GET" deps={deps()} onComplete={vi.fn()} />);
+    const { lastFrame, unmount } = render(
+      <PayView url={SELLER} method="GET" deps={{ ...deps(), showBody }} onComplete={vi.fn()} />,
+    );
     await new Promise((r) => setTimeout(r, 150));
     expect(lastFrame() ?? '').toContain('not accepted by seller');
+    expect((lastFrame() ?? '').includes('nope')).toBe(showBody);
     unmount();
   });
 
@@ -196,7 +345,8 @@ describe('PayView', () => {
     unmount();
   });
 
-  it('renders the approval-required frame for a pending tx and opens the approval URL on Enter', async () => {
+  it.each([undefined, 'ap-9'])('renders a pending payment with approval ID %s', async (approvalId) => {
+    vi.mocked(openUrl).mockClear();
     server.use(
       http.get(
         SELLER,
@@ -204,7 +354,12 @@ describe('PayView', () => {
           new HttpResponse(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(challenge()) } }),
       ),
       http.post(`${INFLOW}/v1/transactions/mpp`, () =>
-        HttpResponse.json({ state: 'pending', transactionId: 'tx-1', approvalId: 'ap-9', retryAfterSeconds: 5 }),
+        HttpResponse.json({
+          state: 'pending',
+          transactionId: 'tx-1',
+          ...(approvalId === undefined ? {} : { approvalId }),
+          retryAfterSeconds: 5,
+        }),
       ),
     );
     const { lastFrame, stdin, unmount } = render(
@@ -213,10 +368,12 @@ describe('PayView', () => {
     await new Promise((r) => setTimeout(r, 120));
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Approval required');
-    expect(frame).toContain('ap-9');
+    if (approvalId === undefined) expect(frame).not.toContain('Open:');
+    else expect(frame).toContain(approvalId);
     stdin.write('\r');
     await new Promise((r) => setTimeout(r, 120));
-    expect(vi.mocked(openUrl)).toHaveBeenCalledWith(expect.stringContaining('ap-9'));
+    if (approvalId === undefined) expect(openUrl).not.toHaveBeenCalled();
+    else expect(openUrl).toHaveBeenCalledWith(expect.stringContaining(approvalId));
     unmount();
   });
 
@@ -280,43 +437,49 @@ describe('PayView', () => {
     view.unmount();
   });
 
-  it('keeps the approval open when remote cancellation fails', async () => {
-    server.use(
-      http.get(
-        SELLER,
-        () =>
-          new HttpResponse(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(challenge()) } }),
-      ),
-      http.post(`${INFLOW}/v1/transactions/mpp`, () =>
-        HttpResponse.json({ state: 'pending', transactionId: 'tx-1', approvalId: 'ap-9', retryAfterSeconds: 5 }),
-      ),
-    );
-    const onComplete = vi.fn();
-    const view = render(
-      <PayView
-        url={SELLER}
-        method="GET"
-        deps={{ ...deps(), awaitPayment: false }}
-        onCancel={() => Promise.reject(new Error('offline'))}
-        onComplete={onComplete}
-      />,
-    );
+  it.each([false, true])(
+    'keeps the approval open when cancellation is unavailable (missing handler=%s)',
+    async (missingHandler) => {
+      server.use(
+        http.get(
+          SELLER,
+          () =>
+            new HttpResponse(null, {
+              status: 402,
+              headers: { 'WWW-Authenticate': renderChallengeHeader(challenge()) },
+            }),
+        ),
+        http.post(`${INFLOW}/v1/transactions/mpp`, () =>
+          HttpResponse.json({ state: 'pending', transactionId: 'tx-1', approvalId: 'ap-9', retryAfterSeconds: 5 }),
+        ),
+      );
+      const onComplete = vi.fn();
+      const view = render(
+        <PayView
+          url={SELLER}
+          method="GET"
+          deps={{ ...deps(), awaitPayment: false }}
+          {...(missingHandler ? {} : { onCancel: () => Promise.reject(new Error('offline')) })}
+          onComplete={onComplete}
+        />,
+      );
 
-    await vi.waitFor(() => expect(view.lastFrame()).toContain('Approval required'));
-    view.stdin.write('\u001b');
-    await vi.waitFor(() => expect(view.lastFrame()).toContain('Unable to cancel approval'));
-    expect(onComplete).not.toHaveBeenCalled();
-    view.unmount();
-  });
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('Approval required'));
+      view.stdin.write('\u001b');
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('Unable to cancel approval'));
+      expect(onComplete).not.toHaveBeenCalled();
+      view.unmount();
+    },
+  );
 
-  it('shows all recurring terms while subscription approval is pending', async () => {
+  it.each([undefined, 'seller-plan'])('shows recurring terms with seller reference %s', async (externalId) => {
     const subscriptionChallenge: MppChallenge = {
       ...challenge(),
       intent: 'subscription',
       request: encode({
         amount: '12.5',
         currency: 'USD',
-        externalId: 'seller-plan',
+        ...(externalId === undefined ? {} : { externalId }),
         methodDetails: { rail: 'balance' },
         periodCount: 1,
         periodUnit: 'month',
@@ -344,7 +507,8 @@ describe('PayView', () => {
     expect(frame).toContain('recurring amount: 12.5 USD');
     expect(frame).toContain('billing period: every 1 month');
     expect(frame).toContain('expires: 2027-08-01T00:00:00Z');
-    expect(frame).toContain('seller reference: seller-plan');
+    if (externalId === undefined) expect(frame).not.toContain('seller reference:');
+    else expect(frame).toContain('seller reference: seller-plan');
     expect(frame).toContain('Either participant can cancel immediately.');
     unmount();
   });

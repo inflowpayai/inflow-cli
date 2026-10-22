@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { pollAsync } from '../../../src/utils/async-poll.js';
 
 async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
@@ -10,6 +10,53 @@ async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
 }
 
 describe('pollAsync', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('disables the deadline for negative timeout while still enforcing the attempt limit', async () => {
+    vi.useFakeTimers();
+    const fn = vi.fn(() => Promise.resolve('pending'));
+    const result = drain(pollAsync({ fn, isTerminal: () => false, interval: 60, maxAttempts: 3, timeout: -1 }));
+    await vi.runAllTimersAsync();
+    expect(await result).toEqual([
+      { value: 'pending', terminal: false },
+      { value: 'pending', terminal: false },
+      { value: 'pending', terminal: true, reason: 'max_attempts' },
+    ]);
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('accepts a terminal response even when the timeout is zero', async () => {
+    const fn = vi.fn(() => Promise.resolve('ready'));
+    expect(await drain(pollAsync({ fn, isTerminal: () => true, interval: 5, maxAttempts: 0, timeout: 0 }))).toEqual([
+      { value: 'ready', terminal: true },
+    ]);
+    expect(fn).toHaveBeenCalledOnce();
+  });
+
+  it('cancels a sleeping poll without making another request or leaving a timer', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const fn = vi.fn(() => Promise.resolve('pending'));
+    const poll = pollAsync({
+      fn,
+      isTerminal: () => false,
+      interval: 60,
+      maxAttempts: 0,
+      timeout: -1,
+      signal: controller.signal,
+    });
+    expect(await poll.next()).toMatchObject({ value: { value: 'pending', terminal: false } });
+    const pending = poll.next();
+    const rejection = expect(pending).rejects.toThrow('Poll aborted.');
+    controller.abort();
+    await rejection;
+    await vi.runAllTimersAsync();
+    expect(fn).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    expect((await poll.next()).done).toBe(true);
+  });
+
   it('stops immediately when isTerminal returns true on the first call', async () => {
     let calls = 0;
     const results = await drain(
@@ -81,6 +128,7 @@ describe('pollAsync', () => {
     const last = results[results.length - 1];
     expect(last?.terminal).toBe(true);
     expect(last?.reason).toBe('timeout');
+    expect(calls).toBe(1);
   });
 
   it('runs once when interval is <= 0', async () => {

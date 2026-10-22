@@ -2,13 +2,14 @@ import { Buffer } from 'node:buffer';
 import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import type * as nodeFs from 'node:fs';
 import type * as nodeFsPromises from 'node:fs/promises';
-import { createConnection, createServer, type Server, type Socket } from 'node:net';
+import { createConnection, createServer, Socket, type Server } from 'node:net';
 import process from 'node:process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 
 const state = vi.hoisted(() => ({
   nativePeer: { pid: 700, uid: 0 },
+  directoryMode: 0o40755,
   privateExists: true,
   privateKeyBytes: new Uint8Array(),
   publicExists: true,
@@ -41,7 +42,7 @@ vi.mock('node:fs', async (importOriginal) => {
     },
     lstatSync: (filePath: string) => {
       if (filePath === '/var/lib/inflow-broker') {
-        return { isDirectory: () => true, isSymbolicLink: () => false, mode: 0o40755, uid: 0 };
+        return { isDirectory: () => true, isSymbolicLink: () => false, mode: state.directoryMode, uid: 0 };
       }
       if (filePath === '/var/lib/inflow-broker/private.der' || filePath === '/var/lib/inflow-broker/public.der') {
         const exists = filePath.endsWith('private.der') ? state.privateExists : state.publicExists;
@@ -96,6 +97,7 @@ describe('Linux vault broker authentication', () => {
 
   beforeEach(() => {
     state.nativePeer = { pid: 700, uid: 0 };
+    state.directoryMode = 0o40755;
     state.privateExists = true;
     state.publicExists = true;
     state.temporaryFiles.clear();
@@ -105,6 +107,7 @@ describe('Linux vault broker authentication', () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await new Promise<void>((resolve) => server?.close(() => resolve()) ?? resolve());
     server = undefined;
   });
@@ -151,6 +154,29 @@ describe('Linux vault broker authentication', () => {
     expect(createPublicKey(privateKey).export({ format: 'der', type: 'spki' })).toEqual(
       Buffer.from(state.publicKeyBytes),
     );
+  });
+
+  it('rejects a machine identity stored in a writable broker directory', async () => {
+    state.directoryMode = 0o40777;
+    await expect(ensureLinuxVaultBrokerKey()).rejects.toThrow('The InFlow vault broker identity is invalid.');
+    expect(state.temporaryFiles.size).toBe(0);
+  });
+
+  it('bounds the wait for a missing broker public identity without sending credentials', async () => {
+    state.publicExists = false;
+    vi.useFakeTimers();
+    const socket = new Socket();
+    const write = vi.spyOn(socket, 'write');
+    try {
+      const verification = createLinuxVaultBrokerPeerVerifier(0)(socket);
+      const rejection = expect(verification).rejects.toThrow('The InFlow vault broker identity is unavailable.');
+      await vi.advanceTimersByTimeAsync(2_000);
+      await rejection;
+      expect(write).not.toHaveBeenCalled();
+    } finally {
+      socket.destroy();
+      write.mockRestore();
+    }
   });
 
   it('rejects a public machine identity that does not match its private key', async () => {

@@ -64,6 +64,122 @@ function tap(): {
 afterEach(() => vi.restoreAllMocks());
 
 describe('TAP request transport', () => {
+  it.each(['fetch', 'transport'] as const)(
+    'uses the global fetch implementation through %s without signing anonymous discovery',
+    async (adapter) => {
+      const signer = tap();
+      const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('public'));
+      const options = { capabilities: capabilities(false), tap: signer.resource };
+      if (adapter === 'fetch') {
+        expect(
+          await (await createTapFetch({ ...options, operation: 'odp.browse' })('https://seller.example/')).text(),
+        ).toBe('public');
+      } else {
+        const result = await createTapRequestTransport(options).request({
+          method: 'GET',
+          operation: 'odp.browse',
+          url: 'https://seller.example/',
+        });
+        expect(await result.response.text()).toBe('public');
+        expect(result.tapEvidenceId).toBeUndefined();
+      }
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(signer.sign).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])(
+    'returns a redirect without Location and preserves optional evidence (signed=%s)',
+    async (enabled) => {
+      const signer = tap();
+      signer.sign.mockResolvedValue(signature({ tapEvidenceId: 'redirect-evidence' }));
+      const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(new Response(null, { status: 302 })));
+      const result = await createTapRequestTransport({
+        capabilities: capabilities(enabled),
+        tap: signer.resource,
+        fetch,
+      }).request({ method: 'GET', operation: 'odp.browse', url: 'https://seller.example/' });
+      expect(result.response.status).toBe(302);
+      expect(result.tapEvidenceId).toBe(enabled ? 'redirect-evidence' : undefined);
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    [301, 'POST', 'GET'],
+    [302, 'POST', 'GET'],
+    [303, 'HEAD', 'HEAD'],
+    [301, 'PUT', 'PUT'],
+    [302, 'GET', 'GET'],
+    [307, 'POST', 'POST'],
+    [308, 'POST', 'POST'],
+  ])('signs the correct redirected method for HTTP %s %s', async (status, method, expectedMethod) => {
+    const signer = tap();
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response(null, { status, headers: { Location: '/next' } }))
+      .mockResolvedValueOnce(new Response('ok'));
+    const hasBody = method === 'POST' || method === 'PUT';
+    const transport = createTapRequestTransport({ capabilities: capabilities(true), fetch, tap: signer.resource });
+    await transport.request({
+      method,
+      operation: 'mpp.payment',
+      url: 'https://seller.example/start',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Payment secret' },
+      ...(hasBody ? { body: '{}' } : {}),
+    });
+    const next = fetch.mock.calls[1]?.[1];
+    expect(next?.method).toBe(expectedMethod);
+    expect(next?.body).toBe(hasBody && expectedMethod !== 'GET' ? '{}' : undefined);
+    expect(new Headers(next?.headers).has('Authorization')).toBe(false);
+    expect(signer.sign.mock.calls[1]?.[0]).toMatchObject({
+      method: expectedMethod,
+      targetUrl: 'https://seller.example/next',
+    });
+    expect(signer.finalize).toHaveBeenCalledTimes(hasBody ? (expectedMethod === 'GET' ? 1 : 2) : 0);
+  });
+
+  it('passes Service and transaction identifiers and request body bytes through the fetch adapter', async () => {
+    const signer = tap();
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response('ok'));
+    const request = new Request('https://seller.example/pay', {
+      method: 'POST',
+      body: '{}',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    await createTapFetch({
+      capabilities: capabilities(true),
+      tap: signer.resource,
+      fetch,
+      operation: 'mpp.payment',
+      serviceId: 'service',
+      transactionId: 'transaction',
+    })(request);
+    expect(signer.sign.mock.calls[0]?.[0]).toMatchObject({
+      serviceId: 'service',
+      transactionId: 'transaction',
+      prepare: true,
+    });
+    expect(Buffer.from(fetch.mock.calls[0]?.[1]?.body as Uint8Array).toString()).toBe('{}');
+  });
+
+  it('forwards the caller abort signal to capability lookup, signing, and transmission', async () => {
+    const signer = tap();
+    const capability = capabilities(true);
+    const has = vi.spyOn(capability, 'has');
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response('ok'));
+    const controller = new AbortController();
+    await createTapRequestTransport({ capabilities: capability, tap: signer.resource, fetch }).request({
+      method: 'GET',
+      operation: 'odp.browse',
+      url: 'https://seller.example/',
+      signal: controller.signal,
+    });
+    expect(has).toHaveBeenCalledWith('visa_tap', { signal: controller.signal });
+    expect(signer.sign.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    expect(fetch.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
+
   it('rechecks TAP signing when loopback redirects to a remote destination', async () => {
     const signer = tap();
     signer.sign.mockRejectedValue(new Error('signing failed'));
@@ -314,30 +430,33 @@ describe('TAP request transport', () => {
     expect(redirectedHeaders.has('PAYMENT-SIGNATURE')).toBe(false);
   });
 
-  it('returns a signed redirect attempt for the composing protocol to handle', async () => {
-    const fetch = vi
-      .fn<typeof globalThis.fetch>()
-      .mockResolvedValue(new Response(null, { headers: { Location: 'https://other.example/final' }, status: 307 }));
-    const signer = tap();
-    signer.sign.mockResolvedValue(signature({ tapEvidenceId: 'evidence' }));
-    const transport = createTapRequestTransport({
-      capabilities: capabilities(true),
-      fetch,
-      followRedirects: false,
-      tap: signer.resource,
-    });
+  it.each([false, true])(
+    'returns redirects to the composing protocol without following them (signing=%s)',
+    async (enabled) => {
+      const fetch = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValue(new Response(null, { headers: { Location: 'https://other.example/final' }, status: 307 }));
+      const signer = tap();
+      signer.sign.mockResolvedValue(signature({ tapEvidenceId: 'evidence' }));
+      const transport = createTapRequestTransport({
+        capabilities: capabilities(enabled),
+        fetch,
+        followRedirects: false,
+        tap: signer.resource,
+      });
 
-    const result = await transport.request({
-      method: 'GET',
-      operation: 'mpp.inspect',
-      url: 'https://seller.example/start',
-    });
+      const result = await transport.request({
+        method: 'GET',
+        operation: 'mpp.inspect',
+        url: 'https://seller.example/start',
+      });
 
-    expect(result.response.status).toBe(307);
-    expect(result.tapEvidenceId).toBe('evidence');
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(signer.sign).toHaveBeenCalledTimes(1);
-  });
+      expect(result.response.status).toBe(307);
+      expect(result.tapEvidenceId).toBe(enabled ? 'evidence' : undefined);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(signer.sign).toHaveBeenCalledTimes(enabled ? 1 : 0);
+    },
+  );
 
   it('applies HTTP redirect method semantics before obtaining the next signature', async () => {
     const fetch = vi

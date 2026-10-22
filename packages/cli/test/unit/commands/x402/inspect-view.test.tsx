@@ -41,6 +41,38 @@ afterEach(() => {
 });
 
 describe('InspectView', () => {
+  it('renders an authentication block without optional Service metadata', async () => {
+    const url = 'https://seller.test';
+    const onComplete = vi.fn();
+    const view = render(
+      <InspectView
+        url={url}
+        method="GET"
+        deps={{
+          url,
+          probeOptions: { method: 'GET', headers: {} },
+          probe: () =>
+            Promise.reject(
+              new PaymentInspectionBlockedError({
+                method: 'GET',
+                url,
+                source: 'challenge',
+                message: 'Authentication required.',
+              }),
+            ),
+        }}
+        onComplete={onComplete}
+      />,
+    );
+    try {
+      await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+      expect(view.lastFrame()).toContain('Authentication required.');
+      expect(view.lastFrame()).not.toContain('Service:');
+      expect(view.lastFrame()).not.toContain('DID:');
+    } finally {
+      view.unmount();
+    }
+  });
   it('labels an Instrument offer as a linked card', async () => {
     const document = decodePaymentRequiredHeader(multiAcceptHeader());
     const header = encodePaymentRequiredHeader({

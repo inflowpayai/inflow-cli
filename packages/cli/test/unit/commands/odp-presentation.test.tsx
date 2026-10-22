@@ -11,11 +11,80 @@ import {
   humanize,
   listed,
   record,
+  ResourceImages,
   shellQuote,
   summarize,
 } from '../../../src/commands/odp/presentation.js';
 
 describe('ODP presentation', () => {
+  it.each(['#/$defs/missing', '#/$defs/scalar/nested'])(
+    'preserves attribute values when a schema reference cannot resolve: %s',
+    (reference) => {
+      expect(
+        attributeDetails(
+          { color: 'black' },
+          {
+            $defs: { scalar: true },
+            properties: { color: { $ref: reference } },
+          },
+          'https://service.test',
+        ),
+      ).toEqual([{ field: 'Color', value: 'black' }]);
+    },
+  );
+
+  it('renders nested attributes without schema properties and resolves escaped pointer tokens', () => {
+    expect(
+      attributeDetails(
+        { settings: { color: 'black' }, manual: '/guide' },
+        {
+          $defs: { 'manual/~': { title: 'User manual', format: 'uri-reference' } },
+          properties: { manual: { $ref: '#/$defs/manual~1~0' } },
+        },
+        'https://service.test',
+      ),
+    ).toEqual([
+      { field: 'User manual', value: 'https://service.test/guide' },
+      { field: 'Settings', value: 'Color: black' },
+    ]);
+  });
+  it('renders attribute values when schema references contain a cycle', () => {
+    expect(
+      attributeDetails(
+        { color: 'black' },
+        {
+          $defs: { first: { $ref: '#/$defs/second' }, second: { $ref: '#/$defs/first' } },
+          properties: { color: { $ref: '#/$defs/first' } },
+        },
+        'https://service.test',
+      ),
+    ).toEqual([{ field: 'Color', value: 'black' }]);
+  });
+
+  it.each([
+    { dimensions: { height: 200 }, expected: '? x 200' },
+    { dimensions: { width: 200 }, expected: '200 x ?' },
+  ])('renders partial image dimensions as $expected', ({ dimensions, expected }) => {
+    const view = render(
+      <ResourceImages images={[{ src: '/image.png', ...dimensions }]} serviceOrigin="https://service.test" />,
+    );
+    expect(view.lastFrame()).toContain(expected);
+    expect(view.lastFrame()).toContain('https://service.test/image.png');
+    view.unmount();
+  });
+
+  it.each([true, false])('displays values whose local attribute schema reference resolves to %s', (definition) => {
+    expect(
+      attributeDetails(
+        { color: 'black' },
+        {
+          $defs: { color: definition },
+          properties: { color: { $ref: '#/$defs/color' } },
+        },
+        'https://service.test',
+      ),
+    ).toEqual([{ field: 'Color', value: 'black' }]);
+  });
   it('formats compact values and wrapped detail rows', () => {
     expect(detail('Description', 'one two three four', 8)).toEqual([
       { field: 'Description', value: 'one two' },

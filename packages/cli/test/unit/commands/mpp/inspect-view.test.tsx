@@ -24,6 +24,76 @@ function challenge(): MppChallenge {
 }
 
 describe('InspectView', () => {
+  it('renders an authentication block without optional Service metadata', async () => {
+    const onComplete = vi.fn();
+    const view = render(
+      <InspectView
+        url={SELLER}
+        method="GET"
+        deps={{
+          url: SELLER,
+          probeOptions: { method: 'GET', headers: {} },
+          probe: () =>
+            Promise.reject(
+              new PaymentInspectionBlockedError({
+                method: 'GET',
+                url: SELLER,
+                source: 'challenge',
+                message: 'Authentication required.',
+              }),
+            ),
+        }}
+        onComplete={onComplete}
+      />,
+    );
+    try {
+      await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+      expect(view.lastFrame()).toContain('Authentication required.');
+      expect(view.lastFrame()).not.toContain('Service:');
+      expect(view.lastFrame()).not.toContain('DID:');
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('renders every advertised challenge when the seller offers multiple options', async () => {
+    server.use(
+      http.get(
+        SELLER,
+        () =>
+          new HttpResponse(null, {
+            status: 402,
+            headers: {
+              'WWW-Authenticate': [
+                renderChallengeHeader(challenge()),
+                renderChallengeHeader({
+                  ...challenge(),
+                  id: 'chal-2',
+                  request: encode({ amount: '20', currency: 'USDT', methodDetails: { rail: 'balance' } }),
+                }),
+              ].join(', '),
+            },
+          }),
+      ),
+    );
+    const onComplete = vi.fn();
+    const view = render(
+      <InspectView
+        url={SELLER}
+        method="GET"
+        deps={{ url: SELLER, probeOptions: { method: 'GET', headers: {} } }}
+        onComplete={onComplete}
+      />,
+    );
+    try {
+      await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+      expect(view.lastFrame()).toContain('2 challenges');
+      expect(view.lastFrame()).toContain('USDC');
+      expect(view.lastFrame()).toContain('USDT');
+    } finally {
+      view.unmount();
+    }
+  });
   it('renders the challenge table for a 402', async () => {
     server.use(
       http.get(
@@ -181,6 +251,8 @@ describe('structured frames', () => {
             periodUnit: 'month',
             subscriptionExpires: '2999-12-31T00:00:00Z',
             externalId: 'monthly-plan',
+            optionId: 'option-1',
+            optionFingerprint: 'fingerprint-1',
           },
           { id: 'chal-2', realm: 'mpp.test', method: 'inflow', intent: 'charge' },
         ],
@@ -208,6 +280,8 @@ describe('structured frames', () => {
           period_unit: 'month',
           subscription_expires: '2999-12-31T00:00:00Z',
           external_id: 'monthly-plan',
+          option_id: 'option-1',
+          option_fingerprint: 'fingerprint-1',
         },
         { id: 'chal-2', realm: 'mpp.test', method: 'inflow', intent: 'charge' },
       ],

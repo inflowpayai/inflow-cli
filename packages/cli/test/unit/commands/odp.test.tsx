@@ -9,6 +9,7 @@ import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
 import { SearchView, SuggestView, __testing, createDirectoryCli } from '../../../src/commands/directory/index.js';
 import { OdpCommandError } from '../../../src/commands/odp/command.js';
+import * as renderer from '../../../src/utils/render-ink-until-exit.js';
 
 const emptyInput: Parameters<typeof __testing.runDirectorySearch>[1] = {
   source: [],
@@ -56,6 +57,31 @@ function failingSequence(): ReturnType<IOdpResource['search']> {
 }
 
 describe('Directory commands', () => {
+  it.each(['search', 'suggest'])('renders Directory %s in a human terminal', async (command) => {
+    const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+    const rendered = vi.spyOn(renderer, 'renderInkUntilExit').mockResolvedValue(undefined);
+    const search = vi.fn(() => sequence({ items: [] }));
+    const suggest = vi.fn(() => Promise.resolve(['Compute']));
+    try {
+      await createDirectoryCli({ search, suggest, continueSearch: vi.fn() }).serve([command, 'compute'], {
+        exit: vi.fn(),
+        stdout: vi.fn(),
+      });
+      expect(rendered).toHaveBeenCalledOnce();
+      expect(command === 'search' ? search : suggest).toHaveBeenCalledOnce();
+      const element = rendered.mock.calls[0]?.[0];
+      if (element === undefined) throw new Error('Missing Directory view');
+      const view = render(element);
+      expect(view.lastFrame()).toContain(command === 'search' ? 'No results' : 'Compute');
+      view.unmount();
+    } finally {
+      rendered.mockRestore();
+      if (descriptor === undefined) Reflect.deleteProperty(process.stdout, 'isTTY');
+      else Object.defineProperty(process.stdout, 'isTTY', descriptor);
+    }
+  });
+
   it.each([
     { command: 'search', option: 'arc' },
     { command: 'search', option: 'monad' },

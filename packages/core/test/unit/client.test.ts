@@ -42,11 +42,106 @@ vi.mock('@inflowpayai/x402-buyer', async (importOriginal) => {
 
 const server = makeServer();
 
+it.each([
+  'deposit-addresses',
+  'subscription-list',
+  'subscription-get',
+  'subscription-authorize',
+  'tap-finalize',
+] as const)('propagates cancellation to the HTTP request without retrying %s', async (operation) => {
+  const controller = new AbortController();
+  let observedSignal: AbortSignal | undefined;
+  const fetch = vi.fn<typeof globalThis.fetch>((input, init) => {
+    observedSignal = new Request(input, init).signal;
+    return new Promise((_resolve, reject) => {
+      observedSignal?.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), {
+        once: true,
+      });
+    });
+  });
+  const client = new Inflow({ accessToken: 'token', fetch });
+  const options = { signal: controller.signal };
+  const request =
+    operation === 'deposit-addresses'
+      ? client.depositAddresses.list(options)
+      : operation === 'subscription-list'
+        ? client.subscriptions.list(options)
+        : operation === 'subscription-get'
+          ? client.subscriptions.get('one', options)
+          : operation === 'subscription-authorize'
+            ? client.subscriptions.authorize(
+                'one',
+                {
+                  id: 'challenge',
+                  realm: 'seller',
+                  method: 'inflow',
+                  intent: 'subscription',
+                  request: 'e30',
+                },
+                options,
+              )
+            : client.tap.finalize('one', 'sha-256=:digest:', 'application/json', options);
+  const rejected = expect(request).rejects.toMatchObject({ name: 'InflowTransportError' });
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+  controller.abort();
+  await rejected;
+  expect(observedSignal?.aborted).toBe(true);
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe('Inflow client', () => {
+  it('inspects a public AEP Service through the actual agent SDK without platform credentials', async () => {
+    const requests: Request[] = [];
+    server.use(
+      http.get('https://service.test/.well-known/aep', ({ request }) => {
+        requests.push(request);
+        return HttpResponse.json(
+          {
+            aep_version: '1.0',
+            bindings: { supported: ['http'] },
+            commands: { supported: ['inspect', 'status'] },
+            core: { signing_algorithms: ['EdDSA', 'ES256'] },
+            http: { endpoint_base: '/aep' },
+            identity: { methods: ['did:web'] },
+            service: { did: 'did:web:service.test' },
+          },
+          { headers: { 'content-type': 'application/aep+json' } },
+        );
+      }),
+    );
+    const client = new Inflow({ apiKey: 'platform-secret' });
+    const result = await client.aep.inspect({ serviceUrl: 'https://service.test' });
+    expect(result.document.service.did).toBe('did:web:service.test');
+    expect(result.commandUrl('status').href).toBe('https://service.test/aep/status');
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.headers.has('Authorization')).toBe(false);
+    expect(requests[0]?.headers.has('X-API-KEY')).toBe(false);
+  });
+  it('cancels MPP approvals through the buyer SDK with the configured authentication', async () => {
+    const requests: Request[] = [];
+    server.use(
+      http.post(`${BASE_URL}/v1/approvals/:id/cancel`, ({ request }) => {
+        requests.push(request);
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const client = new Inflow({ apiBaseUrl: BASE_URL, apiKey: 'test-only-api-key' });
+    await client.mpp.cancelApproval('approval-one');
+    await client.mpp.cancelApproval('approval-two');
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      '/v1/approvals/approval-one/cancel',
+      '/v1/approvals/approval-two/cancel',
+    ]);
+    expect(requests.map((request) => request.headers.get('X-API-KEY'))).toEqual([
+      'test-only-api-key',
+      'test-only-api-key',
+    ]);
+  });
+
   it('exposes the four data resources plus an x402 handle', () => {
     const client = new Inflow();
     expect(client.auth).toBeDefined();

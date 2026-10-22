@@ -146,6 +146,52 @@ describe('vault socket transport', () => {
     vi.useRealTimers();
   });
 
+  it('closes an unverified connection when peer verification never finishes', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const backend = new SocketVaultBackend();
+    const read = vi.spyOn(backend, 'status');
+    let acknowledge: (() => void) | undefined;
+    const verifying = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    let serverSocket: Socket | undefined;
+    servers.push(
+      await startVaultSocketServer({
+        backend,
+        socketPath,
+        peerVerifier(socket) {
+          serverSocket = socket;
+          acknowledge?.();
+          return new Promise(() => undefined);
+        },
+      }),
+    );
+    const socket = createConnection(socketPath);
+    const errors: Error[] = [];
+    const data = vi.fn();
+    socket.on('error', (error) => errors.push(error));
+    socket.on('data', data);
+    const clientClosed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+    try {
+      socket.write(encodeVaultIpcMessage(request('vault.status')));
+      await verifying;
+      if (serverSocket === undefined) throw new Error('Expected verification to start');
+      const closed = new Promise<void>((resolve) => serverSocket?.once('close', () => resolve()));
+      await vi.advanceTimersByTimeAsync(10_000);
+      await closed;
+      await clientClosed;
+      expect(serverSocket.destroyed).toBe(true);
+      expect(read).not.toHaveBeenCalled();
+      expect(data).not.toHaveBeenCalled();
+      for (const error of errors) expect(error).toMatchObject({ code: 'ECONNRESET' });
+    } finally {
+      socket.destroy();
+      await clientClosed;
+    }
+  });
+
   it('closes a verified connection that stops reading a large response', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
@@ -434,6 +480,51 @@ describe('vault socket transport', () => {
     });
   });
 
+  it('does not send a secret request when client peer verification rejects a non-Error value', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const backend = new SocketVaultBackend();
+    const getSecret = vi.spyOn(backend, 'getSecret');
+    servers.push(await startVaultSocketServer({ backend, socketPath }));
+
+    await expect(
+      sendVaultIpcRequest(
+        socketPath,
+        request('secret.get', {
+          expectedKind: 'inflow_api_key',
+          reference: 'vlt_22222222222222222222222222222222',
+        }),
+        vi.fn<VaultSocketPeerVerifier>().mockRejectedValue('untrusted peer'),
+      ),
+    ).rejects.toMatchObject({
+      secureStorageCode: 'secure_storage_peer_verification_failed',
+    });
+    expect(getSecret).not.toHaveBeenCalled();
+    await expect(sendVaultIpcRequest(socketPath, request('vault.status'))).resolves.toMatchObject({ ok: true });
+  });
+
+  it('continues processing after a backend operation fails without exposing its error details', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const backend = new SocketVaultBackend();
+    vi.spyOn(backend, 'getSecret').mockImplementationOnce(() => {
+      throw new Error('private database path and secret');
+    });
+    servers.push(await startVaultSocketServer({ backend, socketPath }));
+    const secretRequest = request('secret.get', {
+      expectedKind: 'inflow_api_key',
+      reference: 'vlt_22222222222222222222222222222222',
+    });
+
+    const failed = await sendVaultIpcRequest(socketPath, secretRequest);
+    expect(failed).toMatchObject({ ok: false, error: { code: 'secure_storage_io_error' } });
+    expect(JSON.stringify(failed)).not.toContain('private database');
+    await expect(sendVaultIpcRequest(socketPath, secretRequest)).resolves.toMatchObject({
+      ok: true,
+      result: { payload: Buffer.from('socket-secret') },
+    });
+  });
+
   it('authenticates the daemon before transmitting request bytes', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
     const socketPath = join(tmpDir, 'run', 'vault.sock');
@@ -710,6 +801,62 @@ describe('vault socket transport', () => {
     await expect(sendVaultIpcRequest(socketPath, request('vault.status'))).rejects.toMatchObject({
       secureStorageCode: 'secure_storage_corrupt',
     });
+  });
+
+  it.each(['fragmented', 'oversized'] as const)('handles a %s daemon response over a real socket', async (mode) => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-socket-'));
+    const socketPath = join(tmpDir, 'vault.sock');
+    const sockets = new Set<Socket>();
+    const frame = encodeVaultIpcMessage({
+      id: 'req_socket',
+      ok: true,
+      result: { lockState: 'locked' },
+      version: 1,
+    });
+    const daemon = createServer((socket) => {
+      sockets.add(socket);
+      socket.on('error', () => undefined);
+      socket.on('close', () => sockets.delete(socket));
+      socket.once('data', () => {
+        if (mode === 'oversized') {
+          const header = Buffer.alloc(4);
+          header.writeUInt32BE(VAULT_IPC_MAX_MESSAGE_BYTES + 1);
+          socket.end(header);
+          return;
+        }
+        socket.write(frame.subarray(0, 2));
+        setTimeout(() => {
+          if (!socket.destroyed) socket.end(frame.subarray(2));
+        }, 10);
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      daemon.once('error', reject);
+      daemon.listen(socketPath, resolve);
+    });
+    servers.push({
+      socketPath,
+      close: async () => {
+        for (const socket of sockets) socket.destroy();
+        await new Promise<void>((resolve, reject) =>
+          daemon.close((cause) => {
+            if (cause) reject(cause);
+            else resolve();
+          }),
+        );
+      },
+    });
+
+    const response = sendVaultIpcRequest(socketPath, request('vault.status'));
+    if (mode === 'oversized') {
+      await expect(response).rejects.toMatchObject({ secureStorageCode: 'secure_storage_invalid_path' });
+    } else {
+      await expect(response).resolves.toMatchObject({
+        id: 'req_socket',
+        ok: true,
+        result: { lockState: 'locked' },
+      });
+    }
   });
 
   it('inspects a connected peer and reports socket reachability', async () => {

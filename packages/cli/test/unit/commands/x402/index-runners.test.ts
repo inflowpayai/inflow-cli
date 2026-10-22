@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { AuthStorage, ICliCapabilitiesResource } from '@inflowpayai/inflow-core';
 import { Inflow, InflowApiError, MemoryStorage, SecureStorageError } from '@inflowpayai/inflow-core';
 import {
@@ -8,10 +11,10 @@ import {
   type InflowClient as X402InflowClient,
   type PreparedPayment,
 } from '@inflowpayai/x402-buyer';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
+import { encodePaymentRequiredHeader, encodePaymentResponseHeader } from '@x402/core/http';
 import type { PaymentRequired } from '@x402/core/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { __testing } from '../../../../src/commands/x402/index.js';
+import { __testing, createX402Cli } from '../../../../src/commands/x402/index.js';
 import { fetchArgs, fetchOptions, payOptions } from '../../../../src/commands/x402/schema.js';
 
 const {
@@ -200,6 +203,170 @@ afterEach(() => {
 });
 
 describe('runPayCommand (agent mode)', () => {
+  it.each(['USD Coin', 'Other token'])('filters payment assets before preparing a payment: %s', async (assetName) => {
+    const required = makePaymentRequired();
+    const candidate = required.accepts[0];
+    if (candidate === undefined) throw new Error('Missing test requirement');
+    candidate.extra = { assetName: 'USD Coin' };
+    const selectInflowRequirement = vi.fn(() => Promise.resolve(candidate));
+    const prepareInflowPayment = vi.fn(() => Promise.resolve(makePrepared()));
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(null, { status: 402, headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(required) } }),
+      );
+    const client = makeClient({ selectInflowRequirement, prepareInflowPayment });
+    const { inflow, storage } = authedResources(client);
+    const paymentId = 'test-payment-identifier';
+    const context = agentContextReturningError(
+      { url: 'https://seller/api' },
+      payOptions.parse({
+        asset: 'USDC',
+        assetName,
+        paymentId,
+        timeout: 120,
+      }),
+    );
+    const result = await drainWithReturn(runPayCommand(context, inflow, storage, 'https://app'));
+    if (assetName === 'USD Coin') {
+      expect(selectInflowRequirement).toHaveBeenCalledWith(required);
+      expect(prepareInflowPayment).toHaveBeenCalledWith(expect.any(Object), expect.any(Object), {
+        timeoutMs: 120000,
+        paymentId,
+      });
+      expect(result.values.at(-1)).toMatchObject({ transaction_id: 'txn_1' });
+    } else {
+      expect(result.returnValue).toMatchObject({ code: 'NO_FILTERED_MATCH' });
+      expect(prepareInflowPayment).not.toHaveBeenCalled();
+    }
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { binary: false, destination: 'inline' },
+    { binary: true, destination: 'inline' },
+    { binary: false, destination: 'hidden' },
+    { binary: true, destination: 'hidden' },
+    { binary: false, destination: 'file' },
+    { binary: true, destination: 'file' },
+  ])(
+    'delivers an unpaid response without creating a payment: $destination binary=$binary',
+    async ({ binary, destination }) => {
+      const directory = await mkdtemp(join(tmpdir(), 'inflow-body-test-'));
+      const outputFile = join(directory, 'response.bin');
+      const bytes = binary ? new Uint8Array([0, 255, 128, 1]) : new TextEncoder().encode('Seller content');
+      const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(bytes, {
+          headers: { 'Content-Type': binary ? 'application/octet-stream' : 'text/plain' },
+        }),
+      );
+      const { inflow, storage } = authedResources(makeClient());
+      const context = agentContext(
+        { url: 'https://seller.test/api' },
+        payOptions.parse({
+          showBody: destination !== 'hidden',
+          ...(destination === 'file' ? { outputFile } : {}),
+        }),
+      );
+      try {
+        const frames = await drain(runPayCommand(context, inflow, storage, 'https://platform.test'));
+        const result = frames.at(-1);
+        expect(result).toMatchObject({ outcome: 'no-payment-required', status: 200, body_size_bytes: bytes.length });
+        if (destination === 'file') {
+          expect(result).toHaveProperty('output_saved_to', outputFile);
+          expect(await readFile(outputFile)).toEqual(Buffer.from(bytes));
+        } else expect(result).not.toHaveProperty('output_saved_to');
+        if (destination === 'inline') {
+          expect(result).toHaveProperty(
+            binary ? 'body_base64' : 'body',
+            binary ? Buffer.from(bytes).toString('base64') : 'Seller content',
+          );
+          expect(result).not.toHaveProperty(binary ? 'body' : 'body_base64');
+        } else {
+          expect(result).not.toHaveProperty('body');
+          expect(result).not.toHaveProperty('body_base64');
+        }
+        expect(fetch).toHaveBeenCalledOnce();
+        expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(['pay', 'fetch'] as const)('rejects malformed %s headers before any network request', async (command) => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const { inflow, storage } = authedResources(makeClient());
+    if (command === 'pay') {
+      const ctx = agentContext({ url: 'https://seller.test/api' }, payOptions.parse({ header: ['missing-colon'] }));
+      await expect(drain(runPayCommand(ctx, inflow, storage, 'https://platform.test'))).rejects.toThrow(
+        'c.error called',
+      );
+      expect(ctx.error).toHaveBeenCalledWith({
+        code: 'INVALID_HEADER',
+        message: 'Invalid --header value "missing-colon"; expected "Name: Value".',
+      });
+    } else {
+      const ctx = agentContext(
+        { transactionId: 'tx-1', resourceUrl: 'https://seller.test/api' },
+        fetchOptions.parse({ header: ['missing-colon'] }),
+      );
+      await expect(drain(runFetchCommand(ctx, inflow, storage))).rejects.toThrow('c.error called');
+      expect(ctx.error).toHaveBeenCalledWith({
+        code: 'INVALID_HEADER',
+        message: 'Invalid --header value "missing-colon"; expected "Name: Value".',
+      });
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('dispatches parsed x402 commands and reuses the selected transaction without creating a payment', async () => {
+    const getX402Payload = vi.fn<X402InflowClient['getX402Payload']>(async () => ({
+      ...(await makePrepared().awaitPayload()),
+      status: 'APPROVED',
+    }));
+    const prepare = vi.fn<X402InflowClient['prepareInflowPayment']>();
+    const cancel = vi.fn<X402InflowClient['cancelApproval']>(() => Promise.resolve());
+    const { inflow, storage } = authedResources(
+      makeClient({ getX402Payload, prepareInflowPayment: prepare, cancelApproval: cancel }),
+    );
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() => Promise.resolve(new Response('public content')));
+    const cli = createX402Cli(inflow, storage, 'https://app');
+    const execute = async (args: string[]) => {
+      const chunks: string[] = [];
+      const exit = vi.fn();
+      await cli.serve([...args, '--format', 'json'], {
+        exit,
+        stdout: (chunk) => {
+          chunks.push(chunk);
+        },
+      });
+      const output = chunks.join('');
+      expect(exit, output).not.toHaveBeenCalled();
+      return output;
+    };
+    expect(await execute(['supported'])).toContain('"scheme": "balance"');
+    expect(await execute(['decode', encodePaymentRequiredHeader(makePaymentRequired())])).toContain('"x402Version": 2');
+    expect(await execute(['inspect', 'https://seller/api'])).toContain('no-payment-required');
+    expect(await execute(['pay', 'https://seller/api'])).toContain('no-payment-required');
+    expect(await execute(['status', 'txn_1'])).toContain('"status": "APPROVED"');
+    const output = await execute(['fetch', 'txn_1', 'https://seller/api']);
+    expect(output).toContain('public content');
+    expect(output).not.toContain('encoded_payload');
+    expect(await execute(['cancel', 'appr_1'])).toContain('"cancelled": true');
+    expect(cancel).toHaveBeenCalledWith('appr_1');
+    expect(prepare).not.toHaveBeenCalled();
+    expect(getX402Payload).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls.map(([input]) => new Request(input).url)).toEqual([
+      'https://seller/.well-known/aep',
+      'https://seller/api',
+      'https://seller/api',
+      'https://seller/api',
+    ]);
+  });
+
   it('yields the no-payment frame when the seller returns 200', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response('hello', { status: 200, headers: { 'content-type': 'text/plain' } }),
@@ -380,115 +547,160 @@ describe('runPayCommand (agent mode)', () => {
     ]);
   });
 
-  it('runFetchCommand fetches a signed transaction without preparing a new payment or exposing encoded payload', async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(
-        new Response('payment required', {
-          status: 402,
-          headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(makePaymentRequired()) },
-        }),
-      )
-      .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
-    const prepareInflowPayment = vi.fn();
-    const client = makeClient({
-      prepareInflowPayment,
-      getX402Payload: vi.fn(() =>
-        Promise.resolve({
-          status: 'APPROVED',
-          encodedPayload: 'ENC',
-          paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
-        }),
-      ),
-    });
-    const requirement = makePaymentRequired().accepts[0];
-    if (requirement === undefined) throw new Error('Test requires a payment offer');
-    const pending = __testing.initialPayFrame(
-      {
-        type: 'prepared',
-        decoded: makePaymentRequired(),
-        requirement,
-        prepared: makePrepared(),
-        approvalUrl: 'https://app/approvals/appr_1',
-      },
-      agentContext({ url: 'https://seller/api' }, payOptions.parse({ header: ['PAYMENT-SIGNATURE: caller'] })),
-    );
-    const next = pending['_next'] as { tool: string; input: Record<string, unknown> };
-    expect(next.tool).toBe('x402_fetch');
-    const ctx = agentContext(
-      fetchArgs.parse(next.input),
-      fetchOptions.parse({ ...next.input, header: ['PAYMENT-SIGNATURE: caller'] }),
-    );
-    const { inflow, storage } = authedResources(client);
-    vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as ICliCapabilitiesResource, 'has').mockResolvedValue(true);
-    const sign = vi.spyOn(inflow.tap, 'sign').mockResolvedValue({
-      created: 1,
-      expires: 2,
-      keyid: 'key',
-      nonce: 'nonce',
-      signature: 'sig=:value:',
-      signatureInput: 'sig=("@method");keyid="key"',
-    });
+  it.each([200, 403].flatMap((status) => [false, true].map((save) => ({ status, save }))))(
+    'runFetchCommand resumes without preparing another payment or disclosing its payload (status $status, save $save)',
+    async ({ status, save }) => {
+      const directory = await mkdtemp(join(tmpdir(), 'x402-fetch-output-'));
+      const outputFile = join(directory, 'response.txt');
+      try {
+        const fetchSpy = vi
+          .spyOn(globalThis, 'fetch')
+          .mockResolvedValueOnce(
+            new Response('payment required', {
+              status: 402,
+              headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(makePaymentRequired()) },
+            }),
+          )
+          .mockResolvedValueOnce(
+            new Response('DONE', {
+              status,
+              headers: save
+                ? {
+                    'PAYMENT-RESPONSE': encodePaymentResponseHeader({
+                      success: true,
+                      transaction: '0xreceipt',
+                      network: 'eip155:84532',
+                      payer: '0xbuyer',
+                    }),
+                  }
+                : {},
+            }),
+          );
+        const requirement = makePaymentRequired().accepts[0];
+        if (requirement === undefined) throw new Error('Test requires a payment offer');
+        const prepareInflowPayment = vi.fn();
+        const client = makeClient({
+          prepareInflowPayment,
+          getX402Payload: vi.fn(() =>
+            Promise.resolve({
+              status: 'APPROVED',
+              encodedPayload: 'ENC',
+              paymentPayload: { x402Version: 2, accepted: requirement, payload: {} },
+            }),
+          ),
+        });
+        const pending = __testing.initialPayFrame(
+          {
+            type: 'prepared',
+            decoded: makePaymentRequired(),
+            requirement,
+            prepared: makePrepared(),
+            approvalUrl: 'https://app/approvals/appr_1',
+          },
+          agentContext({ url: 'https://seller/api' }, payOptions.parse({ header: ['PAYMENT-SIGNATURE: caller'] })),
+        );
+        const next = pending['_next'] as { tool: string; input: Record<string, unknown> };
+        expect(next.tool).toBe('x402_fetch');
+        const ctx = agentContext(
+          fetchArgs.parse(next.input),
+          fetchOptions.parse({ ...next.input, header: ['PAYMENT-SIGNATURE: caller'], ...(save ? { outputFile } : {}) }),
+        );
+        const { inflow, storage } = authedResources(client);
+        vi.spyOn(Object.getPrototypeOf(inflow.capabilities) as ICliCapabilitiesResource, 'has').mockResolvedValue(true);
+        const sign = vi.spyOn(inflow.tap, 'sign').mockResolvedValue({
+          created: 1,
+          expires: 2,
+          keyid: 'key',
+          nonce: 'nonce',
+          signature: 'sig=:value:',
+          signatureInput: 'sig=("@method");keyid="key"',
+        });
 
-    const frames = await drain(runFetchCommand(ctx as never, inflow, storage));
+        const frames: unknown[] = [];
+        const operation = (async () => {
+          for await (const frame of runFetchCommand(ctx, inflow, storage)) frames.push(frame);
+        })();
+        if (status === 200) await operation;
+        else await expect(operation).rejects.toThrow('c.error');
 
-    expect(prepareInflowPayment).not.toHaveBeenCalled();
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(frames.at(-1)).toMatchObject({
-      protocol: 'x402',
-      outcome: 'paid',
-      transaction_id: 'txn_1',
-      requested_url: 'https://seller/api',
-      body: 'DONE',
-    });
-    expect(frames.at(-1)).not.toHaveProperty('encoded_payload');
-    const [, init] = fetchSpy.mock.calls.at(-1) ?? [];
-    expect(new Headers(init?.headers).get('PAYMENT-SIGNATURE')).toBe('ENC');
-    expect(new Headers(init?.headers).has('Signature')).toBe(true);
-    expect(sign).toHaveBeenCalledWith(
-      expect.objectContaining({
-        method: 'GET',
-        operation: 'x402.payment',
-        targetUrl: 'https://seller/api',
-        transactionId: 'txn_1',
-      }),
-      expect.any(Object),
-    );
-  });
+        expect(prepareInflowPayment).not.toHaveBeenCalled();
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+        expect(frames.at(-1)).toMatchObject({
+          protocol: 'x402',
+          outcome: status === 200 ? 'paid' : 'replay-rejected',
+          transaction_id: 'txn_1',
+          requested_url: 'https://seller/api',
+          ...(save ? { output_saved_to: outputFile } : { body: 'DONE' }),
+        });
+        expect(frames.at(-1)).not.toHaveProperty('encoded_payload');
+        if (save && status === 200)
+          expect(frames.at(-1)).toHaveProperty('settled', {
+            transaction: '0xreceipt',
+            network: 'eip155:84532',
+          });
+        else expect(frames.at(-1)).not.toHaveProperty('settled');
+        if (save) {
+          expect(await readFile(outputFile, 'utf8')).toBe('DONE');
+          expect(frames.at(-1)).not.toHaveProperty('body');
+        }
+        const [, init] = fetchSpy.mock.calls.at(-1) ?? [];
+        expect(new Headers(init?.headers).get('PAYMENT-SIGNATURE')).toBe('ENC');
+        expect(new Headers(init?.headers).has('Signature')).toBe(true);
+        expect(sign).toHaveBeenCalledWith(
+          expect.objectContaining({
+            method: 'GET',
+            operation: 'x402.payment',
+            targetUrl: 'https://seller/api',
+            transactionId: 'txn_1',
+          }),
+          expect.any(Object),
+        );
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([0, 1])('runFetchCommand renders the human fetch path with interval %s', async (interval) => {
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(
-        new Response('payment required', {
-          status: 402,
-          headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(makePaymentRequired()) },
-        }),
-      )
-      .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
-    const client = makeClient({
-      getX402Payload: vi.fn(() =>
-        Promise.resolve({
-          status: 'APPROVED',
-          encodedPayload: 'ENC',
-          paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
-        }),
-      ),
-    });
-    const ctx = {
-      agent: false,
-      formatExplicit: false,
-      args: { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
-      options: { method: 'GET', header: [], interval, maxAttempts: 0, timeout: 900, showBody: true },
-      error: vi.fn(),
-    };
-    const { inflow, storage } = authedResources(client);
+    const directory = await mkdtemp(join(tmpdir(), 'x402-fetch-human-'));
+    const outputFile = join(directory, 'response.txt');
+    try {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response('payment required', {
+            status: 402,
+            headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(makePaymentRequired()) },
+          }),
+        )
+        .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+      const client = makeClient({
+        getX402Payload: vi.fn(() =>
+          Promise.resolve({
+            status: 'APPROVED',
+            encodedPayload: 'ENC',
+            paymentPayload: { x402Version: 2, accepted: {} as never, payload: {} },
+          }),
+        ),
+      });
+      const ctx = {
+        agent: false,
+        formatExplicit: false,
+        args: { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
+        options: { method: 'GET', header: [], interval, maxAttempts: 0, timeout: 900, showBody: true, outputFile },
+        error: vi.fn(),
+      };
+      const { inflow, storage } = authedResources(client);
 
-    const result = await drainWithReturn(runFetchCommand(ctx as never, inflow, storage));
+      const result = await drainWithReturn(runFetchCommand(ctx as never, inflow, storage));
 
-    expect(result.values).toEqual([]);
-    expect(ctx.error).not.toHaveBeenCalled();
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(result.values).toEqual([]);
+      expect(ctx.error).not.toHaveBeenCalled();
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(await readFile(outputFile, 'utf8')).toBe('DONE');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('runFetchCommand stops terminal failures before contacting the seller', async () => {
@@ -935,6 +1147,50 @@ describe('runPayCommand (agent mode)', () => {
 });
 
 describe('runStatusCommand (agent mode)', () => {
+  it.each(['DECLINED', 'EXPIRED', 'GENERAL_ERROR', 'INSUFFICIENT_FUNDS'] as const)(
+    'stops polling at %s and never prepares another payment',
+    async (status) => {
+      const getX402Payload = vi.fn<X402InflowClient['getX402Payload']>().mockResolvedValue({ status });
+      const prepareInflowPayment = vi.fn<X402InflowClient['prepareInflowPayment']>();
+      const client = makeClient({ getX402Payload, prepareInflowPayment });
+      const { inflow, storage } = authedResources(client);
+      const ctx = agentContextReturningError(
+        { transactionId: 'txn_1' },
+        { interval: 0.01, maxAttempts: 5, timeout: 60 },
+      );
+      const result = await drainWithReturn(runStatusCommand(ctx, inflow, storage));
+      expect(result.values).toEqual([{ transaction_id: 'txn_1', status }]);
+      expect(ctx.error).toHaveBeenCalledOnce();
+      expect(ctx.error).toHaveBeenCalledWith({
+        code: 'APPROVAL_FAILED',
+        message: `Transaction txn_1 terminated as ${status} with no payload.`,
+      });
+      expect(getX402Payload).toHaveBeenCalledOnce();
+      expect(getX402Payload).toHaveBeenCalledWith('txn_1');
+      expect(prepareInflowPayment).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reports a polling failure after a pending snapshot without preparing another payment', async () => {
+    const getX402Payload = vi
+      .fn<X402InflowClient['getX402Payload']>()
+      .mockResolvedValueOnce({ status: 'INITIATED' })
+      .mockRejectedValueOnce(new Error('Connection interrupted'));
+    const prepareInflowPayment = vi.fn<X402InflowClient['prepareInflowPayment']>();
+    const client = makeClient({ getX402Payload, prepareInflowPayment });
+    const { inflow, storage } = authedResources(client);
+    const ctx = agentContextReturningError(
+      { transactionId: 'txn_1' },
+      { interval: 0.001, maxAttempts: 5, timeout: 60 },
+    );
+    const result = await drainWithReturn(runStatusCommand(ctx, inflow, storage));
+    expect(result.values).toEqual([{ transaction_id: 'txn_1', status: 'INITIATED' }]);
+    expect(ctx.error).toHaveBeenCalledOnce();
+    expect(ctx.error).toHaveBeenCalledWith({ code: 'PAYMENT_FAILED', message: 'Connection interrupted' });
+    expect(getX402Payload).toHaveBeenCalledTimes(2);
+    expect(prepareInflowPayment).not.toHaveBeenCalled();
+  });
+
   it('yields a single status frame when interval=0 (snapshot mode)', async () => {
     const client = makeClient({
       getX402Payload: vi.fn(() => Promise.resolve({ status: 'INITIATED' })),
@@ -1175,6 +1431,29 @@ describe('runSupportedCommand', () => {
 });
 
 describe('runInspectCommand (agent mode)', () => {
+  it.each(['USD Coin', 'Other token'])('applies asset and asset-name filters together: %s', async (assetName) => {
+    const required = makePaymentRequired();
+    const candidate = required.accepts[0];
+    if (candidate === undefined) throw new Error('Missing fixture requirement');
+    candidate.extra = { assetName: 'USD Coin' };
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(null, {
+        status: 402,
+        headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(required) },
+      }),
+    );
+    const ctx = agentContext({ url: 'https://seller/api' }, { method: 'GET', header: [], asset: 'USDC', assetName });
+    if (assetName === 'USD Coin') {
+      expect(await runInspectCommand(ctx)).toMatchObject({
+        outcome: 'accepts',
+        accepts: [{ asset: 'USDC', extra: { assetName: 'USD Coin' } }],
+      });
+    } else {
+      await expect(runInspectCommand(ctx)).rejects.toThrow();
+    }
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it('yields an accepts frame on a 402 probe', async () => {
     const header = encodePaymentRequiredHeader(makePaymentRequired());
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(

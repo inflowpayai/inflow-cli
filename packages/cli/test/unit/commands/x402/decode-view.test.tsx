@@ -2,8 +2,10 @@ import { encodePaymentRequiredHeader } from '@x402/core/http';
 import type { PaymentRequired } from '@x402/core/types';
 import { render } from 'ink-testing-library';
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DecodeView, decodeHeader } from '../../../../src/commands/x402/decode.js';
+import { __testing } from '../../../../src/commands/x402/index.js';
+import * as renderer from '../../../../src/utils/render-ink-until-exit.js';
 
 function paymentRequired(overrides: Partial<PaymentRequired> = {}): PaymentRequired {
   return {
@@ -28,6 +30,32 @@ function paymentRequired(overrides: Partial<PaymentRequired> = {}): PaymentRequi
 }
 
 describe('DecodeView', () => {
+  it('routes interactive decoding through the human view without a network request', async () => {
+    const rendered = vi.spyOn(renderer, 'renderInkUntilExit').mockResolvedValue(undefined);
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    try {
+      const error = vi.fn((failure: { message: string }): never => {
+        throw new Error(failure.message);
+      });
+      await __testing.runDecodeCommand({
+        agent: false,
+        formatExplicit: false,
+        args: { header: encodePaymentRequiredHeader(paymentRequired()) },
+        error,
+      });
+      expect(error).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+      const element = rendered.mock.calls[0]?.[0];
+      if (element === undefined) throw new Error('Missing decode view');
+      const view = render(element);
+      expect(view.lastFrame()).toContain('Decoded PAYMENT-REQUIRED');
+      expect(view.lastFrame()).toContain('amount 500');
+      view.unmount();
+    } finally {
+      rendered.mockRestore();
+      fetch.mockRestore();
+    }
+  });
   it('renders header, accepts, scheme, network, asset, and amount', () => {
     const header = encodePaymentRequiredHeader(paymentRequired());
     const decoded = decodeHeader(header);

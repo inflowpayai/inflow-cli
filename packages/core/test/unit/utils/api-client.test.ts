@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { resolveInflowSdkConfig, type ResolvedInflowSdkConfig } from '../../../src/config.js';
 import { InflowTransportError } from '../../../src/errors.js';
 import { InflowApiClient } from '../../../src/utils/api-client.js';
@@ -124,11 +126,36 @@ describe('InflowApiClient — auth modes', () => {
 });
 
 describe('InflowApiClient — retry behavior', () => {
+  it('passes an already-cancelled signal to the transport and does not retry', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>((_input, init) => {
+      expect(init?.signal?.aborted).toBe(true);
+      return Promise.reject(new DOMException('Request aborted.', 'AbortError'));
+    });
+    const c = makeConfig({ fetch, apiBaseUrl: 'https://api.test' });
+    const client = new InflowApiClient(c, c.apiBaseUrl);
+    await expect(client.get('/v1/x', { signal: AbortSignal.abort() })).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledOnce();
+  });
   beforeEach(() => {
     vi.useFakeTimers();
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('cancels retry backoff without transmitting another authenticated request', async () => {
+    const controller = new AbortController();
+    const { fetch, calls } = makeFetchRecorder([{ status: 503 }]);
+    const c = makeConfig({ fetch, apiBaseUrl: 'https://api.test', apiKey: 'test-key' });
+    const client = new InflowApiClient(c, c.apiBaseUrl);
+    const result = client.get('/v1/x', { signal: controller.signal }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toHaveLength(1);
+    controller.abort();
+    await expect(result).resolves.toMatchObject({ message: 'Request aborted.' });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(calls).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('retries on 503 with exponential backoff up to total attempts', async () => {
@@ -139,11 +166,15 @@ describe('InflowApiClient — retry behavior', () => {
     ]);
     const c = makeConfig({ fetch, apiBaseUrl: 'https://api.test' });
     const client = new InflowApiClient(c, c.apiBaseUrl);
-    const p = client.get('/v1/x');
+    const signal = new AbortController().signal;
+    const removeListener = vi.spyOn(signal, 'removeEventListener');
+    const p = client.get('/v1/x', { signal });
     await vi.advanceTimersByTimeAsync(700);
     const res = await p;
     expect(res.status).toBe(200);
     expect(calls.length).toBe(3);
+    expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+    removeListener.mockRestore();
   });
 
   it('does not retry on 4xx other than 429', async () => {
@@ -243,6 +274,15 @@ describe('InflowApiClient — 401 retry-with-forced-refresh', () => {
 });
 
 describe('InflowApiClient — request bodies & headers', () => {
+  it('preserves a caller-supplied string body and content type', async () => {
+    const { fetch, calls } = makeFetchRecorder([{ status: 200, bodyJson: {} }]);
+    const config = makeConfig({ fetch, apiBaseUrl: 'https://api.test' });
+    const client = new InflowApiClient(config, config.apiBaseUrl);
+    await client.post('/v1/x', 'raw=request&value=one', { headers: { 'Content-Type': 'application/custom' } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body).toBe('raw=request&value=one');
+    expect(calls[0]?.headers.get('Content-Type')).toBe('application/custom');
+  });
   it('JSON post sets Content-Type and serializes body', async () => {
     const { fetch, calls } = makeFetchRecorder([{ status: 200, bodyJson: {} }]);
     const c = makeConfig({ fetch, apiBaseUrl: 'https://api.test' });
@@ -317,6 +357,62 @@ describe('InflowApiClient — request bodies & headers', () => {
 });
 
 describe('InflowApiClient — timeout', () => {
+  it.each(['timeout', 'cancel'] as const)(
+    'interrupts a stalled response body after headers arrive: %s',
+    async (mode) => {
+      vi.useRealTimers();
+      let headersReceived = false;
+      let requests = 0;
+      const server = createServer((_request, response) => {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.write('{"pending":');
+        requests += 1;
+      });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      if (address === null || typeof address === 'string') throw new Error('Expected TCP listener');
+      const config = makeConfig({
+        apiBaseUrl: `http://127.0.0.1:${address.port}`,
+        fetch: async (input, init) => {
+          const response = await globalThis.fetch(input, init);
+          headersReceived = true;
+          return response;
+        },
+      });
+      const client = new InflowApiClient(config, config.apiBaseUrl);
+      const controller = new AbortController();
+      let settled = false;
+      const result = client
+        .get('/slow', {
+          signal: controller.signal,
+          timeoutMs: mode === 'timeout' ? 500 : 5000,
+          retries: mode === 'timeout' ? 1 : 3,
+        })
+        .then(
+          (value) => {
+            settled = true;
+            return value;
+          },
+          (error: unknown) => {
+            settled = true;
+            return error;
+          },
+        );
+      try {
+        await vi.waitFor(() => expect(headersReceived).toBe(true));
+        if (mode === 'cancel') controller.abort();
+        await vi.waitFor(() => expect(settled).toBe(true), { timeout: 1000 });
+        expect(await result).toBeInstanceOf(InflowTransportError);
+        expect(requests).toBe(1);
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+        await result;
+      }
+    },
+  );
+
   it('aborts the underlying fetch when timeout elapses', async () => {
     vi.useFakeTimers();
     const fetch = vi.fn(
@@ -338,20 +434,36 @@ describe('InflowApiClient — timeout', () => {
 });
 
 describe('InflowApiClient — verbose logging', () => {
-  it('redacts Authorization and X-API-KEY headers, plus body fields', async () => {
+  it('does not print a non-JSON response body that could contain credentials', async () => {
+    const body = 'secret returned in a proxy error';
+    const { fetch } = makeFetchRecorder([{ status: 502, body }]);
+    const lines: string[] = [];
+    const c = makeConfig({
+      fetch,
+      apiBaseUrl: 'https://api.test',
+      verbose: true,
+      logger: { debug: (line) => lines.push(line) },
+    });
+    const response = await new InflowApiClient(c, c.apiBaseUrl).get('/v1/x', { retries: 1 });
+    expect(response.rawBody).toBe(body);
+    expect(lines.join('\n')).not.toContain(body);
+    expect(lines).toContain(`<non-JSON body, ${String(body.length)} bytes>`);
+  });
+
+  it.each(['bearer', 'api-key'] as const)('redacts %s credentials and body fields in verbose output', async (mode) => {
     const { fetch } = makeFetchRecorder([{ status: 200, bodyJson: {} }]);
     const lines: string[] = [];
     const c = makeConfig({
       fetch,
       apiBaseUrl: 'https://api.test',
-      accessToken: 'super-secret',
+      ...(mode === 'bearer' ? { accessToken: 'super-secret' } : { apiKey: 'super-secret' }),
       verbose: true,
       logger: { debug: (m) => lines.push(m) },
     });
     const client = new InflowApiClient(c, c.apiBaseUrl);
     await client.post('/v1/x', { refresh_token: 'sensitive', other: 'public' });
     const joined = lines.join('\n');
-    expect(joined).toContain('Bearer <redacted>');
+    expect(joined).toContain(mode === 'bearer' ? 'Bearer <redacted>' : 'X-API-KEY');
     expect(joined).not.toContain('super-secret');
     expect(joined).toContain('<redacted>');
     expect(joined).not.toContain('sensitive');

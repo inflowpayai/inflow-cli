@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import type {
   VaultBackend,
@@ -85,6 +85,53 @@ function request(method: VaultIpcRequest['method'], params: Record<string, unkno
 }
 
 describe('handleVaultIpcRequest', () => {
+  it('forwards an exact secret reference and expiration while clearing the copied payload', async () => {
+    const backend = new FakeVaultBackend();
+    const put = vi.spyOn(backend, 'putSecret');
+    const payload = Buffer.from('caller-owned-secret');
+    const result = await handleVaultIpcRequest(
+      backend,
+      request('secret.put', {
+        expectedKind: 'inflow_api_key',
+        reference: backend.secret.reference.reference,
+        expiresAt: '2999-01-01T00:00:00Z',
+        payload,
+      }),
+    );
+    expect(result).toMatchObject({ ok: true, result: { reference: backend.secret.reference.reference } });
+    expect(put).toHaveBeenCalledWith({
+      expectedKind: 'inflow_api_key',
+      reference: backend.secret.reference,
+      expiresAt: '2999-01-01T00:00:00Z',
+      payload: Buffer.alloc(payload.length),
+    });
+    expect(payload.toString()).toBe('caller-owned-secret');
+  });
+  it.each([undefined, '', 123])(
+    'rejects an invalid expiration-cleanup timestamp %s before touching storage',
+    async (now) => {
+      const backend = new FakeVaultBackend();
+      const cleanup = vi.spyOn(backend, 'deleteExpired');
+      await expect(handleVaultIpcRequest(backend, request('secret.deleteExpired', { now }))).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'secure_storage_invalid_path' },
+      });
+      expect(cleanup).not.toHaveBeenCalled();
+    },
+  );
+
+  it('returns the unlock salt without unlocking or reading credentials', async () => {
+    const backend = new FakeVaultBackend();
+    const unlock = vi.spyOn(backend, 'unlockWithWrappingKey');
+    const read = vi.spyOn(backend, 'getSecret');
+    await expect(handleVaultIpcRequest(backend, request('vault.unlockSalt'))).resolves.toMatchObject({
+      ok: true,
+      result: { salt: Buffer.alloc(16) },
+    });
+    expect(unlock).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it('dispatches generic vault and secret methods without protocol-specific behavior', async () => {
     const backend = new FakeVaultBackend();
     const reference = 'vlt_11111111111111111111111111111111';
@@ -222,6 +269,23 @@ describe('handleVaultIpcRequest', () => {
       },
       ok: false,
     });
+  });
+
+  it.each(['reference', 'expiresAt'])('rejects malformed optional %s before storing a secret', async (field) => {
+    const backend = new FakeVaultBackend();
+    const put = vi.spyOn(backend, 'putSecret');
+    for (const invalid of ['', 123, null]) {
+      const result = await handleVaultIpcRequest(
+        backend,
+        request('secret.put', {
+          expectedKind: 'inflow_api_key',
+          payload: Buffer.from('secret'),
+          [field]: invalid,
+        }),
+      );
+      expect(result).toMatchObject({ ok: false, error: { code: 'secure_storage_invalid_path' } });
+    }
+    expect(put).not.toHaveBeenCalled();
   });
 
   it('rejects malformed policy, base64, kind, and optional fields', async () => {

@@ -307,23 +307,31 @@ describe('wrapEmittingPipeline — error propagation through the MPP pay handle'
     await expect(drainEvents(run.events)).rejects.toThrow('client boom');
   });
 
-  it('wraps a non-Error rejection in an InflowSdkError carrying its string form', async () => {
-    // The pipeline is expected to wrap non-Error rejections; cast preserves the
-    // runtime string value while satisfying prefer-promise-reject-errors.
-    const nonErrorReason = 'weird-failure' as unknown as Error;
-    const raw: IMppResource = {
-      client: () => Promise.reject(nonErrorReason),
-      cancelApproval: vi.fn(() => Promise.resolve(undefined)),
-    };
-    const mpp = augmentMpp(raw, 'https://api.example.test');
-    const run = mpp.pay({
-      url: 'https://seller.test/api',
-      probeOptions: { method: 'GET', headers: {} },
-      showBody: false,
-      interval: 0,
-      maxAttempts: 0,
-      timeout: 0,
-    });
-    await expect(drainEvents(run.events)).rejects.toThrow('weird-failure');
-  });
+  it.each(['weird-failure', { reason: 'client unavailable' }])(
+    'preserves a non-Error client rejection: %j',
+    async (nonErrorReason) => {
+      const client = vi.fn<IMppResource['client']>().mockRejectedValue(nonErrorReason);
+      const raw: IMppResource = {
+        client,
+        cancelApproval: vi.fn(() => Promise.resolve(undefined)),
+      };
+      const mpp = augmentMpp(raw, 'https://api.example.test');
+      const run = mpp.pay({
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        showBody: false,
+        interval: 0,
+        maxAttempts: 0,
+        timeout: 0,
+      });
+      expect(client).not.toHaveBeenCalled();
+      const expected = {
+        cause: nonErrorReason,
+        message: typeof nonErrorReason === 'string' ? nonErrorReason : JSON.stringify(nonErrorReason),
+      };
+      await expect(drainEvents(run.events)).rejects.toMatchObject(expected);
+      await expect(drainEvents(run.events)).resolves.toEqual([]);
+      expect(client).toHaveBeenCalledOnce();
+    },
+  );
 });

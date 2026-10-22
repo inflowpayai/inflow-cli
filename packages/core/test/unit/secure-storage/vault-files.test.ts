@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { lstat, readdir, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -91,6 +91,38 @@ describe('vault file cleanup', () => {
     expect(captureError(() => linuxVaultServiceUserId(invalid))).toMatchObject({
       secureStorageCode: 'secure_storage_peer_verification_failed',
     });
+  });
+
+  it.each([0o720, 0o702])('rejects a real socket in a writable parent directory (%s)', async (mode) => {
+    const parent = join(tmpDir, 'unsafe');
+    mkdirSync(parent, { mode: 0o700 });
+    const socketPath = join(parent, 'vault.sock');
+    server = createServer();
+    await new Promise<void>((resolve) => server?.listen(socketPath, resolve));
+    chmodSync(parent, mode);
+    expect(captureError(() => linuxVaultServiceUserId(socketPath))).toMatchObject({
+      secureStorageCode: 'secure_storage_peer_verification_failed',
+    });
+    chmodSync(parent, 0o700);
+    expect(linuxVaultServiceUserId(socketPath)).toBe(lstatSync(socketPath).uid);
+  });
+
+  it('rejects both socket and parent-directory symlinks', async () => {
+    const parent = join(tmpDir, 'real');
+    mkdirSync(parent, { mode: 0o700 });
+    const socketPath = join(parent, 'vault.sock');
+    server = createServer();
+    await new Promise<void>((resolve) => server?.listen(socketPath, resolve));
+    const socketLink = join(parent, 'link.sock');
+    const parentLink = join(tmpDir, 'linked');
+    symlinkSync(socketPath, socketLink);
+    symlinkSync(parent, parentLink);
+    for (const candidate of [socketLink, join(parentLink, 'vault.sock')]) {
+      expect(captureError(() => linuxVaultServiceUserId(candidate))).toMatchObject({
+        secureStorageCode: 'secure_storage_peer_verification_failed',
+      });
+    }
+    expect(linuxVaultServiceUserId(socketPath)).toBe(lstatSync(socketPath).uid);
   });
 
   it('removes local vault state files while leaving unrelated files in place', async () => {

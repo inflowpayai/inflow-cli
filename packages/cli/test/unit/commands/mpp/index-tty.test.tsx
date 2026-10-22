@@ -3,8 +3,10 @@ import { Inflow, MemoryStorage } from '@inflowpayai/inflow-core';
 import { encode, type MppChallenge, type MppClient, renderChallengeHeader } from '@inflowpayai/mpp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing } from '../../../../src/commands/mpp/index.js';
+import { fetchOptions } from '../../../../src/commands/mpp/schema.js';
 
-const { runPayCommand, runStatusCommand, runCancelCommand, runSupportedCommand, runInspectCommand } = __testing;
+const { runPayCommand, runFetchCommand, runStatusCommand, runCancelCommand, runSupportedCommand, runInspectCommand } =
+  __testing;
 
 const SELLER = 'https://seller.test/api';
 
@@ -72,6 +74,43 @@ async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
 afterEach(() => vi.restoreAllMocks());
 
 describe('mpp TTY runners (renderInkUntilExit paths)', () => {
+  it.each([200, 403])('resumes an existing payment in interactive mode with seller status %s', async (status) => {
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(challenge402())
+      .mockResolvedValueOnce(new Response('seller response', { status }));
+    const getTransaction = vi.fn<MppClient['getTransaction']>().mockResolvedValue({
+      transactionId: 'tx-1',
+      state: 'ready',
+      credential: 'CRED',
+    });
+    const createTransaction = vi.fn<MppClient['createTransaction']>();
+    const { inflow, storage } = authed(makeClient({ getTransaction, createTransaction }));
+    const ctx = ttyCtx({ transactionId: 'tx-1', resourceUrl: SELLER }, fetchOptions.parse({ interval: 0 }));
+    const operation = drain(runFetchCommand(ctx, inflow, storage));
+    if (status === 200) {
+      expect(await operation).toEqual([]);
+      expect(ctx.error).not.toHaveBeenCalled();
+    } else {
+      await expect(operation).rejects.toThrow('PAYMENT_NOT_ACCEPTED');
+      expect(ctx.error.mock.calls[0]?.[0].message).toContain('403');
+    }
+    expect(getTransaction).toHaveBeenCalledOnce();
+    expect(createTransaction).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('Authorization')).toBe('Payment CRED');
+  });
+
+  it('shows a failed resume status request without contacting the seller', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const getTransaction = vi.fn<MppClient['getTransaction']>().mockRejectedValue(new Error('status unavailable'));
+    const { inflow, storage } = authed(makeClient({ getTransaction }));
+    const ctx = ttyCtx({ transactionId: 'tx-1', resourceUrl: SELLER }, fetchOptions.parse({ interval: 0 }));
+    await expect(drain(runFetchCommand(ctx, inflow, storage))).rejects.toThrow('PAYMENT_FAILED');
+    expect(ctx.error.mock.calls[0]?.[0].message).toBe('status unavailable');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('runPayCommand renders to completion on a successful pay and never calls c.error', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     fetchSpy.mockResolvedValueOnce(challenge402());

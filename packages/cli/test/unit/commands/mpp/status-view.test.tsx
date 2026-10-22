@@ -18,6 +18,55 @@ function view(fetchOnce: () => Promise<MppTransactionResponse>, interval = 0) {
 }
 
 describe('MppStatusView', () => {
+  it('ignores a status response that arrives after the view is disposed', async () => {
+    let complete: ((response: MppTransactionResponse) => void) | undefined;
+    const pending = new Promise<MppTransactionResponse>((resolve) => {
+      complete = resolve;
+    });
+    const fetchOnce = vi.fn(() => pending);
+    const onComplete = vi.fn();
+    const result = render(
+      <MppStatusView
+        transactionId="tx-1"
+        fetchOnce={fetchOnce}
+        interval={0}
+        maxAttempts={0}
+        timeout={900}
+        onComplete={onComplete}
+      />,
+    );
+    await vi.waitFor(() => expect(fetchOnce).toHaveBeenCalledOnce());
+    result.unmount();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (complete === undefined) throw new Error('Missing response resolver');
+    complete({ transactionId: 'tx-1', state: 'ready', credential: 'private-credential' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(fetchOnce).toHaveBeenCalledOnce();
+    expect(result.frames.join('')).not.toContain('private-credential');
+  });
+
+  it('shows the credential expiry without revealing the credential', async () => {
+    const result = view(() =>
+      Promise.resolve({
+        transactionId: 'tx-1',
+        state: 'ready',
+        credential: 'private-credential',
+        expires: '2027-01-01T00:00:00Z',
+      }),
+    );
+    await vi.waitFor(() => expect(result.lastFrame()).toContain('expires: 2027-01-01T00:00:00Z'));
+    expect(result.lastFrame()).not.toContain('private-credential');
+    result.unmount();
+  });
+
+  it('reports failure even when the server supplies no problem detail', async () => {
+    const result = view(() => Promise.resolve({ transactionId: 'tx-1', state: 'failed' }));
+    await vi.waitFor(() => expect(result.lastFrame()).toContain('Transaction failed'));
+    expect(result.lastFrame()).not.toContain('undefined');
+    result.unmount();
+  });
+
   it('shows the polling spinner before the first result resolves', async () => {
     const { lastFrame, unmount } = view(() => new Promise<MppTransactionResponse>(() => {}), 5);
     await new Promise((r) => setTimeout(r, 20));

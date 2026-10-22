@@ -1,4 +1,15 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -30,7 +41,10 @@ class QuickCheckStatement extends EmptySqliteStatement {
   }
 }
 
-function quickCheckSqlite(result: Record<string, SqliteTestValue> | undefined): {
+function quickCheckSqlite(
+  result: Record<string, SqliteTestValue> | undefined,
+  integrity?: Record<string, SqliteTestValue>,
+): {
   DatabaseSync: new (filename: string) => {
     close(): void;
     exec(sql: string): void;
@@ -46,7 +60,11 @@ function quickCheckSqlite(result: Record<string, SqliteTestValue> | undefined): 
       exec(_sql: string): void {}
 
       prepare(sql: string): EmptySqliteStatement {
-        return sql === 'PRAGMA quick_check' ? new QuickCheckStatement(result) : new EmptySqliteStatement();
+        return sql === 'PRAGMA quick_check'
+          ? new QuickCheckStatement(result)
+          : sql === 'PRAGMA integrity_check'
+            ? new QuickCheckStatement(integrity)
+            : new EmptySqliteStatement();
       }
     },
   };
@@ -70,6 +88,56 @@ describe('SecureSqliteRepository', () => {
   it('initializes the durable schema and validates database permissions', async () => {
     await expect(repository.verifyDatabaseFiles()).resolves.toBeUndefined();
     await expect(repository.ensureBackup()).resolves.toBeUndefined();
+  });
+
+  it('rejects a directory used as the database file', () => {
+    const databasePath = join(tmpDir, 'directory-not-database');
+    mkdirSync(databasePath);
+    const invalid = new SecureSqliteRepository({ databasePath });
+    try {
+      expect(() => invalid.initialize()).toThrow('The InFlow SQLite database path is invalid.');
+      expect(statSync(databasePath).isDirectory()).toBe(true);
+    } finally {
+      invalid.close();
+    }
+  });
+
+  it('applies the Windows canonical-path policy before opening a database through a directory alias', () => {
+    const originalPlatform = process.platform;
+    const root = realpathSync(tmpDir);
+    const target = join(root, 'canonical');
+    const alias = join(root, 'alias');
+    mkdirSync(target);
+    symlinkSync(target, alias, 'junction');
+    const canonical = new SecureSqliteRepository({ databasePath: join(target, 'accepted.sqlite3') });
+    const redirected = new SecureSqliteRepository({ databasePath: join(alias, 'rejected.sqlite3') });
+    try {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      canonical.initialize();
+      expect(canonical.upsertPrincipal('https://platform.test', 'user').userId).toBe('user');
+      expect(() => redirected.initialize()).toThrow('The InFlow SQLite path is invalid.');
+      expect(existsSync(join(target, 'rejected.sqlite3'))).toBe(false);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+      canonical.close();
+      redirected.close();
+    }
+  });
+
+  it.runIf(process.platform !== 'win32')('rejects a database symlink without modifying its target', () => {
+    const target = join(tmpDir, 'unrelated-file');
+    const databasePath = join(tmpDir, 'symlink.sqlite3');
+    writeFileSync(target, 'unrelated contents', { mode: 0o644 });
+    const originalMode = statSync(target).mode;
+    symlinkSync(target, databasePath);
+    const invalid = new SecureSqliteRepository({ databasePath });
+    try {
+      expect(() => invalid.initialize()).toThrow('The InFlow SQLite database path is invalid.');
+      expect(readFileSync(target, 'utf8')).toBe('unrelated contents');
+      expect(statSync(target).mode).toBe(originalMode);
+    } finally {
+      invalid.close();
+    }
   });
 
   it.runIf(process.platform === 'linux')('uses the Linux vault root for the default database', () => {
@@ -133,6 +201,8 @@ describe('SecureSqliteRepository', () => {
       cachedAt: '2026-01-01T00:00:00.000Z',
       cacheControl: 'max-age=300',
       etag: '"v1"',
+      finalUrl: 'https://service.example/specification.json',
+      lastModified: 'Thu, 01 Jan 2026 00:00:00 GMT',
       namespace: 'openapi',
       payload: { openapi: '3.1.0' },
       url: 'https://service.example/openapi.json',
@@ -141,6 +211,8 @@ describe('SecureSqliteRepository', () => {
     expect(repository.getPublicDocument('openapi', 'https://service.example/openapi.json')).toMatchObject({
       cacheControl: 'max-age=300',
       etag: '"v1"',
+      finalUrl: 'https://service.example/specification.json',
+      lastModified: 'Thu, 01 Jan 2026 00:00:00 GMT',
       payload: { openapi: '3.1.0' },
     });
 
@@ -270,10 +342,11 @@ describe('SecureSqliteRepository', () => {
     repository.writeTransactionSync(() => {
       repository.upsertSetting('nested-sync', { committed: true });
     });
-    await repository.writeTransaction(() => {
-      repository.upsertSetting('nested-async', { committed: true });
-      return Promise.resolve();
-    });
+    await repository.writeTransaction(() =>
+      repository.writeTransaction(() => {
+        repository.upsertSetting('nested-async', { committed: true });
+      }),
+    );
 
     expect(repository.getSetting('nested-sync')?.payload).toEqual({ committed: true });
     expect(repository.getSetting('nested-async')?.payload).toEqual({ committed: true });
@@ -337,6 +410,27 @@ describe('SecureSqliteRepository', () => {
       failing.close();
     }
   });
+
+  it.each([undefined, { integrity_check: 'database disk image is malformed' }])(
+    'refuses a backup after a failed integrity check: %j',
+    async (result) => {
+      const backupPath = join(tmpDir, 'rejected.backup');
+      const failing = new SecureSqliteRepository({
+        databasePath: join(tmpDir, 'backup-source.sqlite3'),
+        loadSqlite: () => quickCheckSqlite({ quick_check: 'ok' }, result),
+      });
+      try {
+        failing.initialize();
+        await expect(failing.ensureBackup(backupPath)).rejects.toMatchObject({
+          secureStorageCode: 'secure_storage_corrupt',
+          message: 'SQLite integrity_check failed.',
+        });
+        expect(existsSync(backupPath)).toBe(false);
+      } finally {
+        failing.close();
+      }
+    },
+  );
 
   it('allows close to be repeated safely', () => {
     repository.close();

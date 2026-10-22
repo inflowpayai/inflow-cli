@@ -27,8 +27,8 @@ describe('DepositAddressResource', () => {
     expect(out.unconfigured[0]?.currencies).toEqual(['USDC']);
   });
 
-  it('returns empty arrays when wire arrays are missing', async () => {
-    server.use(http.get(`${BASE_URL}/v1/deposit-addresses`, () => HttpResponse.json({})));
+  it.each([{}, null])('returns empty arrays when wire arrays are missing: %j', async (body) => {
+    server.use(http.get(`${BASE_URL}/v1/deposit-addresses`, () => HttpResponse.json(body)));
     const r = new DepositAddressResource({
       apiBaseUrl: BASE_URL,
       accessToken: 'tk',

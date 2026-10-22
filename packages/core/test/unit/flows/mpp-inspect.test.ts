@@ -49,6 +49,26 @@ async function collect(filters: Partial<Parameters<typeof runMppInspectPipeline>
 }
 
 describe('runMppInspectPipeline', () => {
+  it.each(['charge', 'subscription'])(
+    'combines method and intent constraints without creating a transaction: %s',
+    async (intent) => {
+      server.use(
+        http.get(
+          SELLER,
+          () =>
+            new HttpResponse(null, {
+              status: 402,
+              headers: { 'WWW-Authenticate': renderChallengeHeader(challenge()) },
+            }),
+        ),
+      );
+      const result = await collect({ paymentMethodFilter: 'inflow', intentFilter: intent });
+      expect(result).toHaveLength(1);
+      if (intent === 'charge')
+        expect(result[0]).toMatchObject({ type: 'challenges', result: { challenges: [{ intent: 'charge' }] } });
+      else expect(result[0]).toMatchObject({ type: 'errored', code: 'NO_FILTERED_MATCH' });
+    },
+  );
   it('reports a non-Error probe rejection', async () => {
     const events = await collect({ probe: vi.fn().mockRejectedValue('connection closed') });
     expect(events).toEqual([{ type: 'errored', code: 'INSPECT_FAILED', message: 'connection closed' }]);

@@ -232,6 +232,93 @@ describe('LocalVaultClient', () => {
     });
   });
 
+  it.each(['previous-factor-accepted', 'unlocked-after-rejection'] as const)(
+    'rejects inconsistent passphrase rotation: %s',
+    async (scenario) => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
+      const methods: string[] = [];
+      await listenWithResponder(tmpDir, (request) => {
+        methods.push(request.method);
+        if (request.method === 'vault.unlock' && scenario === 'unlocked-after-rejection') {
+          return {
+            id: request.id,
+            version: 1,
+            ok: false,
+            error: { code: 'secure_storage_corrupt', message: 'Old factor rejected.' },
+          };
+        }
+        return {
+          id: request.id,
+          version: 1,
+          ok: true,
+          result:
+            request.method === 'vault.unlockSalt'
+              ? { salt: Buffer.alloc(16) }
+              : request.method === 'vault.unlock' || request.method === 'vault.status'
+                ? { daemonRunning: true, lockState: 'unlocked' }
+                : {},
+        };
+      });
+      const client = new LocalVaultClient({ rootDirectory: tmpDir });
+      const current = Buffer.from('current');
+      const next = Buffer.from('next123');
+      try {
+        await expect(client.changePassphrase(current, next)).rejects.toMatchObject({
+          secureStorageCode: 'secure_storage_corrupt',
+          message:
+            scenario === 'previous-factor-accepted'
+              ? 'The previous vault PIN or passphrase remained valid after rotation.'
+              : 'The vault did not remain locked during rotation.',
+        });
+        expect(methods).toEqual([
+          'vault.unlockSalt',
+          'vault.changePassphrase',
+          'vault.lock',
+          'vault.unlockSalt',
+          'vault.unlock',
+          'vault.status',
+          ...(scenario === 'previous-factor-accepted' ? ['vault.lock'] : []),
+        ]);
+        expect(current.toString()).toBe('current');
+        expect(next.toString()).toBe('next123');
+      } finally {
+        current.fill(0);
+        next.fill(0);
+        client.dispose();
+      }
+    },
+    15_000,
+  );
+
+  it('does not request status after the unlock response itself reports a locked vault', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
+    const methods: string[] = [];
+    await listenWithResponder(tmpDir, (request) => {
+      methods.push(request.method);
+      return {
+        id: request.id,
+        ok: true,
+        version: 1,
+        result:
+          request.method === 'vault.unlockSalt'
+            ? { salt: Buffer.alloc(16) }
+            : { daemonRunning: true, lockState: 'locked' },
+      };
+    });
+    const client = new LocalVaultClient({ rootDirectory: tmpDir });
+    const factor = Buffer.from('123456');
+    try {
+      await expect(client.unlock(factor)).rejects.toMatchObject({
+        secureStorageCode: 'secure_storage_corrupt',
+        message: 'The vault did not remain unlocked after authentication.',
+      });
+      expect(methods).toEqual(['vault.unlockSalt', 'vault.unlock']);
+    } finally {
+      factor.fill(0);
+      client.dispose();
+    }
+  });
+
   it('accepts a pre-request peer-verification rejection without trusting other mismatched errors', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
     let peerRejection = true;

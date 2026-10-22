@@ -17,6 +17,64 @@ const serviceDocument = {
 };
 
 describe('Inflow.odp', () => {
+  it.each([undefined, 'test-user'])(
+    'keeps federated transports separate with cache partition %s',
+    async (cachePartition) => {
+      const directoryRequests: Request[] = [];
+      const serviceRequests: Request[] = [];
+      const services = ['catalog', 'offline'].map((name) => ({
+        ...serviceDocument,
+        service_id: name,
+        service_origin: `https://${name}.example`,
+        indexed_at: '2026-09-18T12:00:00Z',
+        source: { type: 'odp', url: `https://${name}.example/.well-known/odp`, x402_discovery: false },
+      }));
+      const directoryTransport: typeof globalThis.fetch = (input, init) => {
+        directoryRequests.push(new Request(input, init));
+        return Promise.resolve(Response.json({ items: services }));
+      };
+      const inspectionTransport: typeof globalThis.fetch = (input, init) => {
+        serviceRequests.push(new Request(input, init));
+        return Promise.resolve(Response.json(serviceDocument, { headers: { 'content-type': 'application/odp+json' } }));
+      };
+      const catalogTransport: typeof globalThis.fetch = (input, init) => {
+        const request = new Request(input, init);
+        serviceRequests.push(request);
+        return Promise.resolve(
+          new URL(request.url).hostname === 'offline.example'
+            ? Response.json({ title: 'Unavailable' }, { status: 503 })
+            : Response.json(
+                { odp_version: '1.0', items: [{ id: 'gpu', name: '\u001b[31mGPU\u001b[0m' }] },
+                { headers: { 'content-type': 'application/odp+json' } },
+              ),
+        );
+      };
+      const resource = new Inflow({ fetch: directoryTransport, apiKey: 'platform-only-key' }).odp.withServiceTransport({
+        transport: catalogTransport,
+        inspectionTransport,
+        ...(cachePartition === undefined ? {} : { cachePartition }),
+      });
+      const results = [];
+      for await (const result of resource.searchOfferingsAcrossServices({ maxServices: 2, concurrency: 1 }))
+        results.push(result);
+      expect(results).toHaveLength(2);
+      expect(results[0], JSON.stringify(results)).toMatchObject({
+        type: 'offering',
+        service: { service_id: 'catalog' },
+        offering: { id: 'gpu', name: 'GPU' },
+      });
+      expect(results[1]).toMatchObject({ type: 'issue', service: { service_id: 'offline' } });
+      expect(directoryRequests).toHaveLength(1);
+      expect(new URL(directoryRequests[0]?.url ?? '').hostname).toBe('directory.offeringprotocol.org');
+      expect(serviceRequests.map((request) => new URL(request.url).pathname)).toContain('/odp/offerings');
+      for (const request of [...directoryRequests, ...serviceRequests]) {
+        expect(request.headers.has('authorization')).toBe(false);
+        expect(request.headers.has('x-api-key')).toBe(false);
+      }
+      expect(JSON.stringify(results)).not.toContain('\\u001b');
+    },
+  );
+
   it.each(['production', 'sandbox'] as const)('uses mixed discovery without credentials in %s', async (environment) => {
     const calls: Request[] = [];
     const stamp = '2026-09-18T12:00:00Z';
@@ -126,6 +184,17 @@ describe('Inflow.odp', () => {
     expect(services[0]?.name).toBe('Compute');
     expect(services[0]?.['service_id']).toBe('eb825701-7eab-42a4-ad1f-c73c7f163c8c');
     expect(inflow.odp.environment).toBe('sandbox');
+
+    const continued = [];
+    for await (const page of inflow.odp.continueSearchServices('/v1/services/search?cursor=opaque', { maxPages: 1 })
+      .pages) {
+      continued.push(page);
+    }
+    expect(calls[1]?.url).toBe('https://sandbox.inflowpay.ai/v1/services/search?cursor=opaque');
+    expect(calls[1]?.method).toBe('GET');
+    expect(continued[0]?.items).toEqual(services);
+    expect(calls[1]?.headers.has('authorization')).toBe(false);
+    expect(calls[1]?.headers.has('x-api-key')).toBe(false);
   });
 
   it('uses the configured transport for Service inspection and clients', async () => {

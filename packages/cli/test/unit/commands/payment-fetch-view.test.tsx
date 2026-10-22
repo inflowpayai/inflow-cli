@@ -1,6 +1,10 @@
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
-import { PaymentFetchView, type PaymentFetchPhase } from '../../../src/commands/payment-fetch.js';
+import {
+  PaymentFetchView,
+  type PaymentFetchPhase,
+  type PaymentFetchViewProps,
+} from '../../../src/commands/payment-fetch.js';
 
 async function* eventsFor(final: PaymentFetchPhase): AsyncGenerator<never> {
   await Promise.resolve();
@@ -25,6 +29,83 @@ async function* eventsFor(final: PaymentFetchPhase): AsyncGenerator<never> {
 }
 
 describe('PaymentFetchView', () => {
+  it.each(['event', 'rejection'] as const)('ignores a late %s after the view is unmounted', async (completion) => {
+    const onComplete = vi.fn();
+    let release = () => undefined as void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let finish = () => undefined as void;
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let signal: AbortSignal | undefined;
+    const events: PaymentFetchViewProps['events'] = async function* (input) {
+      signal = input;
+      try {
+        await pending;
+        if (completion === 'rejection') throw new Error('Request aborted');
+        yield { type: 'errored', code: 'PAYMENT_FAILED', message: 'Late failure' };
+      } finally {
+        finish();
+      }
+    };
+    const view = render(
+      <PaymentFetchView
+        protocol="MPP"
+        transactionId="tx-1"
+        url="https://seller.test/api"
+        method="GET"
+        paymentHeader="Authorization: Payment"
+        events={events}
+        onComplete={onComplete}
+      />,
+    );
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    view.unmount();
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+    release();
+    await finished;
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it('routes Escape to the authentication approval rather than cancelling the payment wait', async () => {
+    const onComplete = vi.fn();
+    const cancel = vi.fn(() => Promise.resolve());
+    let signal: AbortSignal | undefined;
+    async function* waiting(input: AbortSignal): AsyncGenerator<never> {
+      signal = input;
+      await new Promise<void>((resolve) => input.addEventListener('abort', () => resolve(), { once: true }));
+    }
+    const view = render(
+      <PaymentFetchView
+        protocol="MPP"
+        transactionId="tx-1"
+        url="https://seller.test/api"
+        method="GET"
+        paymentHeader="Authorization: Payment"
+        events={waiting}
+        onComplete={onComplete}
+        authenticationApproval={{
+          approvalId: 'authentication-1',
+          approvalUrl: 'https://platform.test/approvals/authentication-1',
+          cancel,
+        }}
+      />,
+    );
+    try {
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('Authentication approval required'));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      view.stdin.write('\u001b');
+      await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+      expect(onComplete).not.toHaveBeenCalled();
+      expect(signal?.aborted).toBe(false);
+    } finally {
+      view.unmount();
+    }
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+  });
+
   it('stops a payment wait on Escape and aborts its polling signal', async () => {
     const onComplete = vi.fn();
     let pollingSignal: AbortSignal | undefined;
@@ -304,27 +385,29 @@ describe('PaymentFetchView', () => {
     unmount();
   });
 
-  it('renders unexpected event stream failures', async () => {
-    const onComplete = vi.fn();
-    async function* failingEvents(): AsyncGenerator<never> {
-      await Promise.resolve();
-      throw new Error('network down');
-    }
-    const { lastFrame, unmount } = render(
-      <PaymentFetchView
-        protocol="x402"
-        transactionId="txn-1"
-        url="https://seller.test/api"
-        method="GET"
-        paymentHeader="PAYMENT-SIGNATURE"
-        events={failingEvents}
-        onComplete={onComplete}
-      />,
-    );
+  it.each([new Error('network down'), 'network down'])(
+    'renders unexpected event stream failures: %s',
+    async (failure) => {
+      const onComplete = vi.fn();
+      async function* failingEvents(): AsyncGenerator<never> {
+        await vi.fn().mockRejectedValue(failure)();
+      }
+      const { lastFrame, unmount } = render(
+        <PaymentFetchView
+          protocol="x402"
+          transactionId="txn-1"
+          url="https://seller.test/api"
+          method="GET"
+          paymentHeader="PAYMENT-SIGNATURE"
+          events={failingEvents}
+          onComplete={onComplete}
+        />,
+      );
 
-    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
-    expect(lastFrame()).toContain('PAYMENT_FETCH_FAILED');
-    expect(lastFrame()).toContain('network down');
-    unmount();
-  });
+      await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+      expect(lastFrame()).toContain('PAYMENT_FETCH_FAILED');
+      expect(lastFrame()).toContain('network down');
+      unmount();
+    },
+  );
 });

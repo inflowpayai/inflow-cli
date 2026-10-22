@@ -1,13 +1,20 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import * as os from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthTokens } from '../../../src/types/index.js';
 import { MemoryStorage, Storage } from '../../../src/utils/storage.js';
-import { AepStorage } from '../../../src/aep/storage.js';
+import { AepStorage, type AepPersistedState } from '../../../src/aep/storage.js';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import { SyncMemorySecretStore, type SecretReference } from '../../../src/secure-storage/secret-store.js';
 import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
+import type { AepPublicDocumentCacheRecord } from '@aep-foundation/agent';
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof os>();
+  return { ...actual, homedir: vi.fn(actual.homedir) };
+});
 
 const sampleAuth: AuthTokens = {
   access_token: 'a',
@@ -49,6 +56,38 @@ class FaultInjectingSecretStore extends CountingSecretStore {
 }
 
 describe('Storage (file-backed)', () => {
+  it.each(['null', '[]', '42', '"not a credential object"', '{broken'])(
+    'rejects corrupt stored AEP credential JSON %s without altering metadata',
+    (payload) => {
+      const secrets = new CountingSecretStore();
+      const storage = new Storage({ cwd: tmpDir, secretStore: secrets });
+      const owner = { platformOrigin: 'https://platform.test', userId: 'user-1' };
+      storage.setAepState({
+        version: 1,
+        owner,
+        identities: {},
+        credentials: {
+          'did:web:service.test': {
+            'credential-1': {
+              credential: { api_key: 'stored-key' },
+              credentialId: 'credential-1',
+              grantType: 'api-key',
+              issuedAt: '2026-01-01T00:00:00Z',
+              serviceDid: 'did:web:service.test',
+            },
+          },
+        },
+      });
+      const read = vi.spyOn(secrets, 'read').mockImplementation(() => Buffer.from(payload));
+      expect(() => storage.getAepState()).toThrow();
+      read.mockRestore();
+      expect(storage.getAepState()?.credentials['did:web:service.test']?.['credential-1']?.credential).toEqual({
+        api_key: 'stored-key',
+      });
+      expect(secrets.deleted).toEqual([]);
+    },
+  );
+
   let tmpDir: string;
 
   beforeEach(() => {
@@ -63,6 +102,192 @@ describe('Storage (file-backed)', () => {
   function secureStorage(): Storage {
     return new Storage({ cwd: tmpDir, secretStore: new SyncMemorySecretStore() });
   }
+
+  it('removes obsolete default credential files only within the resolved user home', () => {
+    const platform = process.platform;
+    vi.spyOn(os, 'homedir').mockReturnValue(tmpDir);
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    try {
+      const preferences = join(tmpDir, 'Library', 'Preferences', 'inflow');
+      mkdirSync(preferences, { recursive: true });
+      const legacy = join(preferences, 'config.json');
+      const unrelated = join(preferences, 'unrelated.json');
+      writeFileSync(legacy, '{"apiKey":"obsolete"}');
+      writeFileSync(unrelated, 'preserved');
+      const storage = new Storage({ secretStore: new SyncMemorySecretStore() });
+      expect(storage.getAuth()).toBeNull();
+      expect(existsSync(legacy)).toBe(false);
+      expect(readFileSync(unrelated, 'utf8')).toBe('preserved');
+      expect(existsSync(join(tmpDir, 'Library', 'Application Support', 'InFlow', 'inflow.sqlite3'))).toBe(true);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform });
+    }
+  });
+
+  it.each([null, { invalid: {} }])(
+    'rejects malformed persisted AEP credential maps without reading secrets: %j',
+    (credentials) => {
+      const secrets = new CountingSecretStore();
+      const storage = new Storage({ cwd: tmpDir, secretStore: secrets });
+      storage.setAepState({
+        version: 1,
+        owner: { platformOrigin: 'https://platform.test', userId: 'user-1' },
+        identities: {},
+        credentials: {},
+      });
+      const repository = new SecureSqliteRepository({ databasePath: storage.getPath() });
+      try {
+        repository.initialize();
+        repository.upsertSetting('aep.state', {
+          version: 1,
+          owner: { platformOrigin: 'https://platform.test', userId: 'user-1' },
+          identities: {},
+          credentials: { 'did:web:service.test': credentials },
+        });
+        expect(storage.getAepState()).toBeNull();
+        expect(secrets.readReferences).toEqual([]);
+        expect(secrets.deleted).toEqual([]);
+      } finally {
+        repository.close();
+      }
+    },
+  );
+
+  it('reads an existing session without optional expiry metadata', () => {
+    const storage = secureStorage();
+    storage.setAuth(sampleAuth);
+    const repository = new SecureSqliteRepository({ databasePath: storage.getPath() });
+    try {
+      repository.initialize();
+      const stored = repository.getSetting('auth.session')?.payload;
+      if (typeof stored !== 'object' || stored === null) throw new Error('Expected session metadata');
+      const metadata = { ...stored };
+      Reflect.deleteProperty(metadata, 'expiresAt');
+      repository.upsertSetting('auth.session', metadata);
+      expect(storage.getAuth()).toEqual(sampleAuth);
+      expect(storage.getAuthSession()?.id).toEqual(expect.any(String));
+      expect(storage.getAuthSession()).not.toHaveProperty('expiresAt');
+    } finally {
+      repository.close();
+    }
+  });
+
+  it('removes an obsolete pending device secret when another device login starts', () => {
+    const secrets = new CountingSecretStore();
+    const storage = new Storage({ cwd: tmpDir, secretStore: secrets });
+    const pending = {
+      device_code: 'first-code',
+      interval: 5,
+      expires_at: Date.now() + 60_000,
+      verification_url: 'https://platform.test/device',
+      phrase: 'FIRST',
+    };
+    storage.setPendingDeviceAuth(pending);
+    storage.setPendingDeviceAuth({ ...pending, device_code: 'second-code', phrase: 'SECOND' });
+    expect(storage.getPendingDeviceAuth()).toEqual({ ...pending, device_code: 'second-code', phrase: 'SECOND' });
+    expect(secrets.deleted).toHaveLength(1);
+    expect(secrets.deleted[0]?.purpose).toBe('pending-device-code');
+  });
+
+  it('preserves optional Service URLs on file-backed credentials', () => {
+    const storage = secureStorage();
+    const owner = { platformOrigin: 'https://platform.test', userId: 'user-1' };
+    const credential = {
+      credential: { api_key: 'secret' },
+      credentialId: 'first',
+      grantType: 'api-key',
+      issuedAt: '2026-01-01T00:00:00Z',
+      serviceDid: 'did:web:service.test',
+      serviceUrl: 'https://service.test',
+    };
+    storage.setAepState({
+      version: 1,
+      owner,
+      identities: {},
+      credentials: { [credential.serviceDid]: { first: credential } },
+    });
+    expect(storage.getAepState()?.credentials[credential.serviceDid]?.['first']).toEqual(credential);
+    storage.deleteAepCredentials(owner, credential.serviceDid, { credentialId: 'absent' });
+    expect(storage.getAepState()?.credentials[credential.serviceDid]?.['first']).toEqual(credential);
+  });
+
+  it.each(['inspect', 'platform-discovery', 'openapi'] as const)(
+    'persists %s public document metadata and replaces only the intended namespace',
+    (namespace) => {
+      const storage = secureStorage();
+      const reader = secureStorage();
+      const document: AepPublicDocumentCacheRecord = {
+        namespace,
+        url: 'https://service.test/document',
+        cachedAt: '2026-01-01T00:00:00Z',
+        cacheControl: 'max-age=300',
+        etag: '"revision-1"',
+        finalUrl: 'https://service.test/document.json',
+        lastModified: 'Thu, 01 Jan 2026 00:00:00 GMT',
+        value: { title: 'Original' },
+      };
+      const unrelated: AepPublicDocumentCacheRecord = {
+        namespace: namespace === 'openapi' ? 'inspect' : 'openapi',
+        url: 'https://other.test/document',
+        cachedAt: document.cachedAt,
+        value: { title: 'Unrelated' },
+      };
+      storage.setDiscoveryDocuments([document, unrelated]);
+      storage.setOpenApiDocuments([document, unrelated]);
+      const read = () => (namespace === 'openapi' ? reader.getOpenApiDocuments() : reader.getDiscoveryDocuments());
+      expect(read()).toEqual([document]);
+      const result = read()[0];
+      if (result !== undefined) result.value = { title: 'Caller mutation' };
+      expect(read()).toEqual([document]);
+
+      const replacement: AepPublicDocumentCacheRecord = {
+        namespace,
+        url: document.url,
+        cachedAt: '2026-01-02T00:00:00Z',
+        value: { title: 'Replacement' },
+      };
+      if (namespace === 'openapi') storage.setOpenApiDocuments([replacement]);
+      else storage.setDiscoveryDocuments([replacement]);
+      expect(read()).toEqual([replacement]);
+      expect(namespace === 'openapi' ? reader.getDiscoveryDocuments() : reader.getOpenApiDocuments()).toEqual([
+        unrelated,
+      ]);
+    },
+  );
+
+  it('rolls back cached document deletion if writing the replacement fails', () => {
+    const storage = secureStorage();
+    const document: AepPublicDocumentCacheRecord = {
+      namespace: 'openapi',
+      url: 'https://service.test/openapi.json',
+      cachedAt: '2026-01-01T00:00:00Z',
+      value: { openapi: '3.1.0' },
+    };
+    storage.setOpenApiDocuments([document]);
+    const write = vi.spyOn(SecureSqliteRepository.prototype, 'upsertPublicDocument').mockImplementation(() => {
+      throw new Error('disk write failed');
+    });
+    expect(() => storage.setOpenApiDocuments([{ ...document, value: { openapi: '3.0.0' } }])).toThrow(
+      'disk write failed',
+    );
+    write.mockRestore();
+    expect(secureStorage().getOpenApiDocuments()).toEqual([document]);
+  });
+
+  it('does not read or erase unrelated secrets when deleting a missing Service credential', () => {
+    const secrets = new CountingSecretStore();
+    const storage = new Storage({ cwd: tmpDir, secretStore: secrets });
+    const owner = { platformOrigin: 'https://platform.test', userId: 'user-1' };
+    storage.setApiKey('unrelated-key');
+    storage.deleteAepCredentials(owner, 'did:web:missing.test', { credentialId: 'missing' });
+    expect(storage.findAepIdentity(owner, 'did:web:missing.test')).toBeUndefined();
+    storage.setAepState({ owner, version: 1, identities: {}, credentials: {} });
+    storage.deleteAepCredentials(owner, 'did:web:missing.test', { credentialId: 'missing' });
+    expect(storage.findAepIdentity(owner, 'did:web:missing.test')).toBeUndefined();
+    expect(secrets.readReferences).toEqual([]);
+    expect(secrets.deleted).toEqual([]);
+    expect(storage.getApiKey()).toBe('unrelated-key');
+  });
 
   it('invalidates other storage readers and clears metadata without retrieving or deleting secrets', () => {
     const secrets = new FaultInjectingSecretStore();
@@ -562,6 +787,41 @@ describe('Storage (file-backed)', () => {
 
     s.clearAepState();
     expect(s.getAepState()).toBeNull();
+  });
+
+  it('persists inspect metadata independently of caller-owned state', () => {
+    const storage = secureStorage();
+    const state: AepPersistedState = {
+      credentials: {},
+      identities: {},
+      owner: { platformOrigin: 'https://platform.example', userId: 'user-1' },
+      version: 1,
+      inspect: {
+        'https://service.example/': {
+          cachedAt: '2026-01-01T00:00:00Z',
+          etag: '"v1"',
+          inspectUrl: 'https://service.example/.well-known/aep',
+          document: {
+            aep_version: '1.0',
+            bindings: { supported: ['http'] },
+            commands: { supported: ['inspect', 'status'] },
+            core: { signing_algorithms: ['ES256'] },
+            http: { endpoint_base: '/aep' },
+            identity: { methods: ['did:web'] },
+            service: { did: 'did:web:service.example' },
+          },
+        },
+      },
+    };
+    storage.setAepState(state);
+    const expected = structuredClone(state);
+    if (state.inspect === undefined) throw new Error('Missing inspect fixture');
+    delete state.inspect['https://service.example/'];
+    const restored = storage.getAepState();
+    expect(restored).toEqual(expected);
+    if (restored?.inspect === undefined) throw new Error('Missing stored inspect');
+    delete restored.inspect['https://service.example/'];
+    expect(storage.getAepState()).toEqual(expected);
   });
 
   it('deletes expired AEP credential secrets during normal credential-store interactions', () => {

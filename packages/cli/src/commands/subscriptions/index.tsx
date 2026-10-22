@@ -174,10 +174,11 @@ const SubscriptionCancelView: React.FC<{
   subscriptionId: string;
   onComplete: (result: boolean | null) => void;
 }> = ({ cancel, subscriptionId, onComplete }) => {
-  const { status, error } = useResource(async () => {
+  const action = useCallback(async () => {
     await cancel();
     return true;
-  }, onComplete);
+  }, [cancel]);
+  const { status, error } = useResource(action, onComplete);
   if (status === 'loading')
     return (
       <Text color="cyan">

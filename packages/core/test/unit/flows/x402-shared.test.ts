@@ -53,6 +53,16 @@ describe('excludePermit2Accepts', () => {
       Buffer.from(JSON.stringify({ ...sample, accepts: [{ ...exact, extra }] })).toString('base64'),
     );
     expect(excludePermit2Accepts(decoded)).toEqual(decoded);
+    expect(filterAccepts(decoded, { assetName: 'USDC' }).accepts).toEqual([]);
+    expect(buildNoFilteredMatchMessage(decoded, { assetName: 'USDC' })).not.toContain('assetName=undefined');
+  });
+
+  it('does not coerce a non-string asset name from decoded seller metadata', () => {
+    const decoded = decodePaymentRequiredHeader(
+      Buffer.from(JSON.stringify({ ...sample, accepts: [{ ...exact, extra: { assetName: 123 } }] })).toString('base64'),
+    );
+    expect(filterAccepts(decoded, { assetName: '123' }).accepts).toEqual([]);
+    expect(buildNoFilteredMatchMessage(decoded, { assetName: 'USDC' })).not.toContain('assetName=123');
   });
 
   it('drops exact Permit2 and upto offers while preserving other offers and signing context', () => {

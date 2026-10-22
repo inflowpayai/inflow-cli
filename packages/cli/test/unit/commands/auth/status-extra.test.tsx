@@ -172,9 +172,10 @@ describe('AuthStatus', () => {
     storage.setConnection({
       environment: 'sandbox',
       apiBaseUrl: 'https://dev.inflowpay.ai',
+      authBaseUrl: 'https://auth.example.test',
     });
     const { lastFrame, unmount } = render(
-      <AuthStatus auth={makeAuth({ storage })} probe={false} onComplete={() => undefined} />,
+      <AuthStatus auth={makeAuth({ storage })} probe={false} verbose onComplete={() => undefined} />,
     );
     await vi.waitFor(() => {
       expect(lastFrame()).toContain('Authenticated');
@@ -184,6 +185,10 @@ describe('AuthStatus', () => {
     expect(frame).toContain('sandbox');
     expect(frame).toContain('API base URL:');
     expect(frame).toContain('https://dev.inflowpay.ai');
+    expect(frame).toContain('Auth base URL: https://auth.example.test');
+    expect(frame).toContain('Credentials: memory');
+    expect(frame).not.toContain(tokens.access_token);
+    expect(frame).not.toContain('Refresh token:');
     unmount();
   });
 

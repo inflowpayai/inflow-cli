@@ -10,6 +10,9 @@ import {
 } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
 import { Static } from 'ink';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createOpenApiCli,
@@ -69,6 +72,41 @@ async function run(discovery: Pick<SourceDiscovery, 'inspect'>, args: string[], 
 }
 
 describe('OpenAPI commands', () => {
+  it('saves the actual response and tells the human where it was written', async () => {
+    const { callOpenApiOperation } = await import('@inflowpayai/inflow-core');
+    const inspected = await setup().discovery.inspect('https://example.com', { format: 'openapi' });
+    if (inspected.sourceType !== 'openapi') throw new Error('Expected OpenAPI');
+    const directory = await mkdtemp(join(tmpdir(), 'inflow-openapi-output-'));
+    const outputFile = join(directory, 'response.txt');
+    try {
+      const request = vi.fn(() => Promise.resolve(new Response('forecast output')));
+      const result = await callOpenApiOperation(inspected.document, { operationId: 'search', outputFile }, request);
+      const view = render(<CallView result={result} />);
+      expect(view.lastFrame()).toContain(`Saved to ${outputFile}`);
+      expect(await readFile(outputFile, 'utf8')).toBe('forecast output');
+      expect(request).toHaveBeenCalledTimes(1);
+      view.unmount();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('offers a payment handoff without asking for credentials that were not supplied', async () => {
+    const { callOpenApiOperation } = await import('@inflowpayai/inflow-core');
+    const inspected = await setup().discovery.inspect('https://example.com', { format: 'openapi' });
+    if (inspected.sourceType !== 'openapi') throw new Error('Expected OpenAPI');
+    const operation = inspected.document.operations[0];
+    if (operation === undefined) throw new Error('Expected operation');
+    operation.payment = { advertised: true, protocols: ['mpp'], offers: [], response402: true, notes: [] };
+    const request = vi.fn(() => Promise.resolve(new Response('must not execute')));
+    const result = await callOpenApiOperation(inspected.document, { operationId: 'search' }, request);
+    const view = render(<CallView result={result} />);
+    expect(view.lastFrame()).toContain('inflow mpp pay');
+    expect(view.lastFrame()).not.toContain('Supply the original credentials');
+    expect(request).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('filters Collections and tags independently or by intersection without mutating the document', async () => {
     const { discovery } = setup();
     const inspected = await discovery.inspect('https://example.com', { format: 'openapi' });
@@ -359,6 +397,23 @@ describe('OpenAPI commands', () => {
       rendered.mockRestore();
       if (descriptor === undefined) Reflect.deleteProperty(process.stdout, 'isTTY');
       else Object.defineProperty(process.stdout, 'isTTY', descriptor);
+    }
+  });
+
+  it('renders a shared Tags column when only some operations advertise tags', async () => {
+    const { discovery } = setup();
+    const inspected = await discovery.inspect('https://example.com', { format: 'openapi' });
+    if (inspected.sourceType !== 'openapi') throw new Error('Expected OpenAPI');
+    const first = inspected.document.operations[0];
+    if (first === undefined) throw new Error('Expected operation');
+    first.tags = ['Forecast'];
+    const view = render(<OperationsView document={inspected.document} />);
+    try {
+      expect(view.lastFrame()).toContain('Tags');
+      expect(view.lastFrame()).toContain('Forecast');
+      expect(view.lastFrame()).toContain('/items');
+    } finally {
+      view.unmount();
     }
   });
   it('discovers cold origins and reuses the exact document without requesting operations', async () => {

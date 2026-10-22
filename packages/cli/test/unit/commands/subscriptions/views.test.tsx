@@ -58,12 +58,15 @@ describe('subscription views', () => {
     empty.unmount();
   });
 
-  it('renders complete subscription details', async () => {
-    const view = render(<SubscriptionGetView load={() => Promise.resolve(subscription)} onComplete={vi.fn()} />);
+  it.each([1, 3])('renders complete subscription details for a %s-month billing period', async (periodCount) => {
+    const view = render(
+      <SubscriptionGetView load={() => Promise.resolve({ ...subscription, periodCount })} onComplete={vi.fn()} />,
+    );
     await settle();
     const frame = view.lastFrame() ?? '';
     expect(frame).toContain('Field');
     expect(frame).toContain('Value');
+    expect(frame).toContain(periodCount === 1 ? 'Every month' : 'Every 3 months');
     expect(frame).toContain('Seller reference');
     expect(frame).toContain('seller-plan');
     expect(frame).toContain('Seller name');

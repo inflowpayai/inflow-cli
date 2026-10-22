@@ -19,6 +19,7 @@ import {
 } from '../../../src/commands/odp/offerings.js';
 import { OdpCommandError } from '../../../src/commands/odp/command.js';
 import { pricePreviewDetails } from '../../../src/commands/odp/presentation.js';
+import * as renderer from '../../../src/utils/render-ink-until-exit.js';
 
 const offering: TerseOffering = { description: 'On-demand accelerator capacity.', id: 'gpu-a100', name: 'A100 GPU' };
 const priceCases: Array<[NonNullable<TerseOffering['price']>, string]> = [
@@ -150,12 +151,282 @@ const emptyPageInput = {
 };
 
 describe('ODP Offering commands', () => {
+  it.each(['list', 'search'])('preserves the continuation returned by the %s command', async (command) => {
+    const { resource, service } = offeringResource();
+    const page = sequence({ items: [offering], odp_version: '1.0', next: 'opaque-next-page' });
+    service.listOfferings.mockReturnValue(page);
+    service.searchOfferings.mockReturnValue(page);
+    const output: string[] = [];
+    await createOfferingsCli(resource).serve(
+      [command, 'https://compute.example', ...(command === 'search' ? ['gpu'] : []), '--format', 'json'],
+      {
+        exit: vi.fn(),
+        stdout: (chunk) => output.push(chunk),
+      },
+    );
+    expect(output.join('')).toContain('opaque-next-page');
+  });
+
+  it('renders filters that have no physical unit', () => {
+    const view = render(
+      <OfferingCapabilitiesView
+        result={{
+          filters: [...searchCapabilities.filters.values()],
+          sorts: [],
+          issues: [],
+          service_origin: 'https://compute.example',
+        }}
+      />,
+    );
+    try {
+      expect(view.lastFrame()).toContain('Memory');
+      expect(view.lastFrame()).toContain('None');
+    } finally {
+      view.unmount();
+    }
+  });
+  it('searches by structured filters without inventing a text query and preserves the page limit', async () => {
+    const { resource, service } = offeringResource();
+    await __testing.runOfferingSearch(resource, {
+      ...emptyPageInput,
+      limit: 7,
+      filters: [{ id: 'memory', operator: 'gte', value: 16 }],
+    });
+    expect(service.searchOfferings).toHaveBeenCalledWith({
+      filters: [{ id: 'memory', operator: 'gte', value: 16 }],
+      limit: 7,
+      maxPages: 1,
+      representation: 'terse',
+    });
+  });
+
+  it('renders empty discovery and Offerings without descriptions without inventing values', () => {
+    const empty = render(<DiscoveryView items={[]} />);
+    const minimal = render(
+      <OfferingsView command="list" service="https://compute.example" offerings={[{ id: 'one', name: 'One' }]} />,
+    );
+    try {
+      expect(empty.lastFrame()).toContain('No Offerings found.');
+      expect(minimal.lastFrame()).toContain('One');
+      expect(minimal.lastFrame()).not.toContain('undefined');
+    } finally {
+      empty.unmount();
+      minimal.unmount();
+    }
+  });
+
+  it.each(['list', 'get', 'search'])('renders Offering %s in a human terminal', async (command) => {
+    const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+    const rendered = vi.spyOn(renderer, 'renderInkUntilExit').mockResolvedValue(undefined);
+    const { resource } = offeringResource();
+    try {
+      await createOfferingsCli(resource).serve(
+        command === 'list' ? [command, 'https://compute.example'] : [command, 'https://compute.example', 'gpu-a100'],
+        { exit: vi.fn(), stdout: vi.fn() },
+      );
+      expect(rendered).toHaveBeenCalledOnce();
+      const element = rendered.mock.calls[0]?.[0];
+      if (element === undefined) throw new Error('Missing Offering view');
+      const view = render(element);
+      expect(view.lastFrame()).toContain('A100 GPU');
+      view.unmount();
+    } finally {
+      rendered.mockRestore();
+      if (descriptor === undefined) Reflect.deleteProperty(process.stdout, 'isTTY');
+      else Object.defineProperty(process.stdout, 'isTTY', descriptor);
+    }
+  });
+
+  it.each([{ collectionId: 'compute' }, { limit: 10 }])(
+    'rejects list continuation conflicts before creating a client: %j',
+    async (conflict) => {
+      const { resource } = offeringResource();
+      await expect(
+        __testing.runOfferingList(resource, {
+          ...emptyPageInput,
+          next: '/odp/offerings?cursor=opaque',
+          ...conflict,
+        }),
+      ).rejects.toMatchObject({ detail: { code: 'ODP_OFFERING_NEXT_CONFLICT', exitCode: 2 } });
+      expect(resource.service).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { collectionId: 'compute' },
+    { filters: [{ id: 'memory', operator: 'gte', value: 80 }] },
+    { includeDescendants: false },
+    { limit: 10 },
+    { query: 'gpu' },
+    { refinements: ['memory'] },
+    { sort: 'price-lowest' },
+  ])('rejects search continuation conflicts before creating a client: %j', async (conflict) => {
+    const { resource } = offeringResource();
+    await expect(
+      __testing.runOfferingSearch(resource, {
+        ...emptyPageInput,
+        next: '/odp/offerings/search?cursor=opaque',
+        ...conflict,
+      }),
+    ).rejects.toMatchObject({ detail: { code: 'ODP_OFFERING_NEXT_CONFLICT', exitCode: 2 } });
+    expect(resource.service).not.toHaveBeenCalled();
+  });
+
+  it('continues a list without inspecting or restarting the catalog', async () => {
+    const { resource, service } = offeringResource();
+    const next = '/odp/offerings?cursor=a%2Fb%3D';
+    const result = await __testing.runOfferingList(resource, { ...emptyPageInput, next });
+    expect(result.items).toEqual([offering]);
+    expect(service.continueListOfferings).toHaveBeenCalledWith(next, { maxPages: 1, representation: 'terse' });
+    expect(service.inspect).not.toHaveBeenCalled();
+    expect(service.listOfferings).not.toHaveBeenCalled();
+  });
+
+  it('stops after the first page and closes the iterator', async () => {
+    const { resource, service } = offeringResource();
+    const closed = vi.fn();
+    const secondPage = vi.fn();
+    service.listOfferings.mockReturnValue({
+      pages: {
+        async *[Symbol.asyncIterator]() {
+          await Promise.resolve();
+          try {
+            yield { items: [offering], odp_version: '1.0', next: '/odp/offerings?cursor=next' };
+            secondPage();
+            yield { items: [], odp_version: '1.0' };
+          } finally {
+            closed();
+          }
+        },
+      },
+    });
+    await expect(__testing.runOfferingList(resource, emptyPageInput)).resolves.toMatchObject({
+      items: [offering],
+      next: '/odp/offerings?cursor=next',
+    });
+    expect(closed).toHaveBeenCalledOnce();
+    expect(secondPage).not.toHaveBeenCalled();
+  });
+
+  it.each(['null', '[]', '42', 'true', '"memory"'])('rejects non-object filters: %s', (value) => {
+    expect(() => __testing.parseFilters([value])).toThrow(OdpCommandError);
+  });
+
+  it('preserves structured filters without changing their values', () => {
+    const filter = { id: 'memory', operator: 'gte', value: 80 };
+    expect(__testing.parseFilters([JSON.stringify(filter)])).toEqual([filter]);
+  });
+
+  it.each([
+    [{}, 'list-offerings'],
+    [{ query: 'gpu' }, 'search-offerings'],
+    [{ filters: [{ id: 'memory', operator: 'gte', value: 80 }] }, 'search-offerings'],
+    [{ includeDescendants: false }, 'search-offerings'],
+    [{ refinements: ['memory'] }, 'search-offerings'],
+    [{ sort: 'price-lowest' }, 'search-offerings'],
+  ] as const)('selects directory capabilities for discovery inputs %j', async (overrides, operation) => {
+    const { resource } = offeringResource();
+    await __testing.runOfferingDiscovery(resource, {
+      collectionId: undefined,
+      concurrency: undefined,
+      includeDescendants: undefined,
+      keywords: [],
+      maxOfferingsPerService: undefined,
+      maxServices: undefined,
+      withAep: false,
+      operations: [],
+      payments: [],
+      query: undefined,
+      serviceQuery: undefined,
+      sort: undefined,
+      ...overrides,
+      filters: 'filters' in overrides ? [...overrides.filters] : [],
+      refinements: 'refinements' in overrides ? [...overrides.refinements] : [],
+    });
+    expect(resource.searchOfferingsAcrossServices).toHaveBeenCalledWith({
+      offerings: {
+        ...('query' in overrides ? { query: overrides.query } : {}),
+        ...('filters' in overrides ? { filters: overrides.filters } : {}),
+        ...('includeDescendants' in overrides ? { include_descendants: false } : {}),
+        ...('refinements' in overrides ? { refinements: overrides.refinements } : {}),
+        ...('sort' in overrides ? { sort: overrides.sort } : {}),
+      },
+      services: { filters: { operations: [{ name: operation }] } },
+    });
+  });
+
   it.each(priceCases)('describes the %s Price Preview type', (price, description) => {
     expect(pricePreviewDetails(price).map((row) => row.value)).toContain(description);
   });
 
   it('omits a Price Preview when none is advertised', () => {
     expect(pricePreviewDetails(undefined)).toEqual([]);
+  });
+
+  it('returns an empty page when a client sequence has no pages', async () => {
+    const { resource, service } = offeringResource();
+    service.listOfferings.mockReturnValue({
+      pages: {
+        async *[Symbol.asyncIterator]() {
+          await Promise.resolve();
+          yield* [];
+        },
+      },
+    });
+    await expect(__testing.runOfferingList(resource, emptyPageInput)).resolves.toEqual({
+      items: [],
+      odp_version: '1.0',
+      service_origin: 'https://compute.example',
+    });
+  });
+
+  it('renders optional metadata, OpenAPI actions, and unresolved action issues', () => {
+    const output = render(
+      <OfferingView
+        serviceOrigin="https://compute.example"
+        offering={{
+          id: 'gpu',
+          name: 'GPU',
+          odp_version: '1.0',
+          web_url: '/gpu',
+          language: 'en',
+          localizations: ['en', 'ja'],
+          collection_ids: ['compute'],
+          schema: { url: '/schemas/gpu' },
+          actions: [
+            {
+              id: 'quote',
+              rel: 'quote',
+              authentication: 'optional',
+              target: { kind: 'openapi', url: '/openapi.json', operation_id: 'quoteGpu' },
+            },
+            {
+              id: 'details',
+              rel: 'invoke',
+              authentication: 'not-required',
+              target: { kind: 'http', method: 'GET', url: '/gpu/details' },
+            },
+          ],
+          issues: [
+            { scope: 'attribute_schema', message: 'Schema unavailable' },
+            { scope: 'action', action_id: 'quote', message: 'Operation unavailable' },
+          ],
+        }}
+      />,
+    ).lastFrame();
+    expect(output).toContain('https://compute.example/gpu');
+    expect(output).toContain('https://compute.example/schemas/gpu');
+    expect(output).toContain('Localizations');
+    expect(output).toContain('ja');
+    expect(output).toContain('Optional');
+    expect(output).toContain('Not required');
+    expect(output).toContain('OpenAPI');
+    expect(output).toContain('https://compute.example/openapi.json#operationId=quoteGpu');
+    expect(output).toContain('Schema unavailable');
+    expect(output).toContain('Operation unavailable');
+    expect(output).not.toContain('Price Preview');
+    expect(output).not.toContain('Attributes');
   });
 
   it('lists one terse Offering page for a Collection', async () => {

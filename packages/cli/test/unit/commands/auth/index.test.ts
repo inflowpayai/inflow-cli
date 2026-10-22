@@ -137,6 +137,38 @@ class LockedStorage extends MemoryStorage {
 }
 
 describe('runAuthLogin (agent mode)', () => {
+  it('reports a polling transport failure without authenticating or discarding the pending login', async () => {
+    const storage = new MemoryStorage();
+    const auth = makeAuthResource(storage, {
+      pollDeviceAuth: vi.fn().mockRejectedValue(new Error('Connection interrupted')),
+    });
+    const user = makeUserResource();
+    const ctx = makeContext({ clientName: 'Test', interval: 0.001, maxAttempts: 5, timeout: 30 });
+    const frames: unknown[] = [];
+    const run = async () => {
+      for await (const frame of runAuthLogin(
+        ctx,
+        {
+          authResource: auth.resource,
+          userResource: user.resource,
+          authStorage: storage,
+        },
+        defaultAuthCtx,
+      ))
+        frames.push(frame);
+    };
+    await expect(run()).rejects.toThrow('c.error called');
+    expect(ctx.error).toHaveBeenCalledWith({ code: 'DEVICE_AUTH_POLL_FAILED', message: 'Connection interrupted' });
+    expect(frames).toEqual([
+      expect.objectContaining({ verification_url: baseRequest.verification_url_complete }),
+      { authenticated: false },
+    ]);
+    expect(storage.getAuth()).toBeNull();
+    expect(storage.getPendingDeviceAuth()?.device_code).toBe(baseRequest.device_code);
+    expect(user.retrieve).not.toHaveBeenCalled();
+    expect(auth.revokeToken).not.toHaveBeenCalled();
+  });
+
   it('rejects empty client-name with INVALID_INPUT', async () => {
     const ctx = makeContext({
       clientName: '   ',
@@ -258,12 +290,12 @@ describe('runAuthLogin (agent mode)', () => {
     );
   });
 
-  it('with-interval mode yields the prologue then polls until authenticated', async () => {
+  it.each([0, 60])('polls until authenticated with timeout %s', async (timeout) => {
     const ctx = makeContext({
       clientName: 'Test',
       interval: 0.01,
       maxAttempts: 5,
-      timeout: 60,
+      timeout,
     });
     const storage = new MemoryStorage();
     const pollSequence: Array<AuthTokens | null> = [null, baseTokens];
@@ -325,6 +357,26 @@ describe('runAuthLogin (agent mode)', () => {
 });
 
 describe('runAuthLogout (agent mode)', () => {
+  it.each([new Error('Logout transport failed'), 'Logout transport failed'])(
+    'resets the vault before reporting a non-storage logout failure: %s',
+    async (failure) => {
+      const storage = new MemoryStorage(baseTokens);
+      const auth = makeAuthResource(storage).resource;
+      vi.spyOn(auth, 'logout').mockRejectedValue(failure);
+      const resetVault = vi.fn(() => Promise.resolve());
+      await expect(
+        runAuthLogout(
+          { agent: true, formatExplicit: true },
+          {
+            authResource: auth,
+            authStorage: storage,
+            resetVault,
+          },
+        ),
+      ).rejects.toThrow(failure instanceof Error ? failure.message : 'The InFlow logout operation failed.');
+      expect(resetVault).toHaveBeenCalledOnce();
+    },
+  );
   it('clears local state and revokes the refresh token', async () => {
     const ctx = makeContext({});
     const storage = new MemoryStorage({
@@ -424,6 +476,7 @@ describe('runAuthLogout (agent mode)', () => {
     storage.setConnection({
       environment: 'sandbox',
       apiBaseUrl: 'https://dev.inflowpay.ai',
+      authBaseUrl: 'https://auth.example.test',
     });
     const auth = makeAuthResource(storage);
     const resetVault = vi.fn(() => Promise.resolve());
@@ -440,6 +493,78 @@ describe('runAuthLogout (agent mode)', () => {
 });
 
 describe('runAuthLogin (agent mode) — api-key save path', () => {
+  it.each([
+    {
+      maxAttempts: 1,
+      timeout: 300,
+      message: 'Reached the configured maximum poll attempts before authentication completed.',
+    },
+    { maxAttempts: 0, timeout: 1, message: 'Polling timed out before authentication completed.' },
+  ])(
+    'reports a retryable polling limit and retains the pending login: $message',
+    async ({ maxAttempts, timeout, message }) => {
+      vi.useFakeTimers();
+      try {
+        const storage = new MemoryStorage();
+        const auth = makeAuthResource(storage);
+        const context = makeContext({ clientName: 'Test', interval: 0.1, maxAttempts, timeout });
+        const operation = drainGenerator(
+          runAuthLogin(
+            context,
+            {
+              authResource: auth.resource,
+              userResource: makeUserResource().resource,
+              authStorage: storage,
+            },
+            defaultAuthCtx,
+          ),
+        );
+        const rejected = expect(operation).rejects.toThrow('c.error called');
+        await vi.advanceTimersByTimeAsync(2500);
+        await rejected;
+        expect(context.error).toHaveBeenCalledWith({ code: 'POLLING_TIMEOUT', message, retryable: true });
+        expect(storage.getAuth()).toBeNull();
+        expect(storage.getPendingDeviceAuth()).toMatchObject({ device_code: baseRequest.device_code });
+        expect(auth.pollDeviceAuth).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([
+    { failure: new Error('connection failed'), message: 'connection failed' },
+    { failure: 'connection failed', message: 'connection failed' },
+    { failure: new InflowApiError('unavailable', { status: 503, code: 'unavailable' }), message: 'unavailable' },
+  ])('preserves saved authentication when key validation fails: $message', async ({ failure, message }) => {
+    const storage = new MemoryStorage(baseTokens);
+    storage.setApiKey('existing-key');
+    const connection: ConnectionSettings = { environment: 'sandbox', apiBaseUrl: 'https://sandbox.example' };
+    storage.setConnection(connection);
+    const previousAuth = storage.getAuth();
+    const auth = makeAuthResource(storage);
+    const user = makeUserResource(vi.fn<() => Promise<User>>().mockRejectedValue(failure));
+    const context = makeContext({ clientName: 'Test', interval: 0, maxAttempts: 0, timeout: 300 });
+    await expect(
+      drainGenerator(
+        runAuthLogin(
+          context,
+          {
+            authResource: auth.resource,
+            userResource: user.resource,
+            authStorage: storage,
+          },
+          { ...defaultAuthCtx, apiKey: 'candidate-key', apiKeySource: 'flag' },
+        ),
+      ),
+    ).rejects.toThrow('c.error called');
+    expect(context.error).toHaveBeenCalledWith({ code: 'API_KEY_VALIDATION_FAILED', message });
+    expect(storage.getAuth()).toEqual(previousAuth);
+    expect(storage.getApiKey()).toBe('existing-key');
+    expect(storage.getConnection()).toEqual(connection);
+    expect(auth.initiateDeviceAuth).not.toHaveBeenCalled();
+  });
+
   it('reads the saved key after unlocking instead of requiring a key in the command context', async () => {
     const storage = new MemoryStorage();
     const auth = makeAuthResource(storage);
@@ -480,6 +605,7 @@ describe('runAuthLogin (agent mode) — api-key save path', () => {
       apiKeySource: 'flag',
       environment: 'sandbox',
       apiBaseUrl: 'https://dev.inflowpay.ai',
+      authBaseUrl: 'https://auth.example.test',
       resolvedApiBaseUrl: 'https://dev.inflowpay.ai',
       verbose: false,
     };
@@ -509,6 +635,7 @@ describe('runAuthLogin (agent mode) — api-key save path', () => {
     expect(storage.getConnection()).toEqual({
       environment: 'sandbox',
       apiBaseUrl: 'https://dev.inflowpay.ai',
+      authBaseUrl: 'https://auth.example.test',
     });
     expect(storage.getAuth()).toBeNull();
   });
@@ -589,6 +716,139 @@ describe('runAuthLogin (agent mode) — api-key save path', () => {
 });
 
 describe('runAuthStatus (agent mode)', () => {
+  it('reports an unauthenticated environment when saved connection metadata is missing', async () => {
+    const storage = new MemoryStorage();
+    vi.spyOn(storage, 'getConnection').mockImplementation(() => {
+      throw new SecureStorageError('secure_storage_secret_missing', 'Connection metadata is missing.');
+    });
+    const user = makeUserResource();
+    const frames = await drainGenerator(
+      runAuthStatus(
+        makeContext({ interval: 0, maxAttempts: 0, timeout: 60, probe: false }),
+        {
+          authResource: makeAuthResource(storage).resource,
+          authStorage: storage,
+          userResource: user.resource,
+          updateProbe: undefined,
+        },
+        defaultAuthCtx,
+      ),
+    );
+    expect(frames[0]).toMatchObject({
+      authenticated: false,
+      connection: { environment: 'production', apiBaseUrl: 'https://api.inflowpay.ai' },
+    });
+    expect(user.retrieve).not.toHaveBeenCalled();
+  });
+  it.each(['saved', 'flag', 'env'] as const)(
+    'reports the environment belonging to %s authentication without rewriting saved settings',
+    async (apiKeySource) => {
+      const storage = new MemoryStorage(baseTokens);
+      const saved: ConnectionSettings = {
+        environment: 'sandbox',
+        apiBaseUrl: 'https://saved-api.example',
+        authBaseUrl: 'https://saved-auth.example',
+      };
+      storage.setConnection(saved);
+      const auth = makeAuthResource(storage);
+      const user = makeUserResource();
+      const runtime: AuthCommandContext = {
+        ...defaultAuthCtx,
+        apiKeySource,
+        apiKey: 'selected-key',
+        apiBaseUrl: 'https://runtime-api.example',
+        authBaseUrl: 'https://runtime-auth.example',
+      };
+      const frames = await drainGenerator(
+        runAuthStatus(
+          makeContext({ interval: 0, maxAttempts: 0, timeout: 60, probe: false }),
+          { authResource: auth.resource, authStorage: storage, userResource: user.resource, updateProbe: undefined },
+          runtime,
+        ),
+      );
+      expect(frames[0]).toMatchObject({
+        authenticated: true,
+        connection:
+          apiKeySource === 'saved'
+            ? saved
+            : {
+                environment: 'production',
+                apiBaseUrl: runtime.apiBaseUrl,
+                authBaseUrl: runtime.authBaseUrl,
+              },
+      });
+      expect(storage.getConnection()).toEqual(saved);
+      expect(user.retrieve).not.toHaveBeenCalled();
+      expect(JSON.stringify(frames)).not.toContain('selected-key');
+    },
+  );
+
+  it.each(['snapshot', 'probe', 'poll'] as const)(
+    'reports a vault lock during %s without emitting an unauthenticated frame',
+    async (phase) => {
+      const storage = new MemoryStorage(baseTokens);
+      const originalAuth = storage.getAuth();
+      const getAuth = vi.spyOn(storage, 'getAuth').mockImplementation(() => {
+        throw new SecureStorageError('vault_locked', 'The InFlow vault is locked.');
+      });
+      if (phase !== 'snapshot') getAuth.mockReturnValueOnce(originalAuth);
+      const auth = makeAuthResource(storage);
+      const user = makeUserResource();
+      const ctx = makeContext({ interval: 0, maxAttempts: 0, timeout: 60, probe: phase === 'probe' });
+      const frames: unknown[] = [];
+      await expect(
+        (async () => {
+          for await (const frame of runAuthStatus(
+            ctx,
+            {
+              authResource: auth.resource,
+              authStorage: storage,
+              userResource: user.resource,
+              updateProbe: undefined,
+            },
+            defaultAuthCtx,
+          ))
+            frames.push(frame);
+        })(),
+      ).rejects.toThrow('c.error called');
+      expect(frames).toEqual([]);
+      expect(ctx.error).toHaveBeenCalledWith({
+        code: 'VAULT_LOCKED',
+        message:
+          'Authentication status unavailable. The InFlow vault is locked. Run `inflow vault unlock` and try again.',
+      });
+      expect(user.retrieve).not.toHaveBeenCalled();
+      expect(auth.pollDeviceAuth).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])('does not probe a user while authentication is pending: %s', async (pending) => {
+    const storage = new MemoryStorage();
+    if (pending)
+      storage.setPendingDeviceAuth({
+        device_code: 'private-code',
+        expires_at: Date.now() + 60_000,
+        interval: 5,
+        phrase: 'ABCD',
+        verification_url: 'https://app.inflowpay.ai/device/',
+      });
+    const user = makeUserResource();
+    const auth = makeAuthResource(storage, {}, user.resource);
+    const ctx = makeContext({ interval: 0, maxAttempts: 0, timeout: 60, probe: true });
+    const frames = await drainGenerator(
+      runAuthStatus(
+        ctx,
+        { authResource: auth.resource, authStorage: storage, userResource: user.resource, updateProbe: undefined },
+        defaultAuthCtx,
+      ),
+    );
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toMatchObject({ authenticated: false });
+    if (pending) expect(frames[0]).toMatchObject({ pending: true, phrase: 'ABCD' });
+    expect(JSON.stringify(frames)).not.toContain('private-code');
+    expect(user.retrieve).not.toHaveBeenCalled();
+  });
+
   it('yields { authenticated: false } when storage is empty', async () => {
     const ctx = makeContext({
       interval: 0,
@@ -816,7 +1076,39 @@ describe('runAuthStatus (agent mode)', () => {
     expect(userField?.email).toBe('ada@example.test');
   });
 
-  it('probe mode yields probed_invalid when retrieve returns 401', async () => {
+  it.each([new InflowApiError('Service unavailable', { status: 503, code: 'unavailable' }), 'Connection interrupted'])(
+    'preserves credentials and reports a failed probe for %s',
+    async (failure) => {
+      const ctx = makeContext({ interval: 0, maxAttempts: 0, timeout: 60, probe: true });
+      const storage = new MemoryStorage(baseTokens);
+      const storedTokens = storage.getAuth();
+      const user = makeUserResource();
+      user.retrieve.mockRejectedValue(failure);
+      const auth = makeAuthResource(storage, {}, user.resource);
+      const generator = runAuthStatus(
+        ctx,
+        {
+          authResource: auth.resource,
+          userResource: user.resource,
+          authStorage: storage,
+          updateProbe: undefined,
+        },
+        defaultAuthCtx,
+      );
+
+      await expect(generator.next()).rejects.toThrow('c.error called');
+      expect(ctx.error).toHaveBeenCalledOnce();
+      expect(ctx.error).toHaveBeenCalledWith({
+        code: 'PROBE_FAILED',
+        message: failure instanceof Error ? failure.message : failure,
+      });
+      expect(user.retrieve).toHaveBeenCalledOnce();
+      expect(storage.getAuth()).toEqual(storedTokens);
+      expect(auth.revokeToken).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])('probe mode preserves verbose/update metadata after a 401: %s', async (verbose) => {
     const ctx = makeContext({
       interval: 0,
       maxAttempts: 0,
@@ -845,14 +1137,19 @@ describe('runAuthStatus (agent mode)', () => {
           authResource: auth.resource,
           userResource: user.resource,
           authStorage: storage,
-          updateProbe: undefined,
+          updateProbe: verbose ? () => Promise.resolve({ current: '1.0.0', latest: '1.1.0' }) : undefined,
         },
-        defaultAuthCtx,
+        { ...defaultAuthCtx, verbose },
       ),
     );
     expect(yields[0]).toMatchObject({
       authenticated: false,
       probed_invalid: true,
     });
+    if (verbose)
+      expect(yields[0]).toMatchObject({
+        credentials_path: 'memory',
+        update: { current_version: '1.0.0', latest_version: '1.1.0' },
+      });
   });
 });

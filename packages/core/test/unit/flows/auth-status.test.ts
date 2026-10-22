@@ -31,6 +31,19 @@ function userResource(retrieve: () => Promise<User>): IUserResource {
 }
 
 describe('probeAuthStatus', () => {
+  it('preserves the configured connection when server validation rejects credentials', async () => {
+    const storage = new MemoryStorage(sampleTokens);
+    storage.setConnection({ environment: 'sandbox', apiBaseUrl: 'https://sandbox.example' });
+    const result = await probeAuthStatus({
+      authStorage: storage,
+      userResource: userResource(() => Promise.reject(new InflowApiError('Rejected', { status: 401 }))),
+    });
+    expect(result).toMatchObject({
+      kind: 'invalid',
+      frame: { connection: { environment: 'sandbox', apiBaseUrl: 'https://sandbox.example' } },
+    });
+    expect(storage.getAuth()).toEqual(sampleTokens);
+  });
   it('returns unauthenticated when storage has no credentials', async () => {
     const result = await probeAuthStatus({
       authStorage: new MemoryStorage(),

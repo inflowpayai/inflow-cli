@@ -4,7 +4,9 @@ import {
   InflowApiError,
   MemoryStorage,
   PaymentInspectionBlockedError,
+  SecureStorageError,
   runInspectPipeline,
+  runAepFetch,
   runMppInspectPipeline,
   runMppPayPipeline,
   type MppPayEvent,
@@ -13,11 +15,19 @@ import {
 import { MppClient } from '@inflowpayai/mpp';
 import {
   AepCommandError,
+  AepPendingSignResolverError,
+  signClientAssertion,
+  inspectService,
   type AepAgentOptions,
   type AgentCredentialRecord,
   type AgentServiceIdentity,
+  type PlatformIdentityProvider,
 } from '@aep-foundation/agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type * as Ink from 'ink';
+import type { AuthenticationApprovalController } from '../../../../src/commands/payment-authentication-approval.js';
+import { __testing as mppCommands } from '../../../../src/commands/mpp/index.js';
+import { __testing as x402Commands } from '../../../../src/commands/x402/index.js';
 import {
   aepCachePartition,
   createAepAwareFetch,
@@ -29,6 +39,20 @@ import {
   storedAepCredentialAuthenticationHeaders,
 } from '../../../../src/commands/aep/runtime.js';
 
+const approvalRendering = vi.hoisted(() => ({
+  clear: vi.fn(),
+  unmount: vi.fn(),
+  render: vi.fn(),
+}));
+
+vi.mock('ink', async (importOriginal) => ({
+  ...(await importOriginal<typeof Ink>()),
+  render: (element: unknown) => {
+    approvalRendering.render(element);
+    return { clear: approvalRendering.clear, unmount: approvalRendering.unmount };
+  },
+}));
+
 const INSPECT_DOCUMENT = {
   aep_version: '1.0',
   authentication: { methods: ['aep-jwt'] },
@@ -37,7 +61,10 @@ const INSPECT_DOCUMENT = {
   commands: { grant_types: ['oauth-bearer'], supported: ['inspect', 'enroll', 'grant', 'revoke', 'status'] },
   core: { signing_algorithms: ['EdDSA', 'ES256'] },
   extensions: { supported: [] },
-  http: { endpoint_base: '/aep', openapi: { path_matching: { trailing_slash: 'strict' }, url: '/openapi.json' } },
+  http: {
+    endpoint_base: '/aep',
+    openapi: { path_matching: { trailing_slash: 'strict' as const }, url: '/openapi.json' },
+  },
   identity: { methods: ['did:web'] },
   service: { did: 'did:web:seller.test' },
 };
@@ -120,9 +147,61 @@ function context() {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 describe('AEP-aware seller transport', () => {
+  it.each([401, 403, 500])('does not send payment credentials after an unrelated HTTP %s response', async (status) => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response('rejected', { status }));
+    const client = inflow();
+    const retrieve = vi.spyOn(client.user, 'retrieve');
+    const transport = createAepAwareSellerTransport({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      fetch,
+      inflow: client,
+      timeout: 30,
+    });
+    const result = await transport.request({
+      additionalAuthenticationHeaders: { Authorization: 'Payment secret' },
+      headers: {},
+      method: 'GET',
+      url: 'https://seller.test/resource',
+    });
+    expect(result.status).toBe(status);
+    expect(Buffer.from(result.bytes).toString()).toBe('rejected');
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false);
+    expect(retrieve).not.toHaveBeenCalled();
+  });
+
+  it('propagates a failed payment-bearing retry without replaying it again', async () => {
+    const failure = new Error('Connection lost after transmission');
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 402 }))
+      .mockRejectedValueOnce(failure);
+    const transport = createAepAwareSellerTransport({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      fetch,
+      inflow: inflow(),
+      timeout: 30,
+    });
+    await expect(
+      transport.request({
+        additionalAuthenticationHeaders: { Authorization: 'Payment secret' },
+        headers: {},
+        method: 'GET',
+        url: 'https://seller.test/resource',
+      }),
+    ).rejects.toBe(failure);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false);
+    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('Authorization')).toBe('Payment secret');
+    expect(fetch.mock.calls[1]?.[1]?.body).toBeUndefined();
+  });
+
   it('runs the MPP pay pipeline against loopback without calling TAP or creating a payment for HTTP 200', async () => {
     const client = inflow();
     vi.spyOn(client.tap, 'canSign').mockReturnValue(true);
@@ -364,6 +443,21 @@ describe('AEP-aware seller transport', () => {
 });
 
 describe('AEP-aware ODP transport', () => {
+  it('rejects a consumed-body risk before sending a Request without replayable input', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const transport = createAepAwareFetch({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      inflow: inflow(),
+      fetch,
+      timeout: 30,
+    });
+    await expect(
+      transport(new Request('https://seller.test/odp/offerings', { method: 'POST', body: '{}' })),
+    ).rejects.toThrow('require a replayable body');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('preserves anonymous responses and caller headers', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       if (requestUrl(input) === 'https://seller.test/odp/offerings') {
@@ -387,61 +481,95 @@ describe('AEP-aware ODP transport', () => {
     expect(fetchSpy).toHaveBeenCalled();
   });
 
-  it('uses a stored AEP credential for a protected ODP read', async () => {
-    const authStorage = new MemoryStorage();
-    const storage = new AepStorage(authStorage, {
-      platformOrigin: 'https://platform.example',
-      userId: 'user-1',
-    });
-    await storage.credentials().saveCredential({
-      credential: {
-        access_token: 'stored-token',
-        credential_id: 'cred-1',
-        expires_at: '2999-01-01T00:00:00.000Z',
-        scopes: [],
-        token_type: 'Bearer',
-      },
-      credentialId: 'cred-1',
-      expiresAt: '2999-01-01T00:00:00.000Z',
-      grantType: 'oauth-bearer',
-      issuedAt: '2026-01-01T00:00:00.000Z',
-      serviceDid: 'did:web:seller.test',
-    });
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
-      const url = requestUrl(input);
-      if (url === 'https://seller.test/.well-known/aep') {
-        return Promise.resolve(
-          Response.json(OAUTH_INSPECT_DOCUMENT, { headers: { 'content-type': 'application/aep+json' } }),
-        );
+  it.each(
+    [undefined, '', '{"query":"café"}'].flatMap((body) =>
+      (['catalog', 'seller'] as const).flatMap((kind) =>
+        [false, true].map((customFetch) => ({ body, kind, customFetch })),
+      ),
+    ),
+  )(
+    'uses a stored credential while preserving $kind request data: $body (custom fetch: $customFetch)',
+    async ({ body, kind, customFetch }) => {
+      const authStorage = new MemoryStorage();
+      const storage = new AepStorage(authStorage, {
+        platformOrigin: 'https://platform.example',
+        userId: 'user-1',
+      });
+      await storage.credentials().saveCredential({
+        credential: {
+          access_token: 'stored-token',
+          credential_id: 'cred-1',
+          expires_at: '2999-01-01T00:00:00.000Z',
+          scopes: [],
+          token_type: 'Bearer',
+        },
+        credentialId: 'cred-1',
+        expiresAt: '2999-01-01T00:00:00.000Z',
+        grantType: 'oauth-bearer',
+        issuedAt: '2026-01-01T00:00:00.000Z',
+        serviceDid: 'did:web:seller.test',
+      });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+        const url = requestUrl(input);
+        if (url === 'https://seller.test/.well-known/aep') {
+          return Promise.resolve(
+            Response.json(OAUTH_INSPECT_DOCUMENT, { headers: { 'content-type': 'application/aep+json' } }),
+          );
+        }
+        if (url === 'https://seller.test/openapi.json') {
+          return Promise.resolve(
+            Response.json(OAUTH_OPENAPI_DOCUMENT, { headers: { 'content-type': 'application/json' } }),
+          );
+        }
+        const authentication = new Headers(init?.headers).get('AEP-Authorization');
+        if (authentication === null) {
+          return Promise.resolve(
+            new Response('authentication required', {
+              headers: {
+                'WWW-Authenticate':
+                  'AEP service_did="did:web:seller.test", inspect="https://seller.test/.well-known/aep"',
+              },
+              status: 401,
+            }),
+          );
+        }
+        expect(authentication).toBe('Bearer stored-token');
+        expect(init?.method).toBe(body === undefined ? 'GET' : 'POST');
+        expect(init?.body).toBe(body);
+        return Promise.resolve(Response.json({ items: [], odp_version: '1.0' }));
+      });
+      const options = {
+        authStorage,
+        context: context(),
+        inflow: inflow(),
+        timeout: 30,
+        ...(customFetch ? { fetch: globalThis.fetch, maxRedirects: 0 } : {}),
+      };
+      if (kind === 'catalog') {
+        const input =
+          body === undefined
+            ? 'https://seller.test/resource'
+            : new Request('https://seller.test/resource', { method: 'POST', body });
+        const response = await createAepAwareFetch(options)(input, {
+          method: body === undefined ? 'GET' : 'POST',
+          ...(body === undefined ? {} : { body }),
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ items: [], odp_version: '1.0' });
+      } else {
+        const response = await createAepAwareSellerTransport(options).request({
+          headers: {},
+          method: body === undefined ? 'GET' : 'POST',
+          ...(body === undefined ? {} : { data: body }),
+          url: 'https://seller.test/resource',
+        });
+        expect(response.status).toBe(200);
+        expect(JSON.parse(Buffer.from(response.bytes).toString('utf8'))).toEqual({ items: [], odp_version: '1.0' });
       }
-      if (url === 'https://seller.test/openapi.json') {
-        return Promise.resolve(
-          Response.json(OAUTH_OPENAPI_DOCUMENT, { headers: { 'content-type': 'application/json' } }),
-        );
-      }
-      const authentication = new Headers(init?.headers).get('AEP-Authorization');
-      if (authentication === null) {
-        return Promise.resolve(
-          new Response('authentication required', {
-            headers: {
-              'WWW-Authenticate':
-                'AEP service_did="did:web:seller.test", inspect="https://seller.test/.well-known/aep"',
-            },
-            status: 401,
-          }),
-        );
-      }
-      expect(authentication).toBe('Bearer stored-token');
-      return Promise.resolve(Response.json({ items: [], odp_version: '1.0' }));
-    });
-    const transport = createAepAwareFetch({ authStorage, context: context(), inflow: inflow(), timeout: 30 });
-
-    const response = await transport('https://seller.test/resource');
-
-    expect(response.status).toBe(200);
-    expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
-    await expect(aepCachePartition(authStorage, inflow())).resolves.toBe('aep:["https://platform.example","user-1"]');
-  });
+      expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
+      await expect(aepCachePartition(authStorage, inflow())).resolves.toBe('aep:["https://platform.example","user-1"]');
+    },
+  );
 
   it('rejects caller-controlled AEP authentication and omits a cache partition without an owner', async () => {
     const authStorage = new MemoryStorage();
@@ -485,6 +613,102 @@ describe('AEP-aware ODP transport', () => {
 });
 
 describe('AEP-aware read-only inspection probe', () => {
+  it.each([
+    ['MPP', mppCommands.runInspectCommand],
+    ['x402', x402Commands.runInspectCommand],
+  ] as const)('returns an actionable blocked %s command result without granting or paying', async (_name, run) => {
+    const client = inflow();
+    vi.spyOn(Object.getPrototypeOf(client.capabilities) as { has: () => Promise<boolean> }, 'has').mockResolvedValue(
+      false,
+    );
+    vi.spyOn(client.user, 'retrieve').mockRejectedValue(new SecureStorageError('vault_locked', 'The vault is locked.'));
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = requestUrl(input);
+      if (url.endsWith('/.well-known/aep'))
+        return Promise.resolve(
+          Response.json(API_KEY_INSPECT_DOCUMENT, { headers: { 'content-type': 'application/aep+json' } }),
+        );
+      if (url.endsWith('/openapi.json')) return Promise.resolve(Response.json(API_KEY_OPENAPI_DOCUMENT));
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const result = await run(
+      {
+        ...context(),
+        args: { url: 'https://seller.test/resource' },
+        options: { header: [], method: 'GET' },
+      },
+      client,
+      new MemoryStorage(),
+    );
+    expect(result).toMatchObject({ outcome: 'aep-authentication-required' });
+    expect(fetch.mock.calls.map(([input]) => requestUrl(input))).toEqual([
+      'https://seller.test/.well-known/aep',
+      'https://seller.test/openapi.json',
+    ]);
+  });
+  it('blocks inspection when credentials cannot be read without sending or granting credentials', async () => {
+    const client = inflow();
+    vi.spyOn(client.user, 'retrieve').mockRejectedValue(new SecureStorageError('vault_locked', 'The vault is locked.'));
+    const fetch = vi.fn<typeof globalThis.fetch>((input) => {
+      const url = requestUrl(input);
+      if (url.endsWith('/.well-known/aep'))
+        return Promise.resolve(
+          Response.json(API_KEY_INSPECT_DOCUMENT, {
+            headers: { 'content-type': 'application/aep+json' },
+          }),
+        );
+      if (url.endsWith('/openapi.json')) return Promise.resolve(Response.json(API_KEY_OPENAPI_DOCUMENT));
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const probe = createAepAwareInspectProbe({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      fetch,
+      inflow: client,
+      timeout: 30,
+    });
+    await expect(probe('https://seller.test/resource', { method: 'GET', headers: {} })).rejects.toMatchObject({
+      blocked: { source: 'openapi', serviceDid: 'did:web:seller.test' },
+    });
+    expect(fetch.mock.calls.map(([input]) => requestUrl(input))).toEqual([
+      'https://seller.test/.well-known/aep',
+      'https://seller.test/openapi.json',
+    ]);
+  });
+
+  it('rejects a challenge whose Service DID differs from same-origin Inspect before reading credentials', async () => {
+    const authStorage = new MemoryStorage();
+    const readState = vi.spyOn(authStorage, 'getAepState');
+    const requests: Request[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>((input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path === '/.well-known/aep')
+        return Promise.resolve(
+          Response.json(API_KEY_INSPECT_DOCUMENT, { headers: { 'content-type': 'application/aep+json' } }),
+        );
+      if (path === '/openapi.json') return Promise.resolve(Response.json({ openapi: '3.1.0', paths: {} }));
+      return Promise.resolve(
+        new Response(null, {
+          status: 401,
+          headers: {
+            'WWW-Authenticate': 'AEP service_did="did:web:another.test", inspect="https://seller.test/.well-known/aep"',
+          },
+        }),
+      );
+    });
+    const probe = createAepAwareInspectProbe({ authStorage, context: context(), fetch, inflow: inflow(), timeout: 30 });
+    await expect(probe('https://seller.test/resource', { method: 'GET', headers: {} })).rejects.toThrow(
+      'Service DID did not match Inspect',
+    );
+    expect(readState).not.toHaveBeenCalled();
+    expect(requests.filter((request) => new URL(request.url).pathname === '/resource')).toHaveLength(1);
+    expect(
+      requests.every((request) => !request.headers.has('AEP-Authorization') && !request.headers.has('x-aep-api-key')),
+    ).toBe(true);
+  });
+
   describe.each([
     ['MPP', runMppInspectPipeline],
     ['x402', runInspectPipeline],
@@ -635,8 +859,13 @@ describe('AEP-aware read-only inspection probe', () => {
     });
   });
 
-  it('uses a stored AEP credential to reveal payment terms when OpenAPI requires AEP', async () => {
-    const authStorage = new MemoryStorage();
+  it.each([true, false])('uses a stored AEP credential to reveal payment terms (public cache: %s)', async (cache) => {
+    const backing = new MemoryStorage();
+    const authStorage = cache
+      ? backing
+      : new Proxy(backing, {
+          has: (target, key) => key !== 'getDiscoveryDocuments' && Reflect.has(target, key),
+        });
     const aepStorage = new AepStorage(authStorage, {
       platformOrigin: 'https://platform.example',
       userId: 'user-1',
@@ -664,10 +893,14 @@ describe('AEP-aware read-only inspection probe', () => {
       }
       if (url === 'https://seller.test/openapi.json') {
         return Promise.resolve(
-          Response.json(OAUTH_OPENAPI_DOCUMENT, { headers: { 'content-type': 'application/json' } }),
+          Response.json(
+            { ...OAUTH_OPENAPI_DOCUMENT, paths: { '/resource': { post: {} } } },
+            { headers: { 'content-type': 'application/json' } },
+          ),
         );
       }
       expect(new Headers(init?.headers).get('AEP-Authorization')).toBe('Bearer stored-token');
+      expect(init?.body).toBe('{"query":"test"}');
       return Promise.resolve(new Response('payment required', { status: 402 }));
     });
     const probe = createAepAwareInspectProbe({
@@ -677,10 +910,19 @@ describe('AEP-aware read-only inspection probe', () => {
       timeout: 30,
     });
 
-    const result = await probe('https://seller.test/resource', { method: 'GET', headers: { 'X-Test': 'yes' } });
+    const result = await probe('https://seller.test/resource', {
+      method: 'POST',
+      headers: { 'X-Test': 'yes' },
+      data: '{"query":"test"}',
+    });
 
     expect(result.status).toBe(402);
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy.mock.calls.map(([input]) => requestUrl(input))).toEqual([
+      'https://seller.test/.well-known/aep',
+      'https://seller.test/openapi.json',
+      ...(cache ? [] : ['https://seller.test/.well-known/aep']),
+      'https://seller.test/resource',
+    ]);
   });
 
   it('uses a stored API-key credential to reveal payment terms when OpenAPI requires AEP', async () => {
@@ -837,6 +1079,55 @@ describe('CLI AEP approval resolver', () => {
     };
   }
 
+  it.each([false, true])(
+    'cancels the active approval after a successful cancellation response (retry=%s)',
+    async (retry) => {
+      const cancelResponses = retry ? [503, 204] : [204];
+      const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+        if (requestUrl(input).endsWith('/cancel')) {
+          const status = cancelResponses.shift();
+          if (status === undefined) throw new Error('Unexpected cancellation request');
+          return Promise.resolve(new Response(null, { status }));
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (signal?.aborted === true) reject(new Error('Request aborted'));
+          else signal?.addEventListener('abort', () => reject(new Error('Request aborted')), { once: true });
+        });
+      });
+      const showPendingApproval = vi.fn<AuthenticationApprovalController['showPendingApproval']>(() => true);
+      const clearPendingApproval = vi.fn();
+      const options = createCliAepAgentOptions({
+        approvalDisplay: { showPendingApproval, clearPendingApproval },
+        authStorage: new MemoryStorage(),
+        context: { ...context(), agent: false, formatExplicit: false },
+        inflow: inflow(),
+        interval: 0.001,
+        timeout: 10,
+      });
+      const continueSign = vi.fn(() => Promise.resolve({ clientAssertion: 'jwt', status: 'completed' as const }));
+      const result = options.pendingSignResolver?.(resolverInput(continueSign));
+      const rejected = Promise.resolve(result).catch((error: unknown) => mapAepRuntimeError(error));
+      const approval = showPendingApproval.mock.calls[0]?.[0];
+      if (approval === undefined) throw new Error('Approval display was not initialized');
+      if (retry) {
+        await expect(approval.cancel()).rejects.toThrow('Approval cancellation request failed.');
+        expect(clearPendingApproval).not.toHaveBeenCalled();
+      }
+      await approval.cancel();
+      expect(await rejected).toEqual({ code: 'APPROVAL_CANCELLED', message: 'The AEP approval was cancelled.' });
+      expect(continueSign).not.toHaveBeenCalled();
+      expect(clearPendingApproval).toHaveBeenCalledOnce();
+      const cancellations = fetch.mock.calls.filter(([input]) => requestUrl(input).endsWith('/cancel'));
+      expect(cancellations).toHaveLength(retry ? 2 : 1);
+      for (const [, init] of cancellations) {
+        expect(init?.method).toBe('POST');
+        expect(new Headers(init?.headers).get('X-Test-Platform')).toBe('yes');
+      }
+      expect(approvalRendering.render).not.toHaveBeenCalled();
+    },
+  );
+
   it('passes the configured request transport to the AEP agent', () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const options = createCliAepAgentOptions({
@@ -850,8 +1141,191 @@ describe('CLI AEP approval resolver', () => {
     expect(options.fetch).toBe(fetch);
   });
 
-  it('continues signing once Platform approval is approved', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ status: 'APPROVED' }));
+  it.each(['active', 'missing', 'failure'] as const)(
+    'preserves the platform lookup for a %s identity without provisioning',
+    async (state) => {
+      const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        const json = (value: unknown) =>
+          Promise.resolve(Response.json(value, { headers: { 'content-type': 'application/aep+json' } }));
+        if (url.origin === 'https://service.test') {
+          expect(request.headers.has('X-Test-Platform')).toBe(false);
+          if (url.pathname === '/.well-known/aep')
+            return json({ ...API_KEY_INSPECT_DOCUMENT, service: { did: 'did:web:service.test' } });
+          if (url.pathname === '/openapi.json') return Promise.resolve(Response.json(API_KEY_OPENAPI_DOCUMENT));
+          if (url.pathname === '/aep/status') {
+            expect(request.headers.get('authorization')).toBe('AEP test-assertion');
+            return json({ status: 'active' });
+          }
+          if (url.pathname === '/aep/grant') {
+            expect(request.method).toBe('POST');
+            expect(request.headers.get('authorization')).toBe('AEP test-assertion');
+            return json({
+              credential_id: 'issued-key',
+              api_key: 'service-key',
+              header: 'x-aep-api-key',
+              expires_at: '2999-01-01T00:00:00Z',
+            });
+          }
+          expect(url.pathname).toBe('/resource');
+          expect(request.headers.get('x-aep-api-key')).toBe('service-key');
+          return Promise.resolve(new Response('accepted'));
+        }
+        if (url.pathname === '/identities/one/sign') {
+          expect(request.method).toBe('POST');
+          expect(request.headers.get('X-Test-Platform')).toBe('yes');
+          return json({
+            status: 'completed',
+            client_assertion: 'test-assertion',
+            agent_did: 'did:web:platform.example:agents:one',
+            service_did: 'did:web:service.test',
+            issued_at: new Date().toISOString(),
+            expires_at: new Date(Date.now() + 60_000).toISOString(),
+            jti: 'test',
+          });
+        }
+        expect(request.method).toBe('GET');
+        if (url.pathname === '/.well-known/aep-platform')
+          return Promise.resolve(
+            Response.json(
+              {
+                aep_version: '1.0',
+                platform: { name: 'Platform', hosted_verification: false },
+                http: { endpoint_base: '/aep' },
+                identity: {
+                  did_methods: ['did:web'],
+                  did_url_template: 'https://platform.example/agents/{id}/did.json',
+                },
+                signing: { algorithms: ['ES256'], default_lifetime_seconds: '300' },
+                endpoints: {
+                  provision: '/provision',
+                  list: '/list',
+                  lifecycle: '/identities/{agent_identity_id}',
+                  sign: '/identities/{agent_identity_id}/sign',
+                },
+              },
+              { headers: { 'content-type': 'application/aep+json' } },
+            ),
+          );
+        expect(url.pathname).toBe('/list');
+        expect(request.headers.get('X-Test-Platform')).toBe('yes');
+        expect(url.searchParams.get('service_did')).toBe('did:web:service.test');
+        if (state === 'failure') return Promise.reject(new Error('Platform unavailable'));
+        return Promise.resolve(
+          Response.json(
+            {
+              count: state === 'missing' ? '0' : '1',
+              total: state === 'missing' ? '0' : '1',
+              data:
+                state === 'missing'
+                  ? []
+                  : [
+                      {
+                        agent_did: 'did:web:platform.example:agents:one',
+                        agent_identity_id: 'one',
+                        service_did: 'did:web:service.test',
+                        signing_algorithms: ['ES256'],
+                        status: 'active',
+                        created_at: '2026-01-01T00:00:00Z',
+                        updated_at: '2026-01-01T00:00:00Z',
+                        did_document_url: 'https://platform.example/agents/one/did.json',
+                        key_id: 'one',
+                      },
+                    ],
+            },
+            { headers: { 'content-type': 'application/aep+json' } },
+          ),
+        );
+      });
+      const options = createCliAepAgentOptions({
+        authStorage: new MemoryStorage(),
+        context: context(),
+        inflow: inflow(),
+        timeout: 1,
+      });
+      const provider = options.identityProvider;
+      if (!('findIdentityByServiceDid' in provider) || typeof provider.findIdentityByServiceDid !== 'function') {
+        throw new Error('Platform identity lookup is missing');
+      }
+      // The shared options type omits the platform-specific method checked above.
+      const platform = provider as PlatformIdentityProvider;
+      const result: unknown = await Promise.resolve(platform.findIdentityByServiceDid('did:web:service.test')).catch(
+        (error: unknown) => error,
+      );
+      if (state === 'failure') expect(result).toMatchObject({ message: 'Platform unavailable' });
+      else if (state === 'missing') expect(result).toBeUndefined();
+      else
+        expect(result).toMatchObject({
+          agentDid: 'did:web:platform.example:agents:one',
+          identityKind: 'platform-hosted',
+          serviceDid: 'did:web:service.test',
+        });
+      expect(fetch).toHaveBeenCalledTimes(2);
+      const inspected = await inspectService({ serviceUrl: 'https://service.test' });
+      const recovered: unknown = await Promise.resolve(
+        provider.getOrCreateIdentity({
+          inspect: inspected.document,
+          serviceDid: 'did:web:service.test',
+          serviceUrl: 'https://service.test',
+        }),
+      ).catch((error: unknown) => error);
+      if (state === 'missing') expect(mapAepRuntimeError(recovered)).toMatchObject({ code: 'AEP_NOT_ENROLLED' });
+      else if (state === 'failure') expect(recovered).toMatchObject({ message: 'Platform unavailable' });
+      else expect(recovered).toEqual(result);
+      if (state === 'active') {
+        const input = { agentOptions: options, url: 'https://service.test/resource', grantType: 'api-key' };
+        expect(await runAepFetch(input)).toMatchObject({
+          status: 200,
+          authentication: { outcome: 'authenticated', operation: 'grant' },
+        });
+        expect(await runAepFetch(input)).toMatchObject({
+          status: 200,
+          authentication: { outcome: 'authenticated', credentialId: 'issued-key' },
+        });
+        expect(await options.identityStore?.findByServiceDid('did:web:service.test')).toMatchObject({
+          agentDid: 'did:web:platform.example:agents:one',
+        });
+        const paths = fetch.mock.calls.map(([input]) => new URL(requestUrl(input)).pathname);
+        expect(paths.filter((path) => path === '/aep/grant')).toHaveLength(1);
+        expect(paths).not.toContain('/aep/enroll');
+        expect(paths).not.toContain('/provision');
+      }
+    },
+  );
+
+  it.each([undefined, 0.001])(
+    'continues signing once Platform approval is approved (interval: %s)',
+    async (interval) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ status: 'APPROVED' }));
+      const options = createCliAepAgentOptions({
+        authStorage: new MemoryStorage(),
+        context: context(),
+        inflow: inflow(),
+        ...(interval === undefined ? {} : { interval }),
+        trace: { markAuthenticated: vi.fn() },
+        timeout: 1,
+      });
+
+      const result = await options.pendingSignResolver?.(
+        resolverInput(() => Promise.resolve({ clientAssertion: 'jwt', status: 'completed' })),
+      );
+
+      expect(result).toEqual({ clientAssertion: 'jwt', status: 'completed' });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        new URL('/v1/approvals/approval-1', 'https://platform.example'),
+        expect.objectContaining({
+          headers: { 'X-Test-Platform': 'yes' },
+          signal: expect.any(AbortSignal) as AbortSignal,
+        }),
+      );
+    },
+  );
+
+  it('waits for signing completion even when approval is already approved', async () => {
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() => Promise.resolve(Response.json({ status: 'APPROVED' })));
     const options = createCliAepAgentOptions({
       authStorage: new MemoryStorage(),
       context: context(),
@@ -859,19 +1333,21 @@ describe('CLI AEP approval resolver', () => {
       interval: 0.001,
       timeout: 1,
     });
-
-    const result = await options.pendingSignResolver?.(
-      resolverInput(() => Promise.resolve({ clientAssertion: 'jwt', status: 'completed' })),
-    );
-
-    expect(result).toEqual({ clientAssertion: 'jwt', status: 'completed' });
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      new URL('/v1/approvals/approval-1', 'https://platform.example'),
-      expect.objectContaining({
-        headers: { 'X-Test-Platform': 'yes' },
-        signal: expect.any(AbortSignal) as AbortSignal,
-      }),
-    );
+    const continueSign = vi
+      .fn<Parameters<typeof resolverInput>[0]>()
+      .mockResolvedValue({ clientAssertion: 'jwt', status: 'completed' });
+    const input = resolverInput(continueSign);
+    const retrySign = vi
+      .fn<typeof input.continueSign>()
+      .mockResolvedValueOnce(input.pending)
+      .mockImplementationOnce(continueSign);
+    await expect(options.pendingSignResolver?.({ ...input, continueSign: retrySign })).resolves.toEqual({
+      clientAssertion: 'jwt',
+      status: 'completed',
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(retrySign).toHaveBeenCalledTimes(2);
+    expect(continueSign).toHaveBeenCalledOnce();
   });
 
   it('lets an outer human payment view own the pending approval display', async () => {
@@ -906,6 +1382,55 @@ describe('CLI AEP approval resolver', () => {
     expect(clearPendingApproval).toHaveBeenCalledOnce();
   });
 
+  it.each(['APPROVED', 'DECLINED', 'ERROR'])(
+    'clears and unmounts its own human approval view after %s',
+    async (status) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        status === 'ERROR' ? new Response('unavailable', { status: 503 }) : Response.json({ status }),
+      );
+      const options = createCliAepAgentOptions({
+        authStorage: new MemoryStorage(),
+        context: { ...context(), agent: false, formatExplicit: false },
+        inflow: inflow(),
+        interval: 0.001,
+        timeout: 1,
+      });
+      const continueSign = vi.fn(() => Promise.resolve({ clientAssertion: 'jwt', status: 'completed' as const }));
+      const result = options.pendingSignResolver?.(resolverInput(continueSign));
+      if (status === 'APPROVED') {
+        await expect(result).resolves.toEqual({ clientAssertion: 'jwt', status: 'completed' });
+        expect(continueSign).toHaveBeenCalledOnce();
+      } else {
+        await expect(result).rejects.toBeInstanceOf(Error);
+        expect(continueSign).not.toHaveBeenCalled();
+      }
+      expect(approvalRendering.render).toHaveBeenCalledOnce();
+      expect(approvalRendering.clear).toHaveBeenCalledOnce();
+      expect(approvalRendering.unmount).toHaveBeenCalledOnce();
+      expect(approvalRendering.clear.mock.invocationCallOrder[0]).toBeLessThan(
+        approvalRendering.unmount.mock.invocationCallOrder[0] ?? 0,
+      );
+    },
+  );
+
+  it.each([undefined, []])('omits an absent or empty scope selection from grant context: %s', (requestedScopes) => {
+    const options = createCliAepAgentOptions({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      inflow: inflow(),
+      timeout: 1,
+    });
+    expect(
+      options.platformContextProvider?.({
+        command: 'grant',
+        grantType: 'api-key',
+        identity,
+        ...(requestedScopes === undefined ? {} : { requestedScopes }),
+        serviceDid: identity.serviceDid,
+      }),
+    ).toEqual({ grant_type: 'api-key' });
+  });
+
   it('maps declined approval to the stable AEP denial error', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ status: 'DECLINED' }));
     const options = createCliAepAgentOptions({
@@ -929,6 +1454,57 @@ describe('CLI AEP approval resolver', () => {
       code: 'AEP_APPROVAL_DENIED',
       message: 'The InFlow approval was declined.',
     });
+  });
+
+  it.each([
+    { status: 'DECLINED', httpStatus: 200, code: 'AEP_APPROVAL_DENIED' },
+    { status: 'CANCELLED', httpStatus: 200, code: 'APPROVAL_CANCELLED' },
+    { status: 'PENDING', httpStatus: 503, code: 'AEP_APPROVAL_SERVER_ERROR' },
+    { status: 'PENDING', httpStatus: 200, code: 'AEP_APPROVAL_TIMEOUT' },
+  ])('maps $code after the real SDK wraps the runtime approval error', async ({ status, httpStatus, code }) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(Response.json({ status }, { status: httpStatus })),
+    );
+    const options = createCliAepAgentOptions({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      inflow: inflow(),
+      interval: 0.001,
+      timeout: code === 'AEP_APPROVAL_TIMEOUT' ? 0.02 : 2,
+    });
+    const signer = vi.fn(() =>
+      Promise.resolve({
+        status: 'pending' as const,
+        platformContext: { approval_id: 'approval-1' },
+        retryAfterSeconds: 1,
+      }),
+    );
+    let caught: unknown;
+    try {
+      await signClientAssertion({
+        agentDid: identity.agentDid,
+        command: 'authenticate',
+        resource: 'https://service.test/resource',
+        serviceDid: identity.serviceDid,
+        signer,
+        ...(options.pendingSignResolver === undefined ? {} : { pendingSignResolver: options.pendingSignResolver }),
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AepPendingSignResolverError);
+    expect(mapAepRuntimeError(caught)).toMatchObject({ code });
+    expect(signer).toHaveBeenCalledOnce();
+  });
+
+  it('does not classify an unrelated SDK resolver failure as an approval rejection', () => {
+    expect(
+      mapAepRuntimeError(
+        new AepPendingSignResolverError('Resolver failed.', 'resolver_failed', {
+          cause: new Error('custom signer failed'),
+        }),
+      ),
+    ).toBeUndefined();
   });
 
   it('maps cancelled approval to the stable cancellation error', async () => {
@@ -1232,14 +1808,14 @@ describe('CLI AEP approval resolver', () => {
     await expect(result).rejects.toBeDefined();
   });
 
-  it('maps AEP not-recognized command errors to the enrollment guidance error', () => {
+  it.each(['not_recognized', 'agent_identity_not_found'])('maps %s to enrollment guidance', (code) => {
     expect(
       mapAepRuntimeError(
         new AepCommandError('not recognized', 401, {
-          code: 'not_recognized',
+          code,
           status: 401,
           title: 'Not recognized',
-          type: 'urn:aep:error:not_recognized',
+          type: `urn:aep:error:${code}`,
         }),
       ),
     ).toEqual({
@@ -1250,6 +1826,17 @@ describe('CLI AEP approval resolver', () => {
 });
 
 describe('CLI AEP persisted stores', () => {
+  it.each([
+    ['vault_not_initialized', 'VAULT_NOT_INITIALIZED'],
+    ['secure_storage_secret_missing', 'VAULT_LOCKED'],
+    ['vault_locked', 'VAULT_LOCKED'],
+    ['secure_storage_unavailable', 'secure_storage_unavailable'],
+  ] as const)('preserves actionable storage errors: %s', (storageCode, code) => {
+    expect(mapAepRuntimeError(new SecureStorageError(storageCode, 'Storage unavailable'))).toEqual({
+      code,
+      message: 'Storage unavailable',
+    });
+  });
   const credential: AgentCredentialRecord = {
     credential: {
       access_token: 'token',
@@ -1313,6 +1900,45 @@ describe('CLI AEP persisted stores', () => {
     );
   });
 
+  it('does not reuse a cache partition when the current account cannot be verified', async () => {
+    const authStorage = new MemoryStorage();
+    const storage = new AepStorage(authStorage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+    await storage.identities().saveIdentity(identity);
+    const before = authStorage.getAepState();
+    const client = inflow();
+    vi.spyOn(client.user, 'retrieve').mockRejectedValue(new Error('Service unavailable'));
+    await expect(aepCachePartition(authStorage, client)).resolves.toBeUndefined();
+    expect(authStorage.getAepState()).toEqual(before);
+  });
+
+  it('persists and removes Inspect cache entries without treating public documents as authentication', async () => {
+    const client = inflow();
+    const retrieve = vi.spyOn(client.user, 'retrieve');
+    const trace = { markAuthenticated: vi.fn() };
+    const options = createCliAepAgentOptions({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      inflow: client,
+      timeout: 30,
+      trace,
+    });
+    const serviceUrl = 'https://service.test';
+    const document = { ...INSPECT_DOCUMENT, service: { did: identity.serviceDid } };
+    await options.inspectCache?.set(serviceUrl, {
+      cachedAt: new Date().toISOString(),
+      document,
+      inspectUrl: new URL(`${serviceUrl}/.well-known/aep`),
+      commandUrl: (command) => new URL(`/aep/${command}`, serviceUrl),
+    });
+    const cached = await options.inspectCache?.get(serviceUrl);
+    expect(cached?.document).toEqual(document);
+    expect(cached?.commandUrl('grant').toString()).toBe('https://service.test/aep/grant');
+    await options.inspectCache?.delete(serviceUrl);
+    expect(await options.inspectCache?.get(serviceUrl)).toBeUndefined();
+    expect(trace.markAuthenticated).not.toHaveBeenCalled();
+    expect(retrieve).toHaveBeenCalledOnce();
+  });
+
   it('returns undefined for credential-only inspect headers when no stored credential exists', async () => {
     await expect(
       storedAepCredentialAuthenticationHeaders(
@@ -1338,5 +1964,39 @@ describe('CLI AEP persisted stores', () => {
         },
       ),
     ).resolves.toBeUndefined();
+  });
+
+  it('selects the newest permitted credential with a stable identifier tie-break without granting', async () => {
+    const authStorage = new MemoryStorage();
+    const storage = new AepStorage(authStorage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+    for (const [id, issuedAt] of [
+      ['older', '2025-01-01T00:00:00.000Z'],
+      ['new-a', '2026-01-01T00:00:00.000Z'],
+      ['new-z', '2026-01-01T00:00:00.000Z'],
+    ]) {
+      if (id === undefined || issuedAt === undefined) throw new Error('Invalid test credential');
+      await storage.credentials().saveCredential({
+        ...credential,
+        credentialId: id,
+        issuedAt,
+        credential: { ...credential.credential, credential_id: id, access_token: id },
+      });
+    }
+    const document = { ...OAUTH_INSPECT_DOCUMENT, service: { did: identity.serviceDid } };
+    const fetch = vi.fn<typeof globalThis.fetch>((input) => {
+      expect(requestUrl(input)).toBe('https://service.test/.well-known/aep');
+      return Promise.resolve(Response.json(document, { headers: { 'content-type': 'application/aep+json' } }));
+    });
+    const headers = await storedAepCredentialAuthenticationHeaders(
+      { authStorage, context: context(), inflow: inflow(), timeout: 30, fetch },
+      {
+        commandUrl: (command: string) => new URL(`https://service.test/aep/${command}`),
+        document,
+        finalUrl: new URL('https://service.test/.well-known/aep'),
+        inspectUrl: new URL('https://service.test/.well-known/aep'),
+      },
+    );
+    expect(headers).toEqual({ 'AEP-Authorization': 'Bearer new-z' });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });

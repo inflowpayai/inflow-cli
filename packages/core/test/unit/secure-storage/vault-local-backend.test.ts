@@ -60,6 +60,12 @@ describe('LocalVaultBackend', () => {
     }
   });
 
+  it('does not treat an unreadable vault sidecar as an uninitialized vault', async () => {
+    mkdirSync(join(tmpDir, 'inflow.vault'));
+    await expect(backend.status()).rejects.toMatchObject({ code: 'EISDIR' });
+    expect(existsSync(vaultFilePaths(tmpDir).database)).toBe(false);
+  });
+
   it('stores a secret at an exact caller-provided vault reference', async () => {
     await backend.unlock(Buffer.from('123456'));
     const reference = parseVaultSecretReference('vlt_11111111111111111111111111111111');
@@ -276,6 +282,26 @@ describe('LocalVaultBackend', () => {
       secureStorageCode: 'secure_storage_corrupt',
       message: 'Vault unlock salt changed.',
     });
+  });
+
+  it('does not replace a corrupt sidecar with a new unlock salt', async () => {
+    const sidecar = join(tmpDir, 'inflow.vault');
+    await writeFile(sidecar, 'corrupt vault header');
+    await expect(backend.unlockSalt()).rejects.toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
+    expect(await readFile(sidecar, 'utf8')).toBe('corrupt vault header');
+  });
+
+  it('keeps an unexpired credential accessible until its declared expiration', async () => {
+    await backend.unlock(Buffer.from('123456'));
+    const reference = backend.putSecret({
+      expectedKind: 'auth_access_token',
+      expiresAt: '2026-01-02T00:00:00.000Z',
+      payload: Buffer.from('future-token'),
+    });
+    expect(backend.getSecret({ expectedKind: 'auth_access_token', reference }).payload).toEqual(
+      Buffer.from('future-token'),
+    );
+    backend.lock();
   });
 
   it('rotates wrapping keys without changing stored secret material', async () => {

@@ -231,6 +231,7 @@ describe('OpenAPI request preparation', () => {
     [{}, 'No schema body', 'does not declare'],
     [{ method: 'GET' }, '{}', 'GET and HEAD'],
     [{ requestBody: { content: { 'application/json': {} } } }, '{secret', 'valid JSON'],
+    [{ requestBody: { content: { 'application/json': {} } } }, '{"value":1e999}', 'valid JSON'],
     [{ requestBody: { content: { 'text/xml': {} } } }, '{}', 'advertised JSON'],
     [{ requestBody: { content: { 'application/json': false } } }, '{}', 'media type is invalid'],
     [{ requestBody: { content: { 'application/a+json': {}, 'application/b+json': {} } } }, '{}', 'advertised JSON'],
@@ -339,6 +340,12 @@ describe('OpenAPI request preparation', () => {
       'https://example.com/v1/items/a?key=%5BREDACTED%5D&key=%5BREDACTED%5D&ordinary=a%20b',
     );
     expect(preview.redactions).toEqual([{ location: 'query', name: 'key' }]);
+    prepared.request.url += '&flag&key';
+    const executableUrl = prepared.request.url;
+    const flagPreview = previewOpenApiRequest(prepared, operation);
+    expect(flagPreview.request.url).toBe(`${preview.request.url}&flag&key=%5BREDACTED%5D`);
+    expect(flagPreview.redactions).toEqual([{ location: 'query', name: 'key' }]);
+    expect(prepared.request.url).toBe(executableUrl);
     const noId = document();
     for (const item of noId.operations) delete item.operationId;
     expect(

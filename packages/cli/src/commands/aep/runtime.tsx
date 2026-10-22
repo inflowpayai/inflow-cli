@@ -211,8 +211,8 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     ...(options.aepReadFetch === undefined ? {} : { readFetch: options.aepReadFetch }),
     ...(options.aepWriteFetch === undefined ? {} : { writeFetch: options.aepWriteFetch }),
-    /* v8 ignore start -- Platform identity provider wiring is covered by AEP command tests with the command-level mock. */
     identityProvider: {
+      ...platform,
       getOrCreateIdentity: async (input) => {
         const recovered = await platform.findIdentityByServiceDid(input.serviceDid);
         if (recovered === undefined) throw new MissingIdentityError();
@@ -226,7 +226,6 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
         };
       },
     },
-    /* v8 ignore stop */
     identityStore: storage.identities,
     inspectCache: storage.inspectCache,
     ...(publicDocumentCache === undefined ? {} : { publicDocumentCache }),
@@ -248,7 +247,6 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
       const controller = new AbortController();
       const approvalUrl = approvalUrlFor(options.inflow.resolvedApiBaseUrl, approvalId);
       let displayHandled = false;
-      /* v8 ignore start -- Ink rendering is exercised through command TTY tests; resolver unit tests run agent-mode. */
       if (!options.context.agent && !options.context.formatExplicit) {
         const approval = {
           approvalId,
@@ -266,7 +264,6 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
           );
         }
       }
-      /* v8 ignore stop */
       try {
         const interval = options.interval ?? input.pending.retryAfterSeconds;
         if (!Number.isFinite(interval) || interval <= 0) {
@@ -609,6 +606,15 @@ export async function storedAepCredentialAuthenticationHeaders(
 }
 
 export function mapAepRuntimeError(error: unknown): { code: string; message: string; retryable?: boolean } | undefined {
+  if (
+    error instanceof AepPendingSignResolverError &&
+    (error.cause instanceof ApprovalDeniedError ||
+      error.cause instanceof ApprovalCancelledError ||
+      error.cause instanceof ApprovalTimeoutError ||
+      error.cause instanceof ApprovalServerError)
+  ) {
+    error = error.cause;
+  }
   if (error instanceof SecureStorageError) {
     const code =
       error.secureStorageCode === 'vault_locked' || error.secureStorageCode === 'secure_storage_secret_missing'

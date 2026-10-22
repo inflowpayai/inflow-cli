@@ -5,6 +5,35 @@ import { describe, expect, it } from 'vitest';
 import { MppChallengePresentation } from '../../../../src/commands/mpp/challenge-presentation.js';
 
 describe('MppChallengePresentation', () => {
+  it('does not invent missing subscription terms and distinguishes multi-period billing', () => {
+    const view = render(
+      <MppChallengePresentation
+        challenges={[
+          { id: 'minimal', realm: 'seller.test', method: 'inflow', intent: 'subscription' },
+          {
+            id: 'quarterly',
+            realm: 'seller.test',
+            method: 'inflow',
+            intent: 'subscription',
+            periodCount: 3,
+            periodUnit: 'month',
+            amount: '30',
+            currency: 'USDC',
+          },
+        ]}
+      />,
+    );
+    const frame = view.lastFrame() ?? '';
+    expect(frame).toContain('Every unknown period');
+    expect(frame).toContain('Every 3 months');
+    expect(frame).toContain('30 USDC');
+    expect(frame).not.toContain('Subscription ends');
+    expect(frame).not.toContain('Accept by');
+    expect(frame).not.toContain('Seller reference');
+    expect(frame).not.toContain('Option ID');
+    view.unmount();
+  });
+
   it('identifies CARD amounts as cents, including when the amount is missing', () => {
     const result = render(
       <MppChallengePresentation

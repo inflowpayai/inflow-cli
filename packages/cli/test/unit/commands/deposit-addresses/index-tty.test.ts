@@ -6,16 +6,9 @@ import {
   Inflow,
   MemoryStorage,
 } from '@inflowpayai/inflow-core';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
-vi.mock('../../../../src/utils/render-ink-until-exit.js', () => ({
-  renderInkUntilExit: vi.fn(),
-}));
+import { describe, expect, it, vi } from 'vitest';
 
 import { __testing, createDepositAddressesCli } from '../../../../src/commands/deposit-addresses/index.js';
-import { renderInkUntilExit } from '../../../../src/utils/render-ink-until-exit.js';
-
-const renderMock = vi.mocked(renderInkUntilExit);
 
 const { runDepositAddressesList } = __testing;
 
@@ -70,12 +63,8 @@ function ttyCtx(): TtyCtx {
   };
 }
 
-afterEach(() => {
-  renderMock.mockReset();
-});
-
 describe('runDepositAddressesList (tty mode)', () => {
-  it('returns the configured addresses when the TTY renderer surfaces them', async () => {
+  it('returns configured addresses loaded through the interactive view', async () => {
     const fixture: ConfiguredDepositAddress[] = [
       {
         address: 'GA7HQ3RJ5EFAQTI3TDRJ5SK24GZSXP4IW5OQXPYO',
@@ -83,12 +72,11 @@ describe('runDepositAddressesList (tty mode)', () => {
         currencies: ['USDC'],
       },
     ];
-    renderMock.mockImplementation(() => Promise.resolve(fixture));
 
     const ctx = ttyCtx();
     const storage = new MemoryStorage(tokens);
     const result = await runDepositAddressesList(ctx, {
-      depositAddressResource: resourceStub(),
+      depositAddressResource: resourceStub(() => Promise.resolve({ configured: fixture, unconfigured: [] })),
       authStorage: storage,
       inflow: makeInflow(storage),
     });
@@ -110,6 +98,26 @@ describe('runDepositAddressesList (tty mode)', () => {
 });
 
 describe('createDepositAddressesCli', () => {
+  it('dispatches the list command and returns only configured addresses', async () => {
+    const storage = new MemoryStorage(tokens);
+    const configured = [{ address: 'test-address', blockchain: 'STELLAR', currencies: ['USDC'] }];
+    const list = vi.fn(() =>
+      Promise.resolve({ configured, unconfigured: [{ blockchain: 'BASE', currencies: ['USDC'] }] }),
+    );
+    const cli = createDepositAddressesCli({ list }, storage, makeInflow(storage));
+    const chunks: string[] = [];
+    const exit = vi.fn();
+    await cli.serve(['list', '--format', 'json'], {
+      exit,
+      stdout: (chunk) => {
+        chunks.push(chunk);
+      },
+    });
+    expect(exit).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledOnce();
+    expect(JSON.parse(chunks.join(''))).toEqual(configured);
+  });
+
   it('returns a Cli scoped to deposit-address commands', () => {
     const storage = new MemoryStorage(tokens);
     const cli = createDepositAddressesCli(resourceStub(), storage, makeInflow(storage));

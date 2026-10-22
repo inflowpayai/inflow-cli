@@ -11,6 +11,9 @@ import { render } from 'ink-testing-library';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Login } from '../../../../src/commands/auth/login.js';
+import { openUrl } from '../../../../src/utils/open-url.js';
+
+vi.mock('../../../../src/utils/open-url.js', () => ({ openUrl: vi.fn() }));
 
 const userStub: IUserResource = { retrieve: vi.fn() };
 
@@ -67,6 +70,7 @@ function makeAuthResource(options: StubAuthOptions = {}): StubAuthHandles {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.clearAllMocks();
 });
 
 describe('Login', () => {
@@ -109,6 +113,10 @@ describe('Login', () => {
     );
 
     await vi.waitFor(() => expect(view.lastFrame()).toContain('Waiting for authorization'));
+    view.stdin.write('\r');
+    await vi.waitFor(() => expect(openUrl).toHaveBeenCalledWith(sampleRequest.verification_url_complete));
+    expect(storage.getAuth()).toBeNull();
+    expect(onComplete).not.toHaveBeenCalled();
     view.stdin.write('\u001b');
     await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
     view.unmount();
