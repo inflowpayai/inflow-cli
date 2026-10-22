@@ -8,12 +8,11 @@ import { inspectionError } from './api-error.js';
 import {
   type AcceptsFilters,
   buildNoFilteredMatchMessage,
-  excludePermit2Accepts,
+  excludeUnsupportedAccepts,
   filterAccepts,
   INVALID_402_CODE,
   isSuccessStatus,
   NO_FILTERED_MATCH_CODE,
-  PERMIT2_INSPECTION_WARNING,
   UNEXPECTED_PROBE_STATUS_CODE,
 } from './x402-shared.js';
 
@@ -33,7 +32,7 @@ export interface InspectResultNoPayment {
 
 /**
  * Result frame returned when the seller responds 402 and the PAYMENT-REQUIRED header decoded cleanly. Carries the
- * decoded accepts list after excluding Permit2 offers and applying caller filters.
+ * decoded accepts list after excluding unsupported offers and applying caller filters.
  */
 export interface InspectResultAccepts {
   outcome: 'accepts';
@@ -121,7 +120,7 @@ export interface InspectPipelineDeps {
  *
  * The filters `(schemeFilter, networkFilter, assetFilter, assetNameFilter)` narrow the rendered accepts via
  * {@link filterAccepts}. An empty filtered set emits `NO_FILTERED_MATCH_CODE` with the available-pairs hint; an empty
- * set without caller filters is still rendered, including when every advertised offer requires Permit2.
+ * set without caller filters is still rendered, with a warning when every advertised offer is excluded.
  */
 export async function runInspectPipeline(
   deps: InspectPipelineDeps,
@@ -176,7 +175,7 @@ export async function runInspectPipeline(
     emit({ type: 'errored', code: parse.code, message: parse.message });
     return;
   }
-  const decoded = excludePermit2Accepts(parse.decoded);
+  const { decoded, warning } = excludeUnsupportedAccepts(parse.decoded);
 
   const filters: AcceptsFilters = {
     ...(deps.schemeFilter !== undefined ? { scheme: deps.schemeFilter } : {}),
@@ -194,7 +193,7 @@ export async function runInspectPipeline(
     emit({
       type: 'errored',
       code: NO_FILTERED_MATCH_CODE,
-      message: buildNoFilteredMatchMessage(decoded, filters),
+      message: warning ?? buildNoFilteredMatchMessage(decoded, filters),
     });
     return;
   }
@@ -208,9 +207,7 @@ export async function runInspectPipeline(
     resource: decoded.resource.url,
     x402Version: decoded.x402Version,
     accepts,
-    ...(decoded.accepts.length === 0 && parse.decoded.accepts.length > 0
-      ? { warning: PERMIT2_INSPECTION_WARNING }
-      : {}),
+    ...(warning === undefined ? {} : { warning }),
     ...(decoded.extensions !== undefined ? { extensions: decoded.extensions } : {}),
   };
   emit({ type: 'accepts', result });

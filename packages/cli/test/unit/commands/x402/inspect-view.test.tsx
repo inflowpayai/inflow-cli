@@ -95,11 +95,13 @@ describe('InspectView', () => {
     expect(view.lastFrame()).toContain('Linked card');
     view.unmount();
   });
-  it('explains why a Permit2-only endpoint has no available offers', async () => {
+  it.each(['upto', 'GatewayWalletBatched'])('explains why %s has no available offers', async (unsupported) => {
     const document = decodePaymentRequiredHeader(multiAcceptHeader());
     const header = encodePaymentRequiredHeader({
       ...document,
-      accepts: document.accepts.map((offer) => ({ ...offer, scheme: 'upto' })),
+      accepts: document.accepts.map((offer) =>
+        unsupported === 'upto' ? { ...offer, scheme: 'upto' } : { ...offer, extra: { name: unsupported } },
+      ),
     });
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('', { status: 402, headers: { 'PAYMENT-REQUIRED': header } }),
@@ -114,8 +116,8 @@ describe('InspectView', () => {
       />,
     );
     await vi.waitFor(() => expect(onComplete).toHaveBeenCalled());
-    expect(view.lastFrame()).toContain('Permit2 or upto payments');
-    expect(view.lastFrame()).toContain('cannot authorize');
+    expect(view.lastFrame()).toContain(unsupported === 'upto' ? 'Permit2 or upto payments' : 'Circle Gateway');
+    expect(view.lastFrame()).toContain(unsupported === 'upto' ? 'cannot authorize' : 'not supported');
     view.unmount();
   });
 

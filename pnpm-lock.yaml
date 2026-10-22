@@ -94,8 +94,8 @@ importers:
         specifier: ^0.12.0
         version: 0.12.0(@x402/core@2.27.0)
       '@inflowpayai/x402-buyer':
-        specifier: ^0.11.1
-        version: 0.11.1(@x402/core@2.27.0)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))
+        specifier: ^0.11.2
+        version: 0.11.2(@x402/core@2.27.0)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))
       '@modelcontextprotocol/server':
         specifier: 2.0.0-alpha.4
         version: 2.0.0-alpha.4
@@ -165,8 +165,8 @@ importers:
         specifier: ^0.12.0
         version: 0.12.0(@x402/core@2.27.0)
       '@inflowpayai/x402-buyer':
-        specifier: ^0.11.1
-        version: 0.11.1(@x402/core@2.27.0)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))
+        specifier: ^0.11.2
+        version: 0.11.2(@x402/core@2.27.0)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))
       '@offering-protocol/agent':
         specifier: ^0.4.6
         version: 0.4.6(@types/json-schema@7.0.15)
@@ -862,8 +862,8 @@ packages:
     peerDependencies:
       mppx: ^0.8.17
 
-  '@inflowpayai/x402-buyer@0.11.1':
-    resolution: {integrity: sha512-MWbTi8UAuLDTsyhfhluaZFk+qZP+YxXqy9Mp2fgKEoRWchnpEDFCn90TKwCmdamx3d5grSbGYcZ8a7zjV5zchQ==}
+  '@inflowpayai/x402-buyer@0.11.2':
+    resolution: {integrity: sha512-enyn8t2De0PhUId0wqUFR1fK6ubegHLkaOJXWW6uqaSqG0dHjjGqScvVIINiHluYMxW9Q1MzuhAN9C8BwjkBDQ==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@x402/core': ^2.27.0
@@ -3711,7 +3711,7 @@ snapshots:
     dependencies:
       mppx: 0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))
 
-  '@inflowpayai/x402-buyer@0.11.1(@x402/core@2.27.0)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))':
+  '@inflowpayai/x402-buyer@0.11.2(@x402/core@2.27.0)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))':
     dependencies:
       '@inflowpayai/x402': 0.12.0(@x402/core@2.27.0)
       '@x402/core': 2.27.0

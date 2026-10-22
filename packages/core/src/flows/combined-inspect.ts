@@ -6,12 +6,7 @@ import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@i
 import { type DecodedChallenge, summarizeChallenges } from './mpp-decode.js';
 import { parseMppHeaderFromProbe } from './mpp-inspect.js';
 import { filterPayableChallenges, resolveAcceptPaymentProbeOptions } from './mpp-shared.js';
-import {
-  excludePermit2Accepts,
-  isSuccessStatus,
-  PERMIT2_INSPECTION_WARNING,
-  UNEXPECTED_PROBE_STATUS_CODE,
-} from './x402-shared.js';
+import { excludeUnsupportedAccepts, isSuccessStatus, UNEXPECTED_PROBE_STATUS_CODE } from './x402-shared.js';
 import { parseX402HeaderFromProbe } from './x402-inspect.js';
 
 /**
@@ -277,15 +272,13 @@ export function buildX402Section(probe: SellerProbeResult): X402Section {
   const parse = parseX402HeaderFromProbe(probe);
   if (parse.kind === 'absent') return { kind: 'absent' };
   if (parse.kind === 'error') return { kind: 'error', code: parse.code, message: parse.message };
-  const decoded = excludePermit2Accepts(parse.decoded);
+  const { decoded, warning } = excludeUnsupportedAccepts(parse.decoded);
   return {
     kind: 'accepts',
     resource: decoded.resource.url,
     x402Version: decoded.x402Version,
     accepts: fromFoundationRequirements(decoded.accepts),
-    ...(decoded.accepts.length === 0 && parse.decoded.accepts.length > 0
-      ? { warning: PERMIT2_INSPECTION_WARNING }
-      : {}),
+    ...(warning === undefined ? {} : { warning }),
     ...(decoded.extensions !== undefined ? { extensions: decoded.extensions } : {}),
   };
 }

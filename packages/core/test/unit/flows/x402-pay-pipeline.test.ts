@@ -136,6 +136,53 @@ async function collect(d: PayPipelineDeps): Promise<PayEvent[]> {
 }
 
 describe('runPayPipeline — full lifecycle', () => {
+  it.each([undefined, 'exact'])(
+    'rejects Gateway-only payment with filter %s before approval or replay',
+    async (schemeFilter) => {
+      const document = paymentRequired();
+      const fetchSpy = mockSeller({
+        requiredHeader: encodePaymentRequiredHeader({
+          ...document,
+          accepts: document.accepts.map((offer) => ({
+            ...offer,
+            maxTimeoutSeconds: 604900,
+            extra: { name: 'GatewayWalletBatched' },
+          })),
+        }),
+      });
+      const input = deps({ ...(schemeFilter === undefined ? {} : { schemeFilter }) });
+      const prepare = vi.spyOn(input.client, 'prepareInflowPayment');
+      const events = await collect(input);
+      expect(events[0]).toMatchObject({ type: 'decoded', decoded: { accepts: [] } });
+      expect(events.at(-1)).toEqual({
+        type: 'errored',
+        code: schemeFilter === undefined ? 'NO_INFLOW_MATCH' : 'NO_FILTERED_MATCH',
+        message: 'Circle Gateway payments are not supported by InFlow.',
+      });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('does not misreport an unrelated unsupported offer as Gateway-only', async () => {
+    const document = paymentRequired();
+    mockSeller({
+      requiredHeader: encodePaymentRequiredHeader({
+        ...document,
+        accepts: [
+          ...document.accepts.map((offer) => ({ ...offer, extra: { name: 'GatewayWalletBatched' } })),
+          ...document.accepts,
+        ],
+      }),
+    });
+    const selectInflowRequirement = vi.fn(() => Promise.resolve(null));
+    const input = deps({ client: payingClient({ selectInflowRequirement }) as never });
+    const events = await collect(input);
+    expect(selectInflowRequirement).toHaveBeenCalledWith(document);
+    expect(events.at(-1)).toMatchObject({ type: 'errored', code: 'NO_INFLOW_MATCH' });
+    expect(JSON.stringify(events)).not.toContain('Circle Gateway');
+  });
+
   it('removes Permit2 before emitting options and selecting a payment', async () => {
     const decoded = paymentRequired();
     const exact = decoded.accepts.find((entry) => entry.scheme === 'exact');

@@ -4,10 +4,7 @@ import type { PaymentRequired } from '@x402/core/types';
 /** Error code emitted when a seller returns 402 but omits the PAYMENT-REQUIRED header. */
 export const INVALID_402_CODE = 'INVALID_402';
 
-/**
- * Error code emitted when none of the seller's accepts[] entries are signable by the InFlow buyer. The accompanying
- * message advises the user to switch to a foundation buyer client (e.g. `@x402/evm`).
- */
+/** Error code emitted when none of the seller's accepts[] entries are signable by the InFlow buyer. */
 export const NO_INFLOW_MATCH_CODE = 'NO_INFLOW_MATCH';
 
 export const NO_INFLOW_MATCH_MESSAGE =
@@ -42,16 +39,29 @@ export interface AcceptsFilters {
 }
 
 /** @internal */
-export function excludePermit2Accepts(decoded: PaymentRequired): PaymentRequired {
+export function excludeUnsupportedAccepts(decoded: PaymentRequired): { decoded: PaymentRequired; warning?: string } {
+  let gatewayCount = 0;
+  const accepts = decoded.accepts.filter((entry) => {
+    // The foundation codec decodes unvalidated seller JSON, which can omit extra.
+    const extra = (entry as { extra?: Record<string, unknown> | null }).extra;
+    if (extra?.[EXTRA_KEYS.NAME] === 'GatewayWalletBatched') {
+      gatewayCount += 1;
+      return false;
+    }
+    return entry.scheme !== 'upto' && extra?.[EXTRA_KEYS.ASSET_TRANSFER_METHOD] !== ASSET_TRANSFER_METHODS.PERMIT2;
+  });
+  let warning: string | undefined;
+  if (accepts.length === 0 && decoded.accepts.length > 0) {
+    warning =
+      gatewayCount === decoded.accepts.length
+        ? 'Circle Gateway payments are not supported by InFlow.'
+        : gatewayCount > 0
+          ? 'This endpoint only offers Circle Gateway, Permit2 or upto payments, which InFlow does not support.'
+          : PERMIT2_INSPECTION_WARNING;
+  }
   return {
-    ...decoded,
-    accepts: decoded.accepts.filter(
-      // The foundation codec decodes unvalidated seller JSON, which can omit extra.
-      (entry) =>
-        entry.scheme !== 'upto' &&
-        (entry as { extra?: Record<string, unknown> | null }).extra?.[EXTRA_KEYS.ASSET_TRANSFER_METHOD] !==
-          ASSET_TRANSFER_METHODS.PERMIT2,
-    ),
+    decoded: { ...decoded, accepts },
+    ...(warning === undefined ? {} : { warning }),
   };
 }
 

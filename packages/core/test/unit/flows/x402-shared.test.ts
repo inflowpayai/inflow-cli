@@ -3,7 +3,7 @@ import { decodePaymentRequiredHeader } from '@x402/core/http';
 import { describe, expect, it } from 'vitest';
 import {
   buildNoFilteredMatchMessage,
-  excludePermit2Accepts,
+  excludeUnsupportedAccepts,
   filterAccepts,
   isSuccessStatus,
 } from '../../../src/flows/x402-shared.js';
@@ -37,7 +37,7 @@ const sample: PaymentRequired = {
   ],
 } as unknown as PaymentRequired;
 
-describe('excludePermit2Accepts', () => {
+describe('excludeUnsupportedAccepts', () => {
   const exact = {
     scheme: 'exact',
     network: 'eip155:8453',
@@ -52,7 +52,7 @@ describe('excludePermit2Accepts', () => {
     const decoded = decodePaymentRequiredHeader(
       Buffer.from(JSON.stringify({ ...sample, accepts: [{ ...exact, extra }] })).toString('base64'),
     );
-    expect(excludePermit2Accepts(decoded)).toEqual(decoded);
+    expect(excludeUnsupportedAccepts(decoded)).toEqual({ decoded });
     expect(filterAccepts(decoded, { assetName: 'USDC' }).accepts).toEqual([]);
     expect(buildNoFilteredMatchMessage(decoded, { assetName: 'USDC' })).not.toContain('assetName=undefined');
   });
@@ -83,7 +83,8 @@ describe('excludePermit2Accepts', () => {
       extensions: { retained: true },
       error: 'Payment required',
     };
-    const out = excludePermit2Accepts(decoded);
+    const { decoded: out, warning } = excludeUnsupportedAccepts(decoded);
+    expect(warning).toBeUndefined();
     expect(out).toEqual({ ...decoded, accepts: retained });
     expect(out.resource).toBe(decoded.resource);
     expect(out.extensions).toBe(decoded.extensions);
@@ -92,10 +93,42 @@ describe('excludePermit2Accepts', () => {
   });
 
   it('leaves no available option when every offer requires Permit2', () => {
-    const decoded = excludePermit2Accepts({ ...sample, accepts: [{ ...exact, scheme: 'upto' }] });
+    const { decoded } = excludeUnsupportedAccepts({ ...sample, accepts: [{ ...exact, scheme: 'upto' }] });
     expect(decoded.accepts).toEqual([]);
     expect(filterAccepts(decoded, { scheme: 'upto' }).accepts).toEqual([]);
     expect(buildNoFilteredMatchMessage(decoded, { scheme: 'exact' })).toContain('Available: (none)');
+  });
+
+  it.each([60, 604900])('excludes Gateway regardless of timeout %s and preserves caller data', (maxTimeoutSeconds) => {
+    const gateway = { ...exact, maxTimeoutSeconds, extra: { name: 'GatewayWalletBatched' } };
+    const input = { ...sample, accepts: [gateway, ...sample.accepts], extensions: { preserved: true } };
+    const before = structuredClone(input);
+    const result = excludeUnsupportedAccepts(input);
+    expect(result).toEqual({ decoded: { ...input, accepts: sample.accepts } });
+    expect(input).toEqual(before);
+    expect(result.decoded.extensions).toBe(input.extensions);
+    expect(result.decoded.accepts[0]).toBe(sample.accepts[0]);
+  });
+
+  it.each([undefined, null, 1, 'gatewaywalletbatched', 'GatewayWalletBatched ', 'USD Coin'])(
+    'does not classify unrelated extra.name %s as Gateway',
+    (name) => {
+      const input = { ...sample, accepts: [{ ...exact, extra: { name } }] };
+      expect(excludeUnsupportedAccepts(input)).toEqual({ decoded: input });
+    },
+  );
+
+  it('distinguishes Gateway-only, mixed unsupported, and empty offers', () => {
+    const gateway = { ...exact, extra: { name: 'GatewayWalletBatched' } };
+    expect(excludeUnsupportedAccepts({ ...sample, accepts: [gateway] })).toMatchObject({
+      decoded: { accepts: [] },
+      warning: 'Circle Gateway payments are not supported by InFlow.',
+    });
+    expect(excludeUnsupportedAccepts({ ...sample, accepts: [gateway, { ...exact, scheme: 'upto' }] })).toMatchObject({
+      decoded: { accepts: [] },
+      warning: 'This endpoint only offers Circle Gateway, Permit2 or upto payments, which InFlow does not support.',
+    });
+    expect(excludeUnsupportedAccepts({ ...sample, accepts: [] })).toEqual({ decoded: { ...sample, accepts: [] } });
   });
 });
 

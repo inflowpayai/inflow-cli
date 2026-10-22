@@ -33,7 +33,7 @@ import { type DecodedHeader } from './x402-decode.js';
 import {
   type AcceptsFilters,
   buildNoFilteredMatchMessage,
-  excludePermit2Accepts,
+  excludeUnsupportedAccepts,
   filterAccepts,
   INVALID_402_CODE,
   isSuccessStatus,
@@ -400,8 +400,9 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
     }
 
     let decoded: PaymentRequired;
+    let warning: string | undefined;
     try {
-      decoded = excludePermit2Accepts(decodePaymentRequiredHeader(headerValue));
+      ({ decoded, warning } = excludeUnsupportedAccepts(decodePaymentRequiredHeader(headerValue)));
     } catch (err) {
       emit({
         type: 'errored',
@@ -433,7 +434,7 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
       emit({
         type: 'errored',
         code: NO_FILTERED_MATCH_CODE,
-        message: buildNoFilteredMatchMessage(decoded, filters),
+        message: warning ?? buildNoFilteredMatchMessage(decoded, filters),
       });
       return;
     }
@@ -442,7 +443,7 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
       emit({
         type: 'errored',
         code: NO_INFLOW_MATCH_CODE,
-        message: NO_INFLOW_MATCH_MESSAGE,
+        message: warning ?? NO_INFLOW_MATCH_MESSAGE,
       });
       return;
     }
