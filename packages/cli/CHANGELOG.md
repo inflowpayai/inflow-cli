@@ -1,5 +1,47 @@
 # @inflowpayai/inflow
 
+## 0.14.3
+
+### Patch Changes
+
+- [#175](https://github.com/inflowpayai/inflow-cli/pull/175)
+  [`43cb4b4`](https://github.com/inflowpayai/inflow-cli/commit/43cb4b4528e6f3325c3026b153538296d7a7b2fa) Thanks
+  [@nkavian](https://github.com/nkavian)! - Prevent repeated subscription cancellation requests during interactive
+  rendering.
+
+  Preserve approval denial, timeout, cancellation, and server-error responses when AEP fetch or payment authentication
+  requires signing approval.
+
+  Expand regression coverage for authentication, credential storage, discovery, and payment command flows.
+
+  Forward explicitly configured bearer access tokens to the MPP and x402 payment clients.
+
+  Release public-document stream readers even when cancellation fails after a stream error.
+
+  Keep platform request timeouts and cancellation active while reading response bodies.
+
+  Preserve existing platform identity lookup during AEP fetch and payment authentication without automatically
+  provisioning or enrolling an identity.
+
+  Clear the current passphrase buffer when the replacement-passphrase prompt is cancelled.
+
+- [#173](https://github.com/inflowpayai/inflow-cli/pull/173)
+  [`203bbbb`](https://github.com/inflowpayai/inflow-cli/commit/203bbbb6f555b02cdf0e28b402fe0354a7ed2ea4) Thanks
+  [@nkavian](https://github.com/nkavian)! - Allow local HTTP development endpoints to be inspected and paid without
+  requesting TAP signatures.
+
+- [#170](https://github.com/inflowpayai/inflow-cli/pull/170)
+  [`f5690d8`](https://github.com/inflowpayai/inflow-cli/commit/f5690d80a49c2b36d0532299dbbae1ec81ce4c15) Thanks
+  [@nkavian](https://github.com/nkavian)! - Upgrade the AEP Agent SDK to 0.6.0 for protected-resource credential
+  selection, redirect isolation, and pending-approval handling fixes.
+
+- [#177](https://github.com/inflowpayai/inflow-cli/pull/177)
+  [`207932e`](https://github.com/inflowpayai/inflow-cli/commit/207932e6a7386c83d121e9895a7a07f46608ff9f) Thanks
+  [@nkavian](https://github.com/nkavian)! - Exclude unsupported Circle Gateway offers from x402 inspection and payment
+  selection, retain ordinary payment options, and explain when the seller only offers unsupported payments.
+
+  Update the InFlow x402 buyer SDK to 0.11.2.
+
 ## 0.14.2
 
 ### Patch Changes
