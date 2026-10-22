@@ -7,6 +7,7 @@ import {
   type AgentCredentialStore,
   type AgentIdentityStore,
   type AgentServiceIdentity,
+  type PlatformIdentityProvider,
 } from '@aep-foundation/agent';
 import { HEADERS as MPP_HEADERS, parseChallengeHeaders, readHeaderAll as readMppHeaderAll } from '@inflowpayai/mpp';
 import { HEADERS as X402_HEADERS, readHeader as readX402Header } from '@inflowpayai/x402';
@@ -126,6 +127,7 @@ export class AepFetchError extends Error {
 }
 
 function tracedAgentOptions(options: AepAgentOptions, trace: FetchTrace): AepAgentOptions {
+  const provider = options.identityProvider;
   const identities =
     options.identityStore === undefined ? undefined : tracedIdentityStore(options.identityStore, trace);
   const credentials =
@@ -134,6 +136,9 @@ function tracedAgentOptions(options: AepAgentOptions, trace: FetchTrace): AepAge
     ...options,
     ...(credentials === undefined ? {} : { credentialStore: credentials }),
     identityProvider: {
+      ...(hasIdentityLookup(provider)
+        ? { findIdentityByServiceDid: (serviceDid: string) => provider.findIdentityByServiceDid(serviceDid) }
+        : {}),
       getOrCreateIdentity: async (input) => {
         trace.serviceDid = input.serviceDid;
         return options.identityProvider.getOrCreateIdentity(input);
@@ -148,6 +153,10 @@ function tracedAgentOptions(options: AepAgentOptions, trace: FetchTrace): AepAge
     },
     ...(identities === undefined ? {} : { identityStore: identities }),
   };
+}
+
+function hasIdentityLookup(provider: AepAgentOptions['identityProvider']): provider is PlatformIdentityProvider {
+  return 'findIdentityByServiceDid' in provider && typeof provider.findIdentityByServiceDid === 'function';
 }
 
 function tracedIdentityStore(store: AgentIdentityStore, trace: FetchTrace): AgentIdentityStore {

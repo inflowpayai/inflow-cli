@@ -37,6 +37,124 @@ async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
 }
 
 describe('pollAuthStatus', () => {
+  it.each(['anonymous', 'pending', 'device', 'saved-key', 'runtime-key'] as const)(
+    'reports %s authentication without leaking secrets and only includes explicitly requested metadata',
+    (mode) => {
+      const storage = new MemoryStorage();
+      if (mode === 'device' || mode === 'saved-key') storage.setAuth(newTokens);
+      if (mode === 'saved-key') storage.setApiKey('saved-secret-key');
+      if (mode === 'pending')
+        storage.setPendingDeviceAuth({
+          device_code: 'secret-device-code',
+          interval: 1,
+          expires_at: Date.now() + 60_000,
+          verification_url: 'https://example.test/activate',
+          phrase: 'PUBLIC-PHRASE',
+        });
+      const options = mode === 'runtime-key' ? { effectiveApiKey: 'runtime-secret-key' } : {};
+      const minimal = composeAuthSnapshot(storage, options);
+      expect(minimal).not.toHaveProperty('credentials_path');
+      expect(minimal).not.toHaveProperty('update');
+      const update = { current_version: '0.14.1', latest_version: '0.14.2' };
+      const connection = { environment: 'sandbox' as const };
+      const detailed = composeAuthSnapshot(storage, { ...options, update, connection, verbose: true });
+      expect(detailed).toMatchObject({ ...minimal, update, connection, credentials_path: storage.getPath() });
+      expect(detailed.authenticated).toBe(['device', 'saved-key', 'runtime-key'].includes(mode));
+      if (mode === 'device') expect(detailed).toMatchObject({ auth_method: 'device_token', token_type: 'Bearer' });
+      if (mode.endsWith('key')) expect(detailed).toMatchObject({ auth_method: 'api_key' });
+      if (mode === 'pending') expect(detailed).toMatchObject({ pending: true, phrase: 'PUBLIC-PHRASE' });
+      const serialized = JSON.stringify(detailed);
+      for (const secret of [
+        newTokens.access_token,
+        newTokens.refresh_token,
+        'saved-secret-key',
+        'runtime-secret-key',
+        'secret-device-code',
+      ]) {
+        expect(serialized).not.toContain(secret);
+      }
+    },
+  );
+
+  it('preserves the prior login when persisting new tokens fails and does not revoke it', async () => {
+    const storage = new MemoryStorage(newTokens);
+    storage.setPendingDeviceAuth({
+      device_code: 'dc',
+      interval: 1,
+      expires_at: Date.now() + 60_000,
+      verification_url: 'https://example.test',
+      phrase: 'P',
+    });
+    const replacement = { ...newTokens, access_token: 'replacement', refresh_token: 'replacement-refresh' };
+    const auth = makeAuth(() => Promise.resolve(replacement));
+    vi.spyOn(storage, 'setAuth').mockImplementation(() => {
+      throw new Error('disk full');
+    });
+    await expect(
+      drain(pollAuthStatus(auth.resource, storage, { interval: 0, maxAttempts: 1, timeout: 30 })),
+    ).rejects.toThrow('disk full');
+    expect(storage.getAuth()?.refresh_token).toBe(newTokens.refresh_token);
+    expect(storage.getPendingDeviceAuth()).not.toBeNull();
+    expect(auth.revokeToken).not.toHaveBeenCalled();
+  });
+
+  it('keeps the successful new login when retiring the old refresh token fails', async () => {
+    const storage = new MemoryStorage(newTokens);
+    storage.setApiKey('old-key');
+    storage.setPendingDeviceAuth({
+      device_code: 'dc',
+      interval: 1,
+      expires_at: Date.now() + 60_000,
+      verification_url: 'https://example.test',
+      phrase: 'P',
+    });
+    const replacement = { ...newTokens, refresh_token: 'replacement-refresh' };
+    const auth = makeAuth(
+      () => Promise.resolve(replacement),
+      () => Promise.reject(new Error('offline')),
+    );
+    const connection = { environment: 'sandbox' as const };
+    const frames = await drain(
+      pollAuthStatus(auth.resource, storage, { interval: 0, maxAttempts: 1, timeout: 30 }, { connection }),
+    );
+    expect(frames.at(-1)).toMatchObject({ authenticated: true, auth_method: 'device_token', connection });
+    expect(storage.getAuth()?.refresh_token).toBe('replacement-refresh');
+    expect(storage.getApiKey()).toBeNull();
+    expect(storage.getPendingDeviceAuth()).toBeNull();
+    expect(storage.getConnection()).toEqual(connection);
+    expect(auth.revokeToken).toHaveBeenCalledWith(newTokens.refresh_token);
+  });
+
+  it.each([true, false])(
+    'retains environment and update information in terminal polling output (override=%s)',
+    async (override) => {
+      const storage = new MemoryStorage();
+      storage.setConnection({ environment: 'production' });
+      const update = { current_version: '0.14.1', latest_version: '0.14.2' };
+      const auth = makeAuth(() => Promise.resolve(null));
+      const frames = await drain(
+        pollAuthStatus(
+          auth.resource,
+          storage,
+          { interval: 0.01, maxAttempts: 1, timeout: 30 },
+          {
+            verbose: true,
+            update,
+            ...(override ? { connection: { environment: 'sandbox' as const } } : {}),
+          },
+        ),
+      );
+      expect(frames.at(-1)).toEqual({
+        authenticated: false,
+        reason: 'max_attempts',
+        credentials_path: storage.getPath(),
+        update,
+        connection: { environment: override ? 'sandbox' : 'production' },
+      });
+      expect(auth.pollDeviceAuth).not.toHaveBeenCalled();
+    },
+  );
+
   it('reports an effective API key without reading locked credential storage', () => {
     const storage = new MemoryStorage();
     const getAuth = vi.spyOn(storage, 'getAuth').mockImplementation(() => {

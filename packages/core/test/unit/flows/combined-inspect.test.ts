@@ -1,5 +1,5 @@
 import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
-import { AepInspectError } from '@aep-foundation/agent';
+import { AepInspectError, type InspectServiceResult } from '@aep-foundation/agent';
 import { encodePaymentRequiredHeader } from '@x402/core/http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ServiceInspection } from '@offering-protocol/agent';
@@ -55,8 +55,13 @@ async function collect(): Promise<CombinedInspectEvent[]> {
   return events;
 }
 
-const aepInspect = {
+const aepInspect: InspectServiceResult = {
+  commandUrl: (command: string) => new globalThis.URL(`https://seller.test/aep/${command}`),
   document: {
+    aep_version: '1.0',
+    bindings: { supported: ['http'] },
+    core: { signing_algorithms: ['ES256'] },
+    http: { endpoint_base: '/aep' },
     commands: { supported: ['inspect', 'enroll', 'status'] },
     identity: { methods: ['did:web'] },
     service: { did: 'did:web:service.test' },
@@ -94,6 +99,181 @@ const odpInspect = {
 } satisfies ServiceInspection;
 
 describe('runCombinedInspectPipeline', () => {
+  it('reports a transport rejection even when the transport rejects with a string', async () => {
+    const events: CombinedInspectEvent[] = [];
+    await runCombinedInspectPipeline(
+      {
+        url: URL,
+        probeOptions: { method: 'GET', headers: {} },
+        probe: vi.fn().mockRejectedValue('Connection unavailable'),
+      },
+      (event) => events.push(event),
+    );
+    expect(events).toEqual([{ type: 'errored', code: 'INSPECT_FAILED', message: 'Connection unavailable' }]);
+  });
+
+  it('reports a challenge inspection failure without hiding payment terms', async () => {
+    mock402({
+      'WWW-Authenticate':
+        'AEP service_did="did:web:service.test", inspect="https://seller.test/.well-known/aep", reason="authentication_required"',
+      'PAYMENT-REQUIRED': x402Header(),
+    });
+    const events: CombinedInspectEvent[] = [];
+    await runCombinedInspectPipeline(
+      {
+        url: URL,
+        probeOptions: { method: 'GET', headers: {} },
+        inspectAep: vi.fn().mockRejectedValue('Inspect unavailable'),
+      },
+      (event) => events.push(event),
+    );
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    if (event?.type !== 'inspected') throw new Error('Expected inspected event');
+    expect(event.result.aep).toMatchObject({
+      kind: 'error',
+      code: 'AEP_INSPECT_FAILED',
+      message: 'Inspect unavailable',
+    });
+    expect(event.result.x402.kind).toBe('accepts');
+  });
+  it.each([new Error('Catalog offline'), 'Catalog offline'])(
+    'preserves payment discovery after an unclassified ODP failure: %s',
+    async (failure) => {
+      mock402({ 'PAYMENT-REQUIRED': x402Header() });
+      const events: CombinedInspectEvent[] = [];
+      await runCombinedInspectPipeline(
+        {
+          inspectOdp: vi.fn().mockRejectedValue(failure),
+          url: URL,
+          probeOptions: { method: 'GET', headers: {} },
+        },
+        (event) => events.push(event),
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: 'inspected',
+        result: {
+          odp: { kind: 'error', code: 'ODP_INSPECT_FAILED', message: 'Catalog offline' },
+          x402: { kind: 'accepts' },
+        },
+      });
+    },
+  );
+
+  it('probes the resource when OpenAPI policy inspection fails', async () => {
+    mock402({ 'PAYMENT-REQUIRED': x402Header() });
+    const events: CombinedInspectEvent[] = [];
+    await runCombinedInspectPipeline(
+      {
+        inspectAep: () => Promise.resolve(aepInspect),
+        inspectAepPolicy: vi.fn().mockRejectedValue(new Error('Policy unavailable')),
+        url: URL,
+        probeOptions: { method: 'GET', headers: {} },
+      },
+      (event) => events.push(event),
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'inspected', result: { x402: { kind: 'accepts' } } });
+  });
+  it.each([
+    [404, { kind: 'absent' }],
+    [410, { kind: 'absent' }],
+    [503, { kind: 'error', code: 'ODP_UNAVAILABLE', message: 'Catalog unavailable' }],
+  ])('distinguishes missing ODP metadata from discovery failure (%s)', async (status, expected) => {
+    mock402({ 'PAYMENT-REQUIRED': x402Header() });
+    const events: CombinedInspectEvent[] = [];
+    await runCombinedInspectPipeline(
+      {
+        inspectOdp: vi
+          .fn()
+          .mockRejectedValue(Object.assign(new Error('Catalog unavailable'), { status, code: 'ODP_UNAVAILABLE' })),
+        url: URL,
+        probeOptions: { method: 'GET', headers: {} },
+      },
+      (event) => events.push(event),
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'inspected', result: { odp: expected, x402: { kind: 'accepts' } } });
+  });
+
+  it('reports a challenged resource even when an AEP inspector is not configured', async () => {
+    mock402({ 'WWW-Authenticate': 'AEP reason="authentication_required"', 'PAYMENT-REQUIRED': x402Header() });
+    const events = await collect();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'inspected',
+      result: {
+        aep: { kind: 'error', code: 'AEP_INSPECT_UNAVAILABLE', reason: 'authentication_required', source: 'challenge' },
+        x402: { kind: 'accepts' },
+      },
+    });
+  });
+
+  it('retains a fresh resource challenge when cached OpenAPI policy has no matching operation', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('', {
+        status: 401,
+        headers: { 'WWW-Authenticate': 'AEP reason="authentication_required"' },
+      }),
+    );
+    const inspectAep = vi.fn().mockResolvedValue(aepInspect);
+    const policy = { freshness: 'fresh' as const, methods: [], source: 'openapi' as const, state: 'fallback' as const };
+    const events: CombinedInspectEvent[] = [];
+    await runCombinedInspectPipeline(
+      {
+        inspectAep,
+        inspectAepPolicy: () => Promise.resolve(policy),
+        url: URL,
+        probeOptions: { method: 'GET', headers: {} },
+      },
+      (event) => events.push(event),
+    );
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(inspectAep).toHaveBeenCalledOnce();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'inspected',
+      result: {
+        status: 401,
+        aep: {
+          kind: 'service',
+          inspect: aepInspect,
+          openApiPolicy: policy,
+          reason: 'authentication_required',
+          source: 'challenge',
+        },
+      },
+    });
+  });
+
+  it('does not anonymously retry a required-authentication resource when no stored credential can be used', async () => {
+    const probe = vi.fn();
+    const authenticatedProbe = vi.fn().mockResolvedValue(undefined);
+    const events: CombinedInspectEvent[] = [];
+    await runCombinedInspectPipeline(
+      {
+        probe,
+        authenticatedProbe,
+        inspectAep: () => Promise.resolve(aepInspect),
+        inspectAepPolicy: () =>
+          Promise.resolve({
+            freshness: 'fresh',
+            methods: ['api-key'],
+            source: 'openapi',
+            state: 'required',
+          }),
+        url: URL,
+        probeOptions: { method: 'GET', headers: {} },
+      },
+      (event) => events.push(event),
+    );
+    expect(probe).not.toHaveBeenCalled();
+    expect(authenticatedProbe).toHaveBeenCalledOnce();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'inspected', result: { aep: { kind: 'blocked' } } });
+  });
+
   async function collectWithHeaders(
     probeHeaders: Record<string, string>,
     customFetch?: (
@@ -494,6 +674,19 @@ describe('runCombinedInspectPipeline', () => {
 });
 
 describe('reduceCombinedInspect', () => {
+  it.each([200, 402])('retains the complete pipeline result for status %s', async (status) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('resource', { status, headers: status === 402 ? { 'PAYMENT-REQUIRED': x402Header() } : {} }),
+    );
+    const events = await collect();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    if (event === undefined || event.type === 'errored') throw new Error('Expected inspection result');
+    const phase = reduceCombinedInspect({ kind: 'probing' }, event);
+    expect(phase).toEqual({ kind: event.type, result: event.result });
+    if (phase.kind === 'inspected' || phase.kind === 'no-payment') expect(phase.result).toBe(event.result);
+  });
+
   it('errored -> error phase', () => {
     expect(reduceCombinedInspect({ kind: 'probing' }, { type: 'errored', code: 'X', message: 'oops' })).toEqual({
       kind: 'error',

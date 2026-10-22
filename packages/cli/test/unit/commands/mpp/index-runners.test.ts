@@ -1,6 +1,15 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { AuthStorage, ICliCapabilitiesResource } from '@inflowpayai/inflow-core';
 import { Inflow, InflowApiError, MemoryStorage, SecureStorageError } from '@inflowpayai/inflow-core';
-import { encode, type MppChallenge, type MppClient, renderChallengeHeader } from '@inflowpayai/mpp';
+import {
+  encode,
+  type MppChallenge,
+  type MppClient,
+  renderChallengeHeader,
+  subscriptionOptionFingerprint,
+} from '@inflowpayai/mpp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing, createMppCli } from '../../../../src/commands/mpp/index.js';
 import { fetchArgs, fetchOptions, payOptions } from '../../../../src/commands/mpp/schema.js';
@@ -106,6 +115,352 @@ async function drainWithReturn<T>(gen: AsyncGenerator<T, unknown>): Promise<{ va
 afterEach(() => vi.restoreAllMocks());
 
 describe('mpp agent runners', () => {
+  it.each([undefined, 'Merchant Legal Name'])(
+    'forwards CARD merchant details and the selected instrument through the command: %s',
+    async (merchantName) => {
+      const offered: MppChallenge = {
+        ...challenge('card'),
+        request: encode({
+          amount: '100',
+          currency: 'usd',
+          recipient: 'acct_test',
+          methodDetails: {
+            acceptedNetworks: ['visa'],
+            merchantName: 'Example Store',
+            encryptionJwk: { kty: 'RSA', alg: 'RSA-OAEP-256', use: 'enc', kid: 'test', n: 'AQAB', e: 'AQAB' },
+          },
+        }),
+      };
+      const fetch = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(offered) } }),
+        );
+      const createTransaction = vi.fn<MppClient['createTransaction']>().mockResolvedValue({
+        state: 'pending',
+        transactionId: 'tx-card',
+        approvalId: 'approval-card',
+      });
+      const { inflow, storage } = authed(makeClient({ createTransaction }));
+      const instrumentId = '00000000-0000-4000-8000-000000000001';
+      const context = agentCtx(
+        { url: SELLER },
+        payOptions.parse({
+          instrumentId,
+          merchantName,
+          merchantUrl: 'https://merchant.test',
+          merchantCountry: 'US',
+          paymentMethod: 'card',
+          intent: 'charge',
+          currency: 'usd',
+        }),
+      );
+      await drain(runPayCommand(context, inflow, storage, 'https://app'));
+      expect(createTransaction).toHaveBeenCalledOnce();
+      expect(createTransaction.mock.calls[0]?.[0]).toMatchObject({
+        challenge: offered,
+        options: {
+          instrumentId,
+          merchant: {
+            name: merchantName ?? 'Example Store',
+            url: 'https://merchant.test',
+            countryCode: 'US',
+          },
+        },
+      });
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    { merchantName: 'Seller', paymentMethod: 'inflow' },
+    { merchantUrl: 'https://merchant.test', rail: 'balance' },
+    { merchantCountry: 'US', intent: 'subscription' },
+    { instrumentId: '00000000-0000-4000-8000-000000000001', rail: 'balance' },
+  ])('rejects incompatible payment choices before contacting the seller: %j', async (options) => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const createTransaction = vi.fn();
+    const client = makeClient({ createTransaction });
+    const { inflow, storage } = authed(client);
+    const context = agentCtxReturningError({ url: SELLER }, payOptions.parse(options));
+    const result = await drainWithReturn(runPayCommand(context, inflow, storage, 'https://app'));
+    expect(result.returnValue).toMatchObject({ code: 'INVALID_PAYMENT_OPTIONS' });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(createTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { binary: false, destination: 'inline' },
+    { binary: true, destination: 'inline' },
+    { binary: false, destination: 'hidden' },
+    { binary: true, destination: 'hidden' },
+    { binary: false, destination: 'file' },
+    { binary: true, destination: 'file' },
+  ])(
+    'delivers an unpaid response without creating a payment: $destination binary=$binary',
+    async ({ binary, destination }) => {
+      const directory = await mkdtemp(join(tmpdir(), 'inflow-body-test-'));
+      const outputFile = join(directory, 'response.bin');
+      const bytes = binary ? new Uint8Array([0, 255, 128, 1]) : new TextEncoder().encode('Seller content');
+      const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(bytes, {
+          headers: { 'Content-Type': binary ? 'application/octet-stream' : 'text/plain' },
+        }),
+      );
+      const { inflow, storage } = authed(makeClient());
+      const context = agentCtx(
+        { url: 'https://seller.test/api' },
+        payOptions.parse({
+          showBody: destination !== 'hidden',
+          ...(destination === 'file' ? { outputFile } : {}),
+        }),
+      );
+      try {
+        const frames = await drain(runPayCommand(context, inflow, storage, 'https://platform.test'));
+        const result = frames.at(-1);
+        expect(result).toMatchObject({ outcome: 'no-payment-required', status: 200, body_size_bytes: bytes.length });
+        if (destination === 'file') {
+          expect(result).toHaveProperty('output_saved_to', outputFile);
+          expect(await readFile(outputFile)).toEqual(Buffer.from(bytes));
+        } else expect(result).not.toHaveProperty('output_saved_to');
+        if (destination === 'inline') {
+          expect(result).toHaveProperty(
+            binary ? 'body_base64' : 'body',
+            binary ? Buffer.from(bytes).toString('base64') : 'Seller content',
+          );
+          expect(result).not.toHaveProperty(binary ? 'body' : 'body_base64');
+        } else {
+          expect(result).not.toHaveProperty('body');
+          expect(result).not.toHaveProperty('body_base64');
+        }
+        expect(fetch).toHaveBeenCalledOnce();
+        expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('selects a subscription by its advertised option and preserves its terms in pending output', async () => {
+    const offers = ['day', 'month'].map((periodUnit) => ({
+      ...challenge('inflow', 'subscription'),
+      id: `subscription-${periodUnit}`,
+      request: encode({
+        amount: '10',
+        currency: 'USDC',
+        methodDetails: { rail: 'balance' },
+        periodCount: 1,
+        periodUnit,
+        subscriptionExpires: '2999-01-01T00:00:00Z',
+        externalId: `${periodUnit}-plan`,
+      }),
+    }));
+    const selected = offers[1];
+    if (selected === undefined) throw new Error('Missing test offer');
+    const option = subscriptionOptionFingerprint(selected);
+    if (option === undefined) throw new Error('Missing subscription option');
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(null, {
+        status: 402,
+        headers: { 'WWW-Authenticate': offers.map(renderChallengeHeader).join(', ') },
+      }),
+    );
+    const createTransaction = vi.fn<MppClient['createTransaction']>().mockResolvedValue({
+      state: 'pending',
+      transactionId: 'sub-1',
+      approvalId: 'approval-1',
+      retryAfterSeconds: 5,
+    });
+    const { inflow, storage } = authed(makeClient({ createTransaction }));
+    const context = agentCtx(
+      { url: SELLER },
+      {
+        ...payOptions.parse({}),
+        optionId: option.optionId,
+        paymentMethod: 'inflow',
+        currency: 'USDC',
+        rail: 'balance',
+      },
+    );
+    const frames = await drain(runSubscribeCommand(context, inflow, storage, 'https://app'));
+    expect(createTransaction).toHaveBeenCalledOnce();
+    expect(createTransaction.mock.calls[0]?.[0].challenge).toEqual(selected);
+    expect(frames.at(-1)).toMatchObject({
+      state: 'pending',
+      transaction_id: 'sub-1',
+      retry_after_seconds: 5,
+      challenge: {
+        id: 'subscription-month',
+        period_count: 1,
+        period_unit: 'month',
+        subscription_expires: '2999-01-01T00:00:00Z',
+        external_id: 'month-plan',
+        option_id: option.optionId,
+        option_fingerprint: option.fingerprint,
+      },
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it.each(['USDC', 'EUR'])('applies all inspection filters for currency %s without purchasing', async (currency) => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(challenge402());
+    const ctx = agentCtx(
+      { url: SELLER },
+      { method: 'GET', header: [], paymentMethod: 'inflow', intent: 'charge', currency, rail: 'balance' },
+    );
+    if (currency === 'USDC') {
+      expect(await runInspectCommand(ctx)).toMatchObject({
+        outcome: 'challenges',
+        challenges: [{ method: 'inflow', intent: 'charge', currency: 'USDC', rail: 'balance' }],
+      });
+    } else {
+      await expect(runInspectCommand(ctx)).rejects.toThrow('NO_FILTERED_MATCH');
+    }
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('Accept-Payment')).toContain('inflow/charge');
+  });
+
+  it.each(['pay', 'fetch'] as const)('rejects malformed %s headers before any network request', async (command) => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const { inflow, storage } = authed(makeClient());
+    if (command === 'pay') {
+      const ctx = agentCtx({ url: 'https://seller.test/api' }, payOptions.parse({ header: ['missing-colon'] }));
+      await expect(drain(runPayCommand(ctx, inflow, storage, 'https://platform.test'))).rejects.toThrow(
+        'INVALID_HEADER',
+      );
+      expect(ctx.error).toHaveBeenCalledOnce();
+    } else {
+      const ctx = agentCtx(
+        { transactionId: 'tx-1', resourceUrl: 'https://seller.test/api' },
+        fetchOptions.parse({ header: ['missing-colon'] }),
+      );
+      await expect(drain(runFetchCommand(ctx, inflow, storage))).rejects.toThrow('INVALID_HEADER');
+      expect(ctx.error).toHaveBeenCalledOnce();
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ type: 'about:blank', title: 'Declined', status: 402, detail: 'Insufficient balance' }, 'Insufficient balance'],
+    [undefined, 'MPP transaction failed.'],
+  ] as const)('preserves the terminal failure and selects its user-facing message: %j', async (problem, message) => {
+    const response = { transactionId: 'tx-1', state: 'failed' as const, ...(problem === undefined ? {} : { problem }) };
+    const getTransaction = vi.fn<MppClient['getTransaction']>().mockResolvedValue(response);
+    const createTransaction = vi.fn<MppClient['createTransaction']>();
+    const client = makeClient({ getTransaction, createTransaction });
+    const { inflow, storage } = authed(client);
+    const ctx = agentCtxReturningError({ transactionId: 'tx-1' }, { interval: 0.01, maxAttempts: 5, timeout: 60 });
+    const result = await drainWithReturn(runStatusCommand(ctx, inflow, storage));
+    expect(result.values).toEqual([
+      { transaction_id: 'tx-1', state: 'failed', ...(problem === undefined ? {} : { problem }) },
+    ]);
+    expect(ctx.error).toHaveBeenCalledOnce();
+    expect(ctx.error).toHaveBeenCalledWith({ code: 'PAYMENT_FAILED', message });
+    expect(getTransaction).toHaveBeenCalledOnce();
+    expect(getTransaction).toHaveBeenCalledWith('tx-1');
+    expect(createTransaction).not.toHaveBeenCalled();
+  });
+
+  it('returns the latest pending snapshot and a retryable timeout without creating a payment', async () => {
+    const getTransaction = vi.fn<MppClient['getTransaction']>().mockResolvedValue({
+      transactionId: 'tx-1',
+      state: 'pending',
+      approvalId: 'ap-1',
+      retryAfterSeconds: 5,
+    });
+    const createTransaction = vi.fn<MppClient['createTransaction']>();
+    const client = makeClient({ getTransaction, createTransaction });
+    const { inflow, storage } = authed(client);
+    const ctx = agentCtxReturningError({ transactionId: 'tx-1' }, { interval: 0.01, maxAttempts: 1, timeout: 60 });
+    const result = await drainWithReturn(runStatusCommand(ctx, inflow, storage));
+    expect(result.values).toEqual([
+      {
+        transaction_id: 'tx-1',
+        state: 'pending',
+        approval_id: 'ap-1',
+        retry_after_seconds: 5,
+      },
+    ]);
+    expect(ctx.error).toHaveBeenCalledOnce();
+    expect(ctx.error).toHaveBeenCalledWith({
+      code: 'POLLING_TIMEOUT',
+      message: 'Polling timed out before the transaction reached a ready state.',
+      retryable: true,
+    });
+    expect(getTransaction).toHaveBeenCalledOnce();
+    expect(createTransaction).not.toHaveBeenCalled();
+  });
+
+  it('reports a polling failure after a pending snapshot without retrying or creating another transaction', async () => {
+    const getTransaction = vi
+      .fn<MppClient['getTransaction']>()
+      .mockResolvedValueOnce({ transactionId: 'tx-1', state: 'pending' })
+      .mockRejectedValueOnce(new Error('Connection interrupted'));
+    const createTransaction = vi.fn<MppClient['createTransaction']>();
+    const client = makeClient({ getTransaction, createTransaction });
+    const { inflow, storage } = authed(client);
+    const ctx = agentCtxReturningError({ transactionId: 'tx-1' }, { interval: 0.001, maxAttempts: 5, timeout: 60 });
+    const result = await drainWithReturn(runStatusCommand(ctx, inflow, storage));
+    expect(result.values).toEqual([{ transaction_id: 'tx-1', state: 'pending' }]);
+    expect(ctx.error).toHaveBeenCalledOnce();
+    expect(ctx.error).toHaveBeenCalledWith({ code: 'PAYMENT_FAILED', message: 'Connection interrupted' });
+    expect(getTransaction).toHaveBeenCalledTimes(2);
+    expect(createTransaction).not.toHaveBeenCalled();
+  });
+
+  it('dispatches parsed MPP commands without leaking stored credentials or requesting a second payment', async () => {
+    const getTransaction = vi.fn<MppClient['getTransaction']>(() =>
+      Promise.resolve({ transactionId: 'tx-1', state: 'ready', credential: 'CRED' }),
+    );
+    const createTransaction = vi.fn<MppClient['createTransaction']>();
+    const cancelApproval = vi.fn(() => Promise.resolve());
+    const { inflow, storage } = authed(
+      makeClient({
+        getTransaction,
+        createTransaction,
+        getSupported: vi.fn<MppClient['getSupported']>(() => Promise.resolve({ kinds: [] })),
+      }),
+      cancelApproval,
+    );
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() => Promise.resolve(new Response('public content')));
+    const cli = createMppCli(inflow, storage, 'https://app');
+    const execute = async (args: string[]) => {
+      const chunks: string[] = [];
+      const exit = vi.fn();
+      await cli.serve([...args, '--format', 'json'], {
+        exit,
+        stdout: (chunk) => {
+          chunks.push(chunk);
+        },
+      });
+      const output = chunks.join('');
+      expect(exit, output).not.toHaveBeenCalled();
+      return output;
+    };
+    expect(await execute(['supported'])).toContain('"kinds": []');
+    expect(await execute(['decode', renderChallengeHeader(challenge())])).toContain('chal-inflow-charge');
+    expect(await execute(['inspect', SELLER])).toContain('no-payment-required');
+    expect(await execute(['pay', SELLER])).toContain('no-payment-required');
+    expect(await execute(['subscribe', SELLER])).toContain('no-payment-required');
+    expect(await execute(['status', 'tx-1'])).toContain('"state": "ready"');
+    const output = await execute(['fetch', 'tx-1', SELLER]);
+    expect(output).toContain('public content');
+    expect(output).not.toContain('CRED');
+    expect(await execute(['cancel', 'ap-1'])).toContain('"cancelled": true');
+    expect(cancelApproval).toHaveBeenCalledWith('ap-1');
+    expect(createTransaction).not.toHaveBeenCalled();
+    expect(getTransaction).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls.map(([input]) => new Request(input).url)).toEqual([
+      'https://seller.test/.well-known/aep',
+      SELLER,
+      SELLER,
+      SELLER,
+      SELLER,
+    ]);
+  });
+
   it('passes merchant flags from the command into CARD transaction options', async () => {
     const offered = {
       ...challenge('card'),
@@ -429,84 +784,134 @@ describe('mpp agent runners', () => {
     );
   });
 
-  it('runFetchCommand fetches a ready transaction without creating a transaction or exposing the credential', async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(challenge402())
-      .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
-    const createTransaction = vi.fn();
-    const client = makeClient({
-      createTransaction: createTransaction as MppClient['createTransaction'],
-      getTransaction: vi.fn(() =>
-        Promise.resolve({
-          state: 'ready',
-          credential: 'CRED',
-          transactionId: 'tx-1',
-        }),
-      ) as MppClient['getTransaction'],
-    });
-    const { inflow, storage } = authed(client);
-    const pending = __testing.createdFrameFromEvent(
-      {
-        transactionId: 'tx-1',
-        state: 'pending',
-        approvalId: 'ap-1',
-        approvalUrl: 'https://app/approvals/ap-1',
-        challenge: { id: 'chal-inflow-charge', realm: 'mpp.test', method: 'inflow', intent: 'charge' },
-      },
-      agentCtx({ url: SELLER }, payOptions.parse({ header: ['Authorization: caller'] })),
-    );
-    const next = pending['_next'] as { tool: string; input: Record<string, unknown> };
-    expect(next.tool).toBe('mpp_fetch');
-    const ctx = agentCtx(
-      fetchArgs.parse(next.input),
-      fetchOptions.parse({ ...next.input, header: ['Authorization: caller'] }),
-    );
+  it.each([200, 403].flatMap((status) => [false, true].map((save) => ({ status, save }))))(
+    'runFetchCommand resumes without another transaction or credential disclosure (status $status, save $save)',
+    async ({ status, save }) => {
+      const directory = await mkdtemp(join(tmpdir(), 'mpp-fetch-output-'));
+      const outputFile = join(directory, 'response.txt');
+      try {
+        const fetchSpy = vi
+          .spyOn(globalThis, 'fetch')
+          .mockResolvedValueOnce(challenge402())
+          .mockResolvedValueOnce(
+            new Response('DONE', {
+              status,
+              headers: save
+                ? {
+                    'Payment-Receipt': encode({
+                      challengeId: 'chal-inflow-charge',
+                      method: 'inflow',
+                      reference: 'settlement-1',
+                      status: 'success',
+                      timestamp: '2026-01-01T00:00:00Z',
+                      settlement: { amount: '10', currency: 'USDC' },
+                    }),
+                  }
+                : {},
+            }),
+          );
+        const createTransaction = vi.fn();
+        const client = makeClient({
+          createTransaction: createTransaction as MppClient['createTransaction'],
+          getTransaction: vi.fn(() =>
+            Promise.resolve({
+              state: 'ready',
+              credential: 'CRED',
+              transactionId: 'tx-1',
+            }),
+          ) as MppClient['getTransaction'],
+        });
+        const { inflow, storage } = authed(client);
+        const pending = __testing.createdFrameFromEvent(
+          {
+            transactionId: 'tx-1',
+            state: 'pending',
+            approvalId: 'ap-1',
+            approvalUrl: 'https://app/approvals/ap-1',
+            challenge: { id: 'chal-inflow-charge', realm: 'mpp.test', method: 'inflow', intent: 'charge' },
+          },
+          agentCtx({ url: SELLER }, payOptions.parse({ header: ['Authorization: caller'] })),
+        );
+        const next = pending['_next'] as { tool: string; input: Record<string, unknown> };
+        expect(next.tool).toBe('mpp_fetch');
+        const ctx = agentCtx(
+          fetchArgs.parse(next.input),
+          fetchOptions.parse({ ...next.input, header: ['Authorization: caller'], ...(save ? { outputFile } : {}) }),
+        );
 
-    const frames = await drain(runFetchCommand(ctx as never, inflow, storage));
+        const frames: unknown[] = [];
+        const operation = (async () => {
+          for await (const frame of runFetchCommand(ctx, inflow, storage)) frames.push(frame);
+        })();
+        if (status === 200) await operation;
+        else await expect(operation).rejects.toThrow('PAYMENT_NOT_ACCEPTED');
 
-    expect(createTransaction).not.toHaveBeenCalled();
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(frames.at(-1)).toMatchObject({
-      protocol: 'mpp',
-      outcome: 'paid',
-      transaction_id: 'tx-1',
-      requested_url: SELLER,
-      body: 'DONE',
-    });
-    expect(frames.at(-1)).not.toHaveProperty('credential');
-    const [, init] = fetchSpy.mock.calls.at(-1) ?? [];
-    expect(new Headers(init?.headers).get('Authorization')).toBe('Payment CRED');
-  });
+        expect(createTransaction).not.toHaveBeenCalled();
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+        expect(frames.at(-1)).toMatchObject({
+          protocol: 'mpp',
+          outcome: status === 200 ? 'paid' : 'seller-rejected',
+          transaction_id: 'tx-1',
+          requested_url: SELLER,
+          ...(save ? { output_saved_to: outputFile } : { body: 'DONE' }),
+        });
+        expect(frames.at(-1)).not.toHaveProperty('credential');
+        if (save && status === 200)
+          expect(frames.at(-1)).toHaveProperty('settled', {
+            amount: '10',
+            currency: 'USDC',
+            reference: 'settlement-1',
+            status: 'success',
+            timestamp: '2026-01-01T00:00:00Z',
+          });
+        else expect(frames.at(-1)).not.toHaveProperty('settled');
+        const [, init] = fetchSpy.mock.calls.at(-1) ?? [];
+        expect(new Headers(init?.headers).get('Authorization')).toBe('Payment CRED');
+        if (save) {
+          expect(await readFile(outputFile, 'utf8')).toBe('DONE');
+          expect(frames.at(-1)).not.toHaveProperty('body');
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([0, 1])('runFetchCommand renders the human fetch path with interval %s', async (interval) => {
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(challenge402())
-      .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
-    const client = makeClient({
-      getTransaction: vi.fn(() =>
-        Promise.resolve({
-          state: 'ready',
-          credential: 'CRED',
-          transactionId: 'tx-1',
-        }),
-      ) as MppClient['getTransaction'],
-    });
-    const { inflow, storage } = authed(client);
-    const ctx = {
-      agent: false,
-      formatExplicit: false,
-      args: { transactionId: 'tx-1', resourceUrl: SELLER },
-      options: { method: 'GET', header: [], interval, maxAttempts: 0, timeout: 900, showBody: true },
-      error: vi.fn(),
-    };
+    const directory = await mkdtemp(join(tmpdir(), 'mpp-fetch-human-'));
+    const outputFile = join(directory, 'response.txt');
+    try {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(challenge402())
+        .mockResolvedValueOnce(new Response('DONE', { status: 200 }));
+      const client = makeClient({
+        getTransaction: vi.fn(() =>
+          Promise.resolve({
+            state: 'ready',
+            credential: 'CRED',
+            transactionId: 'tx-1',
+          }),
+        ) as MppClient['getTransaction'],
+      });
+      const { inflow, storage } = authed(client);
+      const ctx = {
+        agent: false,
+        formatExplicit: false,
+        args: { transactionId: 'tx-1', resourceUrl: SELLER },
+        options: { method: 'GET', header: [], interval, maxAttempts: 0, timeout: 900, showBody: true, outputFile },
+        error: vi.fn(),
+      };
 
-    const result = await drainWithReturn(runFetchCommand(ctx as never, inflow, storage));
+      const result = await drainWithReturn(runFetchCommand(ctx as never, inflow, storage));
 
-    expect(result.values).toEqual([]);
-    expect(ctx.error).not.toHaveBeenCalled();
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(result.values).toEqual([]);
+      expect(ctx.error).not.toHaveBeenCalled();
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(await readFile(outputFile, 'utf8')).toBe('DONE');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('runFetchCommand stops terminal failures before contacting the seller', async () => {

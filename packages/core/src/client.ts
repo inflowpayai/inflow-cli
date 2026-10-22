@@ -281,6 +281,10 @@ export class Inflow {
       const provider = dataOptions.getAccessToken;
       return { ...connection, getAccessToken: () => provider() };
     }
+    if (dataOptions.accessToken !== undefined) {
+      const token = dataOptions.accessToken;
+      return { ...connection, getAccessToken: () => Promise.resolve(token) };
+    }
     // Anonymous variant — no credentials and no authStorage. The buyer client will fail at call time (the server requires auth on the
     // capability cache fetch), but construction is permitted so SDK consumers who only want, say, `inflow.user` aren't forced to
     // configure x402.
@@ -307,6 +311,10 @@ export class Inflow {
     if (dataOptions.getAccessToken !== undefined) {
       const provider = dataOptions.getAccessToken;
       return { ...connection, getAccessToken: () => provider() };
+    }
+    if (dataOptions.accessToken !== undefined) {
+      const token = dataOptions.accessToken;
+      return { ...connection, getAccessToken: () => Promise.resolve(token) };
     }
     // Anonymous variant — construction permitted; buyer calls fail server-side without credentials.
     return connection;

@@ -10,8 +10,10 @@ import { encodePaymentRequiredHeader } from '@x402/core/http';
 import type { PaymentRequired } from '@x402/core/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { __testing, createX402Cli } from '../../../../src/commands/x402/index.js';
+import { fetchOptions } from '../../../../src/commands/x402/schema.js';
 
-const { runPayCommand, runStatusCommand, runCancelCommand, runSupportedCommand, runInspectCommand } = __testing;
+const { runPayCommand, runFetchCommand, runStatusCommand, runCancelCommand, runSupportedCommand, runInspectCommand } =
+  __testing;
 
 function makePaymentRequired(): PaymentRequired {
   return {
@@ -156,6 +158,51 @@ afterAll(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('x402 TTY runners (renderInkUntilExit paths)', () => {
+  it.each([200, 403])('resumes an existing payment in interactive mode with seller status %s', async (status) => {
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 402 }))
+      .mockResolvedValueOnce(new Response('seller response', { status }));
+    const getX402Payload = vi.fn<X402InflowClient['getX402Payload']>().mockResolvedValue({
+      status: 'APPROVED',
+      encodedPayload: 'enc',
+      paymentPayload: encodedPayment.paymentPayload,
+    });
+    const prepareInflowPayment = vi.fn<X402InflowClient['prepareInflowPayment']>();
+    const { inflow, storage } = authedResources(makeClient({ getX402Payload, prepareInflowPayment }));
+    const ctx = ttyCtx(
+      { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
+      fetchOptions.parse({ interval: 0 }),
+    );
+    const operation = drain(runFetchCommand(ctx, inflow, storage));
+    if (status === 200) {
+      expect(await operation).toEqual([]);
+      expect(ctx.error).not.toHaveBeenCalled();
+    } else {
+      await expect(operation).rejects.toThrow('PAYMENT_NOT_ACCEPTED');
+      expect(ctx.error.mock.calls[0]?.[0].message).toContain('403');
+    }
+    expect(getX402Payload).toHaveBeenCalledOnce();
+    expect(prepareInflowPayment).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('PAYMENT-SIGNATURE')).toBe('enc');
+  });
+
+  it('shows a failed resume status request without contacting the seller', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const getX402Payload = vi
+      .fn<X402InflowClient['getX402Payload']>()
+      .mockRejectedValue(new Error('status unavailable'));
+    const { inflow, storage } = authedResources(makeClient({ getX402Payload }));
+    const ctx = ttyCtx(
+      { transactionId: 'txn_1', resourceUrl: 'https://seller/api' },
+      fetchOptions.parse({ interval: 0 }),
+    );
+    await expect(drain(runFetchCommand(ctx, inflow, storage))).rejects.toThrow('PAYMENT_FAILED');
+    expect(ctx.error.mock.calls[0]?.[0].message).toBe('status unavailable');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('passes the explicit card to the client in interactive mode', async () => {
     const { inflow, storage } = authedResources(makeClient());
     const clientSpy = vi.spyOn(inflow.x402, 'client').mockResolvedValue(makeClient());

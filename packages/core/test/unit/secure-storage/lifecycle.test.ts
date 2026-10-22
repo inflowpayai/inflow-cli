@@ -323,4 +323,37 @@ describe('SecureSecretLifecycleCoordinator', () => {
       'Secret references require a purpose and opaque reference.',
     );
   });
+
+  it.each(['not json', '{}', '[null]', '[{"purpose":1,"reference":"key"}]'])(
+    'refuses to replace malformed manifests (%s)',
+    async (payload) => {
+      const reference = { purpose: 'manifest', reference: 'fixed-secret-references' };
+      const addition = { purpose: 'api-key', reference: 'new-key' };
+      await store.create(reference, Buffer.from(payload));
+      await expect(manifest.add(addition)).rejects.toMatchObject({ secureStorageCode: 'secure_storage_corrupt' });
+      expect(Buffer.from(await store.read(reference)).toString()).toBe(payload);
+
+      const syncStore = new SyncMemorySecretStore();
+      syncStore.create(reference, Buffer.from(payload));
+      expect(() => new SyncSecretReferenceManifestStore(syncStore).add(addition)).toThrow(SecureStorageError);
+      expect(Buffer.from(syncStore.read(reference)).toString()).toBe(payload);
+    },
+  );
+
+  it('preserves manifests when the secret store refuses deletion', async () => {
+    const reference = { purpose: 'manifest', reference: 'fixed-secret-references' };
+    const payload = Buffer.from('[{"purpose":"api-key","reference":"existing-key"}]');
+    const addition = { purpose: 'api-key', reference: 'new-key' };
+    const lockedStore = new LockedSecretStore();
+    await lockedStore.create(reference, payload);
+    await expect(new SecretReferenceManifest(lockedStore).add(addition)).rejects.toMatchObject({
+      secureStorageCode: 'vault_locked',
+    });
+    expect(Buffer.from(await lockedStore.read(reference))).toEqual(payload);
+
+    const syncStore = new LockedSyncSecretStore();
+    syncStore.create(reference, payload);
+    expect(() => new SyncSecretReferenceManifestStore(syncStore).add(addition)).toThrow('vault is locked');
+    expect(Buffer.from(syncStore.read(reference))).toEqual(payload);
+  });
 });

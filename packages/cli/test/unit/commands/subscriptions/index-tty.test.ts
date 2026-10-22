@@ -6,16 +6,9 @@ import {
   type PagedSubscriptions,
   type Subscription,
 } from '@inflowpayai/inflow-core';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
-vi.mock('../../../../src/utils/render-ink-until-exit.js', () => ({
-  renderInkUntilExit: vi.fn(),
-}));
+import { describe, expect, it, vi } from 'vitest';
 
 import { __testing } from '../../../../src/commands/subscriptions/index.js';
-import { renderInkUntilExit } from '../../../../src/utils/render-ink-until-exit.js';
-
-const renderMock = vi.mocked(renderInkUntilExit);
 
 const tokens: AuthTokens = {
   access_token: 'access',
@@ -68,57 +61,53 @@ function context<Args, Options>(args: Args, options: Options) {
   };
 }
 
-afterEach(() => renderMock.mockReset());
-
 describe('subscription command runners in interactive mode', () => {
   it('returns the list captured by the renderer', async () => {
     const page: PagedSubscriptions = { count: 1, data: [subscription], total: 1 };
-    renderMock.mockResolvedValue(page);
     await expect(
       __testing.runList(context({}, { descending: true, limit: 10, offset: 0 }), dependencies()),
     ).resolves.toEqual(page);
   });
 
   it('fails when listing ends without a result', async () => {
-    renderMock.mockResolvedValue(null);
-    await expect(
-      __testing.runList(context({}, { descending: true, limit: 10, offset: 0 }), dependencies()),
-    ).rejects.toThrow('SUBSCRIPTION_LIST_FAILED');
+    const deps = dependencies();
+    vi.spyOn(deps.subscriptions, 'list').mockRejectedValue(new Error('Service unavailable'));
+    await expect(__testing.runList(context({}, { descending: true, limit: 10, offset: 0 }), deps)).rejects.toThrow(
+      'SUBSCRIPTION_LIST_FAILED',
+    );
   });
 
   it('returns the subscription captured by the renderer', async () => {
-    renderMock.mockResolvedValue(subscription);
     await expect(__testing.runGet(context({ subscriptionId: 'subscription-id' }, {}), dependencies())).resolves.toEqual(
       subscription,
     );
   });
 
   it('fails when get ends without a result', async () => {
-    renderMock.mockResolvedValue(null);
-    await expect(__testing.runGet(context({ subscriptionId: 'subscription-id' }, {}), dependencies())).rejects.toThrow(
+    const deps = dependencies();
+    vi.spyOn(deps.subscriptions, 'get').mockRejectedValue(new Error('Service unavailable'));
+    await expect(__testing.runGet(context({ subscriptionId: 'subscription-id' }, {}), deps)).rejects.toThrow(
       'SUBSCRIPTION_GET_FAILED',
     );
   });
 
   it('reports a successful cancellation', async () => {
     const deps = dependencies();
-    renderMock.mockResolvedValue(undefined);
-    renderMock.mockImplementationOnce((element) => {
-      const props = element.props as { onComplete: (result: boolean) => void };
-      props.onComplete(true);
-      return Promise.resolve(undefined);
-    });
+    const cancel = vi.spyOn(deps.subscriptions, 'cancel');
     await expect(__testing.runCancel(context({ subscriptionId: 'subscription-id' }, {}), deps)).resolves.toEqual({
       cancelled: true,
       subscription_id: 'subscription-id',
     });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledWith('subscription-id');
   });
 
   it('reports a failed cancellation', async () => {
     const deps = dependencies();
-    renderMock.mockResolvedValue(undefined);
+    const cancel = vi.spyOn(deps.subscriptions, 'cancel').mockRejectedValue(new Error('Service unavailable'));
     await expect(__testing.runCancel(context({ subscriptionId: 'subscription-id' }, {}), deps)).rejects.toThrow(
       'SUBSCRIPTION_CANCEL_FAILED',
     );
+    expect(cancel).toHaveBeenCalledOnce();
   });
 });

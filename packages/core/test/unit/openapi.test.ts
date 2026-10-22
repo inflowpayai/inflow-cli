@@ -354,6 +354,156 @@ describe('public source discovery', () => {
 });
 
 describe('public document HTTP cache', () => {
+  it.each([302, 404, 503])('cancels an unused HTTP %s response body before continuing', async (status) => {
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream<Uint8Array>({ cancel }), {
+      status,
+      headers: { Location: '/next' },
+    });
+    const state = setup({ [`${origin}/spec`]: () => response, [`${origin}/next`]: () => Response.json(contract) });
+    if (status === 503) await expect(state.documents.get(`${origin}/spec`)).rejects.toThrow('503');
+    else expect((await state.documents.get(`${origin}/spec`)).status).toBe(status === 302 ? 200 : 404);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(response.body?.locked).toBe(false);
+  });
+
+  it('rejects a non-byte response stream and releases its reader', async () => {
+    const cancel = vi.fn();
+    const response = new Response(
+      // A custom fetch can supply a malformed stream despite the byte-oriented Response type.
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('not bytes');
+        },
+        cancel,
+      }) as unknown as ReadableStream<Uint8Array>,
+    );
+    const state = setup({ [`${origin}/spec`]: () => response });
+    await expect(state.documents.get(`${origin}/spec`)).rejects.toThrow('stream is not bytes');
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(response.body?.locked).toBe(false);
+    expect(state.cache.values.size).toBe(0);
+  });
+
+  it.each([
+    { sourceUrl: 'https://other.example/spec' },
+    { finalUrl: null },
+    { expiresAt: '2999999999999' },
+    { cacheable: 'true' },
+    { status: '200' },
+    { headers: [] },
+    { headers: { 'content-type': 'application/json', etag: 42 } },
+  ])('refetches an invalid persisted cache record: %j', async (override) => {
+    const cache = new MemoryCache();
+    cache.set('document', `${origin}/spec`, {
+      sourceUrl: `${origin}/spec`,
+      finalUrl: `${origin}/spec`,
+      expiresAt: 2_000_000,
+      cacheable: true,
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      value: { stale: true },
+      ...override,
+    });
+    const state = setup({ [`${origin}/spec`]: () => Response.json(contract) }, cache);
+    expect((await state.documents.get(`${origin}/spec`)).value).toEqual(contract);
+    expect(state.fetch).toHaveBeenCalledOnce();
+    expect(new Headers(state.fetch.mock.calls[0]?.[1].headers).has('if-none-match')).toBe(false);
+  });
+
+  it('releases an interrupted response stream without caching a partial document', async () => {
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"openapi":'));
+          controller.error(new Error('stream interrupted'));
+        },
+      }),
+    );
+    const state = setup({ [`${origin}/spec`]: () => response });
+    await expect(state.documents.get(`${origin}/spec`)).rejects.toThrow('stream interrupted');
+    expect(state.cache.get('document', `${origin}/spec`)).toBeUndefined();
+    expect(response.body?.locked).toBe(false);
+  });
+
+  it.each([
+    [{ Expires: new Date(1_060_000).toUTCString() }, 1_060_000],
+    [{ Expires: 'invalid' }, 1_000_000],
+    [{ 'Cache-Control': 'max-age=60', Age: 'invalid' }, 1_000_000],
+    [{ 'Cache-Control': `max-age=${'9'.repeat(310)}` }, 1_000_000],
+    [{ 'Cache-Control': 'max-age="60"', Date: new Date(1_010_000).toUTCString() }, 1_060_000],
+  ])('computes freshness conservatively for %j', async (headers, expiresAt) => {
+    const state = setup({ [`${origin}/spec`]: () => Response.json(contract, { headers }) });
+    expect((await state.documents.get(`${origin}/spec`)).expiresAt).toBe(expiresAt);
+  });
+
+  it('uses the new age and date when revalidating, rather than the previous response age', async () => {
+    let revalidate = false;
+    const state = setup({
+      [`${origin}/spec`]: () =>
+        revalidate
+          ? new Response(null, { status: 304, headers: { Age: '5', Date: new Date(1_010_000).toUTCString() } })
+          : Response.json(contract, { headers: { 'Cache-Control': 'max-age=60', Age: '55', ETag: '"one"' } }),
+    });
+    await state.documents.get(`${origin}/spec`);
+    state.advance(10_000);
+    revalidate = true;
+    const result = await state.documents.get(`${origin}/spec`);
+    expect(result.expiresAt).toBe(1_065_000);
+    expect(result.value).toEqual(contract);
+    await state.documents.get(`${origin}/spec`);
+    expect(state.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reuse a cached representation for a different redirect destination', async () => {
+    let moved = false;
+    const state = setup({
+      [`${origin}/spec`]: () => new Response(null, { status: 302, headers: { Location: moved ? '/new' : '/old' } }),
+      [`${origin}/old`]: () => Response.json(contract, { headers: { ETag: '"old"' } }),
+      [`${origin}/new`]: () => new Response(null, { status: 304 }),
+    });
+    await state.documents.get(`${origin}/spec`);
+    moved = true;
+    await expect(state.documents.get(`${origin}/spec`, { refresh: true })).rejects.toThrow('unexpected 304');
+    expect(new Headers(state.fetch.mock.lastCall?.[1].headers).has('if-none-match')).toBe(false);
+  });
+
+  it.each([404, 410])('evicts a previously cached document after HTTP %s', async (status) => {
+    let removed = false;
+    const state = setup({
+      [`${origin}/spec`]: () => (removed ? new Response(null, { status }) : Response.json(contract)),
+    });
+    await state.documents.get(`${origin}/spec`);
+    removed = true;
+    expect(await state.documents.get(`${origin}/spec`, { refresh: true })).toMatchObject({ status, value: null });
+    expect(state.cache.get('document', `${origin}/spec`)).toBeUndefined();
+  });
+
+  it('passes caller cancellation through to an in-flight document fetch', async () => {
+    const controller = new AbortController();
+    const fetch = vi.fn(
+      (_url: URL, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener(
+            'abort',
+            () => {
+              const reason: unknown = init.signal?.reason;
+              reject(reason instanceof Error ? reason : new Error('Fetch aborted'));
+            },
+            { once: true },
+          );
+        }),
+    );
+    const cache = new MemoryCache();
+    const documents = new PublicSourceDocuments(cache, fetch);
+    const pending = documents.get(`${origin}/spec`, { signal: controller.signal });
+    const rejected = expect(pending).rejects.toThrow('cancelled by caller');
+    controller.abort(new Error('cancelled by caller'));
+    await rejected;
+    expect(cache.values.size).toBe(0);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it.each(['max-age=invalid', 'max-age=600, max-age=0'])(
     'revalidates ambiguous or malformed freshness: %s',
     async (control) => {
@@ -518,6 +668,15 @@ describe('public address boundary', () => {
 });
 
 describe('OpenAPI interpretation', () => {
+  it('accepts a webhook-only description without inventing callable operations', async () => {
+    const state = setup({
+      [`${origin}/spec`]: () => Response.json({ openapi: '3.1.0', info: { title: 'Events' }, webhooks: {} }),
+    });
+    await expect(state.discovery.inspect(`${origin}/spec`)).resolves.toMatchObject({
+      sourceType: 'openapi',
+      document: { operations: [], limitations: ['Webhook listeners are not supported.'] },
+    });
+  });
   it('preserves operation tags without inheriting top-level tag declarations', async () => {
     const tags = ['Weather', 'Weather', 'Forecast'];
     const state = setup({
@@ -679,6 +838,7 @@ describe('OpenAPI interpretation', () => {
     [{ servers: [{}], paths: { '/x': { get: {} } } }, 'server'],
     [{ paths: { '/x': { $ref: 2 } } }, '$ref'],
     [{ paths: { '/x': { $ref: '#/missing' } } }, 'missing'],
+    [{ info: { title: 'Search', detail: null }, paths: { '/x': { $ref: '#/info/detail/missing' } } }, 'missing'],
     [{ paths: { '/x': { $ref: '#named' } } }, 'pointer'],
     [{ paths: { '/x': { $ref: '#/paths/~9' } } }, 'escape'],
     [{ paths: { '/x': { $ref: '#/paths/~1x' } } }, 'cycle'],

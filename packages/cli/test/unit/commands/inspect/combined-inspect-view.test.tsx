@@ -136,7 +136,7 @@ function renderAepView() {
   );
 }
 
-function renderOpenApiAepView(authenticated = false) {
+function renderOpenApiAepView(authenticated = false, state: 'required' | 'public' = 'required') {
   return render(
     <CombinedInspectView
       url={URL}
@@ -172,9 +172,9 @@ function renderOpenApiAepView(authenticated = false) {
           Promise.resolve({
             freshness: 'fresh',
             matchedOperation: { method: 'GET', pathTemplate: '/api' },
-            methods: ['aep-jwt'],
+            methods: state === 'required' ? ['aep-jwt'] : [],
             source: 'openapi',
-            state: 'required',
+            state,
           }),
         probeOptions: { method: 'GET', headers: {} },
         url: URL,
@@ -189,6 +189,112 @@ async function settle(): Promise<void> {
 }
 
 describe('CombinedInspectView', () => {
+  it('renders the catalog and payment requirement together after discovering an ODP Service', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 402, headers: { 'WWW-Authenticate': mppHeader() } }),
+    );
+    const view = render(
+      <CombinedInspectView
+        url={URL}
+        method="GET"
+        deps={{
+          url: URL,
+          probeOptions: { method: 'GET', headers: {} },
+          inspectOdp: () => Promise.resolve(odpInspect),
+        }}
+        onComplete={vi.fn()}
+      />,
+    );
+    try {
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('Indica Flowers'));
+      expect(view.lastFrame()).toContain('USDC');
+      expect(view.lastFrame()).toContain('list-offerings');
+      expect(view.lastFrame()).toContain('Storefront');
+    } finally {
+      view.unmount();
+    }
+  });
+  it('shows public OpenAPI policy and the live payment requirement as separate facts', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(null, {
+        status: 402,
+        headers: { 'WWW-Authenticate': mppHeader() },
+      }),
+    );
+    const view = renderOpenApiAepView(false, 'public');
+    try {
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('── MPP ──'));
+      expect(view.lastFrame()).toContain('not required');
+      expect(view.lastFrame()).toContain('did:web:service.test');
+      expect(view.lastFrame()).toContain('USDC');
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it.each([{ 'WWW-Authenticate': 'Payment invalid' }, { 'PAYMENT-REQUIRED': 'invalid' }])(
+    'explains malformed payment headers without showing usable payment offers: %j',
+    async (headers) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 402, headers }));
+      const view = renderView();
+      try {
+        await vi.waitFor(() => expect(view.lastFrame()).toContain('header present but undecodable'));
+        expect(view.lastFrame()).toContain('Challenge could not be decoded');
+        expect(view.lastFrame()).not.toContain('Payment required; unsupported method');
+      } finally {
+        view.unmount();
+      }
+    },
+  );
+
+  it('distinguishes a live authentication challenge from unavailable AEP metadata', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('', {
+        status: 401,
+        headers: { 'WWW-Authenticate': 'AEP reason="authentication_required"' },
+      }),
+    );
+    const view = renderView();
+    try {
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('AEP_INSPECT_UNAVAILABLE'));
+      expect(view.lastFrame()).toContain('Detected; inspection failed');
+      expect(view.lastFrame()).toContain('Authentication required');
+      expect(view.lastFrame()).toContain('AEP challenge, HTTP 401');
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('renders multiple independently payable MPP challenges and x402 offers', async () => {
+    const payment = decodePaymentRequiredHeader(x402Header());
+    const first = payment.accepts[0];
+    if (first === undefined) throw new Error('Expected a payment offer.');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('', {
+        status: 402,
+        headers: {
+          'WWW-Authenticate': `${mppHeader()}, ${mppHeader('tempo')}`,
+          'PAYMENT-REQUIRED': encodePaymentRequiredHeader({
+            ...payment,
+            accepts: [first, { ...first, amount: '20000' }],
+          }),
+        },
+      }),
+    );
+    const view = renderView();
+    try {
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('2 challenges'));
+      expect(view.lastFrame()).toContain('2 accepts');
+      expect(view.lastFrame()).toContain('20000');
+      expect(view.lastFrame()).toContain('tempo');
+      expect(view.lastFrame()).toContain('inflow');
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('explains filtered x402 offers while retaining the MPP section', async () => {
     const document = decodePaymentRequiredHeader(x402Header());
     const header = encodePaymentRequiredHeader({

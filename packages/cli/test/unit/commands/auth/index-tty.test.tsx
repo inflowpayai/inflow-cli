@@ -6,11 +6,17 @@ import {
   type IAuthResource,
   type IUserResource,
   InflowApiError,
+  LocalVaultClient,
   MemoryStorage,
+  startLocalVaultDaemon,
   type User,
 } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import React from 'react';
+import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../src/utils/render-ink-until-exit.js', () => ({
@@ -126,6 +132,76 @@ describe('toUpdateBlock', () => {
 });
 
 describe('InteractiveLoginShell', () => {
+  it.each(['n', 'y'])('preserves the existing session when answering %s to re-authentication', async (answer) => {
+    const storage = new MemoryStorage(sampleTokens);
+    const originalAuth = storage.getAuth();
+    const auth = authStub({}, storage);
+    const login = vi.spyOn(auth, 'login');
+    const onComplete = vi.fn();
+    const view = render(
+      <InteractiveLoginShell
+        authResource={auth}
+        authStorage={storage}
+        userResource={userStub()}
+        clientName="Test"
+        connection={{ environment: 'production' }}
+        onComplete={onComplete}
+      />,
+    );
+    try {
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('Re-authenticate?'));
+      view.stdin.write(answer);
+      if (answer === 'n') {
+        await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+        expect(view.lastFrame()).toContain('No change.');
+        expect(login).not.toHaveBeenCalled();
+      } else {
+        await vi.waitFor(() => expect(view.lastFrame()).toContain(sampleRequest.verification_url_complete));
+        expect(login).toHaveBeenCalledWith({
+          clientName: 'Test',
+          connection: { environment: 'production' },
+          priorRefreshToken: sampleTokens.refresh_token,
+        });
+        expect(onComplete).not.toHaveBeenCalled();
+      }
+      expect(storage.getAuth()).toEqual(originalAuth);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('does not start login if the view unmounts while checking the existing session', async () => {
+    const storage = new MemoryStorage(sampleTokens);
+    const originalAuth = storage.getAuth();
+    const auth = authStub({}, storage);
+    const login = vi.spyOn(auth, 'login');
+    let completeProbe: ((user: User) => void) | undefined;
+    const probe = new Promise<User>((resolve) => {
+      completeProbe = resolve;
+    });
+    const retrieve = vi.fn(() => probe);
+    const onComplete = vi.fn();
+    const view = render(
+      <InteractiveLoginShell
+        authResource={auth}
+        authStorage={storage}
+        userResource={userStub(retrieve)}
+        clientName="Test"
+        connection={{ environment: 'production' }}
+        onComplete={onComplete}
+      />,
+    );
+    await vi.waitFor(() => expect(retrieve).toHaveBeenCalledOnce());
+    view.unmount();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    completeProbe?.(sampleUser);
+    await probe;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(login).not.toHaveBeenCalled();
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(storage.getAuth()).toEqual(originalAuth);
+  });
+
   it('skips the probe and jumps to the flow when no auth is stored', async () => {
     const storage = new MemoryStorage();
     const auth = authStub();
@@ -188,6 +264,75 @@ describe('InteractiveLoginShell', () => {
 });
 
 describe('runAuthLogin (tty mode)', () => {
+  it.each(['device', 'api-key', 'status', 'status-api-key', 'logout'] as const)(
+    'completes the real interactive %s renderer',
+    async (command) => {
+      const chunks: string[] = [];
+      renderMock.mockImplementation(async (element) => {
+        const { render: renderInk } = await import('ink');
+        const stdout = new PassThrough();
+        const stdin = new PassThrough();
+        stdout.on('data', (chunk: Buffer) => chunks.push(chunk.toString()));
+        const instance = renderInk(element, {
+          // These noninteractive views only need ordinary stream operations from Ink's terminal interfaces.
+          stdout: stdout as unknown as NodeJS.WriteStream,
+          stderr: stdout as unknown as NodeJS.WriteStream,
+          stdin: stdin as unknown as NodeJS.ReadStream,
+          debug: true,
+          exitOnCtrlC: false,
+          patchConsole: false,
+        });
+        try {
+          await instance.waitUntilExit();
+        } finally {
+          instance.unmount();
+          stdout.destroy();
+          stdin.destroy();
+        }
+      });
+      const storage = new MemoryStorage(command === 'status' || command === 'logout' ? sampleTokens : undefined);
+      const auth = authStub({ pollDeviceAuth: () => Promise.resolve(sampleTokens) }, storage);
+      const error = vi.fn(() => {
+        throw new Error('Unexpected command error');
+      });
+      const c = {
+        agent: false,
+        formatExplicit: false,
+        options: { clientName: 'Test', interval: 1, maxAttempts: 1, timeout: 60, probe: false },
+        error,
+      };
+      const resetVault = vi.fn(() => Promise.resolve());
+      if (command === 'logout') {
+        await runAuthLogout(c, { authResource: auth, authStorage: storage, resetVault });
+        expect(resetVault).toHaveBeenCalledOnce();
+      } else {
+        const dependencies = {
+          authResource: auth,
+          authStorage: storage,
+          userResource: userStub(),
+          updateProbe: undefined,
+        };
+        const events =
+          command === 'status' || command === 'status-api-key'
+            ? runAuthStatus(c, dependencies, {
+                ...defaultAuthCtx,
+                ...(command === 'status-api-key' ? { apiKey: 'private-test-key', apiKeySource: 'flag' as const } : {}),
+              })
+            : runAuthLogin(c, dependencies, {
+                ...defaultAuthCtx,
+                apiKey: command === 'api-key' ? 'private-test-key' : undefined,
+              });
+        for await (const _event of events) {
+          /* Interactive commands render instead of yielding frames. */
+        }
+      }
+      expect(chunks.join('')).not.toContain('private-test-key');
+      expect(chunks.join('')).not.toContain(sampleTokens.access_token);
+      expect(renderMock).toHaveBeenCalledOnce();
+      expect(error).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([false, true])('delegates interactive login rendering with a saved API key: %s', async (savedKey) => {
     renderMock.mockResolvedValueOnce(undefined);
     const storage = new MemoryStorage();
@@ -328,6 +473,108 @@ describe('runAuthStatus (tty + agent details)', () => {
 });
 
 describe('createAuthCli', () => {
+  it('checks the isolated vault before login and shuts it down on logout', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'inflow-auth-command-'));
+    const daemon = await startLocalVaultDaemon({ rootDirectory });
+    const client = new LocalVaultClient({ rootDirectory });
+    const passphrase = Buffer.from('test-passphrase');
+    const storage = new MemoryStorage();
+    const user = userStub();
+    const retrieve = vi.spyOn(user, 'retrieve');
+    const cli = createAuthCli(authStub({}, storage, user), user, undefined, storage, {
+      ...defaultAuthCtx,
+      apiKey: 'test-api-key',
+      apiKeySource: 'flag',
+      vaultOptions: { rootDirectory, client },
+    });
+    const execute = async (command: string) => {
+      const output: string[] = [];
+      const exit = vi.fn();
+      await cli.serve([command, '--format', 'json'], {
+        exit,
+        stdout: (chunk) => {
+          output.push(chunk);
+        },
+      });
+      return { output: JSON.parse(output.join('')) as unknown, exit };
+    };
+    try {
+      await client.unlock(passphrase);
+      await client.lock();
+      const refused = await execute('login');
+      expect(refused.exit).toHaveBeenCalledWith(1);
+      expect(retrieve).not.toHaveBeenCalled();
+      expect(storage.getApiKey()).toBeNull();
+
+      await client.unlock(passphrase);
+      const login = await execute('login');
+      expect(login.exit).not.toHaveBeenCalledWith(1);
+      expect(login.output).toMatchObject([{ authenticated: true, method: 'api_key' }]);
+      expect(storage.getApiKey()).toBe('test-api-key');
+      expect(retrieve).toHaveBeenCalledOnce();
+
+      const logout = await execute('logout');
+      expect(logout.exit).not.toHaveBeenCalledWith(1);
+      expect(logout.output).toEqual({ authenticated: false });
+      expect(storage.getApiKey()).toBeNull();
+      await daemon.closed;
+      expect(renderMock).not.toHaveBeenCalled();
+    } finally {
+      passphrase.fill(0);
+      client.dispose();
+      await daemon.close();
+      await rm(rootDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([false, true])(
+    'dispatches JSON status with authenticated=%s without rendering Ink',
+    async (authenticated) => {
+      const storage = new MemoryStorage(authenticated ? sampleTokens : undefined);
+      const user = userStub();
+      const retrieve = vi.spyOn(user, 'retrieve');
+      const output: string[] = [];
+      const exit = vi.fn();
+      const cli = createAuthCli(authStub({}, storage, user), user, undefined, storage, defaultAuthCtx);
+
+      await cli.serve(['status', '--format', 'json'], {
+        stdout: (chunk) => {
+          output.push(chunk);
+        },
+        exit,
+      });
+
+      expect(JSON.parse(output.join(''))).toMatchObject([{ authenticated }]);
+      expect(output.join('')).not.toContain(sampleTokens.access_token);
+      expect(retrieve).not.toHaveBeenCalled();
+      expect(renderMock).not.toHaveBeenCalled();
+      expect(exit).not.toHaveBeenCalledWith(1);
+    },
+  );
+
+  it('rejects a blank client name before requesting vault access or device authorization', async () => {
+    const storage = new MemoryStorage();
+    const auth = authStub({}, storage);
+    const login = vi.spyOn(auth, 'login');
+    const output: string[] = [];
+    const exit = vi.fn();
+    await createAuthCli(auth, userStub(), undefined, storage, defaultAuthCtx).serve(
+      ['login', '--client-name', ' ', '--format', 'json'],
+      {
+        stdout: (chunk) => {
+          output.push(chunk);
+        },
+        exit,
+      },
+    );
+
+    expect(JSON.parse(output.join(''))).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(login).not.toHaveBeenCalled();
+    expect(storage.getPendingDeviceAuth()).toBeNull();
+    expect(renderMock).not.toHaveBeenCalled();
+  });
+
   it('builds an auth Cli with login/logout/status subcommands', () => {
     const cli = createAuthCli(authStub(), userStub(), undefined, new MemoryStorage(), defaultAuthCtx);
     const description = (cli as unknown as { description?: string }).description;

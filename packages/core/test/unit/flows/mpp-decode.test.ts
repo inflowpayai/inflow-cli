@@ -1,6 +1,11 @@
 import { encode, encodeCredential, type MppChallenge, type MppReceipt, renderChallengeHeader } from '@inflowpayai/mpp';
 import { describe, expect, it } from 'vitest';
-import { decodeChallengeRequest, decodeMppValue, summarizeChallenge } from '../../../src/flows/mpp-decode.js';
+import {
+  decodeChallengeRequest,
+  decodeMppValue,
+  summarizeChallenge,
+  summarizeChallenges,
+} from '../../../src/flows/mpp-decode.js';
 
 function inflowChallenge(): MppChallenge {
   return {
@@ -48,6 +53,49 @@ describe('decodeChallengeRequest', () => {
 });
 
 describe('summarizeChallenge', () => {
+  it('keeps subscription option identifiers stable when challenge order changes', () => {
+    const choices = ['month', 'year'].map((periodUnit) => ({
+      ...inflowChallenge(),
+      id: periodUnit,
+      intent: 'subscription',
+      request: encode({
+        amount: '10',
+        currency: 'USDC',
+        methodDetails: { rail: 'balance' },
+        periodCount: 1,
+        periodUnit,
+        subscriptionExpires: '2999-01-01T00:00:00Z',
+      }),
+    }));
+    const first = summarizeChallenges(choices);
+    const reversed = summarizeChallenges([...choices].reverse());
+    expect(reversed).toEqual([...first].reverse());
+    for (const summary of first) {
+      expect(summary.optionId).toMatch(/^[0-9a-f]+$/);
+      expect(summary.optionFingerprint).toMatch(/^[0-9a-f]{64}$/);
+      expect(summary.optionFingerprint?.startsWith(summary.optionId ?? '')).toBe(true);
+    }
+    expect(first[0]?.optionId).not.toBe(first[1]?.optionId);
+  });
+  it('preserves the advertised instrument and request digest without treating them as credentials', () => {
+    const value = {
+      ...inflowChallenge(),
+      digest: 'sha-256=:AAAA:',
+      request: encode({
+        amount: '100',
+        currency: 'USD',
+        methodDetails: {
+          rail: 'instrument',
+          instrumentId: '00000000-0000-4000-8000-000000000001',
+        },
+      }),
+    };
+    expect(summarizeChallenge(value)).toMatchObject({
+      digest: value.digest,
+      instrumentId: '00000000-0000-4000-8000-000000000001',
+      rail: 'instrument',
+    });
+  });
   it('projects auth-params plus decoded amount/currency/rail', () => {
     const out = summarizeChallenge(inflowChallenge());
     expect(out).toMatchObject({

@@ -9,6 +9,7 @@ import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
 import { ActionView, __testing, createActionsCli } from '../../../src/commands/odp/actions.js';
 import { OdpCommandError } from '../../../src/commands/odp/command.js';
+import * as renderer from '../../../src/utils/render-ink-until-exit.js';
 
 const resolved: ResolvedAction = {
   action: {
@@ -51,6 +52,57 @@ function actionResource(result: ResolvedAction = resolved) {
 }
 
 describe('ODP Action commands', () => {
+  it('renders a resolved Action in a human terminal without invoking it', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+    const rendered = vi.spyOn(renderer, 'renderInkUntilExit').mockResolvedValue(undefined);
+    const { resource, client } = actionResource();
+    try {
+      await createActionsCli(resource).serve(['resolve', 'https://data.example', 'dataset', 'download-dataset'], {
+        exit: vi.fn(),
+        stdout: vi.fn(),
+      });
+      expect(rendered).toHaveBeenCalledOnce();
+      expect(client.resolveAction).toHaveBeenCalledWith('dataset', 'download-dataset');
+      const element = rendered.mock.calls[0]?.[0];
+      if (element === undefined) throw new Error('Missing Action view');
+      const view = render(element);
+      expect(view.lastFrame()).toContain('https://data.example/actions/dataset');
+      view.unmount();
+    } finally {
+      rendered.mockRestore();
+      if (descriptor === undefined) Reflect.deleteProperty(process.stdout, 'isTTY');
+      else Object.defineProperty(process.stdout, 'isTTY', descriptor);
+    }
+  });
+
+  it('renders optional authentication and unconstrained request properties without inventing requirements', () => {
+    const view = render(
+      <ActionView
+        resolution={{
+          offering_id: 'dataset',
+          service_origin: 'https://data.example',
+          action: {
+            ...resolved.action,
+            authentication: 'optional',
+            description: 'Download a subset.',
+            target: { kind: 'http', method: 'POST', url: '/download', response_content_types: ['application/json'] },
+          },
+          request_schema: { type: 'object', properties: { query: { type: 'string' }, extensions: true } },
+        }}
+      />,
+    );
+    const frame = view.lastFrame() ?? '';
+    expect(frame).toContain('Optional');
+    expect(frame).toContain('Download a subset.');
+    expect(frame).toContain('https://data.example/download');
+    expect(frame).toContain('Not constrained');
+    expect(frame).toContain('Not advertised');
+    expect(frame).toMatch(/query\s+string\s+No/);
+    expect(frame).toContain('application/json');
+    view.unmount();
+  });
+
   it('resolves an Action without invoking its target', async () => {
     const { client, resource } = actionResource();
     await expect(

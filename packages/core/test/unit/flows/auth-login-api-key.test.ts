@@ -41,6 +41,20 @@ describe('reduceAuthLoginApiKey', () => {
 });
 
 describe('runAuthLoginApiKey', () => {
+  it('preserves the current account when validation rejects with a non-Error value', async () => {
+    const storage = new MemoryStorage();
+    storage.setApiKey('existing-key');
+    storage.setConnection({ environment: 'production' });
+    const run = runAuthLoginApiKey({
+      apiKey: 'replacement-key',
+      authStorage: storage,
+      userResource: { retrieve: vi.fn().mockRejectedValue('transport unavailable') },
+      connection: { environment: 'sandbox' },
+    });
+    expect(await drain(run.events)).toEqual([{ type: 'failed', message: 'transport unavailable' }]);
+    expect(storage.getApiKey()).toBe('existing-key');
+    expect(storage.getConnection()).toEqual({ environment: 'production' });
+  });
   it('emits validated and persists the api key + connection on success', async () => {
     const storage = new MemoryStorage();
     const userResource: IUserResource = { retrieve: vi.fn().mockResolvedValue(sampleUser) };

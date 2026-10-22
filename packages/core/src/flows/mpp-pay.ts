@@ -200,7 +200,7 @@ export interface MppPayPipelineDeps {
   interval: number;
   /** Hard cap on poll attempts. `0` means unlimited. */
   maxAttempts: number;
-  /** Polling deadline in seconds. `0` means no timeout. */
+  /** Deadline in seconds. `0` stops after the first non-terminal poll response; negative values disable the deadline. */
   timeout: number;
   /**
    * Optional abort signal. When fired, the inline `pending → ready` poll stops promptly (aborting the sleep between

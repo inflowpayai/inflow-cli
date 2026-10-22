@@ -30,6 +30,11 @@ afterEach(() => {
 });
 
 describe('isNewerVersion', () => {
+  it('treats omitted numeric components as zero when comparing release labels', () => {
+    expect(isNewerVersion('1.0.1', '1')).toBe(true);
+    expect(isNewerVersion('1', '1.0.1')).toBe(false);
+    expect(isNewerVersion('1.0', '1.0.0')).toBe(false);
+  });
   it('compares semver-shaped GitHub release names', () => {
     expect(isNewerVersion('v1.0.1', '1.0.0')).toBe(true);
     expect(isNewerVersion('1.0.0', '1.0.0')).toBe(false);
@@ -39,6 +44,51 @@ describe('isNewerVersion', () => {
 });
 
 describe('makeBackgroundUpdateProbe', () => {
+  it.each([{}, { tag_name: '' }, { tag_name: 42 }, { name: false }, null])(
+    'ignores malformed release metadata %j without failing the command',
+    async (metadata) => {
+      const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(Response.json(metadata)));
+      const probe = makeBackgroundUpdateProbe('@inflowpayai/inflow', '1.0.0', fetch);
+      await expect(probe({ polling: false })).resolves.toBeUndefined();
+      await expect(probe({ polling: true })).resolves.toBeUndefined();
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('uses a release name when the tag is absent', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(Response.json({ name: 'v1.2.0' })));
+    expect(await makeBackgroundUpdateProbe('@inflowpayai/inflow', '1.0.0', fetch)({ polling: false })).toEqual({
+      current: '1.0.0',
+      latest: '1.2.0',
+    });
+  });
+
+  it('shares one in-flight lookup and retries HTTP failure only after the short cache expires', async () => {
+    let complete: (response: Response) => void = () => {
+      throw new Error('Fetch not started');
+    };
+    const pending = new Promise<Response>((resolve) => {
+      complete = resolve;
+    });
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockReturnValueOnce(pending)
+      .mockResolvedValueOnce(Response.json({ tag_name: 'v2.0.0' }));
+    const probe = makeBackgroundUpdateProbe('@inflowpayai/inflow', '1.0.0', fetch);
+    const first = probe({ polling: false });
+    const second = probe({ polling: false });
+    expect(await probe({ polling: true })).toBeUndefined();
+    expect(fetch).toHaveBeenCalledOnce();
+    complete(new Response(null, { status: 503 }));
+    expect(await Promise.all([first, second])).toEqual([undefined, undefined]);
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(await probe({ polling: false })).toBeUndefined();
+    expect(fetch).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await probe({ polling: false })).toEqual({ current: '1.0.0', latest: '2.0.0' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('returns update info from GitHub Releases when a newer version is available and caches it for 24 hours', async () => {
     const { calls, fetch } = githubFetch('1.0.1');
     const probe = makeBackgroundUpdateProbe('@inflowpayai/inflow', '1.0.0', fetch);

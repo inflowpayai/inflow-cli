@@ -30,6 +30,8 @@ import {
   type VaultIpcResponse,
 } from '../../../src/secure-storage/vault-ipc.js';
 import { VaultSocketReader } from '../../../src/secure-storage/vault-socket-reader.js';
+import * as protectedKey from '../../../src/secure-storage/vault-protected-key.js';
+import { runLocalVaultDaemon } from '../../../src/secure-storage/vault-daemon.js';
 
 describe('local vault daemon lifecycle', () => {
   let daemon: LocalVaultDaemon | undefined;
@@ -90,6 +92,46 @@ describe('local vault daemon lifecycle', () => {
     });
 
     expect(vaultReferenceFromPut(putResponse)).toMatch(/^vlt_[0-9a-f]{32}$/);
+  });
+
+  it('runs the daemon entry point until its isolated socket receives shutdown', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-entry-'));
+    const socketPath = join(tmpDir, 'run', 'vault.sock');
+    const signals = ['SIGINT', 'SIGTERM'] as const;
+    const originalListeners = new Map(signals.map((signal) => [signal, process.rawListeners(signal)]));
+    const harden = vi.spyOn(protectedKey, 'hardenVaultDaemonProcess').mockImplementation(() => {});
+    const running = runLocalVaultDaemon({ rootDirectory: tmpDir, buildId: 'entry-build', cliVersion: 'entry-version' });
+    try {
+      await vi.waitFor(async () => {
+        await expect(
+          sendVaultIpcRequest(socketPath, { id: 'info', method: 'daemon.info', params: {}, version: 1 }),
+        ).resolves.toMatchObject({
+          ok: true,
+          result: { buildId: 'entry-build', cliVersion: 'entry-version' },
+        });
+      });
+      expect(harden).toHaveBeenCalledOnce();
+      await expect(
+        sendVaultIpcRequest(socketPath, { id: 'shutdown', method: 'daemon.shutdown', params: {}, version: 1 }),
+      ).resolves.toMatchObject({ ok: true });
+      await running;
+    } finally {
+      await sendVaultIpcRequest(socketPath, {
+        id: 'cleanup',
+        method: 'daemon.shutdown',
+        params: {},
+        version: 1,
+      }).catch(() => undefined);
+      await running;
+      for (const signal of signals) {
+        for (const listener of process.rawListeners(signal)) {
+          // Node types raw listeners as Function; these signal listeners take no arguments.
+          if (!originalListeners.get(signal)?.includes(listener))
+            process.removeListener(signal, listener as () => void);
+        }
+      }
+      harden.mockRestore();
+    }
   });
 
   it('closes its database when another daemon already owns the socket', async () => {
@@ -168,6 +210,28 @@ describe('local vault daemon lifecycle', () => {
         version: 1,
       }),
     ).resolves.toMatchObject({ ok: true, result: { lockState: 'not_initialized' } });
+    await daemon.close();
+    await expect(daemon.closed).resolves.toBeUndefined();
+    await expect(daemon.close()).resolves.toBeUndefined();
+  });
+
+  it('rejects a second tenant service on an occupied socket without disrupting the first', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-service-'));
+    const options = {
+      rootDirectory: join(tmpDir, 'vaults'),
+      socketPath: join(tmpDir, 'run', 'vault.sock'),
+      peerVerifier: () => ({ path: process.execPath, pid: process.pid, uid: 1001 }),
+      cliVersion: 'test-version',
+      buildId: 'test-build',
+    };
+    daemon = await startLinuxVaultService(options);
+    await expect(startLinuxVaultService(options)).rejects.toMatchObject({ code: 'secure_storage_unavailable' });
+    await expect(
+      sendVaultIpcRequest(daemon.socketPath, { id: 'info', method: 'daemon.info', params: {}, version: 1 }),
+    ).resolves.toMatchObject({
+      ok: true,
+      result: { cliVersion: 'test-version', buildId: 'test-build' },
+    });
   });
 
   it('enforces a lock from another connection on a retained connection to the real vault', async () => {
@@ -272,7 +336,7 @@ describe('local vault daemon lifecycle', () => {
     await new Promise<void>((resolve) => child.once('exit', () => resolve()));
   });
 
-  it('runs the transferred Linux service on its broker IPC channel', async () => {
+  it.each(['SIGINT', 'SIGTERM', 'disconnect'])('closes the transferred service once on %s', async (shutdownEvent) => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-transferred-service-'));
     const handlers = new Map<string, () => void>();
     const exits: number[] = [];
@@ -303,7 +367,7 @@ describe('local vault daemon lifecycle', () => {
             { peer: { path: process.execPath, pid: process.pid, uid: process.getuid?.() ?? 0 }, type: 'vault-client' },
             new Socket(),
           );
-          handlers.get('disconnect')?.();
+          handlers.get(shutdownEvent)?.();
         },
       },
       (_socket, peer) => {

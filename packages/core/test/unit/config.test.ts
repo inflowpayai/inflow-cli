@@ -16,6 +16,22 @@ describe('resolveInflowSdkConfig', () => {
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each([false, true])('only emits requested debug output with verbose=%s', (verbose) => {
+    const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    const config = resolveInflowSdkConfig({ verbose });
+    config.logger.debug('first');
+    config.logger.debug('second\n');
+    expect(write.mock.calls.map(([value]) => value)).toEqual(verbose ? ['first\n', 'second\n'] : []);
+  });
+
+  it('requires an explicit fetch implementation if the runtime does not provide one', () => {
+    vi.stubGlobal('fetch', undefined);
+    expect(() => resolveInflowSdkConfig()).toThrow('No fetch implementation available');
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    expect(resolveInflowSdkConfig({ fetch }).fetch).toBe(fetch);
   });
 
   it('defaults environment to production and apiBaseUrl', () => {

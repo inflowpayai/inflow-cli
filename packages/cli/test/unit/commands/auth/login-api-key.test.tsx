@@ -51,6 +51,32 @@ function makeAuth(storage: MemoryStorage, retrieve: () => Promise<User>): IAuth 
 }
 
 describe('LoginApiKey', () => {
+  it('does not complete a disposed view when API key validation finishes later', async () => {
+    let complete: ((user: User) => void) | undefined;
+    const pending = new Promise<User>((resolve) => {
+      complete = resolve;
+    });
+    const retrieve = vi.fn(() => pending);
+    const storage = new MemoryStorage();
+    const onComplete = vi.fn();
+    const view = render(
+      <LoginApiKey
+        apiKey="ifk-test"
+        auth={makeAuth(storage, retrieve)}
+        connection={{ environment: 'production' }}
+        onComplete={onComplete}
+      />,
+    );
+    await vi.waitFor(() => expect(retrieve).toHaveBeenCalledOnce());
+    view.unmount();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (complete === undefined) throw new Error('Missing response resolver');
+    complete(sampleUser);
+    await vi.waitFor(() => expect(storage.getApiKey()).toBe('ifk-test'));
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(view.frames.join('')).not.toContain('Saved API key');
+  });
+
   it('renders the validating spinner while the probe is in flight', () => {
     const storage = new MemoryStorage();
     const auth = makeAuth(storage, () => new Promise<User>(() => {})); // never settles

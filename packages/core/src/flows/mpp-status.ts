@@ -55,7 +55,7 @@ export interface MppStatusInput {
   interval: number;
   /** Hard cap on poll attempts. Pass `0` for no cap. */
   maxAttempts: number;
-  /** Wall-clock timeout in seconds. Pass `0` for no timeout. */
+  /** Deadline in seconds. `0` stops after the first non-terminal response; negative values disable the deadline. */
   timeout: number;
   signal?: AbortSignal;
 }

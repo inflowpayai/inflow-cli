@@ -15,6 +15,36 @@ function Probe({ action, onComplete }: ProbeProps): React.ReactElement {
 }
 
 describe('useFlowState', () => {
+  it.each(['resolve', 'reject'] as const)('ignores a late %s after unmount', async (outcome) => {
+    let settle: () => void = () => {
+      throw new Error('Action not started');
+    };
+    const action = vi.fn(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          settle = () => (outcome === 'resolve' ? resolve('late') : reject(new Error('late failure')));
+        }),
+    );
+    const onComplete = vi.fn();
+    const view = render(<Probe action={action} onComplete={onComplete} />);
+    await vi.waitFor(() => expect(action).toHaveBeenCalledOnce());
+    view.unmount();
+    await new Promise((resolve) => setImmediate(resolve));
+    settle();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it('reports a non-Error rejection without losing completion', async () => {
+    const onComplete = vi.fn();
+    const action = vi.fn<() => Promise<string>>().mockRejectedValue('offline');
+    const view = render(<Probe action={action} onComplete={onComplete} />);
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledWith(null));
+    expect(view.lastFrame()).toContain('error=offline');
+    expect(onComplete).toHaveBeenCalledOnce();
+    view.unmount();
+  });
+
   it('transitions loading -> success and calls onComplete with the result', async () => {
     const onComplete = vi.fn();
     const { lastFrame, unmount } = render(<Probe action={() => Promise.resolve('ok')} onComplete={onComplete} />);

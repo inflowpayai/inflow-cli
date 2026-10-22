@@ -63,6 +63,24 @@ describe('vault IPC framing', () => {
     });
   });
 
+  it('round-trips and clears binary attachments nested in arrays without changing caller data', () => {
+    const secret = Buffer.from('nested-secret');
+    const message = {
+      id: 'nested',
+      ok: true as const,
+      result: { entries: [{ values: [secret, null, 'label'] }] },
+      version: 1 as const,
+    };
+    const frame = encodeVaultIpcMessage(message);
+    const decoded = decodeVaultIpcFrame(frame);
+    expect(decoded).toEqual(message);
+    clearVaultIpcBytes(decoded);
+    expect(decoded).toMatchObject({ result: { entries: [{ values: [Buffer.alloc(secret.length), null, 'label'] }] } });
+    expect(secret.toString()).toBe('nested-secret');
+    frame.fill(0);
+    secret.fill(0);
+  });
+
   it('rejects malformed, trailing, oversized, and unknown-method frames', () => {
     const request = {
       id: 'req_1',

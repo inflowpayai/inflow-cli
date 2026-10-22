@@ -10,12 +10,44 @@ import {
   encodeVaultHeader,
   equalBytes,
   unwrapVaultMaterial,
+  createVaultMaterialWithWrappingKey,
+  unwrapVaultMaterialWithWrappingKey,
+  VAULT_SALT_BYTES,
 } from '../../../src/secure-storage/vault-crypto.js';
 
 const firstFactor = Buffer.from('123456', 'utf8');
 const secondFactor = Buffer.from('better-passphrase', 'utf8');
 
 describe('vault crypto', () => {
+  it.each([0, 31, 33])('rejects a %s-byte wrapping key before creating or unwrapping material', (length) => {
+    const key = Buffer.alloc(length);
+    const salt = Buffer.alloc(VAULT_SALT_BYTES);
+    expect(() => createVaultMaterialWithWrappingKey(key, salt)).toThrow('Vault wrapping material is malformed.');
+    expect(() => unwrapVaultMaterialWithWrappingKey(Buffer.alloc(VAULT_SIDECAR_BYTES), key)).toThrow(
+      'Vault wrapping key is malformed.',
+    );
+  });
+
+  it('rejects a malformed salt and a different wrapping key without modifying caller buffers', () => {
+    const key = Buffer.alloc(VAULT_MASTER_KEY_BYTES, 1);
+    const salt = Buffer.alloc(VAULT_SALT_BYTES, 2);
+    expect(() => createVaultMaterialWithWrappingKey(key, salt.subarray(1))).toThrow(
+      'Vault wrapping material is malformed.',
+    );
+    const material = createVaultMaterialWithWrappingKey(key, salt);
+    const before = Buffer.from(material.header);
+    try {
+      expect(() =>
+        unwrapVaultMaterialWithWrappingKey(material.header, Buffer.alloc(VAULT_MASTER_KEY_BYTES, 3)),
+      ).toThrow('Vault material could not be unwrapped.');
+      expect(material.header).toEqual(before);
+      expect(key).toEqual(Buffer.alloc(VAULT_MASTER_KEY_BYTES, 1));
+      expect(salt).toEqual(Buffer.alloc(VAULT_SALT_BYTES, 2));
+    } finally {
+      material.masterKey.fill(0);
+      key.fill(0);
+    }
+  });
   it('wraps one random 32-byte vault master key in the fixed binary sidecar', () => {
     const wrapped = createVaultMaterial(firstFactor);
 

@@ -110,6 +110,26 @@ describe('vault control connection', () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
+  it('does not send credentials when a verifier rejects with a non-Error value', async () => {
+    const verifier = vi.fn<VaultSocketPeerVerifier>().mockRejectedValue('Peer rejected');
+    const { client, received } = await setup(undefined, verifier);
+    await expect(client.request(request('untrusted', { payload: Buffer.from('secret') }))).rejects.toThrow(
+      'The InFlow vault request failed.',
+    );
+    expect(received).toHaveLength(0);
+  });
+
+  it('does not send credentials when the socket closes during peer verification', async () => {
+    const { client, received } = await setup(undefined, (socket) => {
+      socket.destroy();
+      return peer;
+    });
+    await expect(client.request(request('closed', { payload: Buffer.from('secret') }))).rejects.toThrow(
+      'The InFlow vault connection was closed.',
+    );
+    expect(received).toHaveLength(0);
+  });
+
   it('does not replay a request after the peer closes without a response', async () => {
     const { client, received, verify } = await setup((message, socket) => {
       if (message.id === 'a') socket.destroy();

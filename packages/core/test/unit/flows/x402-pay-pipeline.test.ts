@@ -22,6 +22,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it('does not create a payment when seller authentication is refused during the initial probe', async () => {
+  const events: PayEvent[] = [];
+  const input = deps({
+    sellerTransport: {
+      request: () => Promise.reject(new SellerAuthenticationError('AEP_APPROVAL_DENIED', 'Approval declined.')),
+    },
+  });
+  const prepare = vi.spyOn(input.client, 'prepareInflowPayment');
+  await runPayPipeline(input, (event) => events.push(event));
+  expect(events).toEqual([{ type: 'errored', code: 'AEP_APPROVAL_DENIED', message: 'Approval declined.' }]);
+  expect(prepare).not.toHaveBeenCalled();
+});
+
 const SELLER = 'https://seller.test/api';
 
 function paymentRequired(): PaymentRequired {

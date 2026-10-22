@@ -1,4 +1,5 @@
 import {
+  AepStorage,
   Inflow,
   SecureStorageError,
   MemoryStorage,
@@ -136,6 +137,96 @@ function ctx(): InspectCommandContext {
 }
 
 describe('buildCombinedFrame', () => {
+  it.each(['discovered', 'openapi', 'service', 'blocked'] as const)(
+    'retains the original inspection URL when %s has no redirect URL',
+    (kind) => {
+      const inspect = {
+        commandUrl: (command: string) => new globalThis.URL(`https://seller.test/aep/${command}`),
+        inspectUrl: new globalThis.URL('https://seller.test/.well-known/aep'),
+        document: {
+          aep_version: '1.0',
+          bindings: { supported: ['http'] },
+          commands: { supported: ['inspect', 'status'] },
+          core: { signing_algorithms: ['ES256'] },
+          http: {},
+          identity: { methods: ['did:web'] },
+          service: { did: 'did:web:seller.test' },
+        },
+      };
+      const policy = {
+        freshness: 'fetched' as const,
+        methods: ['api-key'],
+        source: 'openapi' as const,
+        state: 'required' as const,
+      };
+      const aep: CombinedInspectResult['aep'] =
+        kind === 'discovered'
+          ? { kind, inspect, source: 'anonymous_probe' }
+          : kind === 'openapi'
+            ? { kind, inspect, policy }
+            : kind === 'blocked'
+              ? { kind, inspect, policy, source: 'openapi', message: 'Authenticate first.' }
+              : { kind, inspect, source: 'challenge', openApiPolicy: policy };
+      const frame = buildCombinedFrame({
+        outcome: 'inspected',
+        method: 'GET',
+        url: URL,
+        odp: { kind: 'absent' },
+        aep,
+        mpp: { kind: 'absent' },
+        x402: { kind: 'absent' },
+      });
+      expect(frame['aep']).toMatchObject({
+        required: kind !== 'discovered',
+        inspect: { service_url: 'https://seller.test' },
+      });
+      expect(frame['aep']).not.toHaveProperty('challenge');
+      if (kind !== 'discovered') expect(frame['aep']).toHaveProperty('openapi.accepted_methods', ['api-key']);
+    },
+  );
+
+  it('preserves authentication diagnostics on a free response without misclassifying it as a payment', () => {
+    const frame = buildNoPaymentFrame({
+      outcome: 'no-payment-required',
+      method: 'GET',
+      url: URL,
+      status: 401,
+      contentType: undefined,
+      bodySizeBytes: 0,
+      odp: { kind: 'absent' },
+      aep: {
+        kind: 'error',
+        code: 'AEP_INSPECT_FAILED',
+        message: 'Unavailable',
+        reason: 'authentication_required',
+        source: 'challenge',
+        openApiPolicy: { freshness: 'fetched', methods: [], source: 'openapi', state: 'fallback' },
+      },
+    });
+    expect(frame).toMatchObject({
+      outcome: 'no-payment-required',
+      status: 401,
+      aep: { required: true, challenge: { reason: 'authentication_required' }, openapi: { state: 'fallback' } },
+      warnings: [{ protocol: 'aep', code: 'AEP_INSPECT_FAILED' }],
+    });
+    expect(frame).not.toHaveProperty('x402');
+    expect(frame).not.toHaveProperty('mpp');
+  });
+
+  it('retains x402 extensions for agent output', () => {
+    const extensions = { 'payment-identifier': { info: { required: false } } };
+    const frame = buildCombinedFrame({
+      outcome: 'inspected',
+      method: 'GET',
+      url: URL,
+      odp: { kind: 'absent' },
+      aep: { kind: 'absent', source: 'anonymous_probe' },
+      mpp: { kind: 'absent' },
+      x402: { kind: 'accepts', x402Version: 2, resource: URL, accepts: [], extensions },
+    });
+    expect(frame['x402_extensions']).toEqual(extensions);
+  });
+
   it('includes ODP and AEP inspection documents in protocol order', () => {
     const result: CombinedInspectResult = {
       outcome: 'inspected',
@@ -385,6 +476,25 @@ describe('buildCombinedFrame', () => {
 });
 
 describe('runCombinedInspectCommand (agent path)', () => {
+  it('rejects a malformed header before any network request', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    await expect(
+      runCombinedInspectCommand({ ...ctx(), options: { method: 'GET', header: ['missing-separator'] } }),
+    ).rejects.toThrow('INVALID_HEADER');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('reports a malformed MPP challenge without losing the valid x402 offer', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, {
+        status: 402,
+        headers: { 'WWW-Authenticate': 'Payment id="invalid"', 'PAYMENT-REQUIRED': x402Header() },
+      }),
+    );
+    const frame = await runCombinedInspectCommand(ctx());
+    expect(frame?.['detected']).toEqual(['x402']);
+    expect(frame?.['warnings']).toEqual(expect.arrayContaining([expect.objectContaining({ protocol: 'mpp' })]));
+  });
   it.each([
     [new SecureStorageError('vault_locked', 'Locked'), 'VAULT_LOCKED'],
     [new Error('Unavailable'), 'Unavailable'],
@@ -545,6 +655,152 @@ describe('runCombinedInspectCommand (agent path)', () => {
       required: true,
       source: 'openapi',
     });
+  });
+
+  it.each([
+    { method: 'GET', scenario: 'success' },
+    { method: 'POST', scenario: 'success' },
+    { method: 'POST', scenario: 'explicit-content-type' },
+    { method: 'GET', scenario: 'no-credential' },
+    { method: 'GET', scenario: 'no-storage' },
+    { method: 'GET', scenario: 'user-unavailable' },
+    { method: 'GET', scenario: 'request-failed' },
+  ])('inspects a protected resource: $method $scenario', async ({ method, scenario }) => {
+    const storage = new MemoryStorage();
+    const client = new Inflow({ apiBaseUrl: 'https://platform.example', apiKey: 'platform-key' });
+    vi.spyOn(client.capabilities, 'has').mockResolvedValue(false);
+    vi.spyOn(client.tap, 'canSign').mockReturnValue(false);
+    vi.spyOn(client.user, 'retrieve').mockResolvedValue({
+      userId: 'user-1',
+      created: '2026-01-01T00:00:00Z',
+      updated: '2026-01-01T00:00:00Z',
+      email: null,
+      firstName: null,
+      lastName: null,
+      username: null,
+      mobile: null,
+      locale: 'EN_US',
+      timezone: 'UTC',
+    });
+    if (scenario === 'user-unavailable')
+      vi.spyOn(client.user, 'retrieve').mockRejectedValue(new Error('user unavailable'));
+    if (scenario !== 'no-credential')
+      await new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' })
+        .credentials()
+        .saveCredential({
+          credential: {
+            access_token: 'stored-token',
+            credential_id: 'cred-1',
+            expires_at: '2999-01-01T00:00:00Z',
+            scopes: [],
+            token_type: 'Bearer',
+          },
+          credentialId: 'cred-1',
+          expiresAt: '2999-01-01T00:00:00Z',
+          grantType: 'oauth-bearer',
+          issuedAt: '2026-01-01T00:00:00Z',
+          serviceDid: 'did:web:seller.test',
+        });
+    const requests: RequestInit[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = requestUrl(input);
+      if (url === URL) {
+        requests.push(init ?? {});
+        if (scenario === 'request-failed') throw new Error('resource unavailable');
+        return Promise.resolve(
+          new Response('', {
+            status: 402,
+            headers: { 'www-authenticate': mppHeader(), 'payment-required': x402Header() },
+          }),
+        );
+      }
+      expect(new Headers(init?.headers).has('AEP-Authorization')).toBe(false);
+      expect(new Headers(init?.headers).has('Authorization')).toBe(false);
+      if (url === 'https://seller.test/.well-known/aep') {
+        return Promise.resolve(
+          Response.json(
+            {
+              aep_version: '1.0',
+              authentication: { methods: ['oauth-bearer'] },
+              bindings: { supported: ['http'] },
+              commands: { supported: ['inspect', 'status', 'grant'], grant_types: ['oauth-bearer'] },
+              core: { signing_algorithms: ['EdDSA', 'ES256'] },
+              identity: { methods: ['did:web'] },
+              http: {
+                endpoint_base: '/aep',
+                openapi: { url: '/openapi.json', path_matching: { trailing_slash: 'strict' } },
+              },
+              service: { did: 'did:web:seller.test' },
+            },
+            { headers: { 'content-type': 'application/aep+json', 'cache-control': 'max-age=300' } },
+          ),
+        );
+      }
+      if (url === 'https://seller.test/openapi.json') {
+        return Promise.resolve(
+          Response.json({
+            openapi: '3.1.0',
+            components: {
+              securitySchemes: {
+                session: { type: 'http', scheme: 'bearer', 'x-aep-authentication-method': 'oauth-bearer' },
+              },
+            },
+            paths: { '/api': { [method.toLowerCase()]: { security: [{ session: [] }] } } },
+          }),
+        );
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const frame = await runCombinedInspectCommand(
+      {
+        ...ctx(),
+        options: {
+          method,
+          header: [
+            'X-Request: example',
+            ...(scenario === 'explicit-content-type' ? ['Content-Type: application/custom+json'] : []),
+          ],
+          ...(method === 'POST' ? { data: '{"query":"gpu"}' } : {}),
+        },
+      },
+      client,
+      scenario === 'no-storage' ? undefined : storage,
+      { inspect: vi.fn().mockResolvedValue(odpInspect) },
+    );
+    if (['no-credential', 'no-storage', 'user-unavailable', 'request-failed'].includes(scenario)) {
+      expect(frame?.['detected']).toEqual(['odp', 'aep']);
+      expect(frame?.['aep']).toMatchObject({ required: true, source: 'openapi', blocked: true });
+      expect(requests).toHaveLength(scenario === 'request-failed' ? 1 : 0);
+      if (scenario === 'request-failed')
+        expect(new Headers(requests[0]?.headers).get('AEP-Authorization')).toBe('Bearer stored-token');
+      return;
+    }
+    expect(frame?.['detected']).toEqual(['odp', 'aep', 'mpp', 'x402']);
+    expect(frame?.['aep']).toMatchObject({ required: true, source: 'openapi', openapi: { state: 'required' } });
+    expect(requests).toHaveLength(1);
+    const headers = new Headers(requests[0]?.headers);
+    expect(headers.get('AEP-Authorization')).toBe('Bearer stored-token');
+    expect(headers.get('X-Request')).toBe('example');
+    expect(requests[0]?.method).toBe(method);
+    if (method === 'POST') {
+      expect(await new Response(requests[0]?.body).text()).toBe('{"query":"gpu"}');
+      expect(headers.get('Content-Type')).toBe(
+        scenario === 'explicit-content-type' ? 'application/custom+json' : 'application/json',
+      );
+    } else expect(requests[0]?.body).toBeUndefined();
+  });
+
+  it.each([200, 500])('finishes real interactive inspection for HTTP %i', async (status) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('response', { status }));
+    const error = vi.fn(ctx().error);
+    const run = runCombinedInspectCommand({ ...ctx(), agent: false, formatExplicit: false, error });
+    if (status === 200) {
+      await expect(run).resolves.toBeUndefined();
+      expect(error).not.toHaveBeenCalled();
+    } else {
+      await expect(run).rejects.toThrow('UNEXPECTED_PROBE_STATUS');
+      expect(error).toHaveBeenCalledOnce();
+    }
   });
 
   it('returns a no-payment frame on a 2xx probe', async () => {

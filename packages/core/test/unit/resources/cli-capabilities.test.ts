@@ -4,6 +4,32 @@ import { Inflow, InflowApiError } from '../../../src/index.js';
 afterEach(() => vi.restoreAllMocks());
 
 describe('CLI capabilities', () => {
+  it('shares an in-flight anonymous lookup between concurrent consumers', async () => {
+    let complete: (response: Response) => void = () => {
+      throw new Error('Request has not started');
+    };
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const inflow = new Inflow({ accessToken: 'private-token', apiBaseUrl: 'https://platform.example', fetch });
+    const first = inflow.capabilities.get({ signal: new AbortController().signal });
+    const second = inflow.capabilities.has('visa_tap');
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    complete(Response.json({ features: ['visa_tap'], minimumSupportedVersion: '0.12.1' }));
+    await expect(first).resolves.toMatchObject({ features: ['visa_tap'] });
+    await expect(second).resolves.toBe(true);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false);
+  });
+
+  it.each([null, 'invalid', 7])('disables capabilities for a non-object response: %s', async (body) => {
+    const inflow = new Inflow({ fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json(body)) });
+    await expect(inflow.capabilities.get()).resolves.toEqual({ features: [], minimumSupportedVersion: '' });
+  });
+
   it('fetches once and caches enabled features without authentication', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

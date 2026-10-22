@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { Worker } from 'node:worker_threads';
 import { LocalVaultClient } from '../../../src/secure-storage/vault-client.js';
+import * as peerVerification from '../../../src/secure-storage/vault-peer-verifier.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __testing,
@@ -83,6 +84,25 @@ describe('SyncVaultSecretStore', () => {
     }
     expect(Buffer.from(client.read(reference)).toString()).toBe('value');
   });
+
+  it.runIf(process.platform !== 'win32')(
+    'authenticates the isolated child process before exchanging secrets',
+    async () => {
+      child = await startVaultSocketFixture(join(tmpDir, 'run', 'vault.sock'));
+      vi.spyOn(peerVerification, 'shouldRequireVaultPeerVerification').mockReturnValue(true);
+      const verify = vi.spyOn(peerVerification, 'verifyVaultPeerVerificationConfig');
+      const client = store({ rootDirectory: tmpDir });
+      const reference = { purpose: 'api-key', reference: 'verified-child' };
+      client.create(reference, Buffer.from('verified-secret'));
+      expect(Buffer.from(client.read(reference)).toString()).toBe('verified-secret');
+      expect(verify).toHaveBeenCalledOnce();
+      expect(verify).toHaveBeenCalledWith(expect.objectContaining({ requireSameUser: true }));
+      expect(JSON.parse(readFileSync(join(tmpDir, 'run', 'vault.sock.counts'), 'utf8'))).toEqual({
+        connections: 1,
+        methods: ['secret.put', 'secret.get'],
+      });
+    },
+  );
 
   it('rejects invalid responses and reconnects only for a later distinct request', async () => {
     child = await startVaultSocketFixture(join(tmpDir, 'run', 'vault.sock'));

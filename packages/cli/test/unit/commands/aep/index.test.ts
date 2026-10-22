@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { isValidElement, type ReactElement } from 'react';
+import { PassThrough } from 'node:stream';
+import type * as Ink from 'ink';
 import { AepFetchError, AepStorage, MemoryStorage, SecureStorageError } from '@inflowpayai/inflow-core';
 import {
   AepClaimRequirementsError,
@@ -8,13 +11,48 @@ import {
   AepServiceReferenceError,
 } from '@aep-foundation/agent';
 import type { InspectServiceResult } from '@aep-foundation/agent';
+import * as AepAgent from '@aep-foundation/agent';
 import type * as InflowCore from '@inflowpayai/inflow-core';
 import { enrollOptions, grantOptions, serviceReferenceArgs } from '../../../../src/commands/aep/schema.js';
+import { PendingApprovalView } from '../../../../src/commands/aep/views.js';
+
+const rendering = vi.hoisted(() => ({
+  render: vi.fn((_element: unknown) => ({ clear: vi.fn(), rerender: vi.fn(), unmount: vi.fn() })),
+  present: vi.fn(async (element: ReactElement) => {
+    const actual = await vi.importActual<typeof Ink>('ink');
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const stdin = new PassThrough();
+    const instance = actual.render(element, {
+      // These noninteractive views only need ordinary stream operations from Ink's terminal interfaces.
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stderr: stderr as unknown as NodeJS.WriteStream,
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
+    try {
+      await instance.waitUntilExit();
+    } finally {
+      instance.unmount();
+      stdout.destroy();
+      stderr.destroy();
+      stdin.destroy();
+    }
+  }),
+}));
+
+vi.mock('ink', async (importOriginal) => ({
+  ...(await importOriginal<typeof Ink>()),
+  render: rendering.render,
+}));
+vi.mock('../../../../src/utils/render-ink-until-exit.js', () => ({ renderInkUntilExit: rendering.present }));
 
 const platformRecovery = vi.hoisted<{
   identity: unknown;
   identityNotFoundOnSign: boolean;
-  immediateSignResult: 'completed' | 'string' | undefined;
+  immediateSignResult: 'completed' | 'completed-without-context' | 'string' | undefined;
   notRecognized: boolean;
   provisioned: boolean;
   statusErrorCode: string | undefined;
@@ -92,7 +130,8 @@ const inspect: InspectServiceResult = {
   inspectUrl: new URL('https://service.example/.well-known/aep'),
 };
 
-vi.mock('@aep-foundation/agent', () => {
+vi.mock('@aep-foundation/agent', async (importOriginal) => {
+  const actual = await importOriginal<typeof AepAgent>();
   class AepClaimRequirementsError extends Error {
     constructor(readonly missingRequiredClaimNames: string[]) {
       super('Required AEP claims are unavailable.');
@@ -130,6 +169,9 @@ vi.mock('@aep-foundation/agent', () => {
       throw error;
     }
     if (platformRecovery.immediateSignResult === 'string') return 'immediate-assertion';
+    if (platformRecovery.immediateSignResult === 'completed-without-context') {
+      return { clientAssertion: 'immediate-assertion', status: 'completed' as const };
+    }
     if (platformRecovery.immediateSignResult === 'completed') {
       return {
         clientAssertion: 'immediate-assertion',
@@ -148,6 +190,7 @@ vi.mock('@aep-foundation/agent', () => {
     };
   };
   return {
+    AepPendingSignResolverError: actual.AepPendingSignResolverError,
     AepClaimRequirementsError,
     AepClaimValuesError,
     AepCommandError,
@@ -221,9 +264,9 @@ function context(options: Record<string, unknown> = {}) {
   };
 }
 
-function inflow() {
+function inflow(inspectResult: InspectServiceResult = inspect): InflowCore.Inflow {
   return {
-    aep: { inspect: () => inspect },
+    aep: { inspect: () => inspectResult },
     hasApiKey: () => false,
     platformAuthenticationHeaders: () => ({ 'X-API-KEY': 'key' }),
     resolvedApiBaseUrl: 'https://platform.example',
@@ -232,6 +275,9 @@ function inflow() {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
+  rendering.render.mockClear();
+  rendering.present.mockClear();
   platformRecovery.identity = undefined;
   platformRecovery.identityNotFoundOnSign = false;
   platformRecovery.immediateSignResult = undefined;
@@ -259,6 +305,643 @@ afterEach(() => {
 });
 
 describe('aep commands', () => {
+  it('uses the requested Inspect URL when no redirect URL is supplied', async () => {
+    const inspected = { ...inspect };
+    delete inspected.finalUrl;
+    const client = inflow(inspected);
+    const frame = await __testing.runInspect(
+      {
+        ...context({ timeout: 30 }),
+        args: { serviceReference: 'https://service.example' },
+      },
+      client,
+    );
+    expect(frame).toHaveProperty('resolved.service_url', 'https://service.example');
+  });
+
+  it.each([undefined, null])('renders an omitted grant scope list as empty: %s', async (scopes) => {
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const persisted = new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+    await persisted.identities().saveIdentity(identity);
+    platformRecovery.immediateSignResult = 'completed';
+    vi.spyOn(AepAgent, 'sessionCredentialRecordFromGrantResult').mockReturnValue({
+      credential: { ...(scopes === undefined ? {} : { scopes }) },
+      credentialId: 'credential-1',
+      expiresAt: '2999-01-01T00:00:00.000Z',
+      grantType: 'oauth-bearer',
+      issuedAt: '2026-01-01T00:00:00.000Z',
+      serviceDid: identity.serviceDid,
+    });
+    const frame = await __testing.runGrant(
+      { ...context({ scope: [] }), agent: false, formatExplicit: false },
+      inflow(),
+      storage,
+    );
+    expect(frame).toHaveProperty('scopes', []);
+    expect(await persisted.credentials().findCredential(identity.serviceDid, 'credential-1')).toBeDefined();
+  });
+
+  it('reports no available grant types for an enrolled JWT-only Service', async () => {
+    const document = structuredClone(inspect.document);
+    delete document.commands.grant_types;
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const persisted = new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+    await persisted.identities().saveIdentity(identity);
+    await expect(__testing.runStatus(context(), inflow({ ...inspect, document }), storage)).resolves.toHaveProperty(
+      'local.available_grant_types',
+      [],
+    );
+  });
+
+  it('enrolls a Service with no requested claims or redirected Inspect URL', async () => {
+    const document = structuredClone(inspect.document);
+    delete document.claims;
+    const { finalUrl: _finalUrl, ...inspection } = inspect;
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    platformRecovery.notRecognized = true;
+    platformRecovery.immediateSignResult = 'completed-without-context';
+    await expect(
+      __testing.runEnroll(context({ maxAttempts: 1, timeout: 1 }), inflow({ ...inspection, document }), storage),
+    ).resolves.toEqual({ status: 'active' });
+  });
+
+  it.each([undefined, [], ['read']])(
+    'passes grant scopes into the fetch approval context without inventing scopes: %j',
+    async (requestedScopes) => {
+      const original = fetchScenario.run;
+      fetchScenario.run = async (rawInput) => {
+        // The interception observes the actual options passed to the core fetch boundary.
+        const input = rawInput as Parameters<typeof InflowCore.runAepFetch>[0];
+        const provider = input.agentOptions.platformContextProvider;
+        expect(
+          await provider?.({
+            identity,
+            command: 'grant',
+            grantType: 'api-key',
+            serviceDid: identity.serviceDid,
+            ...(requestedScopes === undefined ? {} : { requestedScopes }),
+          }),
+        ).toEqual({
+          grant_type: 'api-key',
+          ...(requestedScopes === undefined || requestedScopes.length === 0
+            ? {}
+            : { requested_scopes: requestedScopes }),
+        });
+        expect(
+          await provider?.({ identity, command: 'authenticate', serviceDid: identity.serviceDid }),
+        ).toBeUndefined();
+        return original(rawInput);
+      };
+      await __testing.runFetch(
+        {
+          ...context({
+            header: [],
+            method: 'GET',
+            maxRedirects: 5,
+            maxResponseBytes: 1024,
+            showBody: true,
+            timeout: 30,
+          }),
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        new MemoryStorage(),
+      );
+    },
+  );
+
+  it.each(['missing-approval', 'invalid-interval', 'non-error-status-failure', 'pending-after-approved'] as const)(
+    'handles the fetch approval lifecycle: %s',
+    async (scenario) => {
+      const original = fetchScenario.run;
+      vi.stubGlobal(
+        'fetch',
+        scenario === 'non-error-status-failure'
+          ? vi.fn().mockRejectedValue('Status connection failed')
+          : vi.fn(() => Promise.resolve(Response.json({ status: 'APPROVED' }))),
+      );
+      const continueSign = vi
+        .fn<Parameters<NonNullable<AepAgent.AepAgentOptions['pendingSignResolver']>>[0]['continueSign']>()
+        .mockResolvedValueOnce({ status: 'pending', retryAfterSeconds: 0.001 })
+        .mockResolvedValue({ status: 'completed', clientAssertion: 'assertion' });
+      fetchScenario.run = async (rawInput) => {
+        // The interception exercises the CLI resolver supplied to the core, not a replacement resolver.
+        const input = rawInput as Parameters<typeof InflowCore.runAepFetch>[0];
+        await input.agentOptions.pendingSignResolver?.({
+          claims: {
+            iss: identity.agentDid,
+            sub: identity.agentDid,
+            aud: identity.serviceDid,
+            iat: 1,
+            exp: 301,
+            jti: 'test',
+            op: 'authenticate',
+          },
+          context: { command: 'authenticate', serviceDid: identity.serviceDid, signingAlgorithms: ['ES256'] },
+          pending: {
+            status: 'pending',
+            retryAfterSeconds: scenario === 'invalid-interval' ? 0 : 0.001,
+            ...(scenario === 'missing-approval' ? {} : { platformContext: { approval_id: 'approval-1' } }),
+          },
+          continueSign,
+        });
+        return original(rawInput);
+      };
+      const operation = __testing.runFetch(
+        {
+          ...context({
+            header: [],
+            method: 'GET',
+            maxRedirects: 5,
+            maxResponseBytes: 1024,
+            showBody: true,
+            timeout: 1,
+          }),
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        new MemoryStorage(),
+      );
+      if (scenario === 'pending-after-approved') {
+        await expect(operation).resolves.toMatchObject({ status: 200 });
+        expect(continueSign).toHaveBeenCalledTimes(2);
+      } else {
+        await expect(operation).rejects.toThrow();
+        expect(continueSign).not.toHaveBeenCalled();
+      }
+    },
+  );
+  it('falls back to a resource probe when optional OpenAPI discovery fails', async () => {
+    const agent = await import('@aep-foundation/agent');
+    vi.spyOn(agent, 'inspectOpenApiPolicy').mockRejectedValue(new Error('OpenAPI unavailable'));
+    const result = await __testing.runInspect(
+      { ...context({ timeout: 30, method: 'POST', data: '{}' }), agent: false, formatExplicit: false },
+      inflow(),
+    );
+    expect(result).toMatchObject({ resource_authentication: { result: 'not-required', source: 'anonymous_probe' } });
+    expect(probeScenario.calls).toBe(1);
+    expect(rendering.present).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an invalid Inspect reference before network discovery', async () => {
+    const agent = await import('@aep-foundation/agent');
+    vi.spyOn(agent, 'resolveServiceReference').mockImplementation(() => {
+      throw new AepServiceReferenceError('Invalid Service');
+    });
+    await expect(__testing.runInspect(context({ timeout: 30 }), inflow())).rejects.toThrow('AEP_SERVICE_URL_INVALID');
+    expect(probeScenario.calls).toBe(0);
+  });
+
+  it('rejects malformed Inspect request headers without probing the resource', async () => {
+    await expect(
+      __testing.runInspect(context({ timeout: 30, header: ['missing-separator'] }), inflow()),
+    ).rejects.toThrow('INVALID_HEADER');
+    expect(probeScenario.calls).toBe(0);
+  });
+
+  it('renders a missing Inspect endpoint for a human without requiring enrollment', async () => {
+    const client = inflow();
+    vi.spyOn(client.aep, 'inspect').mockRejectedValue(new AepInspectError('Missing', 'http_error', 404));
+    expect(
+      await __testing.runInspect({ ...context({ timeout: 30 }), agent: false, formatExplicit: false }, client),
+    ).toMatchObject({ outcome: 'not-advertised', status: 404 });
+    expect(rendering.present).toHaveBeenCalledOnce();
+    expect(platformRecovery.approvalsCreated).toBe(0);
+  });
+
+  it.each(['missing-identity', 'unrecognized', 'no-grants', 'already-enrolled'] as const)(
+    'finishes the human view for %s without starting an approval',
+    async (scenario) => {
+      const storage = new MemoryStorage();
+      storage.setApiKey('key');
+      const persisted = new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+      if (scenario !== 'missing-identity') await persisted.identities().saveIdentity(identity);
+      platformRecovery.notRecognized = scenario === 'unrecognized';
+      const document = structuredClone(inspect.document);
+      if (scenario === 'no-grants') delete document.commands.grant_types;
+      const client = inflow({ ...inspect, document });
+      const c = { ...context({ scope: [], maxAttempts: 1, timeout: 1 }), agent: false, formatExplicit: false };
+      if (scenario === 'already-enrolled') {
+        expect(await __testing.runEnroll(c, client, storage)).toEqual({ status: 'active' });
+      } else {
+        expect(await __testing.runGrant(c, client, storage)).toMatchObject({ granted: false });
+        if (scenario === 'missing-identity') {
+          expect(await __testing.runStatus(c, client, storage)).toMatchObject({ enrolled: false });
+        }
+      }
+      expect(rendering.present).toHaveBeenCalled();
+      expect(platformRecovery.approvalsCreated).toBe(0);
+    },
+  );
+
+  it.each(
+    (['enroll', 'grant'] as const).flatMap((command) =>
+      [
+        { status: 'DECLINED', code: 'AEP_APPROVAL_DENIED' },
+        { status: 'CANCELLED', code: 'APPROVAL_CANCELLED' },
+        { status: 'PENDING', code: 'AEP_APPROVAL_TIMEOUT' },
+      ].map((outcome) => ({ command, ...outcome })),
+    ),
+  )('does not issue credentials after human $command approval is $status', async ({ command, status, code }) => {
+    vi.useFakeTimers();
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const persisted = new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+    if (command === 'grant') await persisted.identities().saveIdentity(identity);
+    const approvalFetch = vi.fn(() => Promise.resolve(Response.json({ status })));
+    vi.stubGlobal('fetch', approvalFetch);
+    const c = {
+      ...context({ scope: [], interval: 0.1, maxAttempts: 1, timeout: 1 }),
+      agent: false,
+      formatExplicit: false,
+    };
+    const rejected = expect(
+      command === 'enroll' ? __testing.runEnroll(c, inflow(), storage) : __testing.runGrant(c, inflow(), storage),
+    ).rejects.toThrow(code);
+    await vi.advanceTimersByTimeAsync(1000);
+    await rejected;
+    expect(persisted.credentials().listCredentials(identity.serviceDid)).toEqual([]);
+    expect(rendering.present).not.toHaveBeenCalled();
+    for (const call of rendering.render.mock.results) {
+      if (call.type !== 'return') throw new Error('Rendering failed');
+      expect(call.value.clear).toHaveBeenCalledOnce();
+      expect(call.value.unmount).toHaveBeenCalledOnce();
+    }
+  });
+
+  it.each([['mpp'], ['x402'], ['mpp', 'x402']])(
+    'presents payment-required guidance after authentication without initiating payment: %j',
+    async (...protocols) => {
+      const fetchCall = vi.fn(() =>
+        Promise.resolve({
+          authentication: {
+            method: 'credential',
+            outcome: 'authenticated',
+            credentialId: 'service-key',
+            grantType: 'api-key',
+          },
+          body: 'Payment required',
+          finalUrl: 'https://service.example/resource',
+          redirected: false,
+          requestedUrl: 'https://service.example/resource',
+          responseSizeBytes: 16,
+          status: 402,
+          paymentRequired: { protocols },
+        }),
+      );
+      fetchScenario.run = fetchCall;
+      const frame = await __testing.runFetch(
+        {
+          ...context({
+            header: [],
+            maxRedirects: 5,
+            maxResponseBytes: 1024,
+            method: 'GET',
+            showBody: true,
+            timeout: 30,
+          }),
+          agent: false,
+          formatExplicit: false,
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        new MemoryStorage(),
+      );
+      expect(frame).toMatchObject({
+        status: 402,
+        authentication: {
+          method: 'credential',
+          outcome: 'authenticated',
+          credential_id: 'service-key',
+          grant_type: 'api-key',
+        },
+        payment_required: { protocols },
+      });
+      expect(fetchCall).toHaveBeenCalledOnce();
+      expect(rendering.present).toHaveBeenCalledOnce();
+      expect(platformRecovery.approvalsCreated).toBe(0);
+    },
+  );
+
+  it('retains unfamiliar claim names without offering an invented account URL', () => {
+    const missing = __testing.commandError(new AepClaimRequirementsError(['custom.department']));
+    expect(missing.details).toEqual({
+      reason: 'account_information_missing',
+      missing_claims: [{ label: 'custom.department', name: 'custom.department' }],
+    });
+    expect(missing).not.toHaveProperty('cta');
+    expect(missing.message).not.toContain('undefined');
+    const invalid = __testing.commandError(
+      new AepClaimValuesError([{ path: 'custom.department', message: 'Expected string.' }]),
+    );
+    expect(invalid.details).toEqual({
+      reason: 'account_information_invalid',
+      issues: [
+        {
+          claim: 'custom.department',
+          label: 'custom.department',
+          path: 'custom.department',
+          message: 'Expected string.',
+        },
+      ],
+    });
+    expect(invalid).not.toHaveProperty('cta');
+    expect(invalid.message).not.toContain('undefined');
+  });
+
+  it.each([
+    ['aep-challenge', 401, 'aep-authenticatable'],
+    ['unrelated-authentication', 401, 'other-authentication-required'],
+    ['http-response', 402, 'not-required'],
+  ])(
+    'reports anonymous probe classification %s without requesting credentials',
+    async (classification, status, result) => {
+      probeScenario.classification = classification;
+      probeScenario.status = status;
+      const storage = new MemoryStorage();
+      const read = vi.spyOn(storage, 'getAepState');
+      const frame = await __testing.runInspect(context({ timeout: 30 }), inflow(), storage);
+      expect(frame).toMatchObject({ resource_authentication: { result, source: 'anonymous_probe', status } });
+      expect(read).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, {}, { required: 'contact.email' }, { required: [false, 1] }])(
+    'does not turn malformed unsupported-claims metadata %j into account instructions',
+    (unsupported_claims) => {
+      const error = new AepCommandError('requirements', 400, {
+        code: 'requirements_unmet',
+        status: 400,
+        title: 'Requirements unmet',
+        type: 'urn:aep:error:requirements_unmet',
+        unsupported_claims,
+      });
+      expect(__testing.commandError(error)).toEqual({
+        code: 'AEP_REQUIREMENTS_UNMET',
+        message: 'The Platform cannot satisfy the required Service claims.',
+        retryable: false,
+      });
+    },
+  );
+
+  it.each([
+    { status: 'DECLINED', httpStatus: 200, code: 'AEP_APPROVAL_DENIED' },
+    { status: 'PENDING', httpStatus: 503, code: 'AEP_APPROVAL_SERVER_ERROR' },
+    { status: 'PENDING', httpStatus: 200, code: 'AEP_APPROVAL_TIMEOUT' },
+    { status: 'CANCELLED', httpStatus: 200, code: 'APPROVAL_CANCELLED' },
+  ])('preserves $code through the installed SDK signing resolver', async ({ status, httpStatus, code }) => {
+    const actual = await vi.importActual<typeof AepAgent>('@aep-foundation/agent');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(Response.json({ status }, { status: httpStatus }))),
+    );
+    const signer = vi.fn(() =>
+      Promise.resolve({
+        status: 'pending' as const,
+        platformContext: { approval_id: 'approval-1' },
+        retryAfterSeconds: 0.001,
+      }),
+    );
+    fetchScenario.run = (rawInput) => {
+      // runAepFetch is substituted only to exercise the CLI callback through the real SDK signing boundary.
+      const input = rawInput as Parameters<typeof InflowCore.runAepFetch>[0];
+      return actual.signClientAssertion({
+        agentDid: identity.agentDid,
+        command: 'authenticate',
+        resource: 'https://service.example/resource',
+        serviceDid: identity.serviceDid,
+        signer,
+        ...(input.agentOptions.pendingSignResolver === undefined
+          ? {}
+          : {
+              pendingSignResolver: input.agentOptions.pendingSignResolver,
+            }),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      });
+    };
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    await expect(
+      __testing.runFetch(
+        {
+          ...context({
+            header: [],
+            maxRedirects: 5,
+            maxResponseBytes: 1024,
+            method: 'GET',
+            showBody: true,
+            timeout: code === 'AEP_APPROVAL_TIMEOUT' ? 0.02 : 2,
+          }),
+          args: { resourceUrl: 'https://service.example/resource' },
+        },
+        inflow(),
+        storage,
+      ),
+    ).rejects.toThrow(code);
+    expect(signer).toHaveBeenCalledOnce();
+  });
+
+  it.each(['enroll', 'grant'] as const)(
+    'closes interactive %s progress and approval views after approval',
+    async (command) => {
+      const storage = new MemoryStorage();
+      storage.setApiKey('key');
+      if (command === 'grant') {
+        const persisted = new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+        await persisted.identities().saveIdentity(identity);
+      }
+      const approvalFetch = vi.fn(() => Promise.resolve(Response.json({ status: 'APPROVED' })));
+      vi.stubGlobal('fetch', approvalFetch);
+      const c = {
+        ...context({ scope: ['read'], interval: 0.01, maxAttempts: 1, timeout: 2 }),
+        agent: false,
+        formatExplicit: false,
+      };
+      const result = await (command === 'enroll'
+        ? __testing.runEnroll(c, inflow(), storage)
+        : __testing.runGrant(c, inflow(), storage));
+
+      expect(result).toMatchObject(command === 'enroll' ? { status: 'active' } : { credential_id: 'credential-1' });
+      expect(platformRecovery.approvalsCreated).toBe(1);
+      expect(approvalFetch).toHaveBeenCalledOnce();
+      expect(rendering.present).toHaveBeenCalledOnce();
+      expect(
+        rendering.render.mock.calls.some(
+          ([element]) => isValidElement(element) && element.type === PendingApprovalView,
+        ),
+      ).toBe(true);
+      for (const call of rendering.render.mock.results) {
+        if (call.type !== 'return') throw new Error('Rendering failed');
+        expect(call.value.clear).toHaveBeenCalledOnce();
+        expect(call.value.unmount).toHaveBeenCalledOnce();
+      }
+    },
+  );
+
+  it.each(['enroll', 'grant', 'fetch'] as const)(
+    'cancels an interactive %s approval before closing the waiting view',
+    async (command) => {
+      const storage = new MemoryStorage();
+      storage.setApiKey('key');
+      if (command === 'grant') {
+        const persisted = new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+        await persisted.identities().saveIdentity(identity);
+      }
+      const approvalFetch = vi.fn((_url: unknown, init?: RequestInit) =>
+        Promise.resolve(
+          init?.method === 'POST' ? new Response(null, { status: 204 }) : Response.json({ status: 'PENDING' }),
+        ),
+      );
+      vi.stubGlobal('fetch', approvalFetch);
+      const continueSign = vi.fn().mockRejectedValue(new Error('Cancelled approval must not continue signing'));
+      if (command === 'fetch') {
+        fetchScenario.run = async (rawInput) => {
+          // The test interception receives the same options as the real core entry point.
+          const input = rawInput as Parameters<typeof InflowCore.runAepFetch>[0];
+          const resolver = input.agentOptions.pendingSignResolver;
+          if (resolver === undefined) throw new Error('Missing approval resolver');
+          return resolver({
+            claims: {
+              iss: identity.agentDid,
+              sub: identity.agentDid,
+              aud: identity.serviceDid,
+              iat: 1,
+              exp: 301,
+              jti: 'grant-request',
+              op: 'grant',
+            },
+            context: { command: 'grant', serviceDid: identity.serviceDid, signingAlgorithms: ['ES256'] },
+            continueSign,
+            pending: { platformContext: { approval_id: 'approval-1' }, retryAfterSeconds: 0.01, status: 'pending' },
+          });
+        };
+      }
+      const c = {
+        ...context({ scope: ['read'], interval: 0.01, maxAttempts: 0, timeout: 2 }),
+        agent: false,
+        formatExplicit: false,
+      };
+      const operation =
+        command === 'enroll'
+          ? __testing.runEnroll(c, inflow(), storage)
+          : command === 'grant'
+            ? __testing.runGrant(c, inflow(), storage)
+            : __testing.runFetch(
+                {
+                  ...c,
+                  args: { resourceUrl: 'https://service.example/resource' },
+                  options: {
+                    header: [],
+                    maxRedirects: 5,
+                    maxResponseBytes: 1024,
+                    method: 'GET',
+                    showBody: true,
+                    timeout: 2,
+                  },
+                },
+                inflow(),
+                storage,
+              );
+      const rejected = expect(operation).rejects.toThrow('APPROVAL_CANCELLED');
+      try {
+        await vi.waitFor(() =>
+          expect(
+            rendering.render.mock.calls.some(
+              ([element]) => isValidElement(element) && element.type === PendingApprovalView,
+            ),
+          ).toBe(true),
+        );
+        const element = rendering.render.mock.calls.find(
+          ([value]) => isValidElement(value) && value.type === PendingApprovalView,
+        )?.[0];
+        if (!isValidElement<{ onCancel: () => Promise<void> }>(element)) throw new Error('Missing approval view');
+        await element.props.onCancel();
+        await rejected;
+        const cancellations = approvalFetch.mock.calls.filter(([, init]) => init?.method === 'POST');
+        expect(cancellations).toHaveLength(1);
+        expect(String(cancellations[0]?.[0])).toBe('https://platform.example/v1/approvals/approval-1/cancel');
+        expect(rendering.present).not.toHaveBeenCalled();
+        expect(continueSign).not.toHaveBeenCalled();
+        for (const call of rendering.render.mock.results) {
+          if (call.type !== 'return') throw new Error('Rendering failed');
+          expect(call.value.clear).toHaveBeenCalledOnce();
+          expect(call.value.unmount).toHaveBeenCalledOnce();
+        }
+      } finally {
+        await operation.catch(() => undefined);
+      }
+    },
+  );
+
+  it('routes real parsed command arguments through inspect, status, grant, fetch, and revoke', async () => {
+    const storage = new MemoryStorage();
+    storage.setAuth({
+      access_token: 'test-platform-token',
+      refresh_token: 'test-refresh',
+      token_type: 'Bearer',
+      expires_in: 3600,
+    });
+    await new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' })
+      .identities()
+      .saveIdentity(identity);
+    platformRecovery.immediateSignResult = 'string';
+    const cli = createAepCli(inflow(), storage);
+    const execute = async (args: string[]) => {
+      const output: string[] = [];
+      const exit = vi.fn();
+      await cli.serve([...args, '--format', 'json'], {
+        exit,
+        stdout: (chunk) => {
+          output.push(chunk);
+        },
+      });
+      expect(exit, output.join('')).not.toHaveBeenCalled();
+      const text = output.join('');
+      expect(text).not.toContain('immediate-assertion');
+      return JSON.parse(text) as Record<string, unknown>;
+    };
+    expect(await execute(['inspect', 'service.example', '--method', 'GET'])).toMatchObject({ schema_version: 1 });
+    expect(await execute(['enroll', 'service.example'])).toMatchObject({ status: 'active' });
+    expect(
+      await execute(['grant', 'service.example', '--grant-type', 'oauth-bearer', '--scope', 'read']),
+    ).toMatchObject({ granted: true, grant_type: 'oauth-bearer' });
+    expect(await execute(['status', 'service.example'])).toMatchObject({ service: { status: 'active' } });
+    const fetch = vi.fn(fetchScenario.run);
+    fetchScenario.run = fetch;
+    expect(
+      await execute([
+        'fetch',
+        'https://service.example/resource',
+        '--method',
+        'POST',
+        '--data',
+        '{"q":"test"}',
+        '--credential-id',
+        'credential-1',
+      ]),
+    ).toMatchObject({ status: 200 });
+    expect(fetch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'POST',
+        body: '{"q":"test"}',
+        credentialId: 'credential-1',
+        url: 'https://service.example/resource',
+      }),
+    );
+    expect(await execute(['revoke', 'service.example', '--credential-id', 'credential-1'])).toMatchObject({
+      revoked: true,
+      credential_id: 'credential-1',
+    });
+    expect(
+      await new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' })
+        .credentials()
+        .listCredentials(identity.serviceDid),
+    ).toEqual([]);
+  });
+
   it('registers the public AEP command group', async () => {
     const cli = createAepCli(inflow(), new MemoryStorage());
     const output: string[] = [];
@@ -312,7 +995,7 @@ describe('aep commands', () => {
   it.each([['inspect'], ['inspect', 'enroll', 'status'], ['inspect', 'enroll', 'grant', 'revoke', 'status']] as const)(
     'resolves only advertised AEP commands: %j',
     async (...supported) => {
-      const client = inflow() as InflowCore.Inflow;
+      const client = inflow();
       const advertised: InspectServiceResult = {
         ...inspect,
         document: {
@@ -357,6 +1040,28 @@ describe('aep commands', () => {
       },
     });
   });
+
+  it('reports public OpenAPI operations without contacting the resource or reading credentials', async () => {
+    openApiScenario.policy = { freshness: 'fetched', methods: [], source: 'openapi', state: 'public' };
+    const storage = new MemoryStorage();
+    const readCredentials = vi.spyOn(storage, 'getAepState');
+    const result = await __testing.runInspect(context({ method: 'POST', timeout: 30 }), inflow(), storage);
+    expect(result).toMatchObject({
+      resource_authentication: { result: 'not-required', source: 'openapi', openapi: { state: 'public' } },
+    });
+    expect(probeScenario.calls).toBe(0);
+    expect(readCredentials).not.toHaveBeenCalled();
+  });
+
+  it.each(['Missing separator', ': missing-name', 'X-Test: '])(
+    'rejects malformed inspection headers before probing: %s',
+    async (header) => {
+      await expect(__testing.runInspect(context({ header: [header], timeout: 30 }), inflow())).rejects.toThrow(
+        'INVALID_HEADER',
+      );
+      expect(probeScenario.calls).toBe(0);
+    },
+  );
 
   it('presents strict trailing-slash suggestions while preserving anonymous probe fallback', async () => {
     openApiScenario.policy = {
@@ -644,6 +1349,49 @@ describe('aep commands', () => {
     });
   });
 
+  it('forwards an explicit credential type and output path and reports the saved response without a body', async () => {
+    const fetchCall = vi.fn(() =>
+      Promise.resolve({
+        authentication: { method: null, outcome: 'not-required' },
+        finalUrl: 'https://service.example/resource',
+        requestedUrl: 'https://service.example/resource',
+        redirected: false,
+        responseSizeBytes: 9,
+        bodySizeBytes: 9,
+        status: 200,
+        outputSavedTo: '/tmp/aep-response.txt',
+      }),
+    );
+    fetchScenario.run = fetchCall;
+    const frame = await __testing.runFetch(
+      {
+        ...context({
+          credentialId: 'key-1',
+          grantType: 'api-key',
+          outputFile: '/tmp/aep-response.txt',
+          header: [],
+          method: 'GET',
+          maxRedirects: 5,
+          maxResponseBytes: 1024,
+          showBody: true,
+          timeout: 30,
+        }),
+        args: { resourceUrl: 'https://service.example/resource' },
+      },
+      inflow(),
+      new MemoryStorage(),
+    );
+    expect(fetchCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credentialId: 'key-1',
+        grantType: 'api-key',
+        outputFile: '/tmp/aep-response.txt',
+      }),
+    );
+    expect(frame).toHaveProperty('output_saved_to', '/tmp/aep-response.txt');
+    expect(frame).not.toHaveProperty('body');
+  });
+
   it.each([
     { name: 'JSON body', data: '{ "query": "café" }\n', header: [], expected: { 'Content-Type': 'application/json' } },
     { name: 'empty body', data: '', header: [], expected: { 'Content-Type': 'application/json' } },
@@ -775,8 +1523,11 @@ describe('aep commands', () => {
     ).rejects.toThrow('INVALID_HEADER');
   });
 
-  it('maps core fetch failures to their typed CLI code', async () => {
-    fetchScenario.run = () => Promise.reject(new AepFetchError('AEP_RESPONSE_TOO_LARGE', 'too large'));
+  it.each([
+    [new AepFetchError('AEP_RESPONSE_TOO_LARGE', 'too large'), 'AEP_RESPONSE_TOO_LARGE'],
+    [new SecureStorageError('vault_locked', 'Locked'), 'VAULT_LOCKED'],
+  ] as const)('maps core fetch failures to their typed CLI code: %s', async (failure, code) => {
+    fetchScenario.run = () => Promise.reject(failure);
     await expect(
       __testing.runFetch(
         {
@@ -786,7 +1537,7 @@ describe('aep commands', () => {
         inflow(),
         new MemoryStorage(),
       ),
-    ).rejects.toThrow('AEP_RESPONSE_TOO_LARGE');
+    ).rejects.toThrow(code);
   });
 
   it.each(['not_recognized', 'agent_identity_not_found'])(
@@ -875,6 +1626,7 @@ describe('aep commands', () => {
             saveCredential(record: unknown): Promise<unknown>;
           };
           identityProvider: {
+            findIdentityByServiceDid(serviceDid: string): Promise<unknown>;
             getOrCreateIdentity(input: unknown): Promise<unknown>;
             signerFor(identity: unknown): Promise<unknown>;
           };
@@ -898,6 +1650,7 @@ describe('aep commands', () => {
         serviceDid: identity.serviceDid,
         serviceUrl: 'https://service.example',
       });
+      expect(await input.agentOptions.identityProvider.findIdentityByServiceDid(identity.serviceDid)).toEqual(identity);
       await input.agentOptions.identityProvider.signerFor(identity);
       await input.agentOptions.identityStore.saveIdentity(identity);
       await input.agentOptions.identityStore.findByServiceDid(identity.serviceDid);
@@ -1143,62 +1896,133 @@ describe('aep commands', () => {
     ).rejects.toThrow('APPROVAL_CANCELLED');
   });
 
-  it('runs inspect, enrollment, status, grant, and revoke without exposing credentials', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 }))),
-    );
+  it('sorts stored credentials and reports optional metadata without exposing credential values', async () => {
     const storage = new MemoryStorage();
     storage.setApiKey('key');
-    const client = inflow();
-
-    await expect(__testing.runInspect(context({ timeout: 30 }), client)).resolves.toMatchObject({ schema_version: 1 });
-    await expect(
-      __testing.runEnroll(context({ interval: 1, maxAttempts: 1, timeout: 1 }), client, storage),
-    ).resolves.toEqual({ status: 'active' });
-    await expect(__testing.runStatus(context(), client, storage)).resolves.toMatchObject({
-      local: {
-        available_grant_types: ['oauth-bearer'],
-        grants: [],
-      },
-      service: { status: 'active' },
-    });
-    await expect(
-      __testing.runGrant(context({ interval: 1, scope: ['read', 'read'] }), client, storage),
-    ).resolves.toEqual({
-      credential_id: 'credential-1',
-      expires_at: '2999-01-01T00:00:00.000Z',
-      grant_type: 'oauth-bearer',
-      granted: true,
-      service_did: 'did:web:service.example',
-      scopes: ['read'],
-    });
-    await expect(__testing.runStatus(context(), client, storage)).resolves.toMatchObject({
+    const persisted = new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+    await persisted.identities().saveIdentity(identity);
+    for (const credentialId of ['z', 'a']) {
+      await persisted.credentials().saveCredential({
+        credential: { api_key: `secret-${credentialId}`, ...(credentialId === 'a' ? { scopes: ['wallet:read'] } : {}) },
+        credentialId,
+        grantType: 'api-key',
+        issuedAt: '2026-01-01T00:00:00Z',
+        serviceDid: identity.serviceDid,
+      });
+    }
+    platformRecovery.immediateSignResult = 'string';
+    const result = await __testing.runStatus(context(), inflow(), storage);
+    expect(result).toMatchObject({
       local: {
         grants: [
-          {
-            credential_id: 'credential-1',
-            grant_type: 'oauth-bearer',
-            scopes: ['read'],
-            status: 'active',
-            usable: true,
-          },
+          { credential_id: 'a', scopes: ['wallet:read'], status: 'active', usable: true },
+          { credential_id: 'z', scopes: [], status: 'active', usable: true },
         ],
       },
-      service: { status: 'active' },
     });
-    await expect(__testing.runRevoke(context(), client, storage)).resolves.toEqual({
-      all_grant_types: true,
-      revoked: true,
-    });
-    await expect(__testing.runStatus(context(), client, storage)).resolves.toMatchObject({
-      local: { grants: [] },
-      service: { status: 'active' },
-    });
+    expect(JSON.stringify(result)).not.toContain('secret-');
+    expect(JSON.stringify(result)).not.toContain('expires_at');
+    expect(platformRecovery.approvalsCreated).toBe(0);
   });
 
-  it.each(['agent_identity_not_found', 'not_recognized'])(
-    'maps Status %s failures to an actionable not-enrolled error',
+  it('includes cache metadata and resolves only commands advertised by the Service', async () => {
+    const result: InspectServiceResult = {
+      ...inspect,
+      cacheControl: 'max-age=300',
+      etag: '"revision-one"',
+      document: { ...inspect.document, commands: { supported: ['inspect', 'status'] } },
+    };
+    const frame = await __testing.runInspect(context({ timeout: 30 }), inflow(result));
+    expect(frame).toMatchObject({
+      response: { cache_control: 'max-age=300', etag: '"revision-one"' },
+      resolved: { status: 'https://service.example/aep/status' },
+    });
+    expect(frame['resolved']).not.toHaveProperty('grant');
+    expect(frame['resolved']).not.toHaveProperty('enroll');
+    expect(frame['resolved']).not.toHaveProperty('revoke');
+  });
+
+  it.each([0, -1, 901])('rejects an invalid grant approval timeout before initiating approval: %s', async (timeout) => {
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    await expect(__testing.runGrant(context({ scope: [], timeout }), inflow(), storage)).rejects.toThrow(
+      'AEP_INTERNAL_ERROR',
+    );
+    expect(platformRecovery.approvalsCreated).toBe(0);
+    expect(storage.getAepState()).toBeNull();
+  });
+
+  it.each([true, false].flatMap((agent) => [true, false].map((cache) => ({ agent, cache }))))(
+    'runs inspect, enrollment, status, grant, and revoke (agent $agent, public cache $cache)',
+    async ({ agent, cache }) => {
+      const commandContext = (options: Record<string, unknown> = {}) => ({
+        ...context(options),
+        agent,
+        formatExplicit: agent,
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 }))),
+      );
+      const backing = new MemoryStorage();
+      const storage = cache
+        ? backing
+        : new Proxy(backing, {
+            has: (target, key) => key !== 'getDiscoveryDocuments' && Reflect.has(target, key),
+          });
+      storage.setApiKey('key');
+      const client = inflow();
+
+      await expect(__testing.runInspect(commandContext({ timeout: 30 }), client)).resolves.toMatchObject({
+        schema_version: 1,
+      });
+      await expect(
+        __testing.runEnroll(commandContext({ interval: 1, maxAttempts: 1, timeout: 1 }), client, storage),
+      ).resolves.toEqual({ status: 'active' });
+      await expect(__testing.runStatus(commandContext(), client, storage)).resolves.toMatchObject({
+        local: {
+          available_grant_types: ['oauth-bearer'],
+          grants: [],
+        },
+        service: { status: 'active' },
+      });
+      await expect(
+        __testing.runGrant(commandContext({ interval: 1, scope: ['read', 'read'] }), client, storage),
+      ).resolves.toEqual({
+        credential_id: 'credential-1',
+        expires_at: '2999-01-01T00:00:00.000Z',
+        grant_type: 'oauth-bearer',
+        granted: true,
+        service_did: 'did:web:service.example',
+        scopes: ['read'],
+      });
+      await expect(__testing.runStatus(commandContext(), client, storage)).resolves.toMatchObject({
+        local: {
+          grants: [
+            {
+              credential_id: 'credential-1',
+              grant_type: 'oauth-bearer',
+              scopes: ['read'],
+              status: 'active',
+              usable: true,
+            },
+          ],
+        },
+        service: { status: 'active' },
+      });
+      await expect(__testing.runRevoke(commandContext(), client, storage)).resolves.toEqual({
+        all_grant_types: true,
+        revoked: true,
+      });
+      await expect(__testing.runStatus(commandContext(), client, storage)).resolves.toMatchObject({
+        local: { grants: [] },
+        service: { status: 'active' },
+      });
+    },
+  );
+
+  it.each(['agent_identity_not_found', 'not_recognized', 'service_unavailable'])(
+    'maps Status %s failures without confusing an unavailable Service with missing enrollment',
     async (code) => {
       const storage = new MemoryStorage();
       storage.setApiKey('key');
@@ -1209,7 +2033,9 @@ describe('aep commands', () => {
       await aepStorage.identities().saveIdentity(identity);
       platformRecovery.statusErrorCode = code;
 
-      await expect(__testing.runStatus(context(), inflow(), storage)).rejects.toThrow('AEP_NOT_ENROLLED');
+      await expect(__testing.runStatus(context(), inflow(), storage)).rejects.toThrow(
+        code === 'service_unavailable' ? code : 'AEP_NOT_ENROLLED',
+      );
     },
   );
 
@@ -1311,6 +2137,38 @@ describe('aep commands', () => {
     await expect(__testing.runRevoke(context(options), inflow(), storage)).resolves.toEqual(expected);
   });
 
+  it('does not contact Revoke or sign when no local identity exists', async () => {
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const revoke = vi.spyOn(AepAgent, 'revokeService');
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(__testing.runRevoke(context(), inflow(), storage)).rejects.toThrow('AEP_IDENTITY_NOT_FOUND');
+    expect(revoke).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([new Error('Service unavailable'), 'Service unavailable', new AepAgent.AepCommandError('Failed', 500)])(
+    'does not create an approval or credential when the enrollment status check fails: %s',
+    async (failure) => {
+      const storage = new MemoryStorage();
+      storage.setApiKey('key');
+      const persisted = new AepStorage(storage, {
+        platformOrigin: 'https://platform.example',
+        userId: 'user-1',
+      });
+      await persisted.identities().saveIdentity(identity);
+      vi.spyOn(AepAgent, 'statusService').mockRejectedValueOnce(failure);
+      const grant = vi.spyOn(AepAgent, 'grantService');
+
+      await expect(__testing.runGrant(context({ scope: [] }), inflow(), storage)).rejects.toThrow();
+      expect(platformRecovery.approvalsCreated).toBe(0);
+      expect(grant).not.toHaveBeenCalled();
+      expect(await persisted.credentials().findCredential(identity.serviceDid, 'credential-1')).toBeUndefined();
+    },
+  );
+
   it('rejects per-credential Revoke when the credential is not stored locally', async () => {
     const storage = new MemoryStorage();
     storage.setApiKey('key');
@@ -1324,6 +2182,35 @@ describe('aep commands', () => {
       __testing.runRevoke(context({ credentialId: 'credential-missing' }), inflow(), storage),
     ).rejects.toThrow('AEP_CREDENTIAL_NOT_FOUND');
   });
+
+  it.each([0, -1, 901])(
+    'rejects an invalid enrollment timeout before inspecting or provisioning: %s',
+    async (timeout) => {
+      const storage = new MemoryStorage();
+      storage.setApiKey('key');
+      const client = inflow();
+      const inspectCall = vi.spyOn(client.aep, 'inspect');
+      await expect(__testing.runEnroll(context({ maxAttempts: 0, timeout }), client, storage)).rejects.toThrow(
+        'AEP_INTERNAL_ERROR',
+      );
+      expect(inspectCall).not.toHaveBeenCalled();
+      expect(storage.getAepState()).toBeNull();
+      expect(platformRecovery.approvalsCreated).toBe(0);
+    },
+  );
+
+  it.each([new Error('Status unavailable'), new AepCommandError('Unknown status failure', 500)])(
+    'does not treat a failed Status request as permission to enroll: %s',
+    async (failure) => {
+      const storage = new MemoryStorage();
+      storage.setApiKey('key');
+      vi.spyOn(AepAgent, 'statusService').mockRejectedValueOnce(failure);
+      const enroll = vi.spyOn(AepAgent, 'enrollService');
+      await expect(__testing.runEnroll(context({ maxAttempts: 1, timeout: 1 }), inflow(), storage)).rejects.toThrow();
+      expect(enroll).not.toHaveBeenCalled();
+      expect(platformRecovery.approvalsCreated).toBe(0);
+    },
+  );
 
   it('checks Status and skips approval when enrolling an existing identity', async () => {
     const approvalFetch = vi.fn(() =>
@@ -1341,15 +2228,48 @@ describe('aep commands', () => {
     expect(approvalFetch).toHaveBeenCalledTimes(approvalRequests);
   });
 
-  it.each(['completed', 'string'] as const)('accepts an immediate %s Platform signature', async (resultKind) => {
-    platformRecovery.immediateSignResult = resultKind;
-    const storage = new MemoryStorage();
-    storage.setApiKey('key');
+  it.each(['completed', 'completed-without-context', 'string'] as const)(
+    'accepts an immediate %s Platform signature',
+    async (resultKind) => {
+      platformRecovery.immediateSignResult = resultKind;
+      const storage = new MemoryStorage();
+      storage.setApiKey('key');
 
-    await expect(__testing.runEnroll(context({ maxAttempts: 1, timeout: 1 }), inflow(), storage)).resolves.toEqual({
-      status: 'active',
-    });
-  });
+      await expect(__testing.runEnroll(context({ maxAttempts: 1, timeout: 1 }), inflow(), storage)).resolves.toEqual({
+        status: 'active',
+      });
+    },
+  );
+
+  it.each(['completed-without-context', 'string'] as const)(
+    'completes human enrollment with a %s signature after approval',
+    async (resultKind) => {
+      const approval = vi.fn(() => {
+        platformRecovery.immediateSignResult = resultKind;
+        return Promise.resolve(Response.json({ status: 'APPROVED' }));
+      });
+      vi.stubGlobal('fetch', approval);
+      const storage = new MemoryStorage();
+      storage.setApiKey('key');
+      const enrolled = vi.spyOn(AepAgent, 'enrollService');
+
+      await __testing.runEnroll(
+        { ...context({ maxAttempts: 1, timeout: 1 }), agent: false, formatExplicit: false },
+        inflow(),
+        storage,
+      );
+
+      expect(approval).toHaveBeenCalledOnce();
+      expect(enrolled).toHaveBeenCalledOnce();
+      expect(enrolled).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientAssertion: 'immediate-assertion',
+          claims: {},
+        }),
+      );
+      expect(platformRecovery.approvalsCreated).toBe(1);
+    },
+  );
 
   it('returns an agentic pending approval frame for a new enrollment without polling inline', async () => {
     const approvalFetch = vi.fn();
@@ -1551,13 +2471,13 @@ describe('aep commands', () => {
   });
 
   it('reports a missing Inspect endpoint as a Service that does not advertise AEP', async () => {
-    const client = inflow() as { aep: { inspect: () => never } };
+    const client = inflow();
     const { AepInspectError } = await import('@aep-foundation/agent');
     client.aep.inspect = () => {
       throw new AepInspectError('Not found', 'http_error', 404);
     };
 
-    await expect(__testing.runInspect(context({ timeout: 30 }), client as never)).resolves.toEqual({
+    await expect(__testing.runInspect(context({ timeout: 30 }), client)).resolves.toEqual({
       outcome: 'not-advertised',
       schema_version: 1,
       service_url: 'https://service.example/',

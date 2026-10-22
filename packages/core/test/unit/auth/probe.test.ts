@@ -22,6 +22,23 @@ function resource(retrieve: (opts?: { signal?: AbortSignal }) => Promise<User>):
 }
 
 describe('probeSession', () => {
+  it.each([
+    new InflowTransportError('aborted', { cause: new DOMException('aborted', 'AbortError') }),
+    new InflowTransportError('offline', { cause: new Error('connection refused') }),
+    new InflowTransportError('offline'),
+    new InflowApiError('unavailable', { status: 503 }),
+  ])('distinguishes transport cancellation from authentication rejection: %s', async (error) => {
+    const result = await probeSession(
+      resource(() => Promise.reject(error)),
+      { timeoutMs: 1_000 },
+    );
+    expect(result).toEqual(
+      error.cause instanceof Error && error.cause.name === 'AbortError'
+        ? { ok: false, reason: 'timeout' }
+        : { ok: false, reason: 'other', error },
+    );
+  });
+
   it('returns ok when retrieve resolves before the deadline', async () => {
     const r = resource(() => Promise.resolve(sampleUser));
     const result = await probeSession(r, { timeoutMs: 1_000 });

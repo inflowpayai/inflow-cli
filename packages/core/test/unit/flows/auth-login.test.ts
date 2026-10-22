@@ -81,6 +81,121 @@ describe('reduceAuthLogin', () => {
 });
 
 describe('runAuthLogin', () => {
+  it.each([new Error('poll unavailable'), 'poll unavailable'])(
+    'reports a polling failure without replacing existing authentication: %s',
+    async (error) => {
+      const storage = new MemoryStorage(sampleTokens);
+      const before = storage.getAuth();
+      const run = runAuthLogin({
+        authResource: makeAuth({ pollDeviceAuth: vi.fn().mockRejectedValue(error) }),
+        authStorage: storage,
+        clientName: 'Test',
+        connection: { environment: 'sandbox' },
+        firstPollDelayMs: 0,
+      });
+      expect(await drain(run.events)).toEqual([
+        { type: 'initiated', req: sampleReq },
+        { type: 'pollFailed', message: 'poll unavailable' },
+      ]);
+      expect(storage.getAuth()).toEqual(before);
+      expect(storage.getConnection()).toBeNull();
+    },
+  );
+
+  it('stops at the requested poll count without saving an unfinished authorization', async () => {
+    const storage = new MemoryStorage();
+    const pollDeviceAuth = vi.fn().mockResolvedValue(null);
+    const run = runAuthLogin({
+      authResource: makeAuth({ pollDeviceAuth }),
+      authStorage: storage,
+      clientName: 'Test',
+      connection: { environment: 'sandbox' },
+      firstPollDelayMs: 0,
+      pollIntervalMs: 1,
+      pollMaxAttempts: 2,
+      pollTimeoutSeconds: 10,
+    });
+    expect(await drain(run.events)).toEqual([
+      { type: 'initiated', req: sampleReq },
+      { type: 'pollTimedOut', reason: 'max_attempts' },
+    ]);
+    expect(pollDeviceAuth).toHaveBeenCalledTimes(2);
+    expect(storage.getAuth()).toBeNull();
+  });
+
+  it('keeps the new login when best-effort revocation of the prior refresh token fails', async () => {
+    const storage = new MemoryStorage();
+    const revokeToken = vi.fn().mockRejectedValue(new Error('revoke unavailable'));
+    const run = runAuthLogin({
+      authResource: makeAuth({ revokeToken }),
+      authStorage: storage,
+      clientName: 'Test',
+      connection: { environment: 'sandbox' },
+      firstPollDelayMs: 0,
+      priorRefreshToken: 'old-refresh',
+    });
+    expect(await drain(run.events)).toEqual([{ type: 'initiated', req: sampleReq }, { type: 'tokensReceived' }]);
+    expect(revokeToken).toHaveBeenCalledWith('old-refresh');
+    expect(storage.getAuth()?.access_token).toBe(sampleTokens.access_token);
+    expect(storage.getConnection()).toEqual({ environment: 'sandbox' });
+  });
+
+  it.each(['resolve', 'reject'] as const)('ignores a device poll that %ss after cancellation', async (settlement) => {
+    const storage = new MemoryStorage(sampleTokens);
+    const before = storage.getAuth();
+    let resolvePoll: ((tokens: AuthTokens) => void) | undefined;
+    let rejectPoll: ((error: Error) => void) | undefined;
+    const pending = new Promise<AuthTokens>((resolve, reject) => {
+      resolvePoll = resolve;
+      rejectPoll = reject;
+    });
+    const poll = vi.fn<IAuthResource['pollDeviceAuth']>(() => pending);
+    const revokeToken = vi.fn<IAuthResource['revokeToken']>();
+    const run = runAuthLogin({
+      authResource: makeAuth({ pollDeviceAuth: poll, revokeToken }),
+      authStorage: storage,
+      clientName: 'Test',
+      connection: { environment: 'sandbox' },
+      priorRefreshToken: 'prior',
+      firstPollDelayMs: 0,
+    });
+    const iterator = run.events[Symbol.asyncIterator]();
+    expect((await iterator.next()).value).toMatchObject({ type: 'initiated' });
+    const next = iterator.next();
+    await vi.waitFor(() => expect(poll).toHaveBeenCalledOnce());
+    run.cancel();
+    if (settlement === 'resolve') resolvePoll?.({ ...sampleTokens, access_token: 'late-token' });
+    else rejectPoll?.(new Error('late failure'));
+    expect(await next).toMatchObject({ done: true });
+    expect(storage.getAuth()).toEqual(before);
+    expect(storage.getConnection()).toBeNull();
+    expect(revokeToken).not.toHaveBeenCalled();
+  });
+
+  it('does not poll when cancellation occurs while device authorization is being created', async () => {
+    let resolveInitiation: ((value: DeviceAuthRequest) => void) | undefined;
+    const initiation = new Promise<DeviceAuthRequest>((resolve) => {
+      resolveInitiation = resolve;
+    });
+    const initiateDeviceAuth = vi.fn<IAuthResource['initiateDeviceAuth']>(() => initiation);
+    const pollDeviceAuth = vi.fn<IAuthResource['pollDeviceAuth']>();
+    const storage = new MemoryStorage();
+    const run = runAuthLogin({
+      authResource: makeAuth({ initiateDeviceAuth, pollDeviceAuth }),
+      authStorage: storage,
+      clientName: 'Test',
+      connection: { environment: 'sandbox' },
+      firstPollDelayMs: 0,
+    });
+    const completed = drain(run.events);
+    expect(initiateDeviceAuth).toHaveBeenCalledOnce();
+    run.cancel();
+    resolveInitiation?.(sampleReq);
+    expect(await completed).toEqual([]);
+    expect(pollDeviceAuth).not.toHaveBeenCalled();
+    expect(storage.getAuth()).toBeNull();
+  });
+
   it('emits initiated then tokensReceived on a happy device flow, and persists to storage', async () => {
     const storage = new MemoryStorage();
     const auth = makeAuth();
@@ -155,9 +270,9 @@ describe('runAuthLogin', () => {
     });
   });
 
-  it('emits initiateFailed when initiateDeviceAuth throws', async () => {
+  it.each([new Error('boom'), 'boom'])('emits initiateFailed when initiateDeviceAuth rejects: %s', async (failure) => {
     const auth = makeAuth({
-      initiateDeviceAuth: vi.fn().mockRejectedValue(new Error('boom')),
+      initiateDeviceAuth: vi.fn().mockRejectedValue(failure),
     });
     const run = runAuthLogin({
       authResource: auth,
@@ -169,6 +284,34 @@ describe('runAuthLogin', () => {
     });
     const events = await drain(run.events);
     expect(events).toEqual([{ type: 'initiateFailed', message: 'boom' }]);
+  });
+
+  it('waits the default initial delay before polling and persists the authenticated session', async () => {
+    vi.useFakeTimers();
+    const poll = vi.fn<IAuthResource['pollDeviceAuth']>().mockResolvedValue(sampleTokens);
+    const auth = makeAuth({ pollDeviceAuth: poll });
+    const storage = new MemoryStorage();
+    const run = runAuthLogin({
+      authResource: auth,
+      authStorage: storage,
+      clientName: 'Test',
+      connection: { environment: 'sandbox' },
+    });
+    const iterator = run.events[Symbol.asyncIterator]();
+    try {
+      expect((await iterator.next()).value).toEqual({ type: 'initiated', req: sampleReq });
+      const polling = iterator.next();
+      await vi.advanceTimersByTimeAsync(999);
+      expect(poll).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await polling).value).toMatchObject({ type: 'tokensReceived' });
+      expect(poll).toHaveBeenCalledOnce();
+      expect(storage.getAuth()).toMatchObject(sampleTokens);
+    } finally {
+      run.cancel();
+      await iterator.return?.();
+      vi.useRealTimers();
+    }
   });
 
   it('emits pollExpired when pollDeviceAuth throws an expired_token InflowApiError', async () => {

@@ -50,4 +50,23 @@ describe('Windows protected-memory module loading', () => {
 
     expect(() => hardenVaultDaemonProcess()).toThrow('Vault native module integrity is unavailable.');
   });
+
+  it.each(['missing', 'failure'] as const)('fails closed when native key derivation is %s', async (mode) => {
+    const failure = new Error('native derivation failed');
+    const derive = vi.fn(() => {
+      throw failure;
+    });
+    const loadNative = vi.fn(() => (mode === 'missing' ? {} : { deriveVaultWrappingKey: derive }));
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.stubGlobal('__VAULT_PEER_NATIVE_SHA256__', 'a'.repeat(64));
+    vi.doMock('../../../src/secure-storage/runtime-require.js', () => ({ runtimeRequire: () => loadNative }));
+    vi.doMock('../../../src/secure-storage/vault-peer-verifier.js', () => ({ verifyVaultNativeModule: vi.fn() }));
+    const { deriveVaultWrappingKey } = await import('../../../src/secure-storage/vault-protected-key.js');
+    const factor = Buffer.from('caller-owned-factor');
+    const salt = Buffer.alloc(16, 4);
+    expect(() => deriveVaultWrappingKey(factor, salt)).toThrow('Vault key derivation is unavailable.');
+    expect(factor.toString()).toBe('caller-owned-factor');
+    expect(salt).toEqual(Buffer.alloc(16, 4));
+    expect(derive).toHaveBeenCalledTimes(mode === 'missing' ? 0 : 1);
+  });
 });

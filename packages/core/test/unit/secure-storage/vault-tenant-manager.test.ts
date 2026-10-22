@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MultiTenantVaultBackendManager } from '../../../src/secure-storage/vault-tenant-manager.js';
 import type { VaultSocketPeer } from '../../../src/secure-storage/vault-peer-verifier.js';
 import { parseVaultSecretReference } from '../../../src/secure-storage/vault-types.js';
@@ -16,6 +16,7 @@ describe('multi-tenant vault backend manager', () => {
   afterEach(async () => {
     await manager?.close();
     manager = undefined;
+    vi.useRealTimers();
     if (tmpDir !== undefined) rmSync(tmpDir, { force: true, recursive: true });
     tmpDir = undefined;
   });
@@ -127,6 +128,42 @@ describe('multi-tenant vault backend manager', () => {
     });
     expect(peerError(manager, windowsPeer('not-a-sid'))).toMatchObject({
       secureStorageCode: 'secure_storage_peer_verification_failed',
+    });
+  });
+
+  it('expires a tenant after the configured sleep drift without losing its encrypted secrets', async () => {
+    vi.useFakeTimers();
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-tenants-'));
+    manager = new MultiTenantVaultBackendManager({
+      rootDirectory: tmpDir,
+      sleepCheckIntervalMilliseconds: 100,
+      sleepDriftThresholdMilliseconds: 500,
+    });
+    const tenant = manager.backendForPeer(peer(1001));
+    await tenant.unlock(Buffer.from('sleep-test-factor'));
+    await tenant.setPolicy({ idleTimeoutSeconds: null, lockOnSleep: true });
+    await tenant.putSecret({
+      expectedKind: 'inflow_api_key',
+      payload: Buffer.from('sleep-test-secret'),
+      reference: REFERENCE,
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(manager.backendForPeer(peer(1001))).toBe(tenant);
+    vi.setSystemTime(Date.now() + 500);
+    await vi.advanceTimersByTimeAsync(100);
+    const resumedTenant = manager.backendForPeer(peer(1001));
+    expect(resumedTenant).not.toBe(tenant);
+    await expect(resumedTenant.status()).resolves.toMatchObject({ lockState: 'locked' });
+    await expect(
+      resumedTenant.getSecret({ expectedKind: 'inflow_api_key', reference: REFERENCE }),
+    ).rejects.toMatchObject({
+      secureStorageCode: 'vault_locked',
+    });
+    await resumedTenant.unlock(Buffer.from('sleep-test-factor'));
+    await expect(
+      resumedTenant.getSecret({ expectedKind: 'inflow_api_key', reference: REFERENCE }),
+    ).resolves.toMatchObject({
+      payload: Buffer.from('sleep-test-secret'),
     });
   });
 

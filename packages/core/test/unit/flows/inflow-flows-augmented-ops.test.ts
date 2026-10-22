@@ -36,6 +36,51 @@ async function drainEvents<E>(iterable: AsyncIterable<E>): Promise<E[]> {
 }
 
 describe('Inflow.auth augmented operations (with storage configured)', () => {
+  it('delegates every authentication primitive to the configured authentication host', async () => {
+    const requests: Request[] = [];
+    const tokens = { access_token: 'access', refresh_token: 'refresh', token_type: 'Bearer', expires_in: 3600 };
+    server.use(
+      http.post(`${BASE_URL}/v1/oauth2/:path*`, ({ request }) => {
+        requests.push(request);
+        if (request.url.endsWith('/device/code'))
+          return HttpResponse.json({
+            device_code: 'device',
+            user_code: 'code',
+            verification_uri: `${BASE_URL}/device`,
+            verification_uri_complete: `${BASE_URL}/device?code=code`,
+            expires_in: 600,
+            interval: 5,
+          });
+        if (request.url.endsWith('/revoke')) return new HttpResponse(null, { status: 204 });
+        return HttpResponse.json(tokens);
+      }),
+    );
+    const client = new Inflow({
+      apiBaseUrl: 'https://unused.example',
+      authBaseUrl: BASE_URL,
+      cliClientId: 'test-client',
+    });
+    expect(await client.auth.initiateDeviceAuth('Test client')).toMatchObject({
+      device_code: 'device',
+      user_code: 'code',
+    });
+    expect(await client.auth.pollDeviceAuth('device')).toEqual(tokens);
+    expect(await client.auth.refreshToken('old-refresh')).toEqual(tokens);
+    await client.auth.revokeToken('revoked-refresh');
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      '/v1/oauth2/device/code',
+      '/v1/oauth2/device/token',
+      '/v1/oauth2/token',
+      '/v1/oauth2/revoke',
+    ]);
+    const forms = await Promise.all(requests.map(async (request) => new URLSearchParams(await request.text())));
+    expect(forms[0]?.get('client_name')).toBe('Test client');
+    expect(forms[1]?.get('device_code')).toBe('device');
+    expect(forms[2]?.get('refresh_token')).toBe('old-refresh');
+    expect(forms[3]?.get('token')).toBe('revoked-refresh');
+    expect(requests.every((request) => !request.headers.has('authorization'))).toBe(true);
+  });
+
   it('auth.snapshot composes the unauthenticated frame from empty storage', () => {
     const client = new Inflow({ apiBaseUrl: BASE_URL, authStorage: new MemoryStorage() });
     expect(client.auth.snapshot()).toEqual({ authenticated: false });
@@ -76,6 +121,26 @@ describe('Inflow.auth augmented operations (with storage configured)', () => {
 });
 
 describe('Inflow.x402 augmented operations', () => {
+  it('forwards cancellation to the x402 status poller without another request', async () => {
+    const client = new Inflow({ apiBaseUrl: BASE_URL, accessToken: 'tk' });
+    const buyer = await client.x402.client();
+    const getPayload = vi.spyOn(buyer, 'getX402Payload').mockResolvedValue({ status: 'INITIATED' });
+    const controller = new AbortController();
+    const iterator = client.x402
+      .status({ transactionId: 'tx-77', interval: 30, maxAttempts: 0, timeout: 900, signal: controller.signal })
+      .events[Symbol.asyncIterator]();
+    try {
+      expect((await iterator.next()).value).toMatchObject({ type: 'snapshot' });
+      controller.abort();
+      expect((await iterator.next()).value).toEqual({ type: 'crashed', message: 'Poll aborted.' });
+      expect(getPayload).toHaveBeenCalledOnce();
+      expect((await iterator.next()).done).toBe(true);
+    } finally {
+      controller.abort();
+      await iterator.return?.();
+      getPayload.mockRestore();
+    }
+  });
   it('x402.pay drains the async-iterable to a short-circuited terminal using the resolved apiBaseUrl', async () => {
     server.use(http.get('https://seller.test/free', () => new HttpResponse('FREE', { status: 200 })));
     const client = new Inflow({ apiBaseUrl: BASE_URL, accessToken: 'tk' });
@@ -135,6 +200,28 @@ describe('Inflow.x402 augmented operations', () => {
 });
 
 describe('Inflow.mpp augmented operations', () => {
+  it('forwards cancellation to the MPP status poller without another request', async () => {
+    const client = new Inflow({ apiBaseUrl: BASE_URL, accessToken: 'tk' });
+    const buyer = await client.mpp.client();
+    const getTransaction = vi
+      .spyOn(buyer, 'getTransaction')
+      .mockResolvedValue({ state: 'pending', transactionId: 'tx-77' });
+    const controller = new AbortController();
+    const iterator = client.mpp
+      .status({ transactionId: 'tx-77', interval: 30, maxAttempts: 0, timeout: 900, signal: controller.signal })
+      .events[Symbol.asyncIterator]();
+    try {
+      expect((await iterator.next()).value).toMatchObject({ type: 'snapshot' });
+      controller.abort();
+      expect((await iterator.next()).value).toEqual({ type: 'crashed', message: 'Poll aborted.' });
+      expect(getTransaction).toHaveBeenCalledOnce();
+      expect((await iterator.next()).done).toBe(true);
+    } finally {
+      controller.abort();
+      await iterator.return?.();
+      getTransaction.mockRestore();
+    }
+  });
   it('mpp.fetch uses the augmented handle to replay a ready credential', async () => {
     server.use(http.get('https://seller.test/mpp-fetch', () => new HttpResponse('DONE', { status: 200 })));
     const client = new Inflow({ apiBaseUrl: BASE_URL, accessToken: 'tk' });

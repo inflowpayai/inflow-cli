@@ -6,6 +6,34 @@ import { X402StatusView } from '../../../../src/commands/x402/status.js';
 
 const longPayload = 'a'.repeat(64);
 
+it('ignores a status response that arrives after the x402 view is disposed', async () => {
+  let complete: ((response: X402PayloadResponse) => void) | undefined;
+  const pending = new Promise<X402PayloadResponse>((resolve) => {
+    complete = resolve;
+  });
+  const fetchOnce = vi.fn(() => pending);
+  const onComplete = vi.fn();
+  const view = render(
+    <X402StatusView
+      transactionId="tx-1"
+      fetchOnce={fetchOnce}
+      interval={0}
+      maxAttempts={0}
+      timeout={900}
+      onComplete={onComplete}
+    />,
+  );
+  await vi.waitFor(() => expect(fetchOnce).toHaveBeenCalledOnce());
+  view.unmount();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  if (complete === undefined) throw new Error('Missing response resolver');
+  complete(signedResponse());
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(onComplete).not.toHaveBeenCalled();
+  expect(fetchOnce).toHaveBeenCalledOnce();
+  expect(view.frames.join('')).not.toContain(longPayload);
+});
+
 function signedResponse(): X402PayloadResponse {
   return {
     status: 'APPROVED',

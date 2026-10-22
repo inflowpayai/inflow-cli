@@ -1,6 +1,9 @@
 import { Buffer } from 'node:buffer';
+import { dirname, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
+import type * as NodeFs from 'node:fs';
+import { LocalVaultClient } from '../../../src/secure-storage/vault-client.js';
 import type * as VaultPeerVerifierModule from '../../../src/secure-storage/vault-peer-verifier.js';
 
 const mocks = vi.hoisted(() => {
@@ -24,7 +27,8 @@ const mocks = vi.hoisted(() => {
   return { native, realpath, verifyVaultNativeModule: vi.fn() };
 });
 
-vi.mock('node:fs', () => ({
+vi.mock('node:fs', async (importOriginal) => ({
+  ...(await importOriginal<typeof NodeFs>()),
   realpathSync: Object.assign(mocks.realpath, { native: mocks.realpath }),
 }));
 vi.mock('../../../src/secure-storage/runtime-require.js', () => ({
@@ -36,6 +40,8 @@ vi.mock('../../../src/secure-storage/vault-peer-verifier.js', async (importOrigi
 });
 
 import {
+  createPackagedWindowsVaultTransport,
+  sendWindowsVaultIpcRequest,
   sendWindowsVaultIpcRequestWithTransport,
   WindowsVaultTransport,
   WindowsVaultConnection,
@@ -49,6 +55,7 @@ import {
 const executablePath = 'C:\\Program Files\\InFlow\\inflow.exe';
 const nativeModulePath = 'C:\\Program Files\\InFlow\\native\\vault_peer_windows.node';
 const peer = { path: executablePath, pid: 42, principal: 'S-1-5-21-1000', uid: 0 };
+const originalPlatform = process.platform;
 
 describe('Windows vault transport', () => {
   beforeEach(() => {
@@ -65,6 +72,81 @@ describe('Windows vault transport', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+  });
+
+  it('requires Windows and an embedded native-module digest before loading the packaged transport', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    vi.stubGlobal('__VAULT_PEER_NATIVE_SHA256__', 'b'.repeat(64));
+    expect(() => createPackagedWindowsVaultTransport()).toThrow('Windows vault transport is unavailable');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.stubGlobal('__VAULT_PEER_NATIVE_SHA256__', undefined);
+    expect(() => createPackagedWindowsVaultTransport()).toThrow('Windows vault transport is unavailable');
+    expect(mocks.verifyVaultNativeModule).not.toHaveBeenCalled();
+  });
+
+  it('uses the packaged digest and executable identity for a one-shot request and closes the connection', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.stubGlobal('__VAULT_PEER_NATIVE_SHA256__', 'b'.repeat(64));
+    const connection = {};
+    mocks.native.connectPipe.mockReturnValue({ connection, peer: { ...peer, path: process.execPath } });
+    mocks.native.exchangePipeRequest.mockImplementation((_connection, frame: Buffer) => {
+      const request = decodeVaultIpcFrame(frame);
+      expect(request).toEqual({ id: 'packaged', method: 'vault.status', params: {}, version: 1 });
+      return encodeVaultIpcMessage({ id: request.id, ok: true, result: { lockState: 'locked' }, version: 1 });
+    });
+
+    expect(
+      sendWindowsVaultIpcRequest('pipe', {
+        id: 'packaged',
+        method: 'vault.status',
+        params: {},
+        version: 1,
+      }),
+    ).toMatchObject({ ok: true, result: { lockState: 'locked' } });
+    expect(mocks.verifyVaultNativeModule).toHaveBeenCalledWith(
+      resolve(dirname(process.execPath), 'native', 'vault_peer_windows.node'),
+      { expectedSha256: 'b'.repeat(64), expectedTeamId: '', requireSignature: false },
+    );
+    expect(mocks.native.beginPipeSession).toHaveBeenCalledWith(connection);
+    expect(mocks.native.closePipeConnection).toHaveBeenCalledOnce();
+    expect(mocks.native.closePipeConnection).toHaveBeenCalledWith(connection);
+  });
+
+  it('routes the default Windows vault client through the authenticated named pipe', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.stubGlobal('__VAULT_PEER_NATIVE_SHA256__', 'b'.repeat(64));
+    const connection = {};
+    mocks.native.connectPipe.mockReturnValue({ connection, peer: { ...peer, path: process.execPath } });
+    const methods: string[] = [];
+    mocks.native.exchangePipeRequest.mockImplementation((_connection, frame: Buffer) => {
+      const request = decodeVaultIpcFrame(frame);
+      if (!('method' in request)) throw new Error('Expected vault request');
+      methods.push(request.method);
+      return encodeVaultIpcMessage({
+        id: request.id,
+        ok: true,
+        version: 1,
+        result:
+          request.method === 'daemon.info'
+            ? { buildId: 'build', cliVersion: 'version', executablePath: process.execPath, pid: 42 }
+            : { daemonRunning: true, lockState: 'locked' },
+      });
+    });
+    const client = new LocalVaultClient({
+      expectedDaemon: { buildId: 'build', cliVersion: 'version', executablePath: process.execPath },
+    });
+    try {
+      await expect(client.status()).resolves.toEqual({ daemonRunning: true, lockState: 'locked' });
+      await client.lock();
+      await client.lock();
+      expect(methods).toEqual(['vault.status', 'daemon.info', 'vault.lock', 'vault.lock']);
+      expect(mocks.native.connectPipe).toHaveBeenCalledOnce();
+    } finally {
+      client.dispose();
+    }
+    expect(mocks.native.closePipeConnection).toHaveBeenCalledWith(connection);
   });
 
   it('verifies the native module and authenticates the daemon before beginning the session', () => {
@@ -169,6 +251,22 @@ describe('Windows vault transport', () => {
     });
     expect(() => createTransport()).toThrow(SecureStorageError);
   });
+
+  it.each([true, false])(
+    'preserves dispatcher state and response correlation when native acceptance is %s',
+    (accepted) => {
+      const transport = createTransport();
+      const state = { running: false, error: 109 };
+      const frame = Buffer.from('response');
+      mocks.native.pipeDispatcherState.mockReturnValue(state);
+      mocks.native.submitPipeDispatcher.mockReturnValue(accepted);
+
+      expect(transport.dispatcherState()).toEqual(state);
+      expect(transport.respond({ slot: 3, generation: 7, sequence: 11 }, frame)).toBe(accepted);
+      expect(mocks.native.submitPipeDispatcher).toHaveBeenCalledOnce();
+      expect(mocks.native.submitPipeDispatcher).toHaveBeenCalledWith(3, 7, 11, false, frame);
+    },
+  );
 
   it('authorizes native peers before routing frames and retires the exact generation', () => {
     const transport = createTransport();

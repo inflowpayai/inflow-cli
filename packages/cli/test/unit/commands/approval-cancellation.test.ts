@@ -15,6 +15,19 @@ afterEach(() => {
 });
 
 describe('cancelApproval', () => {
+  it('preserves authentication errors without transmitting a cancellation request', async () => {
+    const failure = new Error('Vault is locked.');
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    vi.stubGlobal('fetch', fetch);
+    await expect(
+      cancelApproval(
+        inflow(() => Promise.reject(failure)),
+        'approval-1',
+      ),
+    ).rejects.toBe(failure);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('rejects a failed cancellation response', async () => {
     vi.stubGlobal(
       'fetch',

@@ -107,6 +107,40 @@ function dependencies(overrides: Partial<ISubscriptionResource> = {}) {
 }
 
 describe('subscription command runners', () => {
+  it.each(['list', 'get', 'cancel'] as const)(
+    'dispatches %s through the real command schema and JSON formatter',
+    async (command) => {
+      const deps = dependencies();
+      const output: string[] = [];
+      const exit = vi.fn();
+      await createSubscriptionsCli(deps.subscriptions, deps.authStorage, deps.inflow).serve(
+        command === 'list'
+          ? ['list', '--limit', '2', '--offset', '4', '--status', 'ACTIVE', '--format', 'json']
+          : [command, 'subscription-id', '--format', 'json'],
+        {
+          exit,
+          stdout: (chunk) => {
+            output.push(chunk);
+          },
+        },
+      );
+      expect(exit).not.toHaveBeenCalledWith(1);
+      const result: unknown = JSON.parse(output.join(''));
+      if (command === 'list') {
+        expect(result).toMatchObject({ count: 1, data: [subscription] });
+        expect(deps.list).toHaveBeenCalledWith({ descending: true, limit: 2, offset: 4, status: 'active' });
+      } else if (command === 'get') {
+        expect(result).toEqual(subscription);
+        expect(deps.get).toHaveBeenCalledWith('subscription-id');
+      } else {
+        expect(result).toEqual({ cancelled: true, subscription_id: 'subscription-id' });
+        expect(deps.cancel).toHaveBeenCalledOnce();
+      }
+      expect(output.join('')).not.toContain('Loading');
+      expect(output.join('')).not.toContain('refresh');
+    },
+  );
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -354,6 +388,21 @@ describe('subscription command runners', () => {
         ([, init]) => new Headers(init?.headers).get('Authorization') === `Payment ${freshCredential}`,
       ),
     ).toBe(true);
+    const output: string[] = [];
+    const exit = vi.fn();
+    await createSubscriptionsCli(deps.subscriptions, deps.authStorage, deps.inflow).serve(
+      ['fetch', 'subscription-id', 'https://seller/resource', '--format', 'json', '--interval', '0'],
+      {
+        exit,
+        stdout: (chunk) => {
+          output.push(chunk);
+        },
+      },
+    );
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(output.join('')).toContain('subscription-id');
+    expect(output.join('')).toContain('paid');
+    expect(output.join('')).not.toContain(freshCredential);
   });
 
   it('cancels immediately and returns the stable agent shape', async () => {

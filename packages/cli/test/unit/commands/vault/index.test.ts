@@ -926,23 +926,28 @@ describe('vault command runners', () => {
     });
   });
 
-  it('prompts humans and unlocks before secret-backed commands continue', async () => {
-    const harness = deps();
-    harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState: 'locked' });
+  it.each(['locked', 'not_initialized'] as const)(
+    'prompts humans before secret-backed commands when %s',
+    async (lockState) => {
+      const harness = deps();
+      harness.client.status.mockResolvedValueOnce({ daemonRunning: true, lockState });
 
-    await expect(
-      __testing.ensureLocalVaultUnlockedWithDeps('human', {
-        ensureDaemon: harness.ensureDaemon,
-        readPassphrase: harness.readPassphrase,
-      }),
-    ).resolves.toBeUndefined();
+      await expect(
+        __testing.ensureLocalVaultUnlockedWithDeps('human', {
+          ensureDaemon: harness.ensureDaemon,
+          readPassphrase: harness.readPassphrase,
+        }),
+      ).resolves.toBeUndefined();
 
-    expect(harness.readPassphrase).toHaveBeenCalledWith(
-      'Enter the InFlow vault PIN or passphrase: ',
-      expect.anything(),
-    );
-    expect(harness.client.unlock).toHaveBeenCalledWith(Buffer.from([0, 0, 0, 0, 0, 0]));
-  });
+      expect(harness.readPassphrase).toHaveBeenCalledWith(
+        lockState === 'locked'
+          ? 'Enter the InFlow vault PIN or passphrase: '
+          : 'Create an InFlow vault PIN or passphrase: ',
+        expect.anything(),
+      );
+      expect(harness.client.unlock).toHaveBeenCalledWith(Buffer.from([0, 0, 0, 0, 0, 0]));
+    },
+  );
 
   it('requires force before resetting the vault', async () => {
     const harness = deps();
@@ -951,6 +956,39 @@ describe('vault command runners', () => {
       code: 'VAULT_RESET_REQUIRES_FORCE',
     });
     expect(harness.resetVault).not.toHaveBeenCalled();
+  });
+
+  it('clears a rejected short passphrase without sending it to the daemon', async () => {
+    const harness = deps();
+    const passphrase = Buffer.from('short');
+    harness.readPassphrase.mockResolvedValueOnce(passphrase);
+    await expect(
+      __testing.ensureLocalVaultUnlockedWithDeps('human', {
+        ensureDaemon: harness.ensureDaemon,
+        readPassphrase: harness.readPassphrase,
+      }),
+    ).rejects.toMatchObject({ secureStorageCode: 'secure_storage_invalid_path' });
+    expect(passphrase).toEqual(Buffer.alloc(5));
+    expect(harness.client.unlock).not.toHaveBeenCalled();
+  });
+
+  it('clears the entered passphrase when the daemon refuses to unlock', async () => {
+    const harness = deps();
+    const passphrase = Buffer.from('example-passphrase');
+    const failure = new SecureStorageError(
+      'secure_storage_peer_verification_failed',
+      'Vault peer verification failed.',
+    );
+    harness.readPassphrase.mockResolvedValueOnce(passphrase);
+    harness.client.unlock.mockRejectedValueOnce(failure);
+    await expect(
+      __testing.ensureLocalVaultUnlockedWithDeps('human', {
+        ensureDaemon: harness.ensureDaemon,
+        readPassphrase: harness.readPassphrase,
+      }),
+    ).rejects.toBe(failure);
+    expect(passphrase).toEqual(Buffer.alloc(passphrase.length));
+    expect(harness.client.unlock).toHaveBeenCalledOnce();
   });
 
   it('rejects agent passphrase changes without reading passphrases', async () => {
@@ -1008,6 +1046,22 @@ describe('vault command runners', () => {
     expect(current).toEqual(Buffer.alloc(8));
     expect(next).toEqual(Buffer.alloc(3));
     expect(harness.client.changePassphrase).not.toHaveBeenCalled();
+  });
+
+  it.each(['replacement', 'confirmation'])('clears entered secrets when the %s prompt is cancelled', async (stage) => {
+    const current = Buffer.from('current1');
+    const next = Buffer.from('next123');
+    const cancelled = new Error('Cancelled.');
+    const readPassphrase = vi.fn().mockResolvedValueOnce(current);
+    if (stage === 'confirmation') readPassphrase.mockResolvedValueOnce(next);
+    readPassphrase.mockRejectedValueOnce(cancelled);
+    const harness = deps({ readPassphrase });
+
+    await expect(__testing.runVaultChangePassphrase(context({}, false), harness)).rejects.toBe(cancelled);
+    expect(current).toEqual(Buffer.alloc(current.length));
+    if (stage === 'confirmation') expect(next).toEqual(Buffer.alloc(next.length));
+    expect(harness.client.changePassphrase).not.toHaveBeenCalled();
+    expect(harness.write).not.toHaveBeenCalled();
   });
 
   it('clears passphrases when changing the daemon credential fails', async () => {
@@ -1098,6 +1152,39 @@ describe('vault command runners', () => {
 
   it('registers the visible vault command surface', () => {
     expect(createVaultCli()).toBeDefined();
+  });
+
+  it.each([
+    ['unlock', 'VAULT_UNLOCK_REQUIRES_HUMAN'],
+    ['change-passphrase', 'VAULT_CHANGE_PASSPHRASE_REQUIRES_HUMAN'],
+    ['reset', 'VAULT_RESET_REQUIRES_FORCE'],
+  ])('enforces the %s safety guard through the registered command', async (command, code) => {
+    const rootDirectory = mkdtempSync(join(tmpdir(), 'inflow-vault-command-'));
+    const client = new LocalVaultClient({ rootDirectory });
+    const status = vi.spyOn(client, 'status').mockResolvedValue({ daemonRunning: true, lockState: 'locked' });
+    const unlock = vi.spyOn(client, 'unlock');
+    const reset = vi.spyOn(client, 'reset');
+    const change = vi.spyOn(client, 'changePassphrase');
+    const output: string[] = [];
+    const exit = vi.fn();
+    try {
+      await createVaultCli({ rootDirectory, client }).serve([command, '--format', 'json'], {
+        exit,
+        stdout: (chunk) => {
+          output.push(chunk);
+        },
+      });
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(JSON.parse(output.join(''))).toMatchObject({ code });
+      expect(status).toHaveBeenCalledTimes(command === 'unlock' ? 1 : 0);
+      expect(unlock).not.toHaveBeenCalled();
+      expect(reset).not.toHaveBeenCalled();
+      expect(change).not.toHaveBeenCalled();
+    } finally {
+      client.dispose();
+      vi.restoreAllMocks();
+      rmSync(rootDirectory, { force: true, recursive: true });
+    }
   });
 
   it.each([

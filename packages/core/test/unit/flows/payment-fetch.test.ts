@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { MppClient } from '@inflowpayai/mpp';
+import { encode, type MppClient } from '@inflowpayai/mpp';
+import { encodePaymentResponseHeader } from '@x402/core/http';
 import type { InflowClient as X402InflowClient } from '@inflowpayai/x402-buyer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runMppFetch, runX402Fetch, SellerAuthenticationError } from '../../../src/index.js';
@@ -30,6 +31,371 @@ async function drain<T>(events: AsyncIterable<T>): Promise<T[]> {
 afterEach(() => vi.restoreAllMocks());
 
 describe('payment fetch replay safety', () => {
+  it.each([undefined, false, true])(
+    'preserves authentication retryability (%s) without retrying a payment',
+    async (retryable) => {
+      const request = vi
+        .fn()
+        .mockRejectedValue(new SellerAuthenticationError('AEP_AUTH_FAILED', 'Authentication failed.', retryable));
+      const input = {
+        transactionId: 'tx-auth',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 1,
+        timeout: 30,
+        showBody: false,
+        sellerTransport: { request },
+      };
+      const expected = {
+        type: 'errored',
+        code: 'AEP_AUTH_FAILED',
+        message: 'Authentication failed.',
+        ...(retryable === undefined ? {} : { retryable }),
+      };
+      const mppEvents = await drain(
+        runMppFetch({
+          ...input,
+          client: mppClient({ state: 'ready', transactionId: input.transactionId, credential: 'opaque' }),
+        }).events,
+      );
+      expect(mppEvents.at(-1)).toEqual(expected);
+      expect(request).toHaveBeenCalledOnce();
+      request.mockClear();
+      const x402Events = await drain(
+        runX402Fetch({
+          ...input,
+          client: x402Client({
+            status: 'APPROVED',
+            encodedPayload: 'opaque',
+            paymentPayload: {
+              x402Version: 2,
+              payload: {},
+              accepted: {
+                scheme: 'exact',
+                network: 'eip155:8453',
+                asset: 'USDC',
+                amount: '1000',
+                payTo: 'seller',
+                maxTimeoutSeconds: 60,
+              },
+            },
+          }),
+        }).events,
+      );
+      expect(x402Events.at(-1)).toEqual(expected);
+      expect(request).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(['mpp', 'x402'] as const)(
+    'preserves %s binary responses, saved output, and settlement receipts',
+    async (protocol) => {
+      const directory = await mkdtemp(join(tmpdir(), 'inflow-fetch-response-'));
+      const bytes = new Uint8Array([0, 255, 128, 3]);
+      const receipt =
+        protocol === 'mpp'
+          ? {
+              'Payment-Receipt': encode({
+                method: 'inflow',
+                reference: 'receipt-one',
+                status: 'success',
+                timestamp: '2026-01-01T00:00:00Z',
+                settlement: { amount: '10', currency: 'USD' },
+              }),
+            }
+          : {
+              'PAYMENT-RESPONSE': encodePaymentResponseHeader({
+                success: true,
+                network: 'eip155:8453',
+                transaction: '0xsettled',
+              }),
+            };
+      try {
+        for (const saved of [false, true]) {
+          const outputFile = join(directory, `${protocol}.bin`);
+          const request = vi.fn().mockResolvedValue({
+            status: 200,
+            headers: new Headers({ ...receipt, 'Content-Type': 'application/octet-stream' }),
+            bytes,
+          });
+          const input = {
+            transactionId: 'tx-one',
+            url: 'https://seller.test/api',
+            probeOptions: { method: 'POST', headers: {}, data: 'original-body' },
+            interval: 0,
+            maxAttempts: 1,
+            timeout: 30,
+            showBody: true,
+            sellerTransport: { request },
+            ...(saved ? { outputFile } : {}),
+          };
+          const events =
+            protocol === 'mpp'
+              ? await drain(
+                  runMppFetch({
+                    ...input,
+                    client: mppClient({ transactionId: 'tx-one', state: 'ready', credential: 'opaque' }),
+                  }).events,
+                )
+              : await drain(
+                  runX402Fetch({
+                    ...input,
+                    client: x402Client({
+                      status: 'SETTLED',
+                      encodedPayload: 'opaque',
+                      paymentPayload: {
+                        x402Version: 2,
+                        accepted: {
+                          scheme: 'balance',
+                          network: 'inflow:1',
+                          amount: '10',
+                          asset: 'USD',
+                          payTo: 'seller',
+                          maxTimeoutSeconds: 60,
+                        },
+                        payload: {},
+                      },
+                    }),
+                  }).events,
+                );
+          expect(events.at(-1)).toMatchObject({
+            type: 'replayed',
+            result: {
+              outcome: 'paid',
+              bodySizeBytes: bytes.length,
+              ...(saved ? { outputSavedTo: outputFile } : { bodyBase64: Buffer.from(bytes).toString('base64') }),
+              settled:
+                protocol === 'mpp'
+                  ? { reference: 'receipt-one', status: 'success' }
+                  : { network: 'eip155:8453', transaction: '0xsettled' },
+            },
+          });
+          expect(request).toHaveBeenCalledOnce();
+          if (saved) {
+            expect(await readFile(outputFile)).toEqual(Buffer.from(bytes));
+            expect(events.at(-1)).not.toHaveProperty('result.bodyBase64');
+          }
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(['mpp', 'x402'] as const)(
+    'stops %s polling without seller replay when the wait is cancelled',
+    async (protocol) => {
+      const controller = new AbortController();
+      const sellerTransport = { request: vi.fn() };
+      const mpp = mppClient({ transactionId: 'tx-1', state: 'pending' });
+      const x402 = x402Client({ status: 'INITIATED' });
+      const getTransaction = vi.spyOn(mpp, 'getTransaction');
+      const getPayload = vi.spyOn(x402, 'getX402Payload');
+      getTransaction.mockImplementation(() => {
+        controller.abort();
+        return Promise.resolve({ transactionId: 'tx-1', state: 'pending' });
+      });
+      getPayload.mockImplementation(() => {
+        controller.abort();
+        return Promise.resolve({ status: 'INITIATED' });
+      });
+      const input = {
+        transactionId: 'tx-1',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 1,
+        maxAttempts: 0,
+        timeout: 30,
+        showBody: false,
+        signal: controller.signal,
+        sellerTransport,
+      };
+      const events =
+        protocol === 'mpp'
+          ? await drain(runMppFetch({ ...input, client: mpp }).events)
+          : await drain(runX402Fetch({ ...input, client: x402 }).events);
+      expect(events).toEqual([{ type: 'errored', code: 'PAYMENT_FAILED', message: 'Poll aborted.' }]);
+      expect(getTransaction).toHaveBeenCalledTimes(protocol === 'mpp' ? 1 : 0);
+      expect(getPayload).toHaveBeenCalledTimes(protocol === 'x402' ? 1 : 0);
+      expect(sellerTransport.request).not.toHaveBeenCalled();
+    },
+  );
+
+  it('replays an explicitly supplied MPP credential without retrieving or creating a transaction', async () => {
+    const client = mppClient({ transactionId: 'tx-1', state: 'pending' });
+    const getTransaction = vi.spyOn(client, 'getTransaction');
+    const createTransaction = vi.spyOn(client, 'createTransaction');
+    const request = vi.fn().mockResolvedValue({ status: 200, headers: new Headers(), bytes: new Uint8Array() });
+    const events = await drain(
+      runMppFetch({
+        client,
+        credential: 'opaque',
+        transactionId: 'tx-1',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0,
+        maxAttempts: 1,
+        timeout: 30,
+        showBody: false,
+        sellerTransport: { request },
+      }).events,
+    );
+    expect(events.at(-1)).toMatchObject({ type: 'replayed', result: { outcome: 'paid', transactionId: 'tx-1' } });
+    expect(getTransaction).not.toHaveBeenCalled();
+    expect(createTransaction).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledOnce();
+    expect(request.mock.calls[0]?.[0]).toMatchObject({
+      additionalAuthenticationHeaders: { Authorization: 'Payment opaque' },
+    });
+  });
+
+  it.each([
+    { state: 'failed' as const, problem: undefined, code: 'PAYMENT_FAILED', message: 'MPP transaction failed.' },
+    {
+      state: 'failed' as const,
+      problem: { title: 'Declined', detail: 'Payment was declined.', status: 400, type: 'about:blank' },
+      code: 'PAYMENT_FAILED',
+      message: 'Payment was declined.',
+    },
+    {
+      state: 'expired' as const,
+      problem: undefined,
+      code: 'PAYMENT_EXPIRED',
+      message: 'MPP transaction expired before it was ready.',
+    },
+  ])('stops MPP polling on $state with $message without replaying', async ({ state, problem, code, message }) => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const client = mppClient({ transactionId: 'tx-1', state, ...(problem === undefined ? {} : { problem }) });
+    const getTransaction = vi.spyOn(client, 'getTransaction');
+    const events = await drain(
+      runMppFetch({
+        client,
+        transactionId: 'tx-1',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0.001,
+        maxAttempts: 2,
+        timeout: 30,
+        showBody: false,
+        signal: new AbortController().signal,
+      }).events,
+    );
+    expect(events).toEqual([{ type: 'errored', code, message }]);
+    expect(getTransaction).toHaveBeenCalledOnce();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(['EXPIRED', 'DECLINED', 'GENERAL_ERROR', 'INSUFFICIENT_FUNDS'] as const)(
+    'stops x402 polling on %s without sending a seller request',
+    async (status) => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const client = x402Client({ status });
+      const getPayload = vi.spyOn(client, 'getX402Payload');
+      const events = await drain(
+        runX402Fetch({
+          client,
+          transactionId: 'tx-1',
+          url: 'https://seller.test/api',
+          probeOptions: { method: 'GET', headers: {} },
+          interval: 0.001,
+          maxAttempts: 2,
+          timeout: 30,
+          showBody: false,
+          signal: new AbortController().signal,
+        }).events,
+      );
+      expect(events).toEqual([
+        {
+          type: 'errored',
+          code:
+            status === 'EXPIRED'
+              ? 'APPROVAL_TIMEOUT'
+              : status === 'GENERAL_ERROR' || status === 'INSUFFICIENT_FUNDS'
+                ? 'APPROVAL_FAILED'
+                : 'APPROVAL_CANCELLED',
+          message:
+            status === 'EXPIRED'
+              ? 'Transaction tx-1 expired before a signed payload was available.'
+              : `Transaction tx-1 terminated as ${status} with no payload.`,
+        },
+      ]);
+      expect(getPayload).toHaveBeenCalledOnce();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reports x402 polling exhaustion without replaying a pending payment', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const events = await drain(
+      runX402Fetch({
+        client: x402Client({ status: 'PENDING' }),
+        transactionId: 'tx-1',
+        url: 'https://seller.test/api',
+        probeOptions: { method: 'GET', headers: {} },
+        interval: 0.001,
+        maxAttempts: 1,
+        timeout: 30,
+        showBody: false,
+      }).events,
+    );
+    expect(events).toEqual([
+      {
+        type: 'errored',
+        code: 'POLLING_TIMEOUT',
+        message: 'Polling timed out before the transaction reached a signed state.',
+        retryable: true,
+      },
+    ]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([new Error('disconnected'), 'disconnected'])(
+    'reports MPP polling failure without replaying: %s',
+    async (error) => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const client = mppClient({ transactionId: 'tx-1', state: 'pending' });
+      vi.spyOn(client, 'getTransaction').mockRejectedValue(error);
+      const events = await drain(
+        runMppFetch({
+          client,
+          transactionId: 'tx-1',
+          url: 'https://seller.test/api',
+          probeOptions: { method: 'GET', headers: {} },
+          interval: 0.001,
+          maxAttempts: 2,
+          timeout: 30,
+          showBody: false,
+        }).events,
+      );
+      expect(events).toEqual([{ type: 'errored', code: 'PAYMENT_FAILED', message: 'disconnected' }]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([new Error('disconnected'), 'disconnected'])(
+    'reports immediate x402 payload failure without replaying: %s',
+    async (error) => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const client = x402Client({ status: 'PENDING' });
+      vi.spyOn(client, 'getX402Payload').mockRejectedValue(error);
+      const events = await drain(
+        runX402Fetch({
+          client,
+          transactionId: 'tx-1',
+          url: 'https://seller.test/api',
+          probeOptions: { method: 'GET', headers: {} },
+          interval: 0,
+          maxAttempts: 2,
+          timeout: 30,
+          showBody: false,
+        }).events,
+      );
+      expect(events).toEqual([{ type: 'errored', code: 'PAYMENT_FAILED', message: 'disconnected' }]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
+
   it('MPP ready fetch sends exactly one credential-bearing seller request and overrides caller Authorization', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')

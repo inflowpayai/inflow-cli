@@ -7,7 +7,13 @@ import type {
   TerseCollection,
 } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
-import { OdpInspectionError, SecureStorageError, TapSigningError } from '@inflowpayai/inflow-core';
+import {
+  Inflow,
+  MemoryStorage,
+  OdpInspectionError,
+  SecureStorageError,
+  TapSigningError,
+} from '@inflowpayai/inflow-core';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CollectionsView,
@@ -17,7 +23,7 @@ import {
   createCollectionsCli,
   odpServiceFailure,
 } from '../../../src/commands/odp/service.js';
-import { createInspectCli } from '../../../src/commands/odp/index.js';
+import { createInspectCli, createOdpCli } from '../../../src/commands/odp/index.js';
 import { OdpCommandError } from '../../../src/commands/odp/command.js';
 import * as renderer from '../../../src/utils/render-ink-until-exit.js';
 
@@ -126,6 +132,187 @@ function failingCollectionSequence(): CollectionSequence<TerseCollection> {
 }
 
 describe('ODP Service and Collection commands', () => {
+  it.each([
+    { query: 'compute', parentId: undefined, limit: undefined },
+    { query: undefined, parentId: 'infrastructure', limit: undefined },
+    { query: 'compute', parentId: 'infrastructure', limit: 5 },
+  ])('forwards only the selected Collection search constraints: %j', async (filters) => {
+    const { resource, service } = collectionResource();
+    const result = await __testing.runCollectionSearch(resource, {
+      service: 'https://compute.example',
+      language: undefined,
+      next: undefined,
+      ...filters,
+    });
+    expect(result.items).toEqual([collection]);
+    expect(service.searchCollections).toHaveBeenCalledWith({
+      representation: 'terse',
+      maxPages: 1,
+      ...(filters.query === undefined ? {} : { query: filters.query }),
+      ...(filters.parentId === undefined ? {} : { parent_id: filters.parentId }),
+      ...(filters.limit === undefined ? {} : { limit: filters.limit }),
+    });
+    expect(service.continueSearchCollections).not.toHaveBeenCalled();
+  });
+
+  it('renders root Collections and a Service without MCP without inventing metadata', () => {
+    const root: Collection = { id: 'root', name: 'Root Collection', odp_version: '1.0' };
+    const list = render(
+      <CollectionsView command="list" page={{ items: [root], odp_version: '1.0' }} service="https://compute.example" />,
+    );
+    const detail = render(<CollectionView collection={root} serviceOrigin="https://compute.example" />);
+    const document = { ...inspection.document };
+    delete document.mcp;
+    const service = render(<InspectionView inspection={{ ...inspection, document }} />);
+    try {
+      expect(list.lastFrame()).toContain('Root Collection');
+      expect(detail.lastFrame()).toContain('Root Collection');
+      expect(list.lastFrame()).not.toContain('infrastructure');
+      expect(detail.lastFrame()).not.toContain('infrastructure');
+      expect(service.lastFrame()).not.toContain('MCP endpoints');
+    } finally {
+      list.unmount();
+      detail.unmount();
+      service.unmount();
+    }
+  });
+
+  it('registers all discovery groups without inspecting a Service or reading credentials', async () => {
+    const storage = new MemoryStorage();
+    const credentials = vi.spyOn(storage, 'getApiKey');
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const output: string[] = [];
+    try {
+      const client = new Inflow({ authStorage: storage });
+      credentials.mockClear();
+      await createOdpCli(client.odp).serve(['--help'], {
+        exit: vi.fn(),
+        stdout: (chunk) => {
+          output.push(chunk);
+        },
+      });
+      for (const command of ['inspect', 'actions', 'collections', 'offerings'])
+        expect(output.join('')).toContain(command);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(credentials).not.toHaveBeenCalled();
+    } finally {
+      fetch.mockRestore();
+      credentials.mockRestore();
+    }
+  });
+  it('rejects a Collection continuation combined with a new page limit before fetching', async () => {
+    const { resource } = collectionResource();
+    await expect(
+      __testing.runCollectionList(resource, {
+        service: 'https://compute.example',
+        language: undefined,
+        limit: 5,
+        next: '/odp/collections?cursor=next',
+        parentId: undefined,
+        query: undefined,
+      }),
+    ).rejects.toMatchObject({ detail: { code: 'ODP_COLLECTION_NEXT_CONFLICT', exitCode: 2 } });
+    expect(resource.service).not.toHaveBeenCalled();
+  });
+
+  it.each(['list', 'get', 'search'])('renders Collection %s in a human terminal', async (command) => {
+    const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+    const rendered = vi.spyOn(renderer, 'renderInkUntilExit').mockResolvedValue(undefined);
+    const { resource } = collectionResource();
+    try {
+      await createCollectionsCli(resource).serve(
+        command === 'list' ? [command, 'https://compute.example'] : [command, 'https://compute.example', 'compute'],
+        { exit: vi.fn(), stdout: vi.fn() },
+      );
+      expect(rendered).toHaveBeenCalledOnce();
+      const element = rendered.mock.calls[0]?.[0];
+      if (element === undefined) throw new Error('Missing Collection view');
+      const view = render(element);
+      expect(view.lastFrame()).toContain('Compute');
+      view.unmount();
+    } finally {
+      rendered.mockRestore();
+      if (descriptor === undefined) Reflect.deleteProperty(process.stdout, 'isTTY');
+      else Object.defineProperty(process.stdout, 'isTTY', descriptor);
+    }
+  });
+
+  it.each([
+    ['aborted', undefined, 'ODP_REQUEST_ABORTED', true],
+    ['http_error', undefined, 'ODP_INSPECT_HTTP_ERROR', true],
+    ['http_error', 429, 'ODP_INSPECT_HTTP_ERROR', true],
+    ['http_error', 503, 'ODP_INSPECT_HTTP_ERROR', true],
+    ['http_error', 404, 'ODP_INSPECT_HTTP_ERROR', false],
+    ['invalid_json', undefined, 'ODP_INSPECT_JSON_INVALID', false],
+    ['invalid_media_type', undefined, 'ODP_INSPECT_MEDIA_TYPE_INVALID', false],
+    ['invalid_redirect', undefined, 'ODP_INSPECT_REDIRECT_REJECTED', false],
+    ['response_too_large', undefined, 'ODP_INSPECT_RESPONSE_TOO_LARGE', false],
+    ['validation_failed', undefined, 'ODP_INSPECT_DOCUMENT_INVALID', false],
+  ] as const)(
+    'classifies inspection failure %s / %s without exposing its internal message',
+    (kind, status, code, retryable) => {
+      let caught: unknown;
+      try {
+        odpServiceFailure(new OdpInspectionError('private diagnostic', kind, status), 'FAILED', 'Inspection failed.');
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(OdpCommandError);
+      expect(caught).toMatchObject({ detail: { code, message: 'Inspection failed.', retryable } });
+    },
+  );
+
+  it.each([{ query: 'compute' }, { parentId: 'infrastructure' }, { limit: 10 }])(
+    'rejects collection continuation conflicts before creating a client: %j',
+    async (conflict) => {
+      const { resource } = collectionResource();
+      await expect(
+        __testing.runCollectionSearch(resource, {
+          language: undefined,
+          limit: undefined,
+          next: '/odp/collections/search?cursor=next',
+          parentId: undefined,
+          query: undefined,
+          service: 'https://compute.example',
+          ...conflict,
+        }),
+      ).rejects.toMatchObject({ detail: { code: 'ODP_COLLECTION_NEXT_CONFLICT', exitCode: 2 } });
+      expect(resource.service).not.toHaveBeenCalled();
+    },
+  );
+
+  it('preserves a collection list continuation and avoids a fresh inspection', async () => {
+    const { resource, service } = collectionResource();
+    const next = '/odp/collections?cursor=a%2Fb%3D';
+    const result = await __testing.runCollectionList(resource, {
+      language: 'ja',
+      limit: undefined,
+      next,
+      parentId: undefined,
+      query: undefined,
+      service: 'https://compute.example',
+    });
+    expect(result.items).toEqual([collection]);
+    expect(resource.service).toHaveBeenCalledWith({ serviceUrl: 'https://compute.example', acceptLanguage: 'ja' });
+    expect(service.continueListCollections).toHaveBeenCalledWith(next, { maxPages: 1, representation: 'terse' });
+    expect(service.inspect).not.toHaveBeenCalled();
+    expect(service.listCollections).not.toHaveBeenCalled();
+  });
+
+  it('does not query an unadvertised collection operation or suggest an unavailable alternative', async () => {
+    const { resource, service } = collectionResource();
+    service.inspect.mockResolvedValue({ ...inspection, capabilities: { ...inspection.capabilities, operations: [] } });
+    await expect(__testing.runCollectionGet(resource, 'https://compute.example', 'compute')).rejects.toMatchObject({
+      detail: {
+        code: 'ODP_OPERATION_NOT_SUPPORTED',
+        retryable: false,
+        message: 'This Service does not advertise get-collection. The Service advertises no ODP operations.',
+      },
+    });
+    expect(service.getCollection).not.toHaveBeenCalled();
+  });
+
   it('preserves locked-vault errors from credential lookup and signing', () => {
     expect.assertions(2);
     const locked = new SecureStorageError('vault_locked', 'Unlock the vault.');

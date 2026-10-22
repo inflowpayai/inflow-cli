@@ -163,7 +163,10 @@ export async function readJson(response: Response): Promise<string> {
     }
     return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
   } finally {
-    await reader.cancel();
-    reader.releaseLock();
+    try {
+      await reader.cancel();
+    } finally {
+      reader.releaseLock();
+    }
   }
 }

@@ -192,6 +192,23 @@ describe('Windows vault service workers', () => {
     expect(mocks.transport.stopDispatcher).toHaveBeenCalled();
   });
 
+  it('forwards connection closure with its exact generation to the runtime worker', async () => {
+    const closed = { type: 'closed', slot: 4, generation: 8, sequence: 3 } as const;
+    mocks.transport.startDispatcher.mockImplementation((_path, callback) => {
+      queueMicrotask(() => {
+        callback(closed);
+        mocks.parentPort.emit('message', { type: 'stop' });
+      });
+    });
+
+    await runWindowsVaultWorker({ buildId: null, cliVersion: null, role: 'pipe' }, new URL('file:///inflow.js'));
+
+    expect(mocks.parentPort.postMessage).toHaveBeenCalledWith(closed);
+    expect(mocks.transport.respond).not.toHaveBeenCalled();
+    expect(mocks.handleVaultIpcRequest).not.toHaveBeenCalled();
+    expect(mocks.transport.stopDispatcher).toHaveBeenCalled();
+  });
+
   it('fails closed if the native dispatcher stops without a service stop', async () => {
     mocks.transport.dispatcherState.mockReturnValue({ running: false, error: 1 });
     await expect(
@@ -586,6 +603,18 @@ describe('Windows vault service workers', () => {
     await rejected;
     expect(invalid.frame.every((byte) => byte === 0)).toBe(true);
     expect(mocks.handleVaultIpcRequest).not.toHaveBeenCalled();
+  });
+
+  it('ignores unrelated worker messages but rejects a request missing its verified peer', async () => {
+    const { worker, completion } = startRuntime();
+    for (const message of [null, undefined, 'unrelated', {}, { type: 'other' }]) worker.emit('message', message);
+    const { peer: _peer, ...request } = requestMessage('missing-peer');
+    const rejected = expect(completion).rejects.toThrow('pipe message is malformed');
+    worker.emit('message', request);
+    await rejected;
+    expect(request.frame.every((byte) => byte === 0)).toBe(true);
+    expect(mocks.handleVaultIpcRequest).not.toHaveBeenCalled();
+    expect(worker.postMessage.mock.calls).toEqual([[{ type: 'stop' }]]);
   });
 
   it('rejects another request while the same connection has active work', async () => {

@@ -12,7 +12,7 @@ import {
 } from '@inflowpayai/mpp';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   buildSettlement,
   mapMppError,
@@ -23,6 +23,7 @@ import {
 } from '../../../src/flows/mpp-pay.js';
 import { PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE, SellerAuthenticationError } from '../../../src/flows/payment-fetch.js';
 import { DEFAULT_ACCEPT_PAYMENT_HEADER } from '../../../src/flows/mpp-shared.js';
+import { SubscriptionResource } from '../../../src/resources/subscription.js';
 
 const SELLER = 'https://seller.test/api';
 const INFLOW = 'https://mpp.test';
@@ -332,6 +333,160 @@ async function collect(d: MppPayPipelineDeps): Promise<MppPayEvent[]> {
 }
 
 describe('runMppPayPipeline', () => {
+  it.each([true, false])(
+    'tries subscription challenges without creating another purchase (authorized=%s)',
+    async (authorized) => {
+      const first = subscriptionChallenge('month');
+      const second = subscriptionChallenge('day');
+      const credential = encode({ challenge: second, payload: { transactionId: 'subscription-payment' } });
+      const attempted: unknown[] = [];
+      const replays: string[] = [];
+      let creations = 0;
+      server.use(
+        http.get(SELLER, ({ request }) => {
+          const authorization = request.headers.get('authorization');
+          if (authorization !== null) {
+            replays.push(authorization);
+            return new HttpResponse('subscription content');
+          }
+          return new HttpResponse(null, {
+            status: 402,
+            headers: {
+              'WWW-Authenticate': `${renderChallengeHeader(first)}, ${renderChallengeHeader(second)}`,
+            },
+          });
+        }),
+        http.post(`${INFLOW}/v1/subscriptions/sub-1/authorize`, async ({ request }) => {
+          attempted.push(await request.json());
+          return authorized && attempted.length === 2
+            ? HttpResponse.json({ credential, expires: '2999-01-01T00:00:00Z' })
+            : HttpResponse.json(
+                { code: 'SUBSCRIPTION_MISMATCH', message: 'Challenge does not match subscription.' },
+                { status: 400 },
+              );
+        }),
+        http.post(`${INFLOW}/v1/transactions/mpp`, () => {
+          creations += 1;
+          return HttpResponse.json({ state: 'failed' });
+        }),
+      );
+      const events = await collect(
+        deps({
+          subscriptionId: 'sub-1',
+          intentFilter: 'subscription',
+          subscriptions: new SubscriptionResource({ apiBaseUrl: INFLOW, accessToken: 'test-token' }),
+        }),
+      );
+      expect(attempted).toEqual([{ challenge: first }, { challenge: second }]);
+      expect(creations).toBe(0);
+      expect(replays).toEqual(authorized ? [`Payment ${credential}`] : []);
+      const terminal = events.at(-1);
+      if (authorized) {
+        expect(terminal).toMatchObject({ type: 'replayed', result: { body: 'subscription content' } });
+      } else {
+        expect(terminal?.type).toBe('errored');
+        if (terminal?.type !== 'errored') throw new Error('Expected subscription authorization failure.');
+        expect(terminal.message).toContain('Challenge does not match subscription.');
+      }
+      expect(JSON.stringify(events.filter((event) => event.type === 'created'))).not.toContain(credential);
+    },
+  );
+
+  it('preserves an authentication refusal before any payment is created', async () => {
+    let creations = 0;
+    server.use(
+      http.post(`${INFLOW}/v1/transactions/mpp`, () => {
+        creations += 1;
+        return HttpResponse.json({ state: 'failed' });
+      }),
+    );
+    const events = await collect(
+      deps({
+        sellerTransport: {
+          request: () => Promise.reject(new SellerAuthenticationError('AEP_NOT_ENROLLED', 'Enroll first.')),
+        },
+      }),
+    );
+    expect(events).toEqual([{ type: 'errored', code: 'AEP_NOT_ENROLLED', message: 'Enroll first.' }]);
+    expect(creations).toBe(0);
+  });
+
+  it.each([undefined, '', 42])(
+    'does not replay a subscription credential with invalid transaction ID %s',
+    async (transactionId) => {
+      const recurring = subscriptionChallenge('month');
+      const credential = encode({
+        challenge: recurring,
+        payload: {
+          ...(transactionId === undefined ? {} : { transactionId }),
+        },
+      });
+      let replays = 0;
+      let creations = 0;
+      let authorizations = 0;
+      server.use(
+        http.get(SELLER, ({ request }) => {
+          if (request.headers.has('authorization')) replays += 1;
+          return new HttpResponse(null, {
+            status: 402,
+            headers: {
+              'WWW-Authenticate': renderChallengeHeader(recurring),
+            },
+          });
+        }),
+        http.post(`${INFLOW}/v1/subscriptions/sub-1/authorize`, async ({ request }) => {
+          authorizations += 1;
+          expect(await request.json()).toEqual({ challenge: recurring });
+          return HttpResponse.json({ credential, expires: '2999-01-01T00:00:00Z' });
+        }),
+        http.post(`${INFLOW}/v1/transactions/mpp`, () => {
+          creations += 1;
+          return HttpResponse.json({ state: 'failed' });
+        }),
+      );
+      const events = await collect(
+        deps({
+          subscriptionId: 'sub-1',
+          intentFilter: 'subscription',
+          subscriptions: new SubscriptionResource({ apiBaseUrl: INFLOW, accessToken: 'test-token' }),
+        }),
+      );
+      expect(events).toEqual([
+        {
+          type: 'errored',
+          code: 'PAYMENT_FAILED',
+          message: 'Subscription credential did not include a transaction id.',
+        },
+      ]);
+      expect(authorizations).toBe(1);
+      expect(creations).toBe(0);
+      expect(replays).toBe(0);
+      expect(JSON.stringify(events)).not.toContain(credential);
+    },
+  );
+
+  it('reports an unmatched subscription option before authorizing or creating a payment', async () => {
+    const recurring = subscriptionChallenge('month');
+    let requests = 0;
+    server.use(
+      http.get(SELLER, () => {
+        requests += 1;
+        return new HttpResponse(null, {
+          status: 402,
+          headers: {
+            'WWW-Authenticate': renderChallengeHeader(recurring),
+          },
+        });
+      }),
+    );
+    const events = await collect(deps({ intentFilter: 'subscription', optionIdFilter: 'no-matching-option' }));
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'errored', code: 'SUBSCRIPTION_OPTION_NOT_FOUND' });
+    if (events[0]?.type !== 'errored') throw new Error('Expected a subscription selection error.');
+    expect(events[0].message).toContain('No subscription option matches no-matching-option.');
+    expect(requests).toBe(1);
+  });
+
   it('uses fresh buyer authorization for an existing subscription instead of creating a transaction', async () => {
     const recurring = subscriptionChallenge('month');
     const freshCredential = encode({
@@ -629,13 +784,28 @@ describe('runMppPayPipeline', () => {
       ),
       http.get(`${INFLOW}/v1/transactions/tx-2/mpp`, () => {
         gets += 1;
-        if (gets < 2) return HttpResponse.json({ state: 'pending', transactionId: 'tx-2', retryAfterSeconds: 0 });
+        if (gets < 3) return HttpResponse.json({ state: 'pending', transactionId: 'tx-2', retryAfterSeconds: 0 });
         return HttpResponse.json({ state: 'ready', credential: 'CRED-2', transactionId: 'tx-2' });
       }),
     );
     const events = await collect(deps());
     expect(events.map((e) => e.type)).toContain('created');
     expect(events.at(-1)?.type).toBe('replayed');
+  });
+
+  it('allows interactive approval waiting with interval zero and an explicit abort signal', async () => {
+    const gets = vi.fn(() => HttpResponse.json({ state: 'ready', credential: 'CRED-2', transactionId: 'tx-2' }));
+    server.use(
+      sellerWithChallenge(),
+      http.post(`${INFLOW}/v1/transactions/mpp`, () =>
+        HttpResponse.json({ state: 'pending', transactionId: 'tx-2', approvalId: 'ap-2', retryAfterSeconds: 5 }),
+      ),
+      http.get(`${INFLOW}/v1/transactions/tx-2/mpp`, gets),
+    );
+    const events = await collect(deps({ interval: 0, awaitPayment: true, signal: new AbortController().signal }));
+    expect(events.map((event) => event.type)).toContain('created');
+    expect(events.at(-1)?.type).toBe('replayed');
+    expect(gets).toHaveBeenCalledOnce();
   });
 
   it('stops at created for a pending transaction when awaitPayment is false (two-process)', async () => {
@@ -765,6 +935,50 @@ describe('runMppPayPipeline', () => {
 
     expect(terminal).toMatchObject({ type: 'errored', code: 'SUBSCRIPTION_OPTION_AMBIGUOUS' });
   });
+
+  it.each(['missing-resource', 'rejected-authorization'] as const)(
+    'does not create a charge or replay when subscription authorization is unavailable: %s',
+    async (scenario) => {
+      const recurring = subscriptionChallenge('month');
+      const request = vi.fn(() =>
+        Promise.resolve({
+          bytes: new Uint8Array(),
+          contentType: undefined,
+          headers: new Headers({ 'WWW-Authenticate': renderChallengeHeader(recurring) }),
+          status: 402,
+        }),
+      );
+      const authorize = vi.fn().mockRejectedValue('authorization unavailable');
+      const subscriptions = {
+        authorize,
+        cancel: vi.fn(),
+        get: vi.fn(),
+        list: vi.fn(),
+      };
+      const create = vi.fn(() => HttpResponse.json({ state: 'pending', transactionId: 'unexpected' }));
+      server.use(http.post(`${INFLOW}/v1/transactions/mpp`, create));
+
+      const events = await collect(
+        deps({
+          intentFilter: 'subscription',
+          subscriptionId: 'sub-1',
+          ...(scenario === 'missing-resource' ? {} : { subscriptions }),
+          sellerTransport: { request },
+        }),
+      );
+
+      expect(events.at(-1)).toMatchObject({
+        type: 'errored',
+        message:
+          scenario === 'missing-resource'
+            ? 'Subscription authorization resource is unavailable.'
+            : 'No challenge matches this subscription.',
+      });
+      expect(create).not.toHaveBeenCalled();
+      expect(request).toHaveBeenCalledOnce();
+      expect(authorize).toHaveBeenCalledTimes(scenario === 'missing-resource' ? 0 : 1);
+    },
+  );
 
   it('selects the current subscription challenge matching the stable option id', async () => {
     const daily = subscriptionChallenge('day');

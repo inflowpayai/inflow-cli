@@ -72,6 +72,21 @@ describe('reduceMppStatus', () => {
 });
 
 describe('runMppStatus', () => {
+  it('suppresses duplicate pending snapshots while still polling through to readiness', async () => {
+    const pending = tx({ state: 'pending' });
+    const ready = tx({ state: 'ready', credential: 'private' });
+    const fetchOnce = vi
+      .fn()
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(ready);
+    expect(await drain(runMppStatus({ fetchOnce, interval: 0.001, maxAttempts: 4, timeout: 1 }).events)).toEqual([
+      { type: 'snapshot', response: pending },
+      { type: 'ready', response: ready },
+    ]);
+    expect(fetchOnce).toHaveBeenCalledTimes(3);
+  });
+
   it('emits ready when a ready transaction arrives', async () => {
     const fetchOnce = vi.fn().mockResolvedValue(tx({ state: 'ready', credential: 'cred-b64' }));
     const events = await drain(runMppStatus({ fetchOnce, interval: 0.01, maxAttempts: 5, timeout: 30 }).events);

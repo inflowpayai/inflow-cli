@@ -15,6 +15,65 @@ import {
 } from '../../../../src/commands/aep/views.js';
 
 describe('AEP views', () => {
+  it.each(['active', 'rejected'])('renders %s enrollment without a misleading follow-up', (status) => {
+    const view = render(
+      <EnrollView onComplete={() => undefined} serviceDid="did:web:service.example" status={status} />,
+    );
+    expect(view.lastFrame()).toContain(`Enrollment ${status}`);
+    expect((view.lastFrame() ?? '').includes('Use `inflow aep status`')).toBe(status !== 'active');
+    view.unmount();
+  });
+
+  it('shows advertised claims and credential expiration without inventing missing scopes', () => {
+    const inspected = render(
+      <InspectView
+        document={{
+          commands: { supported: ['enroll'] },
+          service: { did: 'did:web:service.example' },
+          claims: { required: ['contact.email'], preferred: ['person.first_name'], optional: ['person.last_name'] },
+        }}
+        serviceUrl="https://service.example"
+        onComplete={() => undefined}
+      />,
+    );
+    for (const claim of ['contact.email', 'person.first_name', 'person.last_name'])
+      expect(inspected.lastFrame()).toContain(claim);
+    inspected.unmount();
+    const status = render(
+      <StatusView
+        availableGrantTypes={['api-key']}
+        service={{ status: 'active' }}
+        serviceDid="did:web:service.example"
+        onComplete={() => undefined}
+        grants={[
+          {
+            credential_id: 'key-1',
+            grant_type: 'api-key',
+            status: 'active',
+            scopes: undefined,
+            expires_at: '2030-01-01T00:00:00Z',
+          },
+        ]}
+      />,
+    );
+    expect(status.lastFrame()).toContain('2030-01-01T00:00:00Z');
+    expect(status.lastFrame()).toMatch(/key-1\s+active\s+None/);
+    status.unmount();
+    const grant = render(
+      <GrantView
+        credentialId="key-1"
+        grantType="api-key"
+        scopes={[]}
+        serviceDid="did:web:service.example"
+        expiresAt="2030-01-01T00:00:00Z"
+        onComplete={() => undefined}
+      />,
+    );
+    expect(grant.lastFrame()).toContain('Expires: 2030-01-01T00:00:00Z');
+    expect(grant.lastFrame()).toContain('Scopes: None');
+    grant.unmount();
+  });
+
   it('renders the resource fetch summary', () => {
     const view = render(
       <FetchView
