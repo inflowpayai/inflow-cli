@@ -1012,7 +1012,7 @@ describe('plugin and skill distribution (spec 050)', () => {
     }>('.codex-plugin/plugin.json');
     expect(parsed.name).toBe('inflow');
     expect(parsed.interface?.displayName).toBe('InFlow');
-    expect(parsed.interface?.shortDescription).toContain('agentic MPP / x402 payments');
+    expect(parsed.interface?.shortDescription).toBe('Agent-native payments');
     expect(parsed.interface?.composerIcon).toBe('./assets/inflow.svg');
     expect(parsed.interface?.logo).toBe('./assets/inflow.svg');
     expect(parsed.version).toMatch(/^\d+\.\d+\.\d+/);
