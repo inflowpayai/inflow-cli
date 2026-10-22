@@ -14,11 +14,11 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "InFlow",
-    "shortDescription": "InFlow - agentic MPP / x402 payments from your machine.",
+    "shortDescription": "Agent-native payments",
     "longDescription": "Authenticate with InFlow, inspect balances and deposit addresses, and perform agent-native payments via the x402 and MPP protocols. Runs as a local CLI binary or as an MCP server.",
     "developerName": "Jarwin, Inc.",
     "category": "Finance",
-    "capabilities": [],
+    "capabilities": ["Service discovery", "Service enrollment", "Payments"],
     "websiteURL": "https://inflowcli.ai",
     "privacyPolicyURL": "https://app.inflowpay.ai/privacy",
     "termsOfServiceURL": "https://app.inflowpay.ai/terms",
