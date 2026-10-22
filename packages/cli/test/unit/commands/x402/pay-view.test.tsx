@@ -215,6 +215,7 @@ describe('PayView', () => {
       );
       try {
         await vi.waitFor(() => expect(view.lastFrame()).toContain('Bank verification required'));
+        await vi.waitFor(() => expect(view.stdin.listenerCount('readable')).toBeGreaterThan(0));
         expect(onComplete).not.toHaveBeenCalled();
         view.stdin.write('\r');
         await vi.waitFor(() => expect(openUrl).toHaveBeenCalledWith(verificationUrl));
@@ -435,37 +436,49 @@ describe('PayView', () => {
     unmount();
   });
 
-  it('renders the error frame when the SDK rejects with X402AdapterRoutingError', async () => {
-    const header = encodePaymentRequiredHeader(paymentRequired());
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response('payment required', {
-        status: 402,
-        headers: { 'PAYMENT-REQUIRED': header },
-      }),
-    );
-    const client = makeClient({
-      selectInflowRequirement: vi.fn(() => Promise.resolve(null)),
-    });
-    const { lastFrame, unmount } = render(
-      <PayView
-        url="https://seller/api"
-        method="GET"
-        deps={{
-          client,
-          apiBaseUrl: 'https://api.inflowpay.ai',
-          probeOptions: { method: 'GET', headers: {} },
-          url: 'https://seller/api',
-          signOptions: { timeoutMs: 60_000 },
-          showBody: false,
-        }}
-        onComplete={() => undefined}
-      />,
-    );
-    await vi.waitFor(() => {
-      expect(lastFrame()).toContain('NO_INFLOW_MATCH');
-    });
-    unmount();
-  });
+  it.each([false, true])(
+    'renders the no-match error with a Gateway-specific message when appropriate: %s',
+    async (gateway) => {
+      const document = paymentRequired();
+      const header = encodePaymentRequiredHeader({
+        ...document,
+        accepts: gateway
+          ? document.accepts.map((offer) => ({ ...offer, extra: { name: 'GatewayWalletBatched' } }))
+          : document.accepts,
+      });
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('payment required', {
+          status: 402,
+          headers: { 'PAYMENT-REQUIRED': header },
+        }),
+      );
+      const client = makeClient({
+        selectInflowRequirement: vi.fn(() => Promise.resolve(null)),
+      });
+      const prepare = vi.spyOn(client, 'prepareInflowPayment');
+      const { lastFrame, unmount } = render(
+        <PayView
+          url="https://seller/api"
+          method="GET"
+          deps={{
+            client,
+            apiBaseUrl: 'https://api.inflowpay.ai',
+            probeOptions: { method: 'GET', headers: {} },
+            url: 'https://seller/api',
+            signOptions: { timeoutMs: 60_000 },
+            showBody: false,
+          }}
+          onComplete={() => undefined}
+        />,
+      );
+      await vi.waitFor(() => {
+        expect(lastFrame()).toContain('NO_INFLOW_MATCH');
+      });
+      if (gateway) expect(lastFrame()).toContain('Circle Gateway payments are not supported by InFlow.');
+      expect(prepare).not.toHaveBeenCalled();
+      unmount();
+    },
+  );
 
   it('renders the replay-rejected frame (red ✗, no green ✓) when the seller still returns 402 after approval', async () => {
     const header = encodePaymentRequiredHeader(paymentRequired());

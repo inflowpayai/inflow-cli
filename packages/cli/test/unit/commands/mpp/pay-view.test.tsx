@@ -98,6 +98,7 @@ describe('PayView', () => {
       );
       try {
         await vi.waitFor(() => expect(view.lastFrame()).toContain('Bank verification required'));
+        await vi.waitFor(() => expect(view.stdin.listenerCount('readable')).toBeGreaterThan(0));
         expect(onComplete).not.toHaveBeenCalled();
         view.stdin.write('\r');
         await vi.waitFor(() => expect(openUrl).toHaveBeenCalledWith(verificationUrl));

@@ -295,11 +295,13 @@ describe('CombinedInspectView', () => {
     }
   });
 
-  it('explains filtered x402 offers while retaining the MPP section', async () => {
+  it.each(['upto', 'GatewayWalletBatched'])('explains filtered %s offers while retaining MPP', async (unsupported) => {
     const document = decodePaymentRequiredHeader(x402Header());
     const header = encodePaymentRequiredHeader({
       ...document,
-      accepts: document.accepts.map((offer) => ({ ...offer, scheme: 'upto' })),
+      accepts: document.accepts.map((offer) =>
+        unsupported === 'upto' ? { ...offer, scheme: 'upto' } : { ...offer, extra: { name: unsupported } },
+      ),
     });
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('', {
@@ -308,8 +310,10 @@ describe('CombinedInspectView', () => {
       }),
     );
     const view = renderView();
-    await vi.waitFor(() => expect(view.lastFrame()).toContain('Permit2 or upto payments'));
-    expect(view.lastFrame()).toContain('cannot authorize');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain(unsupported === 'upto' ? 'Permit2 or upto payments' : 'Circle Gateway'),
+    );
+    expect(view.lastFrame()).toContain(unsupported === 'upto' ? 'cannot authorize' : 'not supported');
     expect(view.lastFrame()).toContain('── MPP ──');
     view.unmount();
   });

@@ -1332,7 +1332,7 @@ describe('cli smoke', () => {
     );
   });
 
-  describe('x402 Permit2 offer filtering', () => {
+  describe('x402 unsupported offer filtering', () => {
     const exact = {
       scheme: 'exact',
       network: 'eip155:84532',
@@ -1343,6 +1343,10 @@ describe('cli smoke', () => {
       extra: { assetTransferMethod: 'eip3009' },
     } satisfies PaymentRequired['accepts'][number];
     const permit2 = { ...exact, extra: { assetTransferMethod: 'permit2' } };
+    const gateway = { ...exact, maxTimeoutSeconds: 604900, extra: { name: 'GatewayWalletBatched' } };
+    const permit2Warning =
+      'This endpoint only offers Permit2 or upto payments, which InFlow treasury payments cannot authorize.';
+    const gatewayWarning = 'Circle Gateway payments are not supported by InFlow.';
     const upto = { ...exact, scheme: 'upto', extra: {} };
     const solana = {
       ...exact,
@@ -1363,13 +1367,23 @@ describe('cli smoke', () => {
       it.skipIf(process.platform === 'linux' && packagedExecutable === undefined).each([
         {
           name: 'mixed',
-          offers: [permit2, upto, exact, solana, balance],
+          offers: [gateway, permit2, upto, exact, solana, balance],
           retained: [exact, solana, balance],
           mpp: false,
+          warning: undefined,
         },
-        { name: 'Permit2-only', offers: [permit2, upto], retained: [], mpp: false },
-        { name: 'Permit2-only with MPP', offers: [permit2, upto], retained: [], mpp: true },
-      ])(`filters $name offers with ${command.join(' ')}`, async ({ offers, retained, mpp }) => {
+        { name: 'Permit2-only', offers: [permit2, upto], retained: [], mpp: false, warning: permit2Warning },
+        { name: 'Permit2-only with MPP', offers: [permit2, upto], retained: [], mpp: true, warning: permit2Warning },
+        { name: 'Gateway-only', offers: [gateway], retained: [], mpp: false, warning: gatewayWarning },
+        { name: 'Gateway-only with MPP', offers: [gateway], retained: [], mpp: true, warning: gatewayWarning },
+        {
+          name: 'Gateway and Permit2',
+          offers: [gateway, permit2],
+          retained: [],
+          mpp: false,
+          warning: 'This endpoint only offers Circle Gateway, Permit2 or upto payments, which InFlow does not support.',
+        },
+      ])(`filters $name offers with ${command.join(' ')}`, async ({ offers, retained, mpp, warning }) => {
         const header = encodePaymentRequiredHeader({
           x402Version: 2,
           resource: { url: 'https://seller.test/api' },
@@ -1410,8 +1424,7 @@ describe('cli smoke', () => {
                 expect.objectContaining({
                   ...(command.length === 1 ? { protocol: 'x402' } : {}),
                   code: 'NO_INFLOW_MATCH',
-                  message:
-                    'This endpoint only offers Permit2 or upto payments, which InFlow treasury payments cannot authorize.',
+                  message: warning,
                 }),
               ]);
               expect(frame).toMatchObject({ warnings });
@@ -1425,8 +1438,8 @@ describe('cli smoke', () => {
             }
             const decoded = await run(['x402', 'decode', header, '--format', 'json']);
             expect(decoded.exitCode).toBe(0);
-            expect(decoded.stdout).toContain('permit2');
-            expect(decoded.stdout).toContain('upto');
+            const parsedDecoded = parseAgentJson(decoded.stdout);
+            expect(Array.isArray(parsedDecoded) ? parsedDecoded[0] : parsedDecoded).toMatchObject({ accepts: offers });
           },
         );
       });
@@ -1436,7 +1449,9 @@ describe('cli smoke', () => {
       { name: 'Permit2-only', offers: [permit2, upto], scheme: undefined, selected: undefined },
       { name: 'explicit Permit2 exact', offers: [permit2], scheme: 'exact', selected: undefined },
       { name: 'explicit upto', offers: [upto, exact], scheme: 'upto', selected: undefined },
-      { name: 'mixed exact', offers: [permit2, upto, exact], scheme: 'exact', selected: exact },
+      { name: 'Gateway-only', offers: [gateway], scheme: undefined, selected: undefined },
+      { name: 'explicit Gateway exact', offers: [gateway], scheme: 'exact', selected: undefined },
+      { name: 'mixed exact', offers: [gateway, permit2, upto, exact], scheme: 'exact', selected: exact },
       { name: 'mixed Solana', offers: [permit2, upto, solana], scheme: undefined, selected: solana },
       { name: 'mixed balance', offers: [permit2, upto, balance], scheme: undefined, selected: balance },
     ])(
@@ -1505,6 +1520,9 @@ describe('cli smoke', () => {
               expect(`${result.stdout}${result.stderr}`).toContain(
                 scheme === undefined ? 'NO_INFLOW_MATCH' : 'NO_FILTERED_MATCH',
               );
+              if (offers.every((offer) => offer === gateway)) {
+                expect(`${result.stdout}${result.stderr}`).toContain(gatewayWarning);
+              }
             } else {
               expect(submitted).toEqual([expect.objectContaining({ accept: selected })]);
               expect(result.stdout).toContain('test-approval');

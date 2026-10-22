@@ -58,6 +58,30 @@ async function collect(deps: Parameters<typeof runInspectPipeline>[0]): Promise<
 }
 
 describe('runInspectPipeline — accepts decoding', () => {
+  it.each([undefined, 'exact'])('explains Gateway-only inspection with filter %s', async (schemeFilter) => {
+    const document = paymentRequired();
+    mock402(
+      encodePaymentRequiredHeader({
+        ...document,
+        accepts: document.accepts.map((offer) => ({ ...offer, extra: { name: 'GatewayWalletBatched' } })),
+      }),
+    );
+    const events = await collect({
+      url: SELLER,
+      probeOptions: { method: 'GET', headers: {} },
+      ...(schemeFilter === undefined ? {} : { schemeFilter }),
+    });
+    expect(events[0]).toMatchObject(
+      schemeFilter === undefined
+        ? { type: 'accepts', result: { accepts: [], warning: 'Circle Gateway payments are not supported by InFlow.' } }
+        : {
+            type: 'errored',
+            code: 'NO_FILTERED_MATCH',
+            message: 'Circle Gateway payments are not supported by InFlow.',
+          },
+    );
+  });
+
   it.each([false, true])('distinguishes empty seller offers from filtered offers: %s', async (filtered) => {
     const document = paymentRequired();
     const header = encodePaymentRequiredHeader({
@@ -124,7 +148,7 @@ describe('runInspectPipeline — accepts decoding', () => {
     expect(events[0]).toEqual({
       type: 'errored',
       code: 'NO_FILTERED_MATCH',
-      message: 'Seller has no accepts[] entry matching --scheme=exact. Available: (none).',
+      message: 'This endpoint only offers Permit2 or upto payments, which InFlow treasury payments cannot authorize.',
     });
   });
 

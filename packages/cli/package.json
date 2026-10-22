@@ -47,7 +47,7 @@
     "@inflowpayai/mpp": "^0.12.0",
     "@inflowpayai/mpp-buyer": "^0.8.1",
     "@inflowpayai/x402": "^0.12.0",
-    "@inflowpayai/x402-buyer": "^0.11.1",
+    "@inflowpayai/x402-buyer": "^0.11.2",
     "@modelcontextprotocol/server": "2.0.0-alpha.4",
     "@node-rs/argon2": "^2.0.2",
     "@x402/core": "^2.27.0",
