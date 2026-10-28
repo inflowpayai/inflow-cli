@@ -33,7 +33,11 @@ const artifactRoot = resolve(process.env.INFLOW_MACOS_ARTIFACT_DIR ?? join(repoR
 const buildRoot = join(artifactRoot, 'build');
 const nativeBuildDirectory = join(buildRoot, 'native');
 const nativeBuildPath = join(nativeBuildDirectory, 'vault_peer_darwin.node');
-const nativeBuildEnv = { ...process.env, INFLOW_VAULT_NATIVE_BUILD_DIR: nativeBuildDirectory };
+const nativeBuildEnv = {
+  ...process.env,
+  MACOSX_DEPLOYMENT_TARGET: '13.5',
+  INFLOW_VAULT_NATIVE_BUILD_DIR: nativeBuildDirectory,
+};
 const appPath = join(artifactRoot, `${packageName}.app`);
 const executablePath = join(appPath, 'Contents/MacOS/inflow');
 const linkedExecutablePath = join(artifactRoot, 'bin/inflow');
@@ -120,7 +124,10 @@ if (!skipNotarize) {
   notarize();
   staple();
   verifySignature({ assessGatekeeper: true, gatekeeperOptional: false });
+  zipArtifact();
 }
+
+run(process.execPath, ['scripts/verify-macos-archive.mjs', zipPath, ...(!skipNotarize ? ['--notarized'] : [])]);
 
 writeFileSync(
   join(artifactRoot, 'manifest.json'),
@@ -303,7 +310,7 @@ function writeEntitlements() {
 <dict>
   <key>com.apple.security.cs.allow-jit</key>
   <true/>
-</dict>
+${process.arch === 'x64' ? '  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>\n  <true/>\n' : ''}</dict>
 </plist>
 `,
   );
@@ -351,7 +358,7 @@ function writeInfoPlist() {
   <key>CFBundleVersion</key>
   <string>${escapePlist(version)}</string>
   <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
+  <string>13.5</string>
 </dict>
 </plist>
 `,

@@ -69,6 +69,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Test macOS archive verification
+        run: node --test scripts/verify-macos-archive.test.mjs
+
       - name: Prepare pinned Argon2 source
         run: |
           node scripts/prepare-argon2-source.mjs "$RUNNER_TEMP/argon2-20190702"
@@ -151,18 +154,6 @@ jobs:
             INFLOW_CODESIGN_IDENTITY=- pnpm build:macos-app
           fi
 
-      - name: Verify macOS artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f '${{ steps.metadata.outputs.artifact }}'
-          dist/macos/bin/inflow --version
-          codesign --verify --deep --strict --verbose=2 dist/macos/InFlow.app
-          if [[ '${{ inputs.production }}' == 'true' ]]; then
-            xcrun stapler validate dist/macos/InFlow.app
-            spctl --assess --type execute --verbose=2 dist/macos/InFlow.app
-          fi
-
       - name: Write artifact checksum
         shell: bash
         run: |
@@ -242,6 +233,17 @@ jobs:
           echo "x64_checksum=$x64_checksum" >> "$GITHUB_OUTPUT"
           (cd "$(dirname "$arm64")" && shasum -a 256 -c "$(basename "$arm64_checksum")")
           (cd "$(dirname "$x64")" && shasum -a 256 -c "$(basename "$x64_checksum")")
+
+      - name: Verify Intel archive under Rosetta
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license
+          options=('${{ steps.artifacts.outputs.x64 }}')
+          if [[ '${{ inputs.production }}' == 'true' ]]; then
+            options+=(--notarized)
+          fi
+          node scripts/verify-macos-archive.mjs "${options[@]}"
 
       - name: Render Homebrew Cask
         env:

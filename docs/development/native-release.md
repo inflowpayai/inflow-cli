@@ -18,6 +18,16 @@ production artifacts enter the combined release only through `native release`.
 The `macos release` workflow builds Apple Silicon and Intel application bundles, signs their nested code, notarizes and
 staples them, renders and audits the Homebrew Cask, and stages the verified artifacts for the combined release.
 
+The application and its compiled vault module target macOS 13.5. Archive verification checks every bundled native binary
+against the application's declared minimum and runs `--version` and `--help` from the extracted ZIP. Intel archives also
+run under Rosetta on the Apple Silicon staging runner. Production archives must include a valid stapled notarization
+ticket.
+
+Production builds for both architectures use the hardened runtime with `allow-jit`. Intel executables also require
+`allow-unsigned-executable-memory` for V8 startup under Rosetta. This exception permits executable memory outside
+`MAP_JIT`; it does not disable library validation or enable debugger access. Apple Silicon executables do not receive
+that exception.
+
 Production runs require these repository secrets:
 
 - `APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64`

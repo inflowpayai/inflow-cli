@@ -162,6 +162,18 @@ install_macos() {
     fail 'The InFlow application signing identity is invalid.'
   spctl --assess --type execute --verbose=2 "$application_path"
 
+  minimum_macos="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$application_path/Contents/Info.plist")"
+  current_macos="$(sw_vers -productVersion)"
+  awk -v current="$current_macos" -v minimum="$minimum_macos" 'BEGIN {
+    split(current, actual, "."); split(minimum, required, ".");
+    for (i = 1; i <= 3; i++) {
+      if (actual[i] + 0 > required[i] + 0) exit 0;
+      if (actual[i] + 0 < required[i] + 0) exit 1;
+    }
+  }' || fail "InFlow requires macOS $minimum_macos or newer; this Mac runs $current_macos."
+  "$application_path/Contents/MacOS/inflow" --version ||
+    fail 'InFlow could not start. Your existing installation has not been replaced.'
+
   install_root="${INFLOW_INSTALL_DIR:-$HOME/.local/share/inflow}"
   bin_root="${INFLOW_BIN_DIR:-$HOME/.local/bin}"
   target_application="$install_root/InFlow.app"

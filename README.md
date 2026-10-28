@@ -52,9 +52,10 @@ On macOS, Debian/Ubuntu, and Fedora/RHEL:
 curl -fsSL https://inflowcli.ai/install.sh | bash
 ```
 
-On macOS, the installer selects the current architecture, verifies the checksum plus code-signing and Gatekeeper checks,
-installs `InFlow.app` into `~/.local/share/inflow`, and links `inflow` into `~/.local/bin`. On Linux, it verifies the
-OpenPGP-signed release manifest and package checksum before installing the matching Debian or RPM system package.
+On macOS 13.5 or newer, the installer selects the current architecture, verifies the checksum plus code-signing and
+Gatekeeper checks, installs `InFlow.app` into `~/.local/share/inflow`, and links `inflow` into `~/.local/bin`. On Linux,
+it verifies the OpenPGP-signed release manifest and package checksum before installing the matching Debian or RPM system
+package.
 
 Run the installer again to upgrade to the latest GitHub Release. Uninstall with:
 
