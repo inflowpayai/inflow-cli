@@ -22,6 +22,30 @@ import {
 } from '@inflowpayai/inflow-core';
 
 type ErrorShape = { code: string; message: string };
+
+it.each([false, true])(
+  'reads and resets the selected Windows vault without changing build mode (development=%s)',
+  async (development) => {
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', development);
+    const client = new LocalVaultClient();
+    vi.spyOn(client, 'status').mockResolvedValue({ daemonRunning: true, lockState: 'locked' });
+    vi.spyOn(client, 'info').mockRejectedValue(new Error('stop before mutation'));
+    vi.spyOn(client, 'reset').mockRejectedValue(new Error('stop before mutation'));
+    try {
+      await expect(readVaultStatusWithoutStarting({ client })).resolves.toEqual({
+        daemonRunning: true,
+        lockState: 'locked',
+      });
+      await expect(resetLocalVault({ client })).rejects.toThrow('stop before mutation');
+    } finally {
+      client.dispose();
+      Object.defineProperty(process, 'platform', { value: platform });
+      vi.unstubAllGlobals();
+    }
+  },
+);
 type VaultTestClient = {
   changePassphrase: ReturnType<typeof vi.fn>;
   getPolicy: ReturnType<typeof vi.fn>;

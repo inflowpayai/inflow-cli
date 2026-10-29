@@ -4,12 +4,14 @@ import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   defaultVaultRoot,
   linuxVaultServiceUserId,
   removeVaultLocalState,
   usesLinuxVaultService,
+  usesWindowsVaultService,
+  usesDevelopmentVault,
   vaultFilePaths,
 } from '../../../src/secure-storage/vault-files.js';
 
@@ -29,6 +31,8 @@ describe('vault file cleanup', () => {
     server = undefined;
     Object.defineProperty(process, 'platform', { value: originalPlatform });
     Object.defineProperty(process, 'execPath', { value: originalExecPath });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     if (originalXdgDataHome === undefined) {
       delete process.env['XDG_DATA_HOME'];
     } else {
@@ -42,6 +46,45 @@ describe('vault file cleanup', () => {
     process.env['XDG_DATA_HOME'] = tmpDir;
 
     expect(defaultVaultRoot()).toBe(join(tmpDir, 'inflow'));
+  });
+
+  it('preserves the Linux data directory for development builds', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
+    process.env['XDG_DATA_HOME'] = tmpDir;
+    expect(usesDevelopmentVault()).toBe(true);
+    expect(defaultVaultRoot()).toBe(join(tmpDir, 'inflow'));
+    expect(vaultFilePaths().socket).toBe(join(tmpDir, 'inflow', 'run', 'vault.sock'));
+  });
+
+  it.each([undefined, false, 'true'])('fails closed for development marker %s', (marker) => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', marker);
+    vi.stubEnv('__INFLOW_DEVELOPMENT_VAULT__', 'true');
+    expect(usesDevelopmentVault()).toBe(false);
+  });
+
+  it('does not change macOS paths for a development build', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const expected = defaultVaultRoot();
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
+    expect(usesDevelopmentVault()).toBe(true);
+    expect(defaultVaultRoot()).toBe(expected);
+  });
+
+  it('preserves the Windows data directory while using a per-user development pipe', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    expect(usesWindowsVaultService()).toBe(true);
+    expect(vaultFilePaths().socket).toBe('\\\\.\\pipe\\InFlowVault');
+    const root = defaultVaultRoot();
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
+    expect(usesWindowsVaultService()).toBe(false);
+    expect(defaultVaultRoot()).toBe(root);
+    expect(defaultVaultRoot()).toMatch(/\.inflow$/);
+    const socket = vaultFilePaths(tmpDir).socket;
+    expect(socket).toMatch(/^\\\\\.\\pipe\\InFlowDevelopment-[a-f0-9]{64}$/);
+    expect(vaultFilePaths(tmpDir).socket).toBe(socket);
+    expect(vaultFilePaths(join(tmpDir, 'another')).socket).not.toBe(socket);
   });
 
   it('uses the platform fallback data directory outside macOS and Linux', () => {

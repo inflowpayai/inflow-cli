@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VaultControlConnection } from '../../../src/secure-storage/vault-control-connection.js';
 import {
   decodeVaultIpcFrame,
@@ -23,11 +23,14 @@ function request(id: string, params: Record<string, unknown> = {}): VaultIpcRequ
 describe('vault control connection', () => {
   const cleanup: (() => Promise<void> | void)[] = [];
 
+  beforeEach(() => vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true));
+
   afterEach(async () => {
     for (const close of cleanup.reverse()) await close();
     cleanup.length = 0;
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   async function setup(

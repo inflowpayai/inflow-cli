@@ -25,10 +25,12 @@ describe('SyncVaultSecretStore', () => {
   }
 
   beforeEach(() => {
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-sync-vault-store-'));
   });
 
   afterEach(async () => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
     for (const value of stores.splice(0)) value.dispose();
     if (child !== undefined && child.exitCode === null && child.signalCode === null) {
@@ -89,7 +91,7 @@ describe('SyncVaultSecretStore', () => {
     'authenticates the isolated child process before exchanging secrets',
     async () => {
       child = await startVaultSocketFixture(join(tmpDir, 'run', 'vault.sock'));
-      vi.spyOn(peerVerification, 'shouldRequireVaultPeerVerification').mockReturnValue(true);
+      vi.spyOn(peerVerification, 'shouldRequireUnixSocketPeerVerification').mockReturnValue(true);
       const verify = vi.spyOn(peerVerification, 'verifyVaultPeerVerificationConfig');
       const client = store({ rootDirectory: tmpDir });
       const reference = { purpose: 'api-key', reference: 'verified-child' };
@@ -249,6 +251,7 @@ describe('SyncVaultSecretStore', () => {
       tmpDir,
       `
       const { startLocalVaultDaemon } = await import('./dist/index.js');
+      globalThis.__INFLOW_DEVELOPMENT_VAULT__ = true;
       const daemon = await startLocalVaultDaemon({ rootDirectory: process.argv[1], buildId: 'real', cliVersion: 'test' });
       process.once('SIGTERM', async () => { await daemon.close(); process.exit(0); });
       process.stdout.write('ready\\n');
@@ -427,6 +430,7 @@ function esmProbeSource(): string {
   return `
 import { Buffer } from 'node:buffer';
 import { SyncVaultSecretStore } from './dist/index.js';
+globalThis.__INFLOW_DEVELOPMENT_VAULT__ = true;
 const rootDirectory = process.argv[1];
 const store = new SyncVaultSecretStore({ rootDirectory, timeoutMs: 5000 });
 const reference = { purpose: 'api-key', reference: 'esm-api-key' };

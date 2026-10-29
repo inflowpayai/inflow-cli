@@ -1,9 +1,11 @@
 import type { Buffer } from 'node:buffer';
 import { realpathSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import { SecureStorageError } from './errors.js';
 import { runtimeRequire } from './runtime-require.js';
+import { usesDevelopmentVault } from './vault-files.js';
 import {
   clearVaultIpcBytes,
   decodeVaultIpcFrame,
@@ -15,6 +17,7 @@ import {
 import { verifyVaultNativeModule, type VaultSocketPeer } from './vault-peer-verifier.js';
 
 declare const __VAULT_PEER_NATIVE_SHA256__: string | undefined;
+declare const __VAULT_PEER_NATIVE_RELATIVE_PATH__: string | undefined;
 
 const verifiedConnection = Symbol('verifiedWindowsVaultConnection');
 
@@ -23,6 +26,10 @@ interface WindowsVaultPipeConnection {
 }
 
 interface WindowsVaultNativeModule {
+  currentPrincipal(): string;
+  prepareDevelopmentDirectory(path: string): void;
+  connectDevelopmentPipe(path: string): { connection: unknown; peer: VaultSocketPeer };
+  startDevelopmentPipeDispatcher(path: string, callback: (event: WindowsPipeEvent) => void): void;
   startPipeDispatcher(path: string, callback: (event: WindowsPipeEvent) => void): void;
   stopPipeDispatcher(): void;
   pipeDispatcherState(): { running: boolean; error: number };
@@ -58,6 +65,7 @@ export type VerifiedWindowsPipeEvent = WindowsPipeIdentity &
   ({ type: 'request'; frame: Buffer; peer: VaultSocketPeer & { principal: string } } | { type: 'closed' });
 
 export interface WindowsVaultTransportOptions {
+  development?: boolean;
   expectedExecutablePath: string;
   expectedNativeModuleSha256: string;
   expectedPublisher?: string;
@@ -71,7 +79,8 @@ export interface VerifiedWindowsVaultConnection extends WindowsVaultPipeConnecti
 
 export class WindowsVaultTransport {
   private readonly expectedExecutablePath: string;
-  private readonly expectedPublisher: string;
+  private readonly expectedPublisher: string | undefined;
+  private readonly developmentPrincipal: string | undefined;
   private readonly native: WindowsVaultNativeModule;
   private readonly peers = new Map<number, { generation: number; peer: VaultSocketPeer & { principal: string } }>();
 
@@ -83,13 +92,28 @@ export class WindowsVaultTransport {
     });
     this.native = runtimeRequire()(options.nativeModulePath) as WindowsVaultNativeModule;
     this.expectedExecutablePath = canonicalWindowsPath(options.expectedExecutablePath);
-    const selfSigner = this.native.verifyAuthenticode(this.expectedExecutablePath);
-    if (!/^[0-9a-f]{64}$/u.test(selfSigner.thumbprint)) throw peerVerificationError();
-    this.expectedPublisher = options.expectedPublisher ?? selfSigner.publisher;
+    if (options.development === true) {
+      if (!usesDevelopmentVault()) throw peerVerificationError();
+      this.developmentPrincipal = this.native.currentPrincipal();
+      if (!/^S-\d+(?:-\d+)+$/u.test(this.developmentPrincipal)) throw peerVerificationError();
+    } else {
+      const selfSigner = this.native.verifyAuthenticode(this.expectedExecutablePath);
+      if (!/^[0-9a-f]{64}$/u.test(selfSigner.thumbprint)) throw peerVerificationError();
+      this.expectedPublisher = options.expectedPublisher ?? selfSigner.publisher;
+    }
+  }
+
+  prepareDevelopmentDirectory(path: string): void {
+    if (this.developmentPrincipal === undefined) throw peerVerificationError();
+    this.native.prepareDevelopmentDirectory(path);
   }
 
   startDispatcher(path: string, callback: (event: VerifiedWindowsPipeEvent) => void): void {
-    this.native.startPipeDispatcher(path, (event) => {
+    const start =
+      this.developmentPrincipal === undefined
+        ? this.native.startPipeDispatcher.bind(this.native)
+        : this.native.startDevelopmentPipeDispatcher.bind(this.native);
+    start(path, (event) => {
       if (event.type === 'verify') {
         let peer: VaultSocketPeer & { principal: string };
         try {
@@ -135,7 +159,11 @@ export class WindowsVaultTransport {
   }
 
   connect(path: string): VerifiedWindowsVaultConnection {
-    const connection = this.verify(this.native.connectPipe(path));
+    const connection = this.verify(
+      this.developmentPrincipal === undefined
+        ? this.native.connectPipe(path)
+        : this.native.connectDevelopmentPipe(path),
+    );
     try {
       this.native.beginPipeSession(connection.connection);
       return connection;
@@ -194,9 +222,13 @@ export class WindowsVaultTransport {
       canonicalWindowsPath(peer.path) !== this.expectedExecutablePath
     )
       throw peerVerificationError();
-    const signer = this.native.verifyAuthenticode(peer.path);
-    if (signer.publisher !== this.expectedPublisher || !/^[0-9a-f]{64}$/u.test(signer.thumbprint))
-      throw peerVerificationError();
+    if (this.developmentPrincipal !== undefined) {
+      if (peer.principal !== this.developmentPrincipal) throw peerVerificationError();
+    } else {
+      const signer = this.native.verifyAuthenticode(peer.path);
+      if (signer.publisher !== this.expectedPublisher || !/^[0-9a-f]{64}$/u.test(signer.thumbprint))
+        throw peerVerificationError();
+    }
     return { ...peer, principal: peer.principal };
   }
 }
@@ -213,7 +245,31 @@ export function createPackagedWindowsVaultTransport(): WindowsVaultTransport {
 }
 
 export function sendWindowsVaultIpcRequest(path: string, request: VaultIpcRequest): VaultIpcResponse {
-  return sendWindowsVaultIpcRequestWithTransport(createPackagedWindowsVaultTransport(), path, request);
+  return sendWindowsVaultIpcRequestWithTransport(createWindowsVaultTransport(), path, request);
+}
+
+export function windowsVaultNativeModulePath(): string {
+  if (!usesDevelopmentVault()) return resolve(dirname(process.execPath), 'native', 'vault_peer_windows.node');
+  const directory = dirname(fileURLToPath(import.meta.url));
+  return resolve(
+    directory,
+    typeof __VAULT_PEER_NATIVE_RELATIVE_PATH__ === 'string'
+      ? __VAULT_PEER_NATIVE_RELATIVE_PATH__
+      : `${basename(directory) === 'dist' ? '..' : '../..'}/native/build/vault_peer_windows.node`,
+  );
+}
+
+export function createWindowsVaultTransport(): WindowsVaultTransport {
+  if (!usesDevelopmentVault()) return createPackagedWindowsVaultTransport();
+  if (process.platform !== 'win32' || typeof __VAULT_PEER_NATIVE_SHA256__ !== 'string') {
+    throw new SecureStorageError('secure_storage_unavailable', 'Windows development vault transport is unavailable.');
+  }
+  return new WindowsVaultTransport({
+    development: true,
+    expectedExecutablePath: process.execPath,
+    expectedNativeModuleSha256: __VAULT_PEER_NATIVE_SHA256__,
+    nativeModulePath: windowsVaultNativeModulePath(),
+  });
 }
 
 export class WindowsVaultConnection {
@@ -226,7 +282,7 @@ export class WindowsVaultConnection {
   constructor(
     private readonly path: string,
     private readonly verifyDaemon?: (info: Record<string, unknown>) => void,
-    private readonly createTransport = createPackagedWindowsVaultTransport,
+    private readonly createTransport = createWindowsVaultTransport,
   ) {}
 
   request(request: VaultIpcRequest): VaultIpcResponse {
@@ -264,6 +320,18 @@ export class WindowsVaultConnection {
       }
     } catch (cause) {
       this.retire();
+      if (
+        cause instanceof Error &&
+        'code' in cause &&
+        (cause.code === 'EPIPEHANDSHAKE' || cause.code === 'EPIPEEXCHANGE') &&
+        'windowsError' in cause &&
+        // ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_NOT_CONNECTED.
+        (cause.windowsError === 109 || cause.windowsError === 232 || cause.windowsError === 233)
+      ) {
+        throw new SecureStorageError('secure_storage_unavailable', 'The InFlow vault daemon is unavailable.', {
+          cause,
+        });
+      }
       throw cause;
     }
   }

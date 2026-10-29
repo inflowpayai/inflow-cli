@@ -518,8 +518,13 @@ export class Storage implements AuthStorage, AepStateStorage, PublicDocumentStat
   }
 
   invalidateSessions(): void {
-    this.repository.initialize();
-    this.repository.upsertSetting('vault.reset_generation', randomUUID());
+    try {
+      this.repository.initialize();
+      this.repository.upsertSetting('vault.reset_generation', randomUUID());
+    } finally {
+      this.initialized = false;
+      this.repository.close();
+    }
   }
 
   resetLocalState(): void {

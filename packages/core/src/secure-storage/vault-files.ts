@@ -1,8 +1,15 @@
 import { lstatSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { SecureStorageError } from './errors.js';
+
+declare const __INFLOW_DEVELOPMENT_VAULT__: boolean | undefined;
+
+export function usesDevelopmentVault(): boolean {
+  return typeof __INFLOW_DEVELOPMENT_VAULT__ === 'boolean' && __INFLOW_DEVELOPMENT_VAULT__;
+}
 
 export interface VaultFilePaths {
   database: string;
@@ -37,11 +44,17 @@ export function vaultFilePaths(rootDirectory?: string): VaultFilePaths {
     socket:
       rootDirectory === undefined && usesLinuxVaultService()
         ? '/run/inflow/vault.sock'
-        : rootDirectory === undefined && process.platform === 'win32'
-          ? '\\\\.\\pipe\\InFlowVault'
-          : path.join(runDirectory, 'vault.sock'),
+        : process.platform === 'win32' && usesDevelopmentVault()
+          ? `\\\\.\\pipe\\InFlowDevelopment-${createHash('sha256').update(path.resolve(root).toLowerCase()).digest('hex')}`
+          : rootDirectory === undefined && process.platform === 'win32'
+            ? '\\\\.\\pipe\\InFlowVault'
+            : path.join(runDirectory, 'vault.sock'),
     writeAheadLog: `${database}-wal`,
   };
+}
+
+export function usesWindowsVaultService(): boolean {
+  return process.platform === 'win32' && !usesDevelopmentVault();
 }
 
 export function usesLinuxVaultService(): boolean {
@@ -90,7 +103,7 @@ export async function removeVaultLocalState(paths: VaultFilePaths): Promise<void
   await removePath(paths.writeAheadLog);
   await removePath(paths.sharedMemory);
   await removePath(paths.sidecar);
-  await removePath(paths.socket);
+  if (process.platform !== 'win32' || !usesDevelopmentVault()) await removePath(paths.socket);
 }
 
 async function removePath(filePath: string): Promise<void> {

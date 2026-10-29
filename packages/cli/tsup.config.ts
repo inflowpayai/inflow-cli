@@ -57,6 +57,7 @@ export default defineConfig({
     __CLI_BUILD_ID__: JSON.stringify(buildId),
     __CLI_NAME__: JSON.stringify(manifest.name),
     __CLI_VERSION__: JSON.stringify(manifest.version),
+    __INFLOW_DEVELOPMENT_VAULT__: 'true',
     __SKILL_BODIES__: JSON.stringify(skillBodies),
     __VAULT_PEER_NATIVE_RELATIVE_PATH__: JSON.stringify(vaultPeerNative.relativePath),
     __VAULT_PEER_NATIVE_SHA256__: JSON.stringify(vaultPeerNative.sha256),

@@ -15,10 +15,10 @@ import {
   type VaultIpcRequest,
   type VaultIpcResponse,
 } from './vault-ipc.js';
-import { linuxVaultServiceUserId, usesLinuxVaultService, vaultFilePaths } from './vault-files.js';
+import { linuxVaultServiceUserId, usesDevelopmentVault, usesLinuxVaultService, vaultFilePaths } from './vault-files.js';
 import {
   createVaultPeerVerificationConfig,
-  shouldRequireVaultPeerVerification,
+  shouldRequireUnixSocketPeerVerification,
   verifyVaultPeerVerificationConfig,
   type VaultPeerVerificationConfig,
 } from './vault-peer-verifier.js';
@@ -115,7 +115,7 @@ export class SyncVaultSecretStore implements SyncSecureSecretStore {
       params,
       version: 1,
     };
-    if (process.platform === 'win32' && this.rootDirectory === undefined) {
+    if (process.platform === 'win32' && (this.rootDirectory === undefined || usesDevelopmentVault())) {
       this.windowsConnection ??= new WindowsVaultConnection(
         this.socketPath,
         this.expectedDaemon === undefined
@@ -272,7 +272,7 @@ function createPeerVerification(
   socketPath: string,
   rootDirectory: string | undefined,
 ): (VaultPeerVerificationConfig & { linuxBrokerPublicKeyPath?: string }) | undefined {
-  if (!shouldRequireVaultPeerVerification()) return undefined;
+  if (!shouldRequireUnixSocketPeerVerification()) return undefined;
   const configuration =
     rootDirectory === undefined && usesLinuxVaultService()
       ? createVaultPeerVerificationConfig({

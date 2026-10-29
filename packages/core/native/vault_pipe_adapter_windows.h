@@ -181,8 +181,9 @@ static napi_value start_pipe_dispatcher(napi_env env, napi_callback_info info) {
   napi_valuetype type;
   wchar_t *path = NULL;
   vault_pipe_adapter *existing = NULL;
+  void *mode = NULL;
   if (napi_get_instance_data(env, (void **)&existing) != napi_ok || existing != NULL ||
-      napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc != 2 ||
+      napi_get_cb_info(env, info, &argc, argv, NULL, &mode) != napi_ok || argc != 2 ||
       napi_typeof(env, argv[1], &type) != napi_ok || type != napi_function || !string_argument(env, argv[0], &path)) {
     free(path);
     napi_throw(env, make_error(env, "EINVAL", "expected one dispatcher per worker, pipe path and callback"));
@@ -196,7 +197,14 @@ static napi_value start_pipe_dispatcher(napi_env env, napi_callback_info info) {
   }
   if (napi_add_env_cleanup_hook(env, vault_adapter_cleanup, adapter) != napi_ok) goto failure;
   adapter->cleanup_registered = 1;
-  adapter->dispatcher = vault_pipe_dispatcher_create(path, vault_adapter_emit, adapter);
+  if (mode == NULL) {
+    adapter->dispatcher = vault_pipe_dispatcher_create(path, vault_adapter_emit, adapter);
+  } else {
+    wchar_t *security = development_security(0);
+    if (security == NULL) goto failure;
+    adapter->dispatcher = vault_pipe_dispatcher_create_with_security(path, vault_adapter_emit, adapter, security);
+    free(security);
+  }
   free(path);
   path = NULL;
   if (adapter->dispatcher == NULL) goto failure;
