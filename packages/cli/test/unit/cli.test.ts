@@ -706,6 +706,16 @@ describe.skipIf(!existsSync(DIST_CLI))(
       const manifest = JSON.parse(stdout) as { commands: { name: string }[] };
       const names = manifest.commands.map((c) => c.name);
       expect(names).not.toContain('user get');
+      expect(names).not.toContain('vault service start');
+    });
+
+    it('keeps service recovery callable without listing it in vault help', async () => {
+      const help = await run(['vault', '--help'], { env: TEST_ENV });
+      expect(help.exitCode).toBe(0);
+      expect(help.stdout).not.toContain('service');
+      const recovery = await run(['vault', 'service', 'start', '--help'], { env: TEST_ENV });
+      expect(recovery.exitCode).toBe(0);
+      expect(recovery.stdout).toContain('Start the vault service with administrator privileges.');
     });
 
     it('--llms manifest lists the balances list command', async () => {

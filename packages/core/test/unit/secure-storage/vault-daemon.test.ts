@@ -33,6 +33,8 @@ import { VaultSocketReader } from '../../../src/secure-storage/vault-socket-read
 import * as protectedKey from '../../../src/secure-storage/vault-protected-key.js';
 import { runLocalVaultDaemon } from '../../../src/secure-storage/vault-daemon.js';
 
+const authenticationResponse = `49465231${'ab'.repeat(64)}`;
+
 describe('local vault daemon lifecycle', () => {
   let daemon: LocalVaultDaemon | undefined;
   let tmpDir: string | undefined;
@@ -395,11 +397,19 @@ describe('local vault daemon lifecycle', () => {
           messages.push(message);
           const transferredSocket = new Socket();
           messageHandler?.(
-            { peer: { path: process.execPath, pid: process.pid, uid: process.getuid?.() ?? 0 }, type: 'vault-client' },
+            {
+              authenticationResponse,
+              peer: { path: process.execPath, pid: process.pid, uid: process.getuid?.() ?? 0 },
+              type: 'vault-client',
+            },
             transferredSocket,
           );
           messageHandler?.(
-            { peer: { path: process.execPath, pid: process.pid, uid: process.getuid?.() ?? 0 }, type: 'vault-client' },
+            {
+              authenticationResponse,
+              peer: { path: process.execPath, pid: process.pid, uid: process.getuid?.() ?? 0 },
+              type: 'vault-client',
+            },
             new Socket(),
           );
           handlers.get(shutdownEvent)?.();
@@ -432,6 +442,56 @@ describe('local vault daemon lifecycle', () => {
     ).rejects.toThrow('requires its authenticated broker');
   });
 
+  it('handles a request sent immediately after the transferred worker acknowledges authentication', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-handoff-'));
+    const socketPath = join(tmpDir, 'worker.sock');
+    const peer = { path: process.execPath, pid: process.pid, uid: process.getuid?.() ?? 0 };
+    const handlers = new Map<string, () => void>();
+    let transfer: ((message: unknown, handle: unknown) => void) | undefined;
+    const service = runLinuxTransferredVaultServiceWithRuntime(
+      { rootDirectory: join(tmpDir, 'vaults') },
+      'linux',
+      {
+        exit() {},
+        on(_event, handler) {
+          transfer = handler;
+        },
+        once(event, handler) {
+          handlers.set(event, handler);
+        },
+        send() {},
+      },
+      (_socket, received) => received,
+    );
+    const server = createServer({ pauseOnConnect: true }, (socket) => {
+      transfer?.({ authenticationResponse, peer, type: 'vault-client' }, socket);
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    try {
+      const response = await sendVaultIpcRequest(
+        socketPath,
+        { id: 'immediate', method: 'daemon.info', params: {}, version: 1 },
+        (socket) =>
+          new Promise((resolve, reject) => {
+            socket.once('error', reject);
+            socket.once('data', (data: Buffer) => {
+              socket.off('error', reject);
+              if (data.toString('hex') !== authenticationResponse) {
+                reject(new Error('Unexpected authentication response'));
+                return;
+              }
+              resolve(peer);
+            });
+          }),
+      );
+      expect(response).toMatchObject({ id: 'immediate', ok: true });
+    } finally {
+      handlers.get('disconnect')?.();
+      await service;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('validates broker control messages and peer identities', () => {
     expect(__testing.isReadyMessage({ type: 'vault-service-ready' })).toBe(true);
     expect(__testing.isReadyMessage(null)).toBe(false);
@@ -439,6 +499,7 @@ describe('local vault daemon lifecycle', () => {
 
     expect(
       __testing.isBrokerTransferMessage({
+        authenticationResponse,
         peer: { path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 },
         type: 'vault-client',
       }),
@@ -505,7 +566,8 @@ describe('local vault daemon lifecycle', () => {
       ),
     });
     const signalHandlers = new Map<'SIGINT' | 'SIGTERM', () => void>();
-    const authenticateClient = vi.fn(() => Promise.resolve());
+    const send = vi.spyOn(child, 'send');
+    const authenticateClient = vi.fn(() => Promise.resolve(authenticationResponse));
     let connection: ((socket: Socket) => void) | undefined;
     const run = __testing.runLinuxVaultBrokerWithDependencies(
       3,
@@ -548,7 +610,79 @@ describe('local vault daemon lifecycle', () => {
 
     await expect(run).resolves.toBeUndefined();
     expect(authenticateClient).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(
+      { authenticationResponse, peer: { path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 }, type: 'vault-client' },
+      expect.any(Socket),
+      { keepOpen: false },
+      expect.any(Function),
+    );
   });
+
+  it.each(['SIGINT', 'SIGTERM'] as const)(
+    'closes pending clients and disconnects the worker before draining on %s',
+    async (signal) => {
+      const child = new EventEmitter() as ChildProcess;
+      let finishAuthentication: ((value: string) => void) | undefined;
+      const authentication = new Promise<string>((resolve) => {
+        finishAuthentication = resolve;
+      });
+      let finishDraining: (() => void) | undefined;
+      const draining = new Promise<void>((resolve) => {
+        finishDraining = resolve;
+      });
+      const pending = new Socket();
+      const late = new Socket();
+      let connection: ((socket: Socket) => void) | undefined;
+      const handlers = new Map<string, () => void>();
+      const closeServer = vi.fn(() => draining);
+      const authenticateClient = vi.fn(() => authentication);
+      const send = vi.fn();
+      const disconnect = vi.fn(() => {
+        expect(closeServer).toHaveBeenCalledOnce();
+        expect(pending.destroyed).toBe(true);
+        Object.assign(child, { connected: false });
+        finishDraining?.();
+      });
+      Object.assign(child, { connected: true, disconnect, send });
+      const run = __testing.runLinuxVaultBrokerWithDependencies(
+        3,
+        { gid: 1000, uid: 1000 },
+        {
+          authenticateClient,
+          closeServer,
+          createBrokerServer(listener) {
+            connection = listener;
+            return createServer();
+          },
+          createPeerVerifier: () => () => ({ path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 }),
+          ensureBrokerKey: () => Promise.resolve(generateKeyPairSync('ed25519').privateKey),
+          listenServer: () => {
+            connection?.(pending);
+            return Promise.resolve();
+          },
+          runtime: {
+            once(event, handler) {
+              handlers.set(event, handler);
+            },
+          },
+          spawnService: () => child,
+        },
+      );
+      child.emit('message', { type: 'vault-service-ready' });
+      await vi.waitFor(() => expect(authenticateClient).toHaveBeenCalledOnce());
+      handlers.get(signal)?.();
+      handlers.get(signal === 'SIGINT' ? 'SIGTERM' : 'SIGINT')?.();
+      connection?.(late);
+      finishAuthentication?.(authenticationResponse);
+      await new Promise((resolve) => setImmediate(resolve));
+      child.emit('exit', 0, null);
+      await run;
+      expect(late.destroyed).toBe(true);
+      expect(disconnect).toHaveBeenCalledOnce();
+      expect(closeServer).toHaveBeenCalledOnce();
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
 
   it('closes the tenant manager when Linux service socket startup fails', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-service-failure-'));
@@ -578,7 +712,7 @@ describe('local vault daemon lifecycle', () => {
       3,
       { gid: 1000, uid: 1000 },
       {
-        authenticateClient: vi.fn(() => Promise.resolve()),
+        authenticateClient: vi.fn(() => Promise.resolve(authenticationResponse)),
         closeServer: () => Promise.resolve(),
         createBrokerServer: () => createServer(),
         createPeerVerifier: () => () => ({ path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 }),
@@ -627,11 +761,16 @@ describe('local vault daemon lifecycle', () => {
     await new Promise<void>((resolve) => child.once('exit', () => resolve()));
     const socket = new Socket();
     const destroy = vi.spyOn(socket, 'destroy');
-    __testing.transferSocketToVaultService(child, socket, {
-      path: '/opt/inflow/bin/inflow',
-      pid: 123,
-      uid: 1000,
-    });
+    __testing.transferSocketToVaultService(
+      child,
+      socket,
+      {
+        path: '/opt/inflow/bin/inflow',
+        pid: 123,
+        uid: 1000,
+      },
+      authenticationResponse,
+    );
     expect(destroy).toHaveBeenCalledOnce();
   });
 
@@ -645,6 +784,24 @@ describe('local vault daemon lifecycle', () => {
       listening.listen(0, '127.0.0.1', resolve);
     });
     await expect(__testing.closeBroker(listening)).resolves.toBeUndefined();
+  });
+
+  it('destroys the parent socket when transferring its handle throws', () => {
+    const child = new EventEmitter() as ChildProcess;
+    Object.assign(child, {
+      connected: true,
+      send: () => {
+        throw new Error('channel closed');
+      },
+    });
+    const socket = new Socket();
+    __testing.transferSocketToVaultService(
+      child,
+      socket,
+      { path: '/opt/inflow/bin/inflow', pid: 123, uid: 1000 },
+      authenticationResponse,
+    );
+    expect(socket.destroyed).toBe(true);
   });
 
   it('closes the daemon before exiting on termination signals', async () => {

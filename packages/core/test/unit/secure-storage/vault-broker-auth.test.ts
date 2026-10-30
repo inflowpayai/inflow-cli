@@ -122,8 +122,9 @@ describe('Linux vault broker authentication', () => {
         { path: '/opt/inflow/bin/inflow', pid: process.pid, uid: currentUserId() },
         pair.privateKey,
       );
-      const peer = await verifier(client);
-      await broker;
+      const verification = verifier(client);
+      accepted.write(Buffer.from(await broker, 'hex'));
+      const peer = await verification;
       return peer;
     });
 
@@ -141,8 +142,11 @@ describe('Linux vault broker authentication', () => {
         { path: '/opt/inflow/bin/inflow', pid: process.pid, uid: currentUserId() },
         pair.privateKey,
       );
-      await verifier(client);
-      await broker;
+      const verification = verifier(client);
+      const response = await broker;
+      expect(client.readableLength).toBe(0);
+      accepted.write(Buffer.from(response, 'hex'));
+      await verification;
 
       expect(accepted.isPaused()).toBe(true);
     });
@@ -214,7 +218,7 @@ describe('Linux vault broker authentication', () => {
           pair.privateKey,
         );
         const verification = verifier(client);
-        await broker;
+        accepted.write(Buffer.from(await broker, 'hex'));
         return verification;
       }),
     ).rejects.toMatchObject({ secureStorageCode: 'secure_storage_peer_verification_failed' });
@@ -277,27 +281,19 @@ describe('Linux vault broker authentication', () => {
     });
   });
 
-  it('handles the socket error emitted after a failed authentication write callback', async () => {
+  it('prepares the signed response without writing to the client before socket transfer', async () => {
     const pair = generateKeyPairSync('ed25519');
-    const failure = Object.assign(new Error('broken pipe'), { code: 'EPIPE' });
     await withSocketPair(async (client, accepted) => {
-      let authenticationErrorListenerPresent = false;
-      const emitted = new Promise<void>((resolve) => {
-        accepted.on('error', () => {
-          authenticationErrorListenerPresent = accepted.listenerCount('error') > 1;
-          resolve();
-        });
-      });
-      vi.spyOn(accepted, '_write').mockImplementation((_chunk, _encoding, callback) => callback(failure));
+      const write = vi.spyOn(accepted, 'write');
       const authentication = authenticateLinuxVaultBrokerClient(
         accepted,
         { path: '/opt/inflow/bin/inflow', pid: 1, uid: 1 },
         pair.privateKey,
       );
       client.write(Buffer.concat([Buffer.from('IFB1'), Buffer.alloc(32, 7)]));
-      await expect(authentication).rejects.toBe(failure);
-      await emitted;
-      expect(authenticationErrorListenerPresent).toBe(true);
+      await expect(authentication).resolves.toMatch(/^49465231[0-9a-f]{128}$/);
+      expect(write).not.toHaveBeenCalled();
+      expect(accepted.isPaused()).toBe(true);
     });
   });
 

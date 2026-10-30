@@ -1,6 +1,6 @@
 import process from 'node:process';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { closeSync, lstatSync } from 'node:fs';
+import { closeSync, lstatSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createServer, Socket, type Server } from 'node:net';
 import type { VaultBackend } from './vault-backend.js';
@@ -280,7 +280,10 @@ export async function runLinuxVaultBrokerEntry(
     createBrokerServer: (listener) => createServer({ pauseOnConnect: true }, listener),
     createPeerVerifier: createVaultSocketPeerVerifier,
     ensureBrokerKey: ensureLinuxVaultBrokerKey,
-    listenServer: listenBroker,
+    listenServer: async (server, descriptor) => {
+      await listenBroker(server, descriptor);
+      notifyLinuxServiceReady(process.env);
+    },
     runtime: process,
     spawnService: (identity) =>
       spawn(process.execPath, ['--daemon', 'vault-service'], {
@@ -290,6 +293,20 @@ export async function runLinuxVaultBrokerEntry(
         uid: identity.uid,
       }),
   });
+}
+
+function notifyLinuxServiceReady(environment: NodeJS.ProcessEnv): void {
+  if (environment['INFLOW_VAULT_READY_FD'] === undefined) return;
+  const ready = parseNonNegativeInteger(environment['INFLOW_VAULT_READY_FD']);
+  const lock = parseNonNegativeInteger(environment['INFLOW_VAULT_LOCK_FD']);
+  if (ready === undefined || ready <= 3 || lock === undefined || lock <= 3 || lock === ready) {
+    throw new Error('Invalid service startup descriptors.');
+  }
+  writeSync(lock, 'READY\n');
+  writeSync(ready, 'READY\n');
+  closeSync(ready);
+  delete environment['INFLOW_VAULT_LOCK_FD'];
+  delete environment['INFLOW_VAULT_READY_FD'];
 }
 
 /** @internal */
@@ -302,38 +319,55 @@ export async function runLinuxVaultBrokerWithDependencies(
   await waitForVaultServiceReady(child);
   const brokerPrivateKey = await dependencies.ensureBrokerKey();
   const verifyPeer = dependencies.createPeerVerifier({ requireSameUser: false });
+  const pendingSockets = new Set<Socket>();
+  let closing = false;
   const server = dependencies.createBrokerServer((socket) => {
+    if (closing) {
+      socket.destroy();
+      return;
+    }
+    pendingSockets.add(socket);
+    socket.once('close', () => pendingSockets.delete(socket));
     void Promise.resolve()
       .then(() => verifyPeer(socket))
       .then(async (peer) => {
         socket.resume();
-        await dependencies.authenticateClient(socket, peer, brokerPrivateKey);
+        const authenticationResponse = await dependencies.authenticateClient(socket, peer, brokerPrivateKey);
         socket.pause();
-        return peer;
+        return { authenticationResponse, peer };
       })
       .then(
-        (peer) => transferSocketToVaultService(child, socket, peer),
+        ({ authenticationResponse, peer }) => {
+          if (closing) socket.destroy();
+          else transferSocketToVaultService(child, socket, peer, authenticationResponse);
+        },
         () => socket.destroy(),
       );
   });
   await dependencies.listenServer(server, activationFileDescriptor);
-  const close = async (): Promise<void> => {
-    await dependencies.closeServer(server);
+  let closePromise: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    if (closePromise !== undefined) return closePromise;
+    closing = true;
+    closePromise = dependencies.closeServer(server);
+    for (const socket of pendingSockets) socket.destroy();
+    // Server closure waits for transferred sockets; disconnect makes the worker close them.
     if (child.connected) child.disconnect();
+    return closePromise;
   };
-  dependencies.runtime.once('SIGINT', () => {
-    void close();
-  });
-  dependencies.runtime.once('SIGTERM', () => {
-    void close();
-  });
   await new Promise<void>((resolve, reject) => {
+    dependencies.runtime.once('SIGINT', () => {
+      void close().catch(reject);
+    });
+    dependencies.runtime.once('SIGTERM', () => {
+      void close().catch(reject);
+    });
     child.once('error', reject);
     child.once('exit', (code, signal) => {
-      void dependencies.closeServer(server).finally(() => {
+      void close().then(() => {
         if (code === 0 || signal === 'SIGTERM') resolve();
         else reject(new Error('The InFlow vault service exited unexpectedly.'));
-      });
+      }, reject);
     });
   });
 }
@@ -396,6 +430,8 @@ export async function runLinuxTransferredVaultServiceWithRuntime(
     try {
       const peer = verifyPeer(handle, message.peer);
       handleConnection(handle, peer);
+      // Acknowledging before transfer lets the client's first request get buffered and lost in the broker.
+      handle.write(Buffer.from(message.authenticationResponse, 'hex'));
       handle.resume();
     } catch {
       handle.destroy();
@@ -459,14 +495,23 @@ function waitForVaultServiceReady(child: ChildProcess): Promise<void> {
   });
 }
 
-function transferSocketToVaultService(child: ChildProcess, socket: Socket, peer: VaultSocketPeer): void {
+function transferSocketToVaultService(
+  child: ChildProcess,
+  socket: Socket,
+  peer: VaultSocketPeer,
+  authenticationResponse: string,
+): void {
   if (!child.connected) {
     socket.destroy();
     return;
   }
-  child.send({ peer, type: 'vault-client' }, socket, { keepOpen: true }, () => {
+  try {
+    child.send({ authenticationResponse, peer, type: 'vault-client' }, socket, { keepOpen: false }, () => {
+      socket.destroy();
+    });
+  } catch {
     socket.destroy();
-  });
+  }
 }
 
 function listenBroker(server: Server, fileDescriptor: number): Promise<void> {
@@ -503,11 +548,19 @@ function isReadyMessage(message: unknown): boolean {
   return typeof message === 'object' && message !== null && 'type' in message && message.type === 'vault-service-ready';
 }
 
-function isBrokerTransferMessage(message: unknown): message is { peer: VaultSocketPeer; type: 'vault-client' } {
+function isBrokerTransferMessage(
+  message: unknown,
+): message is { authenticationResponse: string; peer: VaultSocketPeer; type: 'vault-client' } {
   if (typeof message !== 'object' || message === null || !('type' in message) || message.type !== 'vault-client') {
     return false;
   }
   if (!('peer' in message) || typeof message.peer !== 'object' || message.peer === null) return false;
+  if (
+    !('authenticationResponse' in message) ||
+    typeof message.authenticationResponse !== 'string' ||
+    !/^49465231[0-9a-f]{128}$/.test(message.authenticationResponse)
+  )
+    return false;
   const peer = message.peer as Record<string, unknown>;
   return (
     typeof peer['path'] === 'string' &&
@@ -545,6 +598,7 @@ function lifetimeOptions(options: LocalVaultDaemonOptions | LinuxVaultServiceOpt
 
 /** @internal */
 export const __testing = {
+  notifyLinuxServiceReady,
   closeBroker,
   isBrokerTransferMessage,
   isReadyMessage,

@@ -106,7 +106,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Linux packaging tools
-        run: sudo apt-get update && sudo apt-get install --yes cpio rpm
+        run: sudo apt-get update && sudo apt-get install --yes cpio rpm bubblewrap libseccomp-dev
 
       - name: Prepare pinned Argon2 source
         run: |
@@ -161,6 +161,22 @@ jobs:
           sudo dpkg -i dist/linux/inflow_*_amd64.deb
           sudo swapoff -a
           sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/usr/bin/inflow pnpm smoke:linux-system-vault
+
+      - name: Test non-systemd vault lifecycle
+        run: |
+          # Hosted runners make /opt world-writable; the installed service requires a trusted parent.
+          sudo chmod 0755 /opt
+          sudo env "PATH=$PATH" unshare --mount --fork sh -ec '
+            mount --make-rprivate /
+            mount -t tmpfs tmpfs /run
+            chmod 0755 /run
+            mount -t tmpfs tmpfs /var/lib/inflow
+            chown inflow:inflow /var/lib/inflow
+            chmod 0700 /var/lib/inflow
+            mount -t tmpfs tmpfs /var/lib/inflow-broker
+            chmod 0755 /var/lib/inflow-broker
+            INFLOW_DISPOSABLE_CONTAINER=1 node scripts/test-linux-non-systemd-vault.mjs
+          '
 
       - name: Test installed Linux inspection and MCP lifecycle
         run: |

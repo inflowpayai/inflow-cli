@@ -67,6 +67,19 @@ run(process.execPath, ['scripts/verify-standalone-runtime.mjs']);
 copyArgon2Runtime();
 copyMcpRuntime();
 copyVaultPeerRuntime();
+run('cc', [
+  '-O2',
+  '-Wall',
+  '-Wextra',
+  '-Werror',
+  '-fstack-protector-strong',
+  '-D_FORTIFY_SOURCE=2',
+  '-Wl,-z,relro,-z,now',
+  'packaging/linux/vault-launcher.c',
+  '-lseccomp',
+  '-o',
+  join(runtimePath, 'vault-launcher'),
+]);
 writeSeaMain();
 writeFileSync(
   seaConfigPath,
@@ -92,6 +105,7 @@ run(resolvePostject(), [
 linkExecutable();
 normalizeRuntimePermissions(packageRoot);
 chmodSync(executablePath, 0o755);
+chmodSync(join(runtimePath, 'vault-launcher'), 0o755);
 run('chown', ['-R', '0:0', packageRoot]);
 archive();
 const nativePackages = buildNativePackages();
@@ -185,11 +199,21 @@ function buildDebianPackage() {
       `Architecture: ${debianArchitecture()}`,
       'Maintainer: InFlow <support@inflowpay.ai>',
       'Depends: systemd',
+      'Recommends: bubblewrap (>= 0.9), libseccomp2 (>= 2.5.5)',
       'Section: utils',
       'Priority: optional',
       'Description: InFlow agent-native payment command line',
       '',
     ].join('\n'),
+  );
+  writeMaintainerScript(
+    join(controlDirectory, 'preinst'),
+    `#!/bin/sh
+set -e
+if [ ! -d /run/systemd/system ] && [ -d /run/inflow ] && [ -x /opt/inflow/lib/inflow/vault-launcher ]; then
+  /opt/inflow/lib/inflow/vault-launcher --stop
+fi
+`,
   );
   writeMaintainerScript(
     join(controlDirectory, 'postinst'),
@@ -212,11 +236,13 @@ fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
   systemd-tmpfiles --create /usr/lib/tmpfiles.d/inflow.conf
 fi
-if command -v systemctl >/dev/null 2>&1; then
+if [ -d /run/systemd/system ]; then
   systemctl daemon-reload || true
   systemctl preset inflow-vault.socket || systemctl enable inflow-vault.socket || true
   systemctl stop inflow-vault.service inflow-vault.socket || true
   systemctl start inflow-vault.socket || true
+else
+  /opt/inflow/bin/inflow vault service start
 fi
 `,
   );
@@ -224,9 +250,12 @@ fi
     join(controlDirectory, 'prerm'),
     `#!/bin/sh
 set -e
-if [ "$1" = remove ] && command -v systemctl >/dev/null 2>&1; then
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
   systemctl stop inflow-vault.service inflow-vault.socket || true
   systemctl disable inflow-vault.socket || true
+fi
+if [ ! -d /run/systemd/system ] && [ -d /run/inflow ]; then
+  /opt/inflow/lib/inflow/vault-launcher --stop
 fi
 `,
   );
@@ -234,7 +263,7 @@ fi
     join(controlDirectory, 'postrm'),
     `#!/bin/sh
 set -e
-if command -v systemctl >/dev/null 2>&1; then
+if [ -d /run/systemd/system ]; then
   systemctl daemon-reload || true
 fi
 if [ "$1" = purge ]; then
@@ -267,6 +296,8 @@ License: MIT
 Source0: %{name}-%{version}.tar.gz
 BuildArch: ${rpmArchitecture()}
 Requires: systemd
+Recommends: bubblewrap >= 0.9
+Recommends: libseccomp >= 2.5.5
 
 %description
 InFlow agent-native and human-accessible payment command line.
@@ -296,24 +327,36 @@ fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
   systemd-tmpfiles --create /usr/lib/tmpfiles.d/inflow.conf || :
 fi
-if command -v systemctl >/dev/null 2>&1; then
+if [ -d /run/systemd/system ]; then
   systemctl daemon-reload || :
   systemctl preset inflow-vault.socket || systemctl enable inflow-vault.socket || :
 fi
 
 %posttrans
-systemctl stop inflow-vault.service inflow-vault.socket >/dev/null 2>&1 || :
-systemctl start inflow-vault.socket >/dev/null 2>&1 || :
+if [ -d /run/systemd/system ]; then
+  systemctl stop inflow-vault.service inflow-vault.socket >/dev/null 2>&1 || :
+  systemctl start inflow-vault.socket >/dev/null 2>&1 || :
+else
+  /opt/inflow/bin/inflow vault service start
+fi
 
 %preun
-if [ "$1" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+if [ ! -d /run/systemd/system ] && [ -d /run/inflow ]; then
+  /opt/inflow/lib/inflow/vault-launcher --stop
+fi
+if [ "$1" -eq 0 ] && [ -d /run/systemd/system ]; then
   systemctl stop inflow-vault.service inflow-vault.socket || :
   systemctl disable inflow-vault.socket || :
 fi
 
 %postun
-if command -v systemctl >/dev/null 2>&1; then
+if [ -d /run/systemd/system ]; then
   systemctl daemon-reload || :
+fi
+
+%pre
+if [ ! -d /run/systemd/system ] && [ -d /run/inflow ] && [ -x /opt/inflow/lib/inflow/vault-launcher ]; then
+  /opt/inflow/lib/inflow/vault-launcher --stop
 fi
 
 %files
@@ -340,6 +383,7 @@ function installLinuxTree(root) {
   cpSync(join(packageRoot, 'lib'), join(root, 'opt/inflow/lib'), { recursive: true });
   normalizeRuntimePermissions(join(root, 'opt/inflow'));
   chmodSync(join(root, 'opt/inflow/bin/inflow'), 0o755);
+  chmodSync(join(root, 'opt/inflow/lib/inflow/vault-launcher'), 0o755);
   mkdirSync(join(root, 'usr/bin'), { recursive: true });
   symlinkSync('/opt/inflow/bin/inflow', join(root, 'usr/bin/inflow'));
   mkdirSync(join(root, 'usr/lib/systemd/system'), { recursive: true });

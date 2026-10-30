@@ -20,6 +20,7 @@ import {
 import { Cli, Errors } from 'incur';
 import { mcpTool } from '../../mcp-metadata.js';
 import { emptyOptions, policySetOptions, resetOptions } from './schema.js';
+import { createVaultServiceCli, hasSystemdManager, SERVICE_START_INSTRUCTION } from './service.js';
 
 interface VaultCommandContext {
   agent: boolean;
@@ -326,8 +327,9 @@ async function ensureLocalVaultUnlockedWithDeps(mode: LocalVaultUnlockMode, deps
   }
 }
 
-export function createVaultCli(options: LocalVaultDaemonClientOptions = {}) {
+export function createVaultCli(options: LocalVaultDaemonClientOptions = {}, includeService = false) {
   const cli = Cli.create('vault', { description: 'Local credential vault commands' });
+  if (includeService) cli.command(createVaultServiceCli());
 
   cli.command('status', {
     description: 'Show local vault status.',
@@ -549,6 +551,9 @@ async function ensureLocalVaultDaemonWithClient(
     await recoverVaultPeerVerificationFailure(cause, options);
   }
   if (options.rootDirectory === undefined && (usesLinuxVaultService() || usesWindowsVaultService())) {
+    if (usesLinuxVaultService() && !hasSystemdManager()) {
+      throw new SecureStorageError('secure_storage_unavailable', SERVICE_START_INSTRUCTION);
+    }
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
       if (await canUseDaemon(client, options)) return client;
