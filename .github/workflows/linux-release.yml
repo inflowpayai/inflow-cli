@@ -278,10 +278,14 @@ jobs:
 
       - name: Install from signed RPM repository
         run: |
+          # Allow Bubblewrap to create the service sandbox; its own seccomp filter remains enforced.
           docker run --rm \
+            --cap-add SYS_ADMIN --cap-add SYS_PTRACE \
+            --security-opt seccomp=unconfined \
             --volume "$PWD/dist/linux/rpm:/repository:ro" \
             fedora:42 \
-            sh -c '
+            sh -ec '
+              dnf --assumeyes install systemd bubblewrap libseccomp
               printf "%s\n" \
                 "[inflow]" \
                 "name=InFlow" \
@@ -293,6 +297,8 @@ jobs:
                 > /etc/yum.repos.d/inflow.repo
               dnf --assumeyes --disablerepo="*" --enablerepo=inflow install inflow
               inflow --version
+              status=$(inflow vault status --format json)
+              printf "%s\n" "$status" | grep "\"lock_state\": \"not_initialized\""
               dnf --assumeyes remove inflow
             '
 
@@ -427,18 +433,26 @@ jobs:
 
       - name: Test Fedora signed installer lifecycle
         run: |
+          # Allow Bubblewrap to create the service sandbox; its own seccomp filter remains enforced.
           docker run --rm \
+            --cap-add SYS_ADMIN --cap-add SYS_PTRACE \
+            --security-opt seccomp=unconfined \
             --volume "$PWD/dist/linux/release:/release:ro" \
             fedora:42 \
-            sh -c '
+            sh -ec '
               dnf --assumeyes install curl gnupg2
               INFLOW_RELEASE_BASE_URL=file:///release sh /release/install.sh
-              mkdir -p /var/lib/inflow /var/lib/inflow-broker /run/inflow
-              touch /var/lib/inflow-broker/private.der
+              status=$(inflow vault status --format json)
+              printf "%s\n" "$status" | grep "\"lock_state\": \"not_initialized\""
+              test -s /var/lib/inflow-broker/private.der
+              sha256sum /var/lib/inflow-broker/private.der > /tmp/inflow-broker-key.sha256
               sh /release/install.sh --uninstall
               test -d /var/lib/inflow
-              test -f /var/lib/inflow-broker/private.der
+              sha256sum --check /tmp/inflow-broker-key.sha256
               INFLOW_RELEASE_BASE_URL=file:///release sh /release/install.sh
+              status=$(inflow vault status --format json)
+              printf "%s\n" "$status" | grep "\"lock_state\": \"not_initialized\""
+              sha256sum --check /tmp/inflow-broker-key.sha256
               sh /release/install.sh --purge
               test ! -e /var/lib/inflow
               test ! -e /var/lib/inflow-broker
