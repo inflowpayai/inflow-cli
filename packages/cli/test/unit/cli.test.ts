@@ -100,6 +100,7 @@ const MCP_TOOL_EXPECTATIONS = [
   ['aep_enroll', 'AEP: Enroll Service', false, false],
   ['aep_fetch', 'AEP: Fetch Resource', false, false],
   ['aep_grant', 'AEP: Grant Credential', false, false],
+  ['aep_document', 'AEP: Read Document', true, false],
   ['aep_inspect', 'AEP: Inspect Service', true, false],
   ['aep_revoke', 'AEP: Revoke Credentials', false, true],
   ['aep_status', 'AEP: Check Status', true, false],

@@ -3,6 +3,7 @@ import { mcpVaultAccess, shouldEnsureVaultDaemonForMcpTool } from '../../src/mcp
 
 describe('MCP vault metadata', () => {
   it.each([
+    ['aep_document', 'none'],
     ['aep_status', 'required'],
     ['auth_login', 'required'],
     ['vault_lock', 'required'],

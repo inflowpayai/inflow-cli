@@ -3,6 +3,7 @@ import {
   sanitizeDeep,
   type SourceDiscovery,
   type SourceDiscoveryResult,
+  type IAepResource,
 } from '@inflowpayai/inflow-core';
 import { Box, Text } from 'ink';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
@@ -10,6 +11,8 @@ import { OperationsView } from '../openapi/index.js';
 import type { InspectCommandContext } from './index.js';
 import { DetailsTable, detail, listed } from '../odp/presentation.js';
 import { enrollmentProtocolLabel, paymentProtocolLabel } from '../odp/payments.js';
+import type { AepDocumentReadResult } from '@aep-foundation/agent';
+import { ServiceDocumentsTable } from '../aep/documents.js';
 
 export type OriginDiscovery = { source: SourceDiscoveryResult } | { error: { code: string; message: string } };
 
@@ -47,7 +50,15 @@ export function OriginDiscoveryView({ discovery }: { discovery: OriginDiscovery 
   ) : null;
 }
 
-export function DocumentView({ result }: { result: SourceDiscoveryResult }) {
+export function DocumentView({
+  result,
+  documents,
+  documentsUnavailable,
+}: {
+  result: SourceDiscoveryResult;
+  documents?: AepDocumentReadResult['descriptor'][];
+  documentsUnavailable?: boolean;
+}) {
   if (result.sourceType === 'openapi')
     return (
       <Box flexDirection="column">
@@ -93,6 +104,8 @@ export function DocumentView({ result }: { result: SourceDiscoveryResult }) {
         ]}
       />
       <Text dimColor>Public document inspection only. No operation was called or payment requirement tested.</Text>
+      <ServiceDocumentsTable documents={documents} serviceUrl={new URL(result.sourceUrl).origin} />
+      {documentsUnavailable ? <Text>AEP Service document inspection failed. Use aep inspect for details.</Text> : null}
     </Box>
   );
 }
@@ -100,6 +113,7 @@ export function DocumentView({ result }: { result: SourceDiscoveryResult }) {
 export async function inspectDocument(
   c: InspectCommandContext,
   discovery: Pick<SourceDiscovery, 'inspect'>,
+  aep?: Pick<IAepResource, 'inspect'>,
 ): Promise<Record<string, unknown>> {
   let result: SourceDiscoveryResult;
   try {
@@ -116,7 +130,31 @@ export async function inspectDocument(
       retryable: false,
     });
   }
-  if (!c.agent && !c.formatExplicit) await renderInkUntilExit(<DocumentView result={result} />);
+  let documents: AepDocumentReadResult['descriptor'][] | undefined;
+  let documentsUnavailable = false;
+  if (
+    aep !== undefined &&
+    result.sourceType === 'odp' &&
+    result.document.protocols?.enrollment?.some(({ name }) => name.toLowerCase() === 'aep') === true
+  ) {
+    try {
+      const inspected = await aep.inspect({
+        serviceUrl: new URL(result.sourceUrl).origin,
+        signal: AbortSignal.timeout(30_000),
+      });
+      documents = sanitizeDeep(inspected.document.service_documents);
+    } catch {
+      documentsUnavailable = true;
+    }
+  }
+  if (!c.agent && !c.formatExplicit)
+    await renderInkUntilExit(
+      <DocumentView
+        result={result}
+        {...(documents === undefined ? {} : { documents })}
+        documentsUnavailable={documentsUnavailable}
+      />,
+    );
   return {
     outcome: 'document-inspected',
     source: { type: result.sourceType, url: result.sourceUrl },
@@ -124,5 +162,16 @@ export async function inspectDocument(
       ? { service_origin: new URL(result.sourceUrl).origin }
       : { operation_count: result.document.operations.length }),
     document: result.document,
+    ...(documents === undefined ? {} : { service_documents: documents }),
+    ...(documentsUnavailable
+      ? {
+          warnings: [
+            {
+              code: 'AEP_DOCUMENTS_UNAVAILABLE',
+              message: 'AEP Service document inspection failed. Use aep inspect for details.',
+            },
+          ],
+        }
+      : {}),
   };
 }

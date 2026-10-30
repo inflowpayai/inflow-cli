@@ -1,4 +1,5 @@
 import { z } from 'incur';
+import { httpUrlArgument } from '../../utils/http-url-argument.js';
 import { inspectDocument, openApiPolicyOutput } from '../aep/schema.js';
 import { serviceDocumentOutput } from '../odp/schema.js';
 import { descriptionOutput } from '../openapi/schema.js';
@@ -114,11 +115,9 @@ export const inspectOutput: z.ZodType<Record<string, unknown> | undefined> = z
   .meta({ type: 'object' });
 
 export const inspectArgs = z.object({
-  url: z
-    .string()
-    .describe(
-      'A resource URL to inspect for ODP, AEP, MPP, and x402, or a recognized public ODP/OpenAPI document URL. No enrollment or payment is performed.',
-    ),
+  url: httpUrlArgument.describe(
+    'A resource URL to inspect for ODP, AEP, MPP, and x402, or a recognized public ODP/OpenAPI document URL. No enrollment or payment is performed.',
+  ),
 });
 
 export const inspectOptions = z.object({

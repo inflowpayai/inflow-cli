@@ -43,7 +43,7 @@
     "url": "https://github.com/inflowpayai/inflow-cli/issues"
   },
   "dependencies": {
-    "@aep-foundation/agent": "^0.6.0",
+    "@aep-foundation/agent": "^0.7.0",
     "@inflowpayai/mpp": "^0.12.0",
     "@inflowpayai/mpp-buyer": "^0.8.1",
     "@inflowpayai/x402": "^0.12.0",

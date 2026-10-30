@@ -1,6 +1,7 @@
 import type { Mcp } from 'incur';
 
 type ToolName =
+  | 'aep_document'
   | 'aep_enroll'
   | 'aep_fetch'
   | 'aep_grant'
@@ -102,6 +103,7 @@ function vault(metadata: ToolMetadata, vaultAccess: Exclude<VaultAccess, 'none'>
 }
 
 const TOOLS: Record<ToolName, ToolMetadata> = {
+  aep_document: read('AEP: Read Document', 'Read a Service document without authentication or acknowledgement.'),
   aep_enroll: vault(write('AEP: Enroll Service', 'Enroll the local agent with an AEP Service.'), 'required'),
   aep_fetch: vault(
     write('AEP: Fetch Resource', 'Fetch a resource using AEP authentication when the Service requires it.'),

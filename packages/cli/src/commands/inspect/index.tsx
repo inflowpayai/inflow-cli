@@ -460,7 +460,7 @@ export function createInspectCommand(
       },
     ],
     async run(c: InspectCommandContext) {
-      if (isDocumentInspect(c.args.url, c.options)) return inspectDocument(c, discovery);
+      if (isDocumentInspect(c.args.url, c.options)) return inspectDocument(c, discovery, inflow.aep);
       let origin: string | undefined;
       try {
         const url = new URL(c.args.url);

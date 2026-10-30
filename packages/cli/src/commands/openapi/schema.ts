@@ -1,4 +1,5 @@
 import { z } from 'incur';
+import { httpUrlArgument } from '../../utils/http-url-argument.js';
 
 const strings = z.array(z.string());
 const providerObject = z.record(z.string(), z.unknown());
@@ -116,7 +117,7 @@ export const callOutput = z
   .meta({ type: 'object' });
 
 export const documentArgs = z.object({
-  source: z.string().describe('HTTPS origin or exact public OpenAPI JSON document URL.'),
+  source: httpUrlArgument.describe('HTTPS origin or exact public OpenAPI JSON document URL.'),
 });
 
 const documentOptions = z.object({

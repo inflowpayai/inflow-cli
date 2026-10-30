@@ -39,6 +39,7 @@ import {
   type Inflow,
   type TapOperation,
   sanitizeDeep,
+  sanitizeText,
 } from '@inflowpayai/inflow-core';
 import { Cli } from 'incur';
 import { render } from 'ink';
@@ -57,6 +58,10 @@ import {
   revokeOutput,
   statusOutput,
   enrollOptions,
+  documentArgs,
+  documentOptions,
+  documentOutput,
+  documentIds,
   fetchArgs,
   fetchOptions,
   grantOptions,
@@ -86,6 +91,7 @@ import {
   RevokeView,
   StatusView,
 } from './views.js';
+import { documentFrame, ServiceDocumentsTable, ServiceDocumentView } from './documents.js';
 
 type ErrorOptions = {
   code: string;
@@ -192,7 +198,7 @@ function inspectError(error: unknown): ErrorOptions | undefined {
     };
     return {
       code: codes[error.code],
-      message: 'AEP Service Inspect failed.',
+      message: sanitizeText(error.message),
       retryable: !NON_RETRYABLE_INSPECT_ERRORS.has(error.code),
     };
   }
@@ -321,9 +327,49 @@ function commandError(error: unknown, context?: RequirementErrorContext): ErrorO
     if (code === 'requirements_unmet') {
       const unsupportedClaims = unsupportedRequiredClaims(error);
       if (unsupportedClaims.length === 0) {
+        const pending = error.problem?.requirements_pending;
+        const ids = error.problem?.required_document_ids;
+        const requirements = Array.isArray(pending)
+          ? pending.filter((name): name is string => typeof name === 'string').map(sanitizeText)
+          : [];
+        const documentIds = Array.isArray(ids)
+          ? ids
+              .filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(id))
+              .slice(0, 7)
+          : [];
+        const command = context === undefined ? undefined : `aep enroll ${shellArg(context.serviceReference)}`;
         return {
           code: 'AEP_REQUIREMENTS_UNMET',
-          message: 'The Platform cannot satisfy the required Service claims.',
+          ...(command === undefined
+            ? {}
+            : {
+                cta: {
+                  commands: [{ command, description: 'Review and update enrollment' }],
+                  description: 'Run Enroll to resolve these requirements.',
+                },
+              }),
+          details: {
+            requirements_pending: requirements,
+            required_document_ids: documentIds,
+            ...(context === undefined
+              ? {}
+              : {
+                  resolution: {
+                    action: 'enroll',
+                    tool: 'aep_enroll',
+                    input: { serviceReference: context.serviceReference },
+                  },
+                }),
+          },
+          message:
+            'The Service requires updated enrollment information or document acceptance.' +
+            (requirements.length === 0
+              ? ''
+              : `\n\nRequired information\n${requirements.map((name) => `  ${name}`).join('\n')}`) +
+            (documentIds.length === 0
+              ? ''
+              : `\n\nRequired documents\n${documentIds.map((id) => `  ${id}`).join('\n')}`) +
+            `\n\nRun ${command === undefined ? 'aep enroll for this Service' : `inflow ${command}`} to review and update enrollment. Then request Grant again when ready.`,
           retryable: false,
         };
       }
@@ -350,6 +396,17 @@ function commandError(error: unknown, context?: RequirementErrorContext): ErrorO
   }
   if (error instanceof TypeError && error.message === 'Invalid AEP Grant response.') {
     return { code: 'AEP_GRANT_RESPONSE_INVALID', message: 'The Service returned an invalid AEP Grant response.' };
+  }
+  if (
+    error instanceof TypeError &&
+    error.message === 'The Service returned a different document acknowledgement list.'
+  ) {
+    return {
+      code: 'AEP_ENROLL_RESPONSE_INVALID',
+      message:
+        'The Service did not confirm the approved document IDs in its enrollment response. ' +
+        'The Service must return the same acknowledged_document_ids that were sent. Enrollment could not be confirmed.',
+    };
   }
   if (error instanceof SecureStorageError) {
     const vaultCode =
@@ -411,6 +468,23 @@ class CliInputError extends Error {
   ) {
     super(message);
   }
+}
+
+function approvedDocumentIds(
+  context: Record<string, unknown>,
+  requestedIds: string[] | undefined,
+): string[] | undefined {
+  const result = documentIds.optional().safeParse(context['approved_document_ids']);
+  if (
+    !result.success ||
+    (requestedIds !== undefined &&
+      ((result.data?.length ?? 0) !== requestedIds.length || requestedIds.some((id) => !result.data?.includes(id))))
+  )
+    throw new CliInputError(
+      'AEP_DOCUMENT_APPROVAL_INVALID',
+      'InFlow did not return valid approval for the requested Service documents. Enrollment was not submitted. Run `inflow aep enroll <service>` to request a new approval.',
+    );
+  return result.data;
 }
 
 async function approvedAssertion(
@@ -960,6 +1034,31 @@ async function runInspect(c: Context, inflow: Inflow, authStorage?: AuthStorage)
   }
 }
 
+async function runDocument(
+  c: Context & { args: { documentId: string } },
+  inflow: Inflow,
+): Promise<ReturnType<typeof documentFrame>> {
+  try {
+    const options = documentOptions.parse(c.options);
+    const signal = AbortSignal.timeout(options.timeout * 1000);
+    const inspect = await inflow.aep.inspect({ serviceUrl: c.args.serviceReference, signal });
+    const descriptor = inspect.document.service_documents?.find((item) => item.id === c.args.documentId);
+    if (descriptor === undefined)
+      throw new CliInputError(
+        'AEP_DOCUMENT_NOT_FOUND',
+        'This Service does not advertise the requested document ID. Run aep inspect to see available documents.',
+      );
+    const read = await inflow.aep.document({ document: descriptor, signal, timeoutMs: options.timeout * 1000 });
+    return present(
+      c,
+      <ServiceDocumentView read={read} summary={options.summary} />,
+      documentFrame(read, options.summary),
+    );
+  } catch (error) {
+    return c.error(commandError(error));
+  }
+}
+
 async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): Promise<Record<string, unknown>> {
   assertSessionGuard(c, authStorage, inflow);
   let waitingView: AepRenderer | undefined;
@@ -996,24 +1095,14 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       try {
         updateAepProgress(progressView, 'Checking enrollment status...');
         const assertion = await directAssertion(inflow, identity, inspect, 'status', publicDocumentCache);
-        const status = await statusService({
+        await statusService({
           agentDid: identity.agentDid,
           clientAssertion: assertion,
           fetch: inspectFetch,
           inspect,
           serviceUrl: c.args.serviceReference,
         });
-        closeAepRenderer(progressView);
-        progressView = undefined;
-        return present(
-          c,
-          <EnrollView
-            onComplete={() => undefined}
-            serviceDid={inspect.document.service.did}
-            status={status.body.status}
-          />,
-          sanitizeDeep(status.body),
-        );
+        break;
       } catch (error) {
         if (!(error instanceof AepCommandError)) throw error;
         if (error.problem?.code === 'not_recognized') break;
@@ -1033,6 +1122,13 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       preferred: inspect.document.claims?.preferred ?? [],
       required: inspect.document.claims?.required ?? [],
     };
+    const requiredDocumentIds = (inspect.document.service_documents ?? [])
+      .filter((document) => document.enrollment === 'required')
+      .map((document) => document.id);
+    const documentsView =
+      options.approvalId === undefined ? (
+        <ServiceDocumentsTable documents={inspect.document.service_documents} serviceUrl={c.args.serviceReference} />
+      ) : null;
     let signed: { assertion: string; context: Record<string, unknown> };
     try {
       updateAepProgress(progressView, 'Creating approval request...');
@@ -1041,7 +1137,7 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
         identity,
         inspect,
         'enroll',
-        { claims },
+        { claims, ...(requiredDocumentIds.length === 0 ? {} : { required_document_ids: requiredDocumentIds }) },
         {
           ...options,
           deferPending:
@@ -1061,7 +1157,9 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
                   await cancelApproval(inflow, approvalId);
                   approvalController.abort();
                 }}
-              />,
+              >
+                {documentsView}
+              </PendingApprovalView>,
               { exitOnCtrlC: false },
             );
           }
@@ -1093,7 +1191,12 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
     waitingView = undefined;
     progressView = startAepProgress(c, 'Completing enrollment...');
     const approvedClaims = signed.context['approved_claims'];
+    const acknowledgedDocumentIds = approvedDocumentIds(
+      signed.context,
+      options.approvalId === undefined ? requiredDocumentIds : undefined,
+    );
     const response = await enrollService({
+      ...(acknowledgedDocumentIds === undefined ? {} : { acknowledgedDocumentIds }),
       agentDid: identity.agentDid,
       claims:
         typeof approvedClaims === 'object' && approvedClaims !== null
@@ -1382,7 +1485,12 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
       return c.error({ code: 'AEP_APPROVAL_DENIED', message: 'The InFlow approval was declined.' });
     if (error instanceof ApprovalTimeoutError)
       return c.error({ code: 'AEP_APPROVAL_TIMEOUT', message: 'The InFlow approval timed out.' });
-    return c.error(commandError(error));
+    return c.error(
+      commandError(error, {
+        accountUrl: accountUrlFor(inflow.resolvedApiBaseUrl),
+        serviceReference: c.args.serviceReference,
+      }),
+    );
   }
 }
 
@@ -1455,6 +1563,15 @@ async function runRevoke(c: Context, inflow: Inflow, authStorage: AuthStorage): 
 
 export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
   const cli = Cli.create('aep', { description: 'Agent Enrollment Protocol service commands' });
+  cli.command('document', {
+    args: documentArgs,
+    description: 'Read a Service document without authentication or acknowledgement.',
+    mcp: mcpTool('aep_document'),
+    options: documentOptions,
+    output: documentOutput,
+    outputPolicy: 'agent-only' as const,
+    run: (c) => runDocument(c, inflow),
+  });
   cli.command('inspect', {
     output: inspectOutput,
     args: serviceReferenceArgs,
@@ -1520,6 +1637,7 @@ export const __testing = {
   inspected,
   paymentRequiredFrame,
   runEnroll,
+  runDocument,
   runFetch,
   runGrant,
   runInspect,

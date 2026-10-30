@@ -1,4 +1,5 @@
 import { z } from 'incur';
+import { httpUrlArgument } from '../../utils/http-url-argument.js';
 import { PAYMENT_FILTERS } from './payments.js';
 
 const operation = z.enum([
@@ -295,7 +296,7 @@ export const actionOutput = z.object({
 });
 
 const serviceArgs = z.object({
-  service: z.string().describe('ODP Service URL or origin.'),
+  service: httpUrlArgument.describe('ODP Service URL or origin.'),
 });
 
 const languageOption = {
@@ -313,7 +314,7 @@ export const collectionListOptions = z.object({
 });
 
 export const collectionSearchArgs = z.object({
-  service: z.string().describe('ODP Service URL or origin.'),
+  service: httpUrlArgument.describe('ODP Service URL or origin.'),
   query: z.string().optional().describe('Optional free-text Collection query.'),
 });
 
@@ -325,7 +326,7 @@ export const collectionSearchOptions = z.object({
 });
 
 export const collectionGetArgs = z.object({
-  service: z.string().describe('ODP Service URL or origin.'),
+  service: httpUrlArgument.describe('ODP Service URL or origin.'),
   id: z.string().describe('Collection identifier.'),
 });
 
@@ -340,7 +341,7 @@ export const offeringListOptions = z.object({
 });
 
 export const offeringSearchArgs = z.object({
-  service: z.string().describe('ODP Service URL or origin.'),
+  service: httpUrlArgument.describe('ODP Service URL or origin.'),
   query: z.string().optional().describe('Optional free-text Offering query.'),
 });
 
@@ -362,7 +363,7 @@ export const offeringCapabilitiesOptions = z.object({
 });
 
 export const offeringGetArgs = z.object({
-  service: z.string().describe('ODP Service URL or origin.'),
+  service: httpUrlArgument.describe('ODP Service URL or origin.'),
   id: z.string().describe('Offering identifier.'),
 });
 
@@ -395,7 +396,7 @@ export const offeringDiscoverOptions = z.object({
 });
 
 export const actionResolveArgs = z.object({
-  service: z.string().describe('ODP Service URL or origin.'),
+  service: httpUrlArgument.describe('ODP Service URL or origin.'),
   offeringId: z.string().describe('Offering identifier.'),
   actionId: z.string().describe('Action identifier from the full Offering.'),
 });

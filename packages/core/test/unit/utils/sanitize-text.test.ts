@@ -23,6 +23,11 @@ describe('sanitizeText', () => {
     expect(sanitizeText(input)).toBe('startmidendfinal');
   });
 
+  it('strips C1 terminal sequences and standalone C1 controls', () => {
+    expect(sanitizeText('\u009b2JText\u009d')).toBe('Text');
+    expect(sanitizeText('Before\u0085After')).toBe('BeforeAfter');
+  });
+
   it('preserves newline and tab', () => {
     expect(sanitizeText('line1\nline2\tcol')).toBe('line1\nline2\tcol');
   });
