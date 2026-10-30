@@ -220,6 +220,7 @@ export {
   linuxVaultServiceUserId,
   removeVaultLocalState,
   usesLinuxVaultService,
+  usesWindowsVaultService,
   vaultFilePaths,
   type VaultFilePaths,
 } from './secure-storage/vault-files.js';

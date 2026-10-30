@@ -45,6 +45,15 @@ static napi_value make_error(napi_env env, const char *code, const char *message
   return error;
 }
 
+static napi_value make_pipe_io_error(napi_env env, const char *code, const char *message) {
+  const DWORD windows_error = GetLastError();
+  napi_value error = make_error(env, code, message);
+  napi_value value;
+  napi_create_uint32(env, windows_error, &value);
+  napi_set_named_property(env, error, "windowsError", value);
+  return error;
+}
+
 static void report_service_status(DWORD state, DWORD controls, DWORD exit_code, DWORD wait_hint) {
   if (service_status_handle == NULL) return;
   SERVICE_STATUS status = {
@@ -440,6 +449,86 @@ static int bytes_argument(napi_env env, napi_value value, uint8_t **data, size_t
   return 1;
 }
 
+static int development_mode;
+
+static wchar_t *development_security(int directory) {
+  wchar_t *sid = NULL;
+  if (!process_sid(GetCurrentProcess(), &sid)) return NULL;
+  wchar_t *security = calloc(640, sizeof(*security));
+  if (security != NULL && swprintf_s(security, 640,
+      directory ? L"O:%lsD:P(A;OICI;FA;;;%ls)" : L"O:%lsD:P(A;;GA;;;%ls)", sid, sid) < 0) {
+    free(security);
+    security = NULL;
+  }
+  free(sid);
+  return security;
+}
+
+static napi_value current_principal(napi_env env, napi_callback_info info) {
+  (void)info;
+  wchar_t *sid = NULL;
+  if (!process_sid(GetCurrentProcess(), &sid)) {
+    napi_throw(env, make_error(env, "EPIPEIDENTITY", "current user identity is unavailable"));
+    return NULL;
+  }
+  napi_value result;
+  napi_status status = napi_create_string_utf16(env, (const char16_t *)sid, NAPI_AUTO_LENGTH, &result);
+  free(sid);
+  return status == napi_ok ? result : NULL;
+}
+
+static napi_value prepare_development_directory(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  wchar_t *path = NULL;
+  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc != 1 ||
+      !string_argument(env, argv[0], &path)) {
+    free(path);
+    napi_throw(env, make_error(env, "EINVAL", "expected development vault directory"));
+    return NULL;
+  }
+  wchar_t *security = development_security(1);
+  PSECURITY_DESCRIPTOR descriptor = NULL;
+  PSECURITY_DESCRIPTOR existing = NULL;
+  HANDLE directory = INVALID_HANDLE_VALUE;
+  int ok = 0;
+  if (security == NULL || !ConvertStringSecurityDescriptorToSecurityDescriptorW(
+      security, SDDL_REVISION_1, &descriptor, NULL)) goto done;
+  SECURITY_ATTRIBUTES attributes = { sizeof(attributes), descriptor, FALSE };
+  if (!CreateDirectoryW(path, &attributes) && GetLastError() != ERROR_ALREADY_EXISTS) goto done;
+  directory = CreateFileW(path, READ_CONTROL | WRITE_DAC,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+  BY_HANDLE_FILE_INFORMATION file;
+  if (directory == INVALID_HANDLE_VALUE || !GetFileInformationByHandle(directory, &file) ||
+      !(file.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+      (file.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) goto done;
+  PSID owner = NULL, expected = NULL;
+  BOOL defaulted = FALSE, present = FALSE;
+  PACL acl = NULL;
+  if (GetSecurityInfo(directory, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION, &owner,
+      NULL, NULL, NULL, &existing) != ERROR_SUCCESS ||
+      !GetSecurityDescriptorOwner(descriptor, &expected, &defaulted) || owner == NULL || expected == NULL ||
+      !EqualSid(owner, expected) ||
+      !GetSecurityDescriptorDacl(descriptor, &present, &acl, &defaulted) || !present || acl == NULL) goto done;
+  ok = SetSecurityInfo(directory, SE_FILE_OBJECT,
+      DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+      NULL, NULL, acl, NULL) == ERROR_SUCCESS;
+done:
+  if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
+  if (existing != NULL) LocalFree(existing);
+  if (descriptor != NULL) LocalFree(descriptor);
+  free(security);
+  free(path);
+  if (!ok) {
+    napi_throw(env, make_error(env, "EVAULTACL", "development vault directory access could not be restricted"));
+    return NULL;
+  }
+  napi_value result;
+  napi_get_undefined(env, &result);
+  return result;
+}
+
 #include "vault_pipe_adapter_windows.h"
 
 static void close_connection(vault_pipe_connection *connection) {
@@ -517,10 +606,13 @@ static napi_value begin_pipe_session(napi_env env, napi_callback_info info) {
     return NULL;
   }
   vault_pipe_connection *connection = connection_argument(env, argv[0]);
-  if (connection == NULL ||
-      !vault_pipe_transfer(connection->handle, (uint8_t *)vault_pipe_handshake,
+  if (connection == NULL) {
+    napi_throw(env, make_error(env, "EINVAL", "expected named pipe connection"));
+    return NULL;
+  }
+  if (!vault_pipe_transfer(connection->handle, (uint8_t *)vault_pipe_handshake,
           sizeof(vault_pipe_handshake), 1, GetTickCount64() + 10000)) {
-    napi_throw(env, make_error(env, "EPIPEHANDSHAKE", "named pipe authentication handshake failed"));
+    napi_throw(env, make_pipe_io_error(env, "EPIPEHANDSHAKE", "named pipe authentication handshake failed"));
     return NULL;
   }
   napi_value result;
@@ -533,31 +625,34 @@ static napi_value connect_pipe(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value argv[1];
   wchar_t *pipe_name = NULL;
-  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc != 1 ||
+  void *mode = NULL;
+  if (napi_get_cb_info(env, info, &argc, argv, NULL, &mode) != napi_ok || argc != 1 ||
       !string_argument(env, argv[0], &pipe_name)) {
     free(pipe_name);
       napi_throw(env, make_error(env, "EINVAL", "expected named pipe path"));
     return NULL;
   }
-  if (!allow_service_process_query()) {
-    free(pipe_name);
-    napi_throw(env, make_error(env, "EPIPEACL", "vault service process verification could not be authorized"));
-    return NULL;
+  if (mode == NULL) {
+    if (!allow_service_process_query()) {
+      free(pipe_name);
+      napi_throw(env, make_error(env, "EPIPEACL", "vault service process verification could not be authorized"));
+      return NULL;
+    }
+    SC_HANDLE manager = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+    SC_HANDLE service =
+        manager == NULL ? NULL : OpenServiceW(manager, L"InFlowVault", SERVICE_START | SERVICE_QUERY_STATUS);
+    if (service == NULL ||
+        (!StartServiceW(service, 0, NULL) && GetLastError() != ERROR_SERVICE_ALREADY_RUNNING)) {
+      if (service != NULL) CloseServiceHandle(service);
+      if (manager != NULL) CloseServiceHandle(manager);
+      free(pipe_name);
+      napi_throw(env, make_error(env, "ESERVICESTART", "vault service could not be started"));
+      return NULL;
+    }
+    CloseServiceHandle(service);
+    CloseServiceHandle(manager);
   }
-  SC_HANDLE manager = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
-  SC_HANDLE service =
-      manager == NULL ? NULL : OpenServiceW(manager, L"InFlowVault", SERVICE_START | SERVICE_QUERY_STATUS);
-  if (service == NULL ||
-      (!StartServiceW(service, 0, NULL) && GetLastError() != ERROR_SERVICE_ALREADY_RUNNING)) {
-    if (service != NULL) CloseServiceHandle(service);
-    if (manager != NULL) CloseServiceHandle(manager);
-    free(pipe_name);
-    napi_throw(env, make_error(env, "ESERVICESTART", "vault service could not be started"));
-    return NULL;
-  }
-  CloseServiceHandle(service);
-  CloseServiceHandle(manager);
-  const ULONGLONG pipe_deadline = GetTickCount64() + 25000;
+  const ULONGLONG pipe_deadline = GetTickCount64() + (mode == NULL ? 25000 : 250);
   HANDLE pipe = INVALID_HANDLE_VALUE;
   while (pipe == INVALID_HANDLE_VALUE) {
     if (WaitNamedPipeW(pipe_name, 250)) {
@@ -574,6 +669,11 @@ static napi_value connect_pipe(napi_env env, napi_callback_info info) {
       }
     }
     const DWORD error = GetLastError();
+    if (mode != NULL && error == ERROR_FILE_NOT_FOUND) {
+      free(pipe_name);
+      napi_throw(env, make_error(env, "ENOENT", "development vault pipe is unavailable"));
+      return NULL;
+    }
     if ((error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY && error != ERROR_SEM_TIMEOUT) ||
         GetTickCount64() >= pipe_deadline) {
       free(pipe_name);
@@ -623,7 +723,7 @@ static napi_value exchange_pipe_request(napi_env env, napi_callback_info info) {
   const ULONGLONG deadline = GetTickCount64() + 10000;
   if (!vault_pipe_transfer(connection->handle, request, (DWORD)request_length, 1, deadline) ||
       !read_frame(connection->handle, &response, &response_length, deadline)) {
-    napi_throw(env, make_error(env, "EPIPEEXCHANGE", "named pipe request failed"));
+    napi_throw(env, make_pipe_io_error(env, "EPIPEEXCHANGE", "named pipe request failed"));
     return NULL;
   }
   napi_value result;
@@ -882,6 +982,10 @@ static napi_value request_service_stop(napi_env env, napi_callback_info info) {
 
 static napi_value init(napi_env env, napi_value exports) {
   napi_property_descriptor dispatcher_methods[] = {
+      {"currentPrincipal", NULL, current_principal, NULL, NULL, NULL, napi_default, NULL},
+      {"prepareDevelopmentDirectory", NULL, prepare_development_directory, NULL, NULL, NULL, napi_default, NULL},
+      {"connectDevelopmentPipe", NULL, connect_pipe, NULL, NULL, NULL, napi_default, &development_mode},
+      {"startDevelopmentPipeDispatcher", NULL, start_pipe_dispatcher, NULL, NULL, NULL, napi_default, &development_mode},
       {"startPipeDispatcher", NULL, start_pipe_dispatcher, NULL, NULL, NULL, napi_default, NULL},
       {"stopPipeDispatcher", NULL, stop_pipe_dispatcher, NULL, NULL, NULL, napi_default, NULL},
       {"submitPipeDispatcher", NULL, submit_pipe_dispatcher, NULL, NULL, NULL, napi_default, NULL},

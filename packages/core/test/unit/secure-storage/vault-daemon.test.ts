@@ -6,7 +6,7 @@ import { chmodSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { createConnection, createServer, Socket, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
 import { sendVaultIpcRequest } from '../../../src/secure-storage/vault-socket.js';
@@ -37,11 +37,34 @@ describe('local vault daemon lifecycle', () => {
   let daemon: LocalVaultDaemon | undefined;
   let tmpDir: string | undefined;
 
+  beforeEach(() => vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true));
+
   afterEach(async () => {
     if (daemon !== undefined) await daemon.close();
     daemon = undefined;
     if (tmpDir !== undefined) rmSync(tmpDir, { force: true, recursive: true });
     tmpDir = undefined;
+    vi.unstubAllGlobals();
+  });
+
+  it('refuses startup when required Unix peer verification cannot initialize', async () => {
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', false);
+    const verification = await import('../../../src/secure-storage/vault-peer-verifier.js');
+    const verifier = vi.spyOn(verification, 'createVaultSocketPeerVerifier').mockImplementation(() => {
+      throw new Error('synthetic verifier initialization failure');
+    });
+    const close = vi.spyOn(SecureSqliteRepository.prototype, 'close');
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-daemon-'));
+    try {
+      await expect(startLocalVaultDaemon({ rootDirectory: tmpDir })).rejects.toThrow(
+        'synthetic verifier initialization failure',
+      );
+      expect(verifier).toHaveBeenCalledOnce();
+      expect(close).toHaveBeenCalledOnce();
+    } finally {
+      verifier.mockRestore();
+      close.mockRestore();
+    }
   });
 
   it('serves generic vault IPC over the configured socket', async () => {

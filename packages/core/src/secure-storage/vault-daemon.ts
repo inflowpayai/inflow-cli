@@ -1,6 +1,7 @@
 import process from 'node:process';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, lstatSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { createServer, Socket, type Server } from 'node:net';
 import type { VaultBackend } from './vault-backend.js';
 import { authenticateLinuxVaultBrokerClient, ensureLinuxVaultBrokerKey } from './vault-broker-auth.js';
@@ -14,12 +15,14 @@ import { SecureSqliteRepository } from './sqlite.js';
 import { LocalVaultBackend } from './vault-local-backend.js';
 import {
   createVaultSocketPeerVerifier,
-  shouldRequireVaultPeerVerification,
+  shouldRequireUnixSocketPeerVerification,
   verifyTransferredVaultSocketPeer,
   type VaultSocketPeer,
   type VaultSocketPeerVerifier,
 } from './vault-peer-verifier.js';
-import { vaultFilePaths } from './vault-files.js';
+import { usesDevelopmentVault, vaultFilePaths } from './vault-files.js';
+import { startWindowsDevelopmentVaultServer } from './vault-windows-development.js';
+import { createWindowsVaultTransport } from './vault-windows-transport.js';
 import { hardenVaultDaemonProcess } from './vault-protected-key.js';
 import { createVaultSocketConnectionHandler, startVaultSocketServer, type VaultSocketServer } from './vault-socket.js';
 import { MultiTenantVaultBackendManager } from './vault-tenant-manager.js';
@@ -85,6 +88,10 @@ interface LinuxVaultBrokerDependencies {
 
 export async function startLocalVaultDaemon(options: LocalVaultDaemonOptions = {}): Promise<LocalVaultDaemon> {
   const paths = vaultFilePaths(options.rootDirectory);
+  const windowsDevelopment = process.platform === 'win32' && usesDevelopmentVault();
+  if (windowsDevelopment) {
+    createWindowsVaultTransport().prepareDevelopmentDirectory(dirname(paths.database));
+  }
   const repository = new SecureSqliteRepository({ databasePath: paths.database });
   repository.initialize();
   const backend = new LocalVaultBackend({ paths, repository });
@@ -94,20 +101,34 @@ export async function startLocalVaultDaemon(options: LocalVaultDaemonOptions = {
   const closedPromise = new Promise<void>((resolve) => {
     resolveClosed = resolve;
   });
-  const server = await startVaultSocketServer(
-    socketServerOptions(
-      new LifetimeVaultBackend(backend, lifetime),
-      paths.socket,
-      options.cliVersion ?? null,
-      options.buildId ?? null,
-      () => {
-        void shutdown.close?.();
-      },
-    ),
-  ).catch((error: unknown) => {
-    repository.close();
-    throw error;
-  });
+  const startServer = windowsDevelopment ? startWindowsDevelopmentVaultServer : startVaultSocketServer;
+  const server = await Promise.resolve()
+    .then(() =>
+      startServer(
+        socketServerOptions(
+          new LifetimeVaultBackend(
+            backend,
+            lifetime,
+            windowsDevelopment
+              ? () => {
+                  repository.close();
+                  return Promise.resolve();
+                }
+              : undefined,
+          ),
+          paths.socket,
+          options.cliVersion ?? null,
+          options.buildId ?? null,
+          () => {
+            void shutdown.close?.();
+          },
+        ),
+      ),
+    )
+    .catch((error: unknown) => {
+      repository.close();
+      throw error;
+    });
   let isClosed = false;
   const close = async (): Promise<void> => {
     if (isClosed) return;
@@ -198,7 +219,7 @@ function socketServerOptions(
     onShutdown,
     socketPath,
   };
-  if (shouldRequireVaultPeerVerification()) options.peerVerifier = createVaultSocketPeerVerifier();
+  if (shouldRequireUnixSocketPeerVerification()) options.peerVerifier = createVaultSocketPeerVerifier();
   return options;
 }
 

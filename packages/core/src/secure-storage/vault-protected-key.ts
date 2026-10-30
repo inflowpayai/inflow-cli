@@ -1,5 +1,4 @@
 import type { Buffer } from 'node:buffer';
-import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { SecureStorageError } from './errors.js';
 import {
@@ -8,6 +7,7 @@ import {
   verifyVaultPeerVerificationConfig,
 } from './vault-peer-verifier.js';
 import { runtimeRequire } from './runtime-require.js';
+import { windowsVaultNativeModulePath } from './vault-windows-transport.js';
 import { vaultRecordAad, type EncryptedVaultRecordPayload, type VaultRecordEncryptionContext } from './vault-crypto.js';
 
 declare const __VAULT_PEER_NATIVE_SHA256__: string | undefined;
@@ -116,7 +116,7 @@ function loadSecureMemoryModule(): VaultSecureMemoryModule {
     if (typeof __VAULT_PEER_NATIVE_SHA256__ !== 'string') {
       throw new SecureStorageError('secure_storage_unavailable', 'Vault native module integrity is unavailable.');
     }
-    const nativeModulePath = resolve(dirname(process.execPath), 'native', 'vault_peer_windows.node');
+    const nativeModulePath = windowsVaultNativeModulePath();
     verifyVaultNativeModule(nativeModulePath, {
       expectedSha256: __VAULT_PEER_NATIVE_SHA256__,
       expectedTeamId: '',

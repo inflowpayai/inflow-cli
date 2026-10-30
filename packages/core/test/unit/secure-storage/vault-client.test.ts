@@ -2,9 +2,10 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __testing, LocalVaultClient } from '../../../src/secure-storage/vault-client.js';
 import { VaultSocketReader } from '../../../src/secure-storage/vault-socket-reader.js';
+import * as peerVerification from '../../../src/secure-storage/vault-peer-verifier.js';
 import {
   decodeVaultIpcFrame,
   encodeVaultIpcMessage,
@@ -17,13 +18,32 @@ describe('LocalVaultClient', () => {
   let tmpDir: string | undefined;
   const sockets = new Set<Socket>();
 
+  beforeEach(() => vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true));
+
   afterEach(async () => {
+    vi.unstubAllGlobals();
     for (const socket of sockets) socket.destroy();
     sockets.clear();
     await closeServer(server);
     server = undefined;
     if (tmpDir !== undefined) rmSync(tmpDir, { force: true, recursive: true });
     tmpDir = undefined;
+  });
+
+  it('propagates required Unix verifier initialization failures instead of connecting unverified', async () => {
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', false);
+    const verifier = vi.spyOn(peerVerification, 'createVaultSocketPeerVerifier').mockImplementation(() => {
+      throw new Error('synthetic verifier initialization failure');
+    });
+    tmpDir = mkdtempSync(join(tmpdir(), 'inflow-vault-client-'));
+    const client = new LocalVaultClient({ rootDirectory: tmpDir });
+    try {
+      await expect(client.status()).rejects.toThrow('synthetic verifier initialization failure');
+      expect(verifier).toHaveBeenCalledOnce();
+    } finally {
+      client.dispose();
+      verifier.mockRestore();
+    }
   });
 
   it('maps vault status and policy responses from the local socket', async () => {

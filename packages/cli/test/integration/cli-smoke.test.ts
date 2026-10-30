@@ -6,8 +6,9 @@
  * block below hits `balances list` against `sandbox.inflowpay.ai`.
  */
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -57,6 +58,7 @@ function run(args: string[], env: NodeJS.ProcessEnv = {}, timeout?: number): Pro
       INFLOW_BASE_URL: 'http://127.0.0.1:1',
       INFLOW_ENVIRONMENT: 'sandbox',
       HOME: authDir,
+      USERPROFILE: authDir,
       NO_UPDATE_NOTIFIER: '1',
       XDG_DATA_HOME: join(authDir, '.local', 'share'),
       ...env,
@@ -336,27 +338,62 @@ describe('cli smoke', () => {
     }
   });
 
-  it.skipIf(process.platform !== 'darwin')(
-    'starts and resets the development vault daemon from the built CLI',
+  it.skipIf(packagedExecutable !== undefined)(
+    'starts and reuses the development vault across built CLI commands',
     async () => {
-      const vaultRoot = mkdtempSync(join('/tmp', 'inflow-development-vault-'));
+      const vaultRoot = realpathSync(
+        mkdtempSync(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'inflow-development-vault-')),
+      );
       const env = {
         HOME: vaultRoot,
+        USERPROFILE: vaultRoot,
         XDG_DATA_HOME: join(vaultRoot, 'data'),
       };
+      const { LocalVaultClient } = await import('../../../core/dist/index.js');
+      vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
+      if (process.platform === 'win32') {
+        vi.stubGlobal(
+          '__VAULT_PEER_NATIVE_SHA256__',
+          createHash('sha256')
+            .update(readFileSync(resolvePath(here, '../../../core/native/build/vault_peer_windows.node')))
+            .digest('hex'),
+        );
+      }
+      const client = new LocalVaultClient({
+        rootDirectory:
+          process.platform === 'darwin'
+            ? join(vaultRoot, 'Library', 'Application Support', 'InFlow')
+            : process.platform === 'win32'
+              ? join(vaultRoot, '.inflow')
+              : join(env.XDG_DATA_HOME, 'inflow'),
+      });
+      let resetCompleted = false;
       try {
         const policy = await run(['vault', 'policy', '--format', 'json'], env);
         expect(policy.exitCode, `${policy.stdout}\n${policy.stderr}`).toBe(0);
         expect(parseAgentJson(policy.stdout)).toEqual({ idle_timeout_seconds: 28800, lock_on_sleep: true });
 
+        await client.unlock(Buffer.from('synthetic-development-test-factor'));
+        const initial = await client.info();
+        for (let invocation = 0; invocation < 2; invocation++) {
+          const status = await run(['vault', 'status', '--format', 'json'], env);
+          expect(status.exitCode, `${status.stdout}\n${status.stderr}`).toBe(0);
+          expect(parseAgentJson(status.stdout)).toEqual({ lock_state: 'unlocked' });
+          expect((await client.info()).pid).toBe(initial.pid);
+        }
+
         const reset = await run(['vault', 'reset', '--force', '--format', 'json'], env);
         expect(reset.exitCode, `${reset.stdout}\n${reset.stderr}`).toBe(0);
         expect(parseAgentJson(reset.stdout)).toEqual({ reset: true });
+        resetCompleted = true;
       } finally {
-        await run(['vault', 'reset', '--force', '--format', 'json'], env);
-        rmSync(vaultRoot, { recursive: true, force: true });
+        client.dispose();
+        vi.unstubAllGlobals();
+        if (!resetCompleted) await run(['vault', 'reset', '--force', '--format', 'json'], env);
+        if (resetCompleted) rmSync(vaultRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       }
     },
+    process.platform === 'win32' ? 30_000 : 15_000,
   );
 
   it('auth status --format json yields an unauthenticated frame on a cold start', async () => {
@@ -456,6 +493,7 @@ describe('cli smoke', () => {
             '-e',
             `
         import { LocalVaultClient, Storage, SyncVaultSecretStore } from ${JSON.stringify(coreUrl)};
+        globalThis.__INFLOW_DEVELOPMENT_VAULT__ = true;
         const client = new LocalVaultClient();
         ${body}
       `,
@@ -630,6 +668,7 @@ describe('cli smoke', () => {
             '-e',
             `
         import { LocalVaultClient, Storage, SyncVaultSecretStore } from ${JSON.stringify(coreUrl)};
+        globalThis.__INFLOW_DEVELOPMENT_VAULT__ = true;
         const client = new LocalVaultClient();
         const secrets = new SyncVaultSecretStore();
         try {
@@ -695,6 +734,7 @@ describe('cli smoke', () => {
             '-e',
             `
           import { LocalVaultClient, Storage, SyncVaultSecretStore } from ${JSON.stringify(coreUrl)};
+          globalThis.__INFLOW_DEVELOPMENT_VAULT__ = true;
           const client = new LocalVaultClient();
           const secrets = new SyncVaultSecretStore();
           try {

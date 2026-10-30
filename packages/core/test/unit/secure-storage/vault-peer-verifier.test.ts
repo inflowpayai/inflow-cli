@@ -13,7 +13,7 @@ import {
   createVaultPeerVerificationConfig,
   createVaultSocketPeerVerifier,
   inspectSameUserVaultListener,
-  shouldRequireVaultPeerVerification,
+  shouldRequireUnixSocketPeerVerification,
   socketFileDescriptor,
   type VaultSocketPeer,
   type VaultPeerVerificationConfig,
@@ -67,6 +67,7 @@ describe('vault peer verifier', () => {
   );
 
   it('resolves a build-embedded native path relative to the verifier module', () => {
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     Object.defineProperty(process, 'execPath', { value: '/test/node' });
     vi.stubGlobal('__VAULT_PEER_NATIVE_RELATIVE_PATH__', '../native/custom.node');
@@ -84,6 +85,7 @@ describe('vault peer verifier', () => {
   });
 
   it('verifies the native module before checking a transferred socket attestation', () => {
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
     const config = createVaultPeerVerificationConfig();
     const verify = vi.spyOn(__testing.defaultPeerVerifierDependencies, 'verifyNativeModule');
     const peer = { path: config.expectedExecutablePath, pid: 123, uid: 1000 };
@@ -106,7 +108,7 @@ describe('vault peer verifier', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     Object.defineProperty(process, 'execPath', { value: '/Applications/InFlow.app/Contents/MacOS/inflow' });
 
-    expect(shouldRequireVaultPeerVerification()).toBe(true);
+    expect(shouldRequireUnixSocketPeerVerification()).toBe(true);
   });
 
   it('requires peer verification when the executable path is a symlink into the macOS app', () => {
@@ -121,7 +123,7 @@ describe('vault peer verifier', () => {
       Object.defineProperty(process, 'platform', { value: 'darwin' });
       Object.defineProperty(process, 'execPath', { value: symlink });
 
-      expect(shouldRequireVaultPeerVerification()).toBe(true);
+      expect(shouldRequireUnixSocketPeerVerification()).toBe(true);
     } finally {
       rmSync(tmpDir, { force: true, recursive: true });
     }
@@ -131,7 +133,18 @@ describe('vault peer verifier', () => {
     Object.defineProperty(process, 'platform', { value: 'linux' });
     Object.defineProperty(process, 'execPath', { value: '/opt/inflow/bin/inflow' });
 
-    expect(shouldRequireVaultPeerVerification()).toBe(true);
+    expect(shouldRequireUnixSocketPeerVerification()).toBe(true);
+  });
+
+  it.each(['linux', 'darwin'])('uses the build marker rather than executable location on %s', (platform) => {
+    Object.defineProperty(process, 'platform', { value: platform });
+    Object.defineProperty(process, 'execPath', { value: '/usr/bin/node' });
+    expect(shouldRequireUnixSocketPeerVerification()).toBe(true);
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
+    expect(shouldRequireUnixSocketPeerVerification()).toBe(false);
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', false);
+    Object.defineProperty(process, 'execPath', { value: '/tmp/copied-inflow' });
+    expect(shouldRequireUnixSocketPeerVerification()).toBe(true);
   });
 
   it('accepts same-user same-executable peers and verifies release signatures', () => {

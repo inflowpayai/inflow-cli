@@ -10,6 +10,84 @@ permissions:
   id-token: write
 
 jobs:
+  windows-development:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9
+        with:
+          arch: x64
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare native build dependencies
+        shell: pwsh
+        run: |
+          $argon2 = Join-Path $env:RUNNER_TEMP 'argon2-20190702'
+          node scripts/prepare-argon2-source.mjs $argon2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $archive = Join-Path $env:RUNNER_TEMP 'node-headers.tar.gz'
+          Invoke-WebRequest 'https://nodejs.org/dist/v24.15.0/node-v24.15.0-headers.tar.gz' -OutFile $archive
+          if ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne '9a9250039fef572d0bcc110ac5e78055faf5604421211d2d5f578ebc5a34e703') {
+            throw 'Node header checksum mismatch'
+          }
+          tar -xzf $archive -C $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $definition = Join-Path $env:RUNNER_TEMP 'node.def'
+          (Get-Content packaging/windows/inflow-node.def -Raw).Replace('LIBRARY inflow.exe', 'LIBRARY node.exe') | Set-Content $definition
+          $library = Join-Path $env:RUNNER_TEMP 'node.lib'
+          lib.exe /nologo "/def:$definition" /machine:x64 "/out:$library"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "INFLOW_ARGON2_SOURCE_DIR=$argon2" >> $env:GITHUB_ENV
+          "INFLOW_NODE_INCLUDE_DIR=$(Join-Path $env:RUNNER_TEMP 'node-v24.15.0/include/node')" >> $env:GITHUB_ENV
+          "INFLOW_NODE_LIBRARY=$library" >> $env:GITHUB_ENV
+      - name: Build native vault module
+        run: node scripts/build-vault-peer-native.mjs
+      - name: Test native pipe dispatcher
+        shell: pwsh
+        run: |
+          $test = Join-Path $env:RUNNER_TEMP 'vault-pipe-test.exe'
+          cl.exe /nologo /std:c11 /W4 /WX packages/core/test/native/vault_pipe_dispatcher_windows.c "/Fe:$test" /link advapi32.lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $test
+          exit $LASTEXITCODE
+      - run: pnpm build
+      - name: Test repository vault lifecycle as a non-administrator
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $name = 'inflow-dev-test'
+          $password = ConvertTo-SecureString ([guid]::NewGuid().ToString() + 'aA1!') -AsPlainText -Force
+          $account = New-LocalUser $name -Password $password
+          $credential = [pscredential]::new("$env:COMPUTERNAME\$name", $password)
+          $directory = Join-Path $env:GITHUB_WORKSPACE 'packages/cli'
+          $script = Join-Path $directory 'development-vault-test.ps1'
+          @'
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+          if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Test requires a non-administrator' }
+          Set-Location $PSScriptRoot
+          $env:TEMP = Join-Path $PSScriptRoot 'development-test-temp'
+          $env:TMP = $env:TEMP
+          New-Item -ItemType Directory -Force $env:TEMP | Out-Null
+          & $env:INFLOW_TEST_NODE '../../node_modules/vitest/vitest.mjs' run test/integration/cli-smoke.test.ts -t 'starts and reuses the development vault' --coverage.enabled=false --maxWorkers=1 --minWorkers=1
+          exit $LASTEXITCODE
+          '@ | Set-Content $script
+          $env:INFLOW_TEST_NODE = (Get-Command node).Source
+          icacls.exe $env:GITHUB_WORKSPACE /grant "*$($account.SID.Value):(OI)(CI)M" /Q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          try {
+            $result = Start-Process pwsh -Credential $credential -LoadUserProfile -WorkingDirectory $directory -ArgumentList '-NoProfile', '-File', "`"$script`"" -PassThru -RedirectStandardOutput "$directory/development-test.out" -RedirectStandardError "$directory/development-test.err"
+            $finished = $result.WaitForExit(120000)
+            Get-Content "$directory/development-test.out", "$directory/development-test.err"
+            if (-not $finished) { throw 'Windows development test process did not exit' }
+            if ($result.ExitCode -ne 0) { exit $result.ExitCode }
+          } finally {
+            Remove-LocalUser $name
+          }
   ci:
     runs-on: ubuntu-24.04
     steps:

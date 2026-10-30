@@ -5,10 +5,10 @@ import { resolve } from 'node:path';
 import { SecureStorageError, type SecureStorageErrorCode } from './errors.js';
 import type { VaultPolicy, VaultStatus } from './vault-backend.js';
 import { createLinuxVaultBrokerPeerVerifier } from './vault-broker-auth.js';
-import { linuxVaultServiceUserId, usesLinuxVaultService, vaultFilePaths } from './vault-files.js';
+import { linuxVaultServiceUserId, usesDevelopmentVault, usesLinuxVaultService, vaultFilePaths } from './vault-files.js';
 import {
   createVaultSocketPeerVerifier,
-  shouldRequireVaultPeerVerification,
+  shouldRequireUnixSocketPeerVerification,
   type VaultSocketPeerVerifier,
 } from './vault-peer-verifier.js';
 import type { VaultIpcMethod } from './vault-ipc.js';
@@ -56,7 +56,7 @@ export class LocalVaultClient {
             }
           };
     this.connection =
-      process.platform === 'win32' && this.rootDirectory === undefined
+      process.platform === 'win32' && (this.rootDirectory === undefined || usesDevelopmentVault())
         ? new WindowsVaultConnection(this.socketPath, verifyDaemon)
         : new VaultControlConnection(
             this.socketPath,
@@ -221,7 +221,7 @@ function createClientPeerVerifier(
   socketPath: string,
   rootDirectory: string | undefined,
 ): VaultSocketPeerVerifier | undefined {
-  if (!shouldRequireVaultPeerVerification()) return undefined;
+  if (!shouldRequireUnixSocketPeerVerification()) return undefined;
   if (rootDirectory === undefined && usesLinuxVaultService()) {
     return createLinuxVaultBrokerPeerVerifier(linuxVaultServiceUserId(socketPath));
   }

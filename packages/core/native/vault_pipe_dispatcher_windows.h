@@ -179,8 +179,8 @@ static void vault_pipe_reconnect(vault_pipe_dispatcher *dispatcher, DWORD index)
   }
 }
 
-static vault_pipe_dispatcher *vault_pipe_dispatcher_create(
-    const wchar_t *name, vault_pipe_emit emit, void *context) {
+static vault_pipe_dispatcher *vault_pipe_dispatcher_create_with_security(
+    const wchar_t *name, vault_pipe_emit emit, void *context, const wchar_t *security) {
   if (name == NULL || name[0] == L'\0' || emit == NULL) {
     SetLastError(ERROR_INVALID_PARAMETER);
     return NULL;
@@ -199,9 +199,8 @@ static vault_pipe_dispatcher *vault_pipe_dispatcher_create(
   if (dispatcher->stop == NULL) goto failure;
   dispatcher->wake = CreateEventW(NULL, TRUE, FALSE, NULL);
   if (dispatcher->wake == NULL) goto failure;
-  /* Authenticated users receive FILE_GENERIC_READ | FILE_WRITE_DATA, not FILE_CREATE_PIPE_INSTANCE. */
   if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-          VAULT_PIPE_SECURITY,
+          security,
           SDDL_REVISION_1, &descriptor, NULL)) goto failure;
   SECURITY_ATTRIBUTES attributes = { sizeof(attributes), descriptor, FALSE };
   for (DWORD index = 0; index < VAULT_PIPE_SLOTS; index++) {
@@ -225,6 +224,11 @@ failure:;
   vault_pipe_dispatcher_destroy(dispatcher);
   SetLastError(error);
   return NULL;
+}
+
+static vault_pipe_dispatcher *vault_pipe_dispatcher_create(
+    const wchar_t *name, vault_pipe_emit emit, void *context) {
+  return vault_pipe_dispatcher_create_with_security(name, emit, context, VAULT_PIPE_SECURITY);
 }
 
 static void vault_pipe_expect(vault_pipe_dispatcher *dispatcher, DWORD index, vault_pipe_stage stage) {

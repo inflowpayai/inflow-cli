@@ -318,6 +318,31 @@ describe('Storage (file-backed)', () => {
     }
   });
 
+  it('closes the session invalidation writer before reset and reopens storage on subsequent use', () => {
+    const storage = secureStorage();
+    storage.setConnection({ environment: 'sandbox' });
+    const close = vi.spyOn(SecureSqliteRepository.prototype, 'close');
+    storage.invalidateSessions();
+    expect(close).toHaveBeenCalledOnce();
+    const generation = storage.getResetGeneration();
+    expect(generation).toEqual(expect.any(String));
+    expect(storage.getConnection()).toEqual({ environment: 'sandbox' });
+    storage.invalidateSessions();
+    expect(storage.getResetGeneration()).not.toBe(generation);
+  });
+
+  it('closes the session invalidation writer when the marker cannot be written', () => {
+    const storage = secureStorage();
+    const close = vi.spyOn(SecureSqliteRepository.prototype, 'close');
+    vi.spyOn(SecureSqliteRepository.prototype, 'upsertSetting').mockImplementationOnce(() => {
+      throw new Error('synthetic write failure');
+    });
+    expect(() => storage.invalidateSessions()).toThrow('synthetic write failure');
+    expect(close).toHaveBeenCalledOnce();
+    storage.invalidateSessions();
+    expect(storage.getResetGeneration()).toEqual(expect.any(String));
+  });
+
   it('reads a replacement database instead of keeping a reset generation from an unlinked handle', () => {
     const first = secureStorage();
     const reader = secureStorage();

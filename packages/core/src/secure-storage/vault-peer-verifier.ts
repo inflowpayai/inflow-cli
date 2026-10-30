@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import type { Socket } from 'node:net';
 import { SecureStorageError } from './errors.js';
 import { runtimeRequire } from './runtime-require.js';
+import { usesDevelopmentVault } from './vault-files.js';
 
 declare const __VAULT_PEER_NATIVE_SHA256__: string | undefined;
 declare const __VAULT_PEER_NATIVE_RELATIVE_PATH__: string | undefined;
@@ -59,9 +60,8 @@ interface VaultPeerVerifierDependencies {
 
 const DEFAULT_TEAM_ID = 'B96U57DTR2';
 
-export function shouldRequireVaultPeerVerification(): boolean {
-  if (process.platform === 'linux') return true;
-  return process.platform === 'darwin' && realExecutablePath().includes('/InFlow.app/Contents/MacOS/');
+export function shouldRequireUnixSocketPeerVerification(): boolean {
+  return (process.platform === 'linux' || process.platform === 'darwin') && !usesDevelopmentVault();
 }
 
 export function createVaultSocketPeerVerifier(
@@ -187,8 +187,7 @@ export function createVaultPeerVerificationConfig(
   const nativeModulePath = options.nativeModulePath ?? defaultNativeModulePath();
   const expectedPath = dependencies.realpath(options.expectedExecutablePath ?? process.execPath);
   const expectedTeamId = options.expectedTeamId ?? DEFAULT_TEAM_ID;
-  const requireSignature =
-    options.requireSignature ?? (process.platform === 'darwin' && expectedPath.includes('/InFlow.app/Contents/MacOS/'));
+  const requireSignature = options.requireSignature ?? (process.platform === 'darwin' && !usesDevelopmentVault());
   const expectedNativeModuleSha256 = options.expectedNativeModuleSha256 ?? embeddedNativeModuleSha256();
   if (
     options.expectedUserId !== undefined &&

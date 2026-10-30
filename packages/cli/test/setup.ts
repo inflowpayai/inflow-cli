@@ -1,4 +1,4 @@
-import { beforeEach, vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 
 /**
  * Vitest global setup for the CLI package.
@@ -49,8 +49,11 @@ for (const name of CI_ENV_VARS) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
   vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 if (!process.stdout.columns) {
   Object.defineProperty(process.stdout, 'columns', {

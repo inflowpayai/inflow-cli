@@ -14,6 +14,7 @@ import {
   type VaultPolicy,
   type VaultStatus,
   usesLinuxVaultService,
+  usesWindowsVaultService,
   vaultFilePaths,
 } from '@inflowpayai/inflow-core';
 import { Cli, Errors } from 'incur';
@@ -253,7 +254,7 @@ export async function resetLocalVault(options: LocalVaultDaemonClientOptions = {
   try {
     await resetLocalVaultWithDeps(options, {
       client,
-      sharedService: options.rootDirectory === undefined && (usesLinuxVaultService() || process.platform === 'win32'),
+      sharedService: options.rootDirectory === undefined && (usesLinuxVaultService() || usesWindowsVaultService()),
       executablePath: process.execPath,
       now: Date.now,
       removeLocalState: removeVaultLocalState,
@@ -487,7 +488,7 @@ export async function readVaultStatusWithoutStarting(
   try {
     return await readVaultStatusWithoutStartingWithDeps(options, {
       client,
-      sharedService: options.rootDirectory === undefined && (usesLinuxVaultService() || process.platform === 'win32'),
+      sharedService: options.rootDirectory === undefined && (usesLinuxVaultService() || usesWindowsVaultService()),
       ensureDaemon: () => ensureLocalVaultDaemon({ ...options, client }),
       recoverPeerFailure: recoverVaultPeerVerificationFailure,
       sidecarExists: vaultSidecarExists,
@@ -547,7 +548,7 @@ async function ensureLocalVaultDaemonWithClient(
   } catch (cause) {
     await recoverVaultPeerVerificationFailure(cause, options);
   }
-  if (options.rootDirectory === undefined && (usesLinuxVaultService() || process.platform === 'win32')) {
+  if (options.rootDirectory === undefined && (usesLinuxVaultService() || usesWindowsVaultService())) {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
       if (await canUseDaemon(client, options)) return client;
@@ -559,6 +560,7 @@ async function ensureLocalVaultDaemonWithClient(
   const command = daemonCommand();
   const child = spawn(command.file, command.args, {
     detached: true,
+    windowsHide: true,
     env: daemonEnvironment(process.env),
     stdio: 'ignore',
   });
