@@ -2,6 +2,31 @@ import { z } from 'incur';
 
 export const emptyOptions = z.object({});
 
+export const statusOutput = z.object({
+  lock_state: z.enum(['locked', 'not_initialized', 'unlocked']).describe('Current local vault lock state.'),
+});
+
+export const policyOutput = z.object({
+  idle_timeout_seconds: z.number().nullable().describe('Idle seconds before locking; null disables the idle timeout.'),
+  lock_on_sleep: z.boolean().describe('Whether the vault locks when the computer sleeps.'),
+});
+
+export const lockOutput = z.object({
+  locked: z.literal(true).describe('The vault lock operation completed.'),
+});
+
+export const changePassphraseOutput = z.object({
+  changed: z.literal(true).describe('The vault PIN or passphrase was changed.'),
+});
+
+export const resetOutput = z.object({
+  reset: z.literal(true).describe('The vault reset operation completed.'),
+});
+
+export const serviceStartOutput = z.object({
+  service_state: z.literal('running').describe('The system vault service started and responded to its control client.'),
+});
+
 export const resetOptions = z.object({
   force: z
     .boolean()

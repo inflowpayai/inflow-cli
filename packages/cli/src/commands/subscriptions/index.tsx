@@ -21,7 +21,14 @@ import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { Table, type TableColumn } from '../../utils/table.js';
 import { runPayCommand } from '../mpp/index.js';
 import { fetchOptions } from '../mpp/schema.js';
-import { listOptions, subscriptionFetchArgs, subscriptionIdArgs } from './schema.js';
+import {
+  cancelOutput,
+  listOptions,
+  listOutput,
+  subscriptionFetchArgs,
+  subscriptionIdArgs,
+  subscriptionOutput,
+} from './schema.js';
 
 interface CommandContext {
   agent: boolean;
@@ -342,6 +349,7 @@ export function createSubscriptionsCli(subscriptions: ISubscriptionResource, aut
   cli.command('list', {
     description: 'List your subscriptions.',
     mcp: mcpTool('subscriptions_list'),
+    output: listOutput,
     options: listOptions,
     outputPolicy: 'agent-only' as const,
     run: (c) => runList(c, deps),
@@ -349,6 +357,7 @@ export function createSubscriptionsCli(subscriptions: ISubscriptionResource, aut
   cli.command('get', {
     description: 'View your subscription details.',
     mcp: mcpTool('subscriptions_get'),
+    output: subscriptionOutput,
     args: subscriptionIdArgs,
     outputPolicy: 'agent-only' as const,
     run: (c) => runGet(c, deps),
@@ -366,6 +375,7 @@ export function createSubscriptionsCli(subscriptions: ISubscriptionResource, aut
   cli.command('cancel', {
     description: 'Cancel your subscription immediately.',
     mcp: mcpTool('subscriptions_cancel'),
+    output: cancelOutput,
     args: subscriptionIdArgs,
     outputPolicy: 'agent-only' as const,
     run: (c) => runCancel(c, deps),

@@ -69,6 +69,7 @@ export interface Subscription {
   periodCount: number;
   period0Amount: string;
   periodUnit: SubscriptionPeriod;
+  revoked?: string;
   sellerId?: string;
   sellerName?: string;
   sellerWebsite?: string;

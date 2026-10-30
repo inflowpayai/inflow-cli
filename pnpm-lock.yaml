@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@apidevtools/json-schema-ref-parser@15.5.2': 11973baa1c73bf2ee8c372f559f79dd0641b1f9e5b8e9967a0f7b1b0bea38a23
-  incur@0.4.19: db810b6bf4ff682d812812447c25be42191d896d0785c71dc0fd8896a76a684f
+  incur@0.4.19: f2b628f4f58f449cd45c7a1f41afb13012f5fb86380729ae116e5589b3fa5b00
 
 importers:
 
@@ -107,7 +107,7 @@ importers:
         version: 2.27.0
       incur:
         specifier: ^0.4.5
-        version: 0.4.19(patch_hash=db810b6bf4ff682d812812447c25be42191d896d0785c71dc0fd8896a76a684f)
+        version: 0.4.19(patch_hash=f2b628f4f58f449cd45c7a1f41afb13012f5fb86380729ae116e5589b3fa5b00)
       ink:
         specifier: ^5.2.1
         version: 5.2.1(@types/react@18.3.31)(react@18.3.1)
@@ -4869,7 +4869,7 @@ snapshots:
 
   imurmurhash@0.1.4: {}
 
-  incur@0.4.19(patch_hash=db810b6bf4ff682d812812447c25be42191d896d0785c71dc0fd8896a76a684f):
+  incur@0.4.19(patch_hash=f2b628f4f58f449cd45c7a1f41afb13012f5fb86380729ae116e5589b3fa5b00):
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/server': 2.0.0-alpha.4

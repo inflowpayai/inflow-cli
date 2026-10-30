@@ -3,6 +3,13 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it, vi } from 'vitest';
+import { Schema } from 'incur';
+import { subscriptionOutput } from '../../src/commands/subscriptions/schema.js';
+import * as aepOutput from '../../src/commands/aep/schema.js';
+import * as odpOutput from '../../src/commands/odp/schema.js';
+import * as openapiOutput from '../../src/commands/openapi/schema.js';
+import { directorySearchOutput } from '../../src/commands/directory/schema.js';
+import { inspectOutput } from '../../src/commands/inspect/schema.js';
 import {
   isNpmShimAgentMode,
   renderNpmShimAgentPayload,
@@ -34,6 +41,57 @@ const VAULT_COMMANDS = [
   'vault unlock',
 ] as const;
 const VAULT_MCP_TOOLS = VAULT_COMMANDS.map((command) => command.replace(' ', '_'));
+const OBJECT_RESPONSE_FIELDS: Record<string, string[]> = {
+  'auth logout': ['authenticated'],
+  'directory suggest': ['items'],
+  'subscriptions cancel': ['cancelled', 'subscription_id'],
+  'subscriptions list': ['count', 'data', 'total'],
+  'vault change-passphrase': ['changed'],
+  'vault lock': ['locked'],
+  'vault policy': ['idle_timeout_seconds', 'lock_on_sleep'],
+  'vault reset': ['reset'],
+  'vault set-policy': ['idle_timeout_seconds', 'lock_on_sleep'],
+  'vault status': ['lock_state'],
+  'vault unlock': ['lock_state'],
+};
+
+type ResponseSchema = {
+  type?: string;
+  properties?: Record<string, { description?: string }>;
+  required?: string[];
+};
+
+const RESPONSE_SCHEMAS = {
+  'aep enroll': aepOutput.enrollOutput,
+  'aep fetch': aepOutput.fetchOutput,
+  'aep grant': aepOutput.grantOutput,
+  'aep inspect': aepOutput.inspectOutput,
+  'aep revoke': aepOutput.revokeOutput,
+  'aep status': aepOutput.statusOutput,
+  'directory search': directorySearchOutput,
+  inspect: inspectOutput,
+  'odp actions resolve': odpOutput.actionOutput,
+  'odp collections get': odpOutput.collectionOutput,
+  'odp collections list': odpOutput.collectionPageOutput,
+  'odp collections search': odpOutput.collectionPageOutput,
+  'odp inspect': odpOutput.inspectionOutput,
+  'odp offerings capabilities': odpOutput.capabilitiesOutput,
+  'odp offerings discover': odpOutput.discoveryOutput,
+  'odp offerings get': odpOutput.offeringOutput,
+  'odp offerings list': odpOutput.offeringPageOutput,
+  'odp offerings search': odpOutput.offeringPageOutput,
+  'openapi operations call': openapiOutput.callOutput,
+  'openapi operations get': openapiOutput.getOutput,
+  'openapi operations list': openapiOutput.listOutput,
+  'openapi operations prepare': openapiOutput.prepareOutput,
+};
+
+function expectResponseSchema(schema: ResponseSchema | undefined, fields: string[]) {
+  expect(schema?.type).toBe('object');
+  expect(Object.keys(schema?.properties ?? {}).sort()).toEqual([...fields].sort());
+  expect([...(schema?.required ?? [])].sort()).toEqual([...fields].sort());
+  for (const field of fields) expect(schema?.properties?.[field]?.description).toBeTruthy();
+}
 const MCP_TOOL_EXPECTATIONS = [
   ['openapi_operations_get', 'OpenAPI: Get Operation', true, false],
   ['openapi_operations_list', 'OpenAPI: List Operations', true, false],
@@ -122,6 +180,7 @@ const CLI_SCHEMA_COMMANDS = [
   'odp collections list',
   'odp collections search',
   'odp inspect',
+  'odp offerings capabilities',
   'odp offerings discover',
   'odp offerings get',
   'odp offerings list',
@@ -821,9 +880,20 @@ describe.skipIf(!existsSync(DIST_CLI))(
       expect(exitCode).toBe(0);
       const parsed = JSON.parse(stdout) as {
         args?: { type?: string; properties?: Record<string, unknown> };
-        options?: { type?: string; properties?: Record<string, unknown> };
+        options?: { type?: string; properties?: Record<string, { default?: unknown }>; required?: string[] };
+        output?: ResponseSchema;
       };
-      const schema = parsed.options ?? parsed.args;
+      for (const [name, property] of Object.entries(parsed.options?.properties ?? {})) {
+        if (Object.hasOwn(property, 'default')) expect(parsed.options?.required ?? [], name).not.toContain(name);
+      }
+      const fields = OBJECT_RESPONSE_FIELDS[command];
+      if (fields) expectResponseSchema(parsed.output, fields);
+      if (command === 'subscriptions get') expect(parsed.output).toEqual(Schema.toJsonSchema(subscriptionOutput));
+      for (const [name, output] of Object.entries(RESPONSE_SCHEMAS)) {
+        if (command === name) expect(parsed.output).toEqual(Schema.toJsonSchema(output));
+      }
+      if (command.startsWith('mpp ') || command.startsWith('x402 ')) expect(parsed.output).toBeUndefined();
+      const schema = parsed.options ?? parsed.args ?? parsed.output;
       if (schema === undefined) {
         expect(parsed).toEqual({});
       } else {
@@ -860,10 +930,25 @@ describe.skipIf(!existsSync(DIST_CLI))(
               title?: string;
             };
             inputSchema?: { type?: string; properties?: Record<string, unknown> };
+            outputSchema?: ResponseSchema;
           }[];
         };
       };
       const tools = response.result?.tools ?? [];
+      for (const [command, fields] of Object.entries(OBJECT_RESPONSE_FIELDS)) {
+        expectResponseSchema(tools.find((entry) => entry.name === command.replace(' ', '_'))?.outputSchema, fields);
+      }
+      expect(tools.find((entry) => entry.name === 'subscriptions_get')?.outputSchema).toEqual(
+        Schema.toJsonSchema(subscriptionOutput),
+      );
+      for (const [name, output] of Object.entries(RESPONSE_SCHEMAS)) {
+        expect(tools.find((entry) => entry.name === name.replaceAll(' ', '_'))?.outputSchema, name).toEqual(
+          Schema.toJsonSchema(output),
+        );
+      }
+      for (const tool of tools.filter((entry) => /^(mpp|x402)_/.test(entry.name))) {
+        expect(tool.outputSchema, tool.name).toBeUndefined();
+      }
       expect(tools.map((entry) => entry.name).sort()).toEqual(MCP_TOOL_EXPECTATIONS.map(([name]) => name).sort());
       for (const [name, title, readOnlyHint, destructiveHint] of MCP_TOOL_EXPECTATIONS) {
         expect(
@@ -955,14 +1040,19 @@ describe.skipIf(!existsSync(DIST_CLI))(
           .filter((line) => line.trim().length > 0)
           .map(
             (line) =>
-              JSON.parse(line) as { id?: number; result?: { content?: { text?: string }[]; isError?: boolean } },
+              JSON.parse(line) as {
+                id?: number;
+                result?: { content?: { text?: string }[]; isError?: boolean; structuredContent?: unknown };
+              },
           );
         const status = responses.find((entry) => entry.id === 1);
         const unlock = responses.find((entry) => entry.id === 2);
         const statusText = status?.result?.content?.[0]?.text ?? '';
         expect(JSON.parse(statusText)).toEqual({ lock_state: 'not_initialized' });
+        expect(status?.result?.structuredContent).toEqual(JSON.parse(statusText));
         expect(statusText).not.toContain('daemon');
         expect(unlock?.result?.isError).toBe(true);
+        expect(unlock?.result?.structuredContent).toBeUndefined();
         expect(unlock?.result?.content?.[0]?.text).toContain('A human must run `inflow vault unlock`');
       } finally {
         rmSync(root, { force: true, recursive: true });

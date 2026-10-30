@@ -23,6 +23,8 @@ import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { Table, type TableColumn } from '../../utils/table.js';
 import {
   collectionGetArgs,
+  collectionOutput,
+  collectionPageOutput,
   collectionGetOptions,
   collectionListArgs,
   collectionListOptions,
@@ -128,6 +130,22 @@ export function odpServiceFailure(
   if (authentication !== undefined) return odpCommandError(authentication);
   if (cause instanceof TapSigningError)
     return odpCommandError({ code: 'TAP_SIGNING_FAILED', message: cause.message, retryable: false });
+  if (error instanceof TypeError) {
+    const validationMessages = new Map([
+      ['ODP Action OpenAPI document is invalid', "The service's advertised OpenAPI document is invalid."],
+      [
+        'ODP Action requires an OpenAPI 3.1 document',
+        "The service's advertised action requires an OpenAPI 3.1 document.",
+      ],
+      [
+        'ODP Attribute Schema must declare JSON Schema Draft 2020-12',
+        'The service\'s request or attribute schema must declare "$schema": "https://json-schema.org/draft/2020-12/schema".',
+      ],
+    ]);
+    const reason = validationMessages.get(error.message);
+    if (reason !== undefined)
+      return odpCommandError({ code: fallbackCode, message: `${message} ${reason}`, retryable: false });
+  }
   if (error instanceof OdpInspectionError) {
     const codes: Record<OdpInspectionError['code'], string> = {
       aborted: 'ODP_REQUEST_ABORTED',
@@ -445,6 +463,7 @@ export function createCollectionsCli(resource: CollectionResource) {
   const cli = Cli.create('collections', { description: 'Browse collections from a service.' });
 
   cli.command('list', {
+    output: collectionPageOutput,
     args: collectionListArgs,
     description: 'List collections from a service.',
     mcp: mcpTool('odp_collections_list'),
@@ -469,6 +488,7 @@ export function createCollectionsCli(resource: CollectionResource) {
   });
 
   cli.command('search', {
+    output: collectionPageOutput,
     args: collectionSearchArgs,
     description: 'Search collections from a service.',
     mcp: mcpTool('odp_collections_search'),
@@ -493,6 +513,7 @@ export function createCollectionsCli(resource: CollectionResource) {
   });
 
   cli.command('get', {
+    output: collectionOutput,
     args: collectionGetArgs,
     description: 'Get full collection details.',
     mcp: mcpTool('odp_collections_get'),

@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
+import { stripVTControlCharacters } from 'node:util';
 
 test(
   'macOS archive verification checks extracted binaries, metadata, and startup',
@@ -47,7 +48,7 @@ test(
       pack('13.5', '1.2.3');
       result = verify();
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /status: 42/u);
+      assert.match(stripVTControlCharacters(result.stderr), /status: 42/u);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

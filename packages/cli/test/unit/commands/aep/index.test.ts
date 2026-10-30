@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isValidElement, type ReactElement } from 'react';
 import { PassThrough } from 'node:stream';
 import type * as Ink from 'ink';
@@ -14,6 +14,9 @@ import type { InspectServiceResult } from '@aep-foundation/agent';
 import * as AepAgent from '@aep-foundation/agent';
 import type * as InflowCore from '@inflowpayai/inflow-core';
 import { enrollOptions, grantOptions, serviceReferenceArgs } from '../../../../src/commands/aep/schema.js';
+import * as responseSchemas from '../../../../src/commands/aep/schema.js';
+import { Schema } from 'incur';
+import { fromJsonSchema } from '@modelcontextprotocol/server';
 import { PendingApprovalView } from '../../../../src/commands/aep/views.js';
 
 const rendering = vi.hoisted(() => ({
@@ -252,6 +255,33 @@ vi.mock('@aep-foundation/agent', async (importOriginal) => {
 
 const { __testing, createAepCli } = await import('../../../../src/commands/aep/index.js');
 
+const outputSchemas = {
+  runEnroll: responseSchemas.enrollOutput,
+  runFetch: responseSchemas.fetchOutput,
+  runGrant: responseSchemas.grantOutput,
+  runInspect: responseSchemas.inspectOutput,
+  runRevoke: responseSchemas.revokeOutput,
+  runStatus: responseSchemas.statusOutput,
+};
+const checkOutputs: Array<() => Promise<void>> = [];
+beforeEach(() => {
+  checkOutputs.length = 0;
+  for (const name of ['runEnroll', 'runFetch', 'runGrant', 'runInspect', 'runRevoke', 'runStatus'] as const) {
+    const spy = vi.spyOn(__testing, name);
+    checkOutputs.push(async () => {
+      for (const result of spy.mock.settledResults) {
+        if (result.type === 'fulfilled') {
+          const parsed = outputSchemas[name].safeParse(JSON.parse(JSON.stringify(result.value)));
+          expect(parsed.error, `${name} response schema`).toBeUndefined();
+          const validator = fromJsonSchema(Schema.toJsonSchema(outputSchemas[name]));
+          const validated = await validator['~standard'].validate(JSON.parse(JSON.stringify(result.value)));
+          expect(validated.issues, `${name} MCP output validation`).toBeUndefined();
+        }
+      }
+    });
+  }
+});
+
 function context(options: Record<string, unknown> = {}) {
   return {
     agent: true,
@@ -274,7 +304,8 @@ function inflow(inspectResult: InspectServiceResult = inspect): InflowCore.Inflo
   } as never;
 }
 
-afterEach(() => {
+afterEach(async () => {
+  for (const check of checkOutputs) await check();
   vi.useRealTimers();
   rendering.render.mockClear();
   rendering.present.mockClear();

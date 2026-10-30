@@ -3,6 +3,7 @@ import { PublicSourceDocuments } from '../../src/openapi/documents.js';
 import type { PublicSourceCache } from '../../src/openapi/cache.js';
 import { SourceDiscovery } from '../../src/openapi/discovery.js';
 import {
+  OpenApiPreparationError,
   prepareOpenApiRequest,
   previewOpenApiRequest,
   type OpenApiPreparationInput,
@@ -277,6 +278,85 @@ describe('OpenAPI request preparation', () => {
     expect(() =>
       prepare({ requestBody: { content: { 'application/json': { schema } } } }, { data: JSON.stringify(value) }),
     ).toThrow('nesting depth');
+  });
+  it.each([
+    [{ anyOf: [{ type: 'string' }, { type: 'null' }] }, 'text', true],
+    [{ anyOf: [{ type: 'string' }, { type: 'null' }] }, null, true],
+    [{ anyOf: [{ type: 'string' }, { type: 'null' }] }, 3, false],
+    [{ anyOf: [{ type: 'number' }, { type: 'integer' }] }, 3, true],
+    [{ oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, ['text'], true],
+    [{ oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, [3], false],
+    [{ oneOf: [{ type: 'number' }, { type: 'integer' }] }, 3, false],
+    [{ oneOf: [{ type: 'number' }, { type: 'integer' }] }, 3.5, true],
+    [{ allOf: [{ type: 'string' }, { enum: ['yes'] }] }, 'yes', true],
+    [{ allOf: [{ type: 'string' }, { enum: ['yes'] }] }, 'no', false],
+    [{ anyOf: [false, true] }, {}, true],
+    [{ oneOf: [true, true] }, {}, false],
+    [{ oneOf: [false, false] }, {}, false],
+    [{ allOf: [false, true] }, {}, false],
+    [{ type: 'string', anyOf: [true] }, 3, false],
+    [{ anyOf: [true], oneOf: [false] }, {}, false],
+    [
+      { allOf: [{ type: 'object' }, { anyOf: [{ required: ['domain'] }, { required: ['company'] }] }] },
+      { domain: 'example.com' },
+      true,
+    ],
+    [{ allOf: [{ type: 'object' }, { anyOf: [{ required: ['domain'] }, { required: ['company'] }] }] }, {}, false],
+    [
+      {
+        type: 'object',
+        properties: {
+          messages: {
+            type: 'array',
+            items: { type: 'object', properties: { content: { anyOf: [{ type: 'string' }, { type: 'null' }] } } },
+          },
+        },
+      },
+      { messages: [{ content: 'hello' }] },
+      true,
+    ],
+  ])('validates composed request schemas %j', (schema, value, succeeds) => {
+    const operation = { requestBody: { content: { 'application/json': { schema } } } };
+    const before = structuredClone(operation);
+    const data = JSON.stringify(value);
+    const run = () => prepare(operation, { data });
+    if (succeeds) expect(run().request.body).toBe(data);
+    else expect(run).toThrow(OpenApiPreparationError);
+    expect(operation).toEqual(before);
+  });
+  it.each([
+    { anyOf: [] },
+    { oneOf: {} },
+    { allOf: [null] },
+    { oneOf: [true, { $ref: '#/other' }] },
+    { anyOf: [{ $dynamicRef: '#other' }, true] },
+    { anyOf: [true, { not: {} }] },
+    { oneOf: [{ type: 'string', pattern: '^yes$' }, { type: 'string' }] },
+    { anyOf: [{ type: 'number', minimum: 1 }, true] },
+    { allOf: [{ type: 'object', properties: { value: { minLength: 1 } } }] },
+  ])('does not count unsupported or malformed alternatives as matches %j', (schema) => {
+    let failure: unknown;
+    try {
+      prepare({ requestBody: { content: { 'application/json': { schema } } } }, { data: '{"value":""}' });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(OpenApiPreparationError);
+    expect(failure).toMatchObject({ code: 'OPENAPI_PREPARATION_UNSUPPORTED' });
+  });
+  it('bounds composed schema evaluation across an array', () => {
+    const schema = { type: 'array', items: { anyOf: [true, true] } };
+    expect(() =>
+      prepare(
+        { requestBody: { content: { 'application/json': { schema } } } },
+        { data: JSON.stringify(Array.from({ length: 4000 }, () => 1)) },
+      ),
+    ).toThrow('schema evaluation limit');
+  });
+  it('validates composed parameter schemas', () => {
+    const parameters = [{ in: 'path', name: 'id', schema: { oneOf: [{ const: 'one' }, { const: 'two' }] } }];
+    expect(prepare({ parameters }).request.url).toContain('/one');
+    expect(() => prepare({ parameters }, { parameters: { path: { id: 'three' } } })).toThrow('exactly one');
   });
   it('redacts only recognized credential locations without altering the executable request', () => {
     const securitySchemes = {

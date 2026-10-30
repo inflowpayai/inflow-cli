@@ -23,7 +23,17 @@ import { mcpTool } from '../../mcp-metadata.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { Table } from '../../utils/table.js';
 import { summarize } from '../odp/presentation.js';
-import { callOptions, documentArgs, getOptions, listOptions, prepareOptions } from './schema.js';
+import {
+  callOptions,
+  documentArgs,
+  getOptions,
+  listOptions,
+  prepareOptions,
+  callOutput,
+  getOutput,
+  listOutput,
+  prepareOutput,
+} from './schema.js';
 
 interface ReadContext {
   agent: boolean;
@@ -254,6 +264,7 @@ export function createOpenApiCli(
     return sanitizeDeep(result.document);
   };
   operations.command('list', {
+    output: listOutput,
     args: documentArgs,
     description: 'List OpenAPI operations, optionally filtered by Directory Collection or provider tag.',
     mcp: mcpTool('openapi_operations_list'),
@@ -292,6 +303,7 @@ export function createOpenApiCli(
     },
   });
   operations.command('get', {
+    output: getOutput,
     args: documentArgs,
     description: 'Inspect one operation without invoking it or obtaining credentials.',
     mcp: mcpTool('openapi_operations_get'),
@@ -313,6 +325,7 @@ export function createOpenApiCli(
     },
   });
   operations.command('prepare', {
+    output: prepareOutput,
     args: documentArgs,
     description: 'Construct a request preview without invoking the operation, enrolling, or paying.',
     mcp: mcpTool('openapi_operations_prepare'),
@@ -340,6 +353,7 @@ export function createOpenApiCli(
     },
   });
   operations.command('call', {
+    output: callOutput,
     args: documentArgs,
     description: 'Call an operation once, or direct an advertised paid operation to an explicit payment command.',
     mcp: mcpTool('openapi_operations_call'),

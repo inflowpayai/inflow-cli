@@ -6,7 +6,7 @@ import { odpServiceFailure, requireServiceOperation } from './service.js';
 import { mcpTool } from '../../mcp-metadata.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { Table, type TableColumn } from '../../utils/table.js';
-import { actionResolveArgs } from './schema.js';
+import { actionResolveArgs, actionOutput } from './schema.js';
 import { executeOdpCommand } from './command.js';
 import { absoluteReference, detail, DetailsTable, listed, record, type DetailRow } from './presentation.js';
 
@@ -144,6 +144,7 @@ export function ActionView({ resolution }: { resolution: ActionResolution }) {
 export function createActionsCli(resource: ActionResource) {
   const cli = Cli.create('actions', { description: 'Inspect executable requests advertised by offerings.' });
   cli.command('resolve', {
+    output: actionOutput,
     args: actionResolveArgs,
     description: "Resolve an offering's action into an executable request without invoking it.",
     mcp: mcpTool('odp_actions_resolve'),

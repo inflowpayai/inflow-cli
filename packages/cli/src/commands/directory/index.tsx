@@ -14,9 +14,11 @@ import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { Table, type TableColumn } from '../../utils/table.js';
 import {
   directorySearchArgs,
+  directorySearchOutput,
   directorySearchOptions,
   directorySuggestArgs,
   directorySuggestOptions,
+  directorySuggestOutput,
 } from './schema.js';
 import { executeOdpCommand, odpCommandError } from '../odp/command.js';
 import { Continuation, summarize } from '../odp/presentation.js';
@@ -266,6 +268,7 @@ export function createDirectoryCli(resource: Pick<IOdpResource, 'continueSearch'
   const directory = Cli.create('directory', { description: 'Search the directory for Services and Collections.' });
 
   directory.command('search', {
+    output: directorySearchOutput,
     args: directorySearchArgs,
     description: 'Search the directory for Services and Collections.',
     mcp: mcpTool('directory_search'),
@@ -295,6 +298,7 @@ export function createDirectoryCli(resource: Pick<IOdpResource, 'continueSearch'
     args: directorySuggestArgs,
     description: 'Find matching Service and Collection names.',
     mcp: mcpTool('directory_suggest'),
+    output: directorySuggestOutput,
     options: directorySuggestOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {

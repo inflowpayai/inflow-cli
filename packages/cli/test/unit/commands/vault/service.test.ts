@@ -4,6 +4,7 @@ import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __testing, createVaultServiceCli, hasSystemdManager } from '../../../../src/commands/vault/service.js';
 import { createVaultCli } from '../../../../src/commands/vault/index.js';
+import { serviceStartOutput } from '../../../../src/commands/vault/schema.js';
 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
@@ -236,6 +237,28 @@ describe('explicit system vault startup', () => {
       },
     });
     expect(output.join('')).toContain(success ? 'running' : 'VAULT_SERVICE_START_FAILED');
+    if (success) expect(serviceStartOutput.parse(JSON.parse(output.join('')))).toEqual({ service_state: 'running' });
+  });
+
+  it('describes service startup without starting or contacting the service', async () => {
+    let output = '';
+    await createVaultServiceCli().serve(['start', '--schema', '--format', 'json'], {
+      exit: vi.fn(),
+      stdout: (chunk) => {
+        output += chunk;
+      },
+    });
+    expect(JSON.parse(output)).toMatchObject({
+      output: {
+        type: 'object',
+        required: ['service_state'],
+        properties: {
+          service_state: { const: 'running', description: serviceStartOutput.shape.service_state.description },
+        },
+      },
+    });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.info).not.toHaveBeenCalled();
   });
 
   it.each([true, false])('registers service recovery only when requested (include=%s)', async (include) => {

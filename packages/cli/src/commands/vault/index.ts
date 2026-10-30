@@ -19,7 +19,16 @@ import {
 } from '@inflowpayai/inflow-core';
 import { Cli, Errors } from 'incur';
 import { mcpTool } from '../../mcp-metadata.js';
-import { emptyOptions, policySetOptions, resetOptions } from './schema.js';
+import {
+  changePassphraseOutput,
+  emptyOptions,
+  lockOutput,
+  policyOutput,
+  policySetOptions,
+  resetOptions,
+  resetOutput,
+  statusOutput,
+} from './schema.js';
 import { createVaultServiceCli, hasSystemdManager, SERVICE_START_INSTRUCTION } from './service.js';
 
 interface VaultCommandContext {
@@ -334,6 +343,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}, incl
   cli.command('status', {
     description: 'Show local vault status.',
     mcp: mcpTool('vault_status'),
+    output: statusOutput,
     options: emptyOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
@@ -344,6 +354,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}, incl
   cli.command('unlock', {
     description: 'Unlock or initialize the local vault.',
     mcp: mcpTool('vault_unlock'),
+    output: statusOutput,
     options: emptyOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
@@ -354,6 +365,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}, incl
   cli.command('lock', {
     description: 'Lock the local vault.',
     mcp: mcpTool('vault_lock'),
+    output: lockOutput,
     options: emptyOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
@@ -364,6 +376,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}, incl
   cli.command('policy', {
     description: 'Show the local vault lock policy.',
     mcp: mcpTool('vault_policy'),
+    output: policyOutput,
     options: emptyOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
@@ -374,6 +387,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}, incl
   cli.command('set-policy', {
     description: 'Update the local vault lock policy.',
     mcp: mcpTool('vault_set-policy'),
+    output: policyOutput,
     options: policySetOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
@@ -384,6 +398,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}, incl
   cli.command('change-passphrase', {
     description: 'Change the local vault PIN or passphrase.',
     mcp: mcpTool('vault_change-passphrase'),
+    output: changePassphraseOutput,
     options: emptyOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {
@@ -394,6 +409,7 @@ export function createVaultCli(options: LocalVaultDaemonClientOptions = {}, incl
   cli.command('reset', {
     description: 'Remove the local vault database, sidecar, and runtime files.',
     mcp: mcpTool('vault_reset'),
+    output: resetOutput,
     options: resetOptions,
     outputPolicy: 'agent-only' as const,
     async run(c) {

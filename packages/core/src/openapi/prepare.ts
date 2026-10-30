@@ -64,13 +64,79 @@ function scalar(value: unknown, label: string): string {
   return unsupported(`${label} requires a scalar or an array of scalar values.`);
 }
 
-function checkSchema(value: unknown, schema: unknown, label: string, depth = 0): void {
+function checkSchema(
+  value: unknown,
+  schema: unknown,
+  label: string,
+  depth = 0,
+  composed = false,
+  budget = { remaining: 10_000 },
+): void {
+  if (--budget.remaining < 0) unsupported(`${label} exceeds the supported schema evaluation limit.`);
   if (depth > 32) unsupported(`${label} exceeds the supported schema nesting depth.`);
   if (schema === undefined || schema === true) return;
   if (schema === false) invalid(`${label} is not permitted by its schema.`);
   if (!isRecord(schema)) invalid(`${label} has an invalid schema.`);
-  for (const key of ['$ref', '$dynamicRef', 'allOf', 'anyOf', 'oneOf', 'not', 'if']) {
+  for (const key of ['$ref', '$dynamicRef', 'not', 'if']) {
     if (schema[key] !== undefined) unsupported(`${label} uses unsupported schema keyword ${key}.`);
+  }
+  composed ||= ['allOf', 'anyOf', 'oneOf'].some((key) => schema[key] !== undefined);
+  if (composed) {
+    // Ignored constraints cannot determine whether an alternative matches.
+    for (const key of [
+      'multipleOf',
+      'maximum',
+      'exclusiveMaximum',
+      'minimum',
+      'exclusiveMinimum',
+      'maxLength',
+      'minLength',
+      'pattern',
+      'format',
+      'maxItems',
+      'minItems',
+      'uniqueItems',
+      'contains',
+      'prefixItems',
+      'additionalItems',
+      'unevaluatedItems',
+      'maxProperties',
+      'minProperties',
+      'patternProperties',
+      'propertyNames',
+      'dependencies',
+      'dependentRequired',
+      'dependentSchemas',
+      'unevaluatedProperties',
+    ]) {
+      if (schema[key] !== undefined) unsupported(`${label} uses unsupported schema keyword ${key}.`);
+    }
+  }
+  for (const key of ['allOf', 'anyOf', 'oneOf']) {
+    const alternatives = schema[key];
+    if (alternatives === undefined) continue;
+    if (
+      !Array.isArray(alternatives) ||
+      alternatives.length === 0 ||
+      alternatives.some((alternative) => typeof alternative !== 'boolean' && !isRecord(alternative))
+    )
+      unsupported(`${label} has an invalid ${key} schema.`);
+    let matches = 0;
+    for (const alternative of alternatives) {
+      try {
+        checkSchema(value, alternative, label, depth + 1, true, budget);
+        matches++;
+      } catch (error) {
+        if (
+          !(error instanceof OpenApiPreparationError) ||
+          error.code === 'OPENAPI_PREPARATION_UNSUPPORTED' ||
+          key === 'allOf'
+        )
+          throw error;
+      }
+    }
+    if (key === 'anyOf' && matches === 0) invalid(`${label} does not match any alternative in anyOf.`);
+    if (key === 'oneOf' && matches !== 1) invalid(`${label} must match exactly one alternative in oneOf.`);
   }
   if (value === null && schema['nullable'] === true) return;
   const type = schema['type'];
@@ -104,7 +170,7 @@ function checkSchema(value: unknown, schema: unknown, label: string, depth = 0):
   if (Object.hasOwn(schema, 'const') && !isDeepStrictEqual(schema['const'], value))
     invalid(`${label} does not match its declared constant.`);
   if (Array.isArray(value)) {
-    for (const item of value) checkSchema(item, schema['items'], `${label} item`, depth + 1);
+    for (const item of value) checkSchema(item, schema['items'], `${label} item`, depth + 1, composed, budget);
   }
   if (isRecord(value)) {
     const properties = isRecord(schema['properties']) ? schema['properties'] : {};
@@ -120,7 +186,7 @@ function checkSchema(value: unknown, schema: unknown, label: string, depth = 0):
     }
     for (const [name, item] of Object.entries(value)) {
       const child = Object.hasOwn(properties, name) ? properties[name] : schema['additionalProperties'];
-      checkSchema(item, child, `${label}.${name}`, depth + 1);
+      checkSchema(item, child, `${label}.${name}`, depth + 1, composed, budget);
     }
   }
 }

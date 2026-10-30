@@ -7,6 +7,13 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { Cli } from 'incur';
 import {
+  changePassphraseOutput,
+  lockOutput,
+  policyOutput,
+  resetOutput,
+  statusOutput,
+} from '../../../../src/commands/vault/schema.js';
+import {
   __testing,
   createVaultCli,
   ensureLocalVaultUnlocked,
@@ -277,13 +284,30 @@ describe('vault command runners', () => {
     },
   );
 
-  it('reports vault status in agent shape', async () => {
+  it.each(['locked', 'not_initialized', 'unlocked'] as const)('describes the %s vault status', async (lockState) => {
     const harness = deps();
+    harness.readVaultStatus.mockResolvedValue({ daemonRunning: false, lockState });
 
-    await expect(__testing.runVaultStatus(context(), harness)).resolves.toEqual({
-      lock_state: 'locked',
-    });
+    const result = await __testing.runVaultStatus(context(), harness);
+    expect(result).toEqual({ lock_state: lockState });
+    expect(statusOutput.parse(result)).toEqual(result);
     expect(harness.ensureDaemon).not.toHaveBeenCalled();
+  });
+
+  it('describes successful unlock, lock, policy, policy updates, and reset results', async () => {
+    const harness = deps();
+    harness.readVaultStatus.mockResolvedValue({ daemonRunning: true, lockState: 'unlocked' });
+    const unlock = await __testing.runVaultUnlock(context(), harness);
+    expect(statusOutput.parse(unlock)).toEqual(unlock);
+    const lock = await __testing.runVaultLock(context(), harness);
+    expect(lockOutput.parse(lock)).toEqual(lock);
+    const policy = await __testing.runVaultPolicy(context(), harness);
+    expect(policyOutput.parse(policy)).toEqual(policy);
+    const disabled = await __testing.runVaultPolicySet(context({ idleTimeoutSeconds: 0 }), harness);
+    expect(disabled.idle_timeout_seconds).toBeNull();
+    expect(policyOutput.parse(disabled)).toEqual(disabled);
+    const reset = await __testing.runVaultReset(context({ force: true }), harness);
+    expect(resetOutput.parse(reset)).toEqual(reset);
   });
 
   it('renders status in human mode', async () => {
@@ -1035,7 +1059,9 @@ describe('vault command runners', () => {
         .mockResolvedValueOnce(Buffer.from('next123')),
     });
 
-    await expect(__testing.runVaultChangePassphrase(context({}, false), harness)).resolves.toEqual({ changed: true });
+    const result = await __testing.runVaultChangePassphrase(context({}, false), harness);
+    expect(result).toEqual({ changed: true });
+    expect(changePassphraseOutput.parse(result)).toEqual(result);
     expect(harness.client.changePassphrase).toHaveBeenCalledWith(
       Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
       Buffer.from([0, 0, 0, 0, 0, 0, 0]),

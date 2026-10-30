@@ -2,7 +2,7 @@ import { type IOdpResource } from '@inflowpayai/inflow-core';
 import { Cli } from 'incur';
 import { mcpTool } from '../../mcp-metadata.js';
 import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
-import { inspectArgs, inspectOptions } from './schema.js';
+import { inspectArgs, inspectOptions, inspectionOutput } from './schema.js';
 import { createCollectionsCli, InspectionView, runInspect } from './service.js';
 import { createOfferingsCli } from './offerings.js';
 import { createActionsCli } from './actions.js';
@@ -18,6 +18,7 @@ interface InspectCommandContext extends OdpCommandContext {
 function createInspectCommand(resource: Pick<IOdpResource, 'inspect'>) {
   return {
     args: inspectArgs,
+    output: inspectionOutput,
     description: "Inspect a service's capabilities.",
     mcp: mcpTool('odp_inspect'),
     options: inspectOptions,
