@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
+import { statSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SecureStorageError } from './errors.js';
@@ -40,6 +41,20 @@ export interface LocalVaultBackendOptions {
 
 const POLICY_SETTING_NAME = 'vault-policy';
 const RECORD_ENCRYPTION_VERSION = 1;
+
+function defaultVaultPolicy(): VaultPolicy {
+  if (process.platform === 'linux') {
+    try {
+      // systemd's sd_booted checks this runtime marker, not the installed systemctl executable.
+      statSync('/run/systemd/system/');
+    } catch (cause) {
+      if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT') {
+        return { ...DEFAULT_VAULT_POLICY, lockOnSleep: false };
+      }
+    }
+  }
+  return { ...DEFAULT_VAULT_POLICY };
+}
 
 export class LocalVaultBackend implements VaultBackend {
   private masterKey: ProtectedVaultKey | undefined;
@@ -107,7 +122,7 @@ export class LocalVaultBackend implements VaultBackend {
 
   getPolicy(): VaultPolicy {
     const setting = this.repository.getSetting(POLICY_SETTING_NAME);
-    if (setting === undefined) return DEFAULT_VAULT_POLICY;
+    if (setting === undefined) return defaultVaultPolicy();
     return parseVaultPolicy(setting.payload);
   }
 
