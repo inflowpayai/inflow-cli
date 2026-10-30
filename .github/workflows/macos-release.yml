@@ -265,6 +265,7 @@ jobs:
           git -C "$tap" add Casks/inflow.rb
           git -C "$tap" commit -m "Add inflow cask"
           brew tap inflowpayai/tap-audit "$tap"
+          brew trust --cask inflowpayai/tap-audit/inflow
           HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_DEVELOPER=1 brew audit --cask --strict --skip-style inflowpayai/tap-audit/inflow
           brew untap inflowpayai/tap-audit
 
