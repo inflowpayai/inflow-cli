@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { chmodSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer, Socket, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -78,7 +78,13 @@ describe('local vault daemon lifecycle', () => {
         params: {},
         version: 1,
       }),
-    ).resolves.toMatchObject({ ok: true, result: { idleTimeoutSeconds: 28800, lockOnSleep: true } });
+    ).resolves.toMatchObject({
+      ok: true,
+      result: {
+        idleTimeoutSeconds: 28800,
+        lockOnSleep: process.platform !== 'linux' || existsSync('/run/systemd/system/'),
+      },
+    });
 
     await expect(
       sendVaultIpcRequest(daemon.socketPath, {
@@ -173,7 +179,13 @@ describe('local vault daemon lifecycle', () => {
           params: {},
           version: 1,
         }),
-      ).resolves.toMatchObject({ ok: true, result: { idleTimeoutSeconds: 28800, lockOnSleep: true } });
+      ).resolves.toMatchObject({
+        ok: true,
+        result: {
+          idleTimeoutSeconds: 28800,
+          lockOnSleep: process.platform !== 'linux' || existsSync('/run/systemd/system/'),
+        },
+      });
     } finally {
       close.mockRestore();
     }

@@ -371,7 +371,10 @@ describe('cli smoke', () => {
       try {
         const policy = await run(['vault', 'policy', '--format', 'json'], env);
         expect(policy.exitCode, `${policy.stdout}\n${policy.stderr}`).toBe(0);
-        expect(parseAgentJson(policy.stdout)).toEqual({ idle_timeout_seconds: 28800, lock_on_sleep: true });
+        expect(parseAgentJson(policy.stdout)).toEqual({
+          idle_timeout_seconds: 28800,
+          lock_on_sleep: process.platform !== 'linux' || existsSync('/run/systemd/system/'),
+        });
 
         await client.unlock(Buffer.from('synthetic-development-test-factor'));
         const initial = await client.info();
