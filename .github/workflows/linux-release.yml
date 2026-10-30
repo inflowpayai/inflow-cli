@@ -73,7 +73,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Linux packaging tools
-        run: sudo apt-get update && sudo apt-get install --yes cpio rpm
+        run: sudo apt-get update && sudo apt-get install --yes cpio rpm bubblewrap libseccomp-dev
 
       - name: Prepare pinned Argon2 source
         run: |

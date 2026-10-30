@@ -115,7 +115,7 @@ export async function authenticateLinuxVaultBrokerClient(
   socket: Socket,
   peer: VaultSocketPeer,
   privateKey: KeyObject,
-): Promise<void> {
+): Promise<string> {
   const challenge = await readExact(socket, CHALLENGE_BYTES);
   try {
     if (!challenge.subarray(0, CHALLENGE_MAGIC.byteLength).equals(CHALLENGE_MAGIC)) {
@@ -129,7 +129,7 @@ export async function authenticateLinuxVaultBrokerClient(
     const response = Buffer.concat([RESPONSE_MAGIC, signature]);
     try {
       socket.pause();
-      await writeBytes(socket, response);
+      return response.toString('hex');
     } finally {
       response.fill(0);
       signature.fill(0);

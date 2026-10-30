@@ -464,7 +464,13 @@ async function main(): Promise<void> {
   cli.command(createBalancesCli(inflow.balances, authStorage, inflow));
   cli.command(createDepositAddressesCli(inflow.depositAddresses, authStorage, inflow));
   cli.command(createSubscriptionsCli(inflow.subscriptions, authStorage, inflow));
-  cli.command(createVaultCli(vaultOptions));
+  cli.command(
+    createVaultCli(
+      vaultOptions,
+      commandPath(process.argv).slice(0, 2).join(' ') === 'vault service' &&
+        !process.argv.some((argument) => ['--llms', '--llms-full', '--mcp'].includes(argument)),
+    ),
+  );
   cli.command(createX402Cli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createMppCli(inflow, authStorage, resolvedApiBaseUrl));
   cli.command(createAepCli(inflow, authStorage));
