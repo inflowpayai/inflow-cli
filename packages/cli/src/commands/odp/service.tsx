@@ -130,6 +130,22 @@ export function odpServiceFailure(
   if (authentication !== undefined) return odpCommandError(authentication);
   if (cause instanceof TapSigningError)
     return odpCommandError({ code: 'TAP_SIGNING_FAILED', message: cause.message, retryable: false });
+  if (error instanceof TypeError) {
+    const validationMessages = new Map([
+      ['ODP Action OpenAPI document is invalid', "The service's advertised OpenAPI document is invalid."],
+      [
+        'ODP Action requires an OpenAPI 3.1 document',
+        "The service's advertised action requires an OpenAPI 3.1 document.",
+      ],
+      [
+        'ODP Attribute Schema must declare JSON Schema Draft 2020-12',
+        'The service\'s request or attribute schema must declare "$schema": "https://json-schema.org/draft/2020-12/schema".',
+      ],
+    ]);
+    const reason = validationMessages.get(error.message);
+    if (reason !== undefined)
+      return odpCommandError({ code: fallbackCode, message: `${message} ${reason}`, retryable: false });
+  }
   if (error instanceof OdpInspectionError) {
     const codes: Record<OdpInspectionError['code'], string> = {
       aborted: 'ODP_REQUEST_ABORTED',

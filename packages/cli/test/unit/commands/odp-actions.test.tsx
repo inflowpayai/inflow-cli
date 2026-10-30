@@ -1,5 +1,7 @@
 import {
   OdpInspectionError,
+  OdpResource,
+  type OdpServiceOptions,
   OdpRequestError,
   type ResolvedAction,
   SecureStorageError,
@@ -53,6 +55,95 @@ function actionResource(result: ResolvedAction = resolved) {
 }
 
 describe('ODP Action commands', () => {
+  it.each([
+    [
+      'invalid OpenAPI component name',
+      {
+        openapi: '3.1.0',
+        info: { title: 'Catalog', version: '1' },
+        paths: {},
+        components: { securitySchemes: { 'API/Key': { type: 'http', scheme: 'bearer' } } },
+      },
+      "The service's advertised OpenAPI document is invalid.",
+    ],
+    [
+      'unsupported OpenAPI version',
+      { openapi: '3.0.0', info: { title: 'Catalog', version: '1' }, paths: {} },
+      "The service's advertised action requires an OpenAPI 3.1 document.",
+    ],
+    [
+      'missing JSON Schema dialect',
+      { type: 'object', properties: {} },
+      'The service\'s request or attribute schema must declare "$schema": "https://json-schema.org/draft/2020-12/schema".',
+    ],
+  ])('explains SDK validation of %s through the registered command', async (_name, document, reason) => {
+    const target =
+      'openapi' in document
+        ? { openapi: { url: '/document.json', operation_id: 'download' } }
+        : { http: { href: '/download', method: 'POST', request: { schema: { url: '/document.json' } } } };
+    const requests: string[] = [];
+    const transport: typeof globalThis.fetch = (input) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      requests.push(url.pathname);
+      if (url.pathname === '/.well-known/odp')
+        return Promise.resolve(
+          Response.json(
+            {
+              odp_version: '1.0',
+              name: 'Catalog',
+              description: 'Catalog description',
+              language: 'en',
+              localizations: ['en'],
+              http: { endpoint_base: '/odp' },
+              operations: [
+                { name: 'get-offering', authentication: 'not-required' },
+                { name: 'list-offerings', authentication: 'not-required' },
+              ],
+            },
+            { headers: { 'content-type': 'application/odp+json' } },
+          ),
+        );
+      if (url.pathname === '/odp/offerings/dataset')
+        return Promise.resolve(
+          Response.json(
+            {
+              odp_version: '1.0',
+              id: 'dataset',
+              name: 'Dataset',
+              actions: [{ authentication: 'not-required', id: 'download', rel: 'download', ...target }],
+            },
+            { headers: { 'content-type': 'application/odp+json' } },
+          ),
+        );
+      if (url.pathname === '/document.json')
+        return Promise.resolve(
+          Response.json(document, {
+            headers: { 'content-type': 'openapi' in document ? 'application/json' : 'application/schema+json' },
+          }),
+        );
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    };
+    const output: string[] = [];
+    const exit = vi.fn();
+    const resource = new OdpResource('production', transport);
+    await createActionsCli({
+      service: (options: OdpServiceOptions) => resource.service({ ...options, supportingTransport: transport }),
+    }).serve(['resolve', 'https://data.example', 'dataset', 'download', '--format', 'json'], {
+      exit,
+      stdout: (chunk) => {
+        output.push(chunk);
+      },
+    });
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(JSON.parse(output.join(''))).toMatchObject({
+      code: 'ODP_ACTION_RESOLVE_FAILED',
+      message: `ODP Action resolution failed. ${reason}`,
+      retryable: false,
+    });
+    expect(requests).toContain('/document.json');
+    expect(requests).not.toContain('/download');
+  });
+
   it('renders a resolved Action in a human terminal without invoking it', async () => {
     const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
     Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });

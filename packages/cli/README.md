@@ -301,11 +301,15 @@ type is selected automatically; choose among multiple types with `--header 'Cont
 fields, basic types, safe integers, enums and constants are checked. This is not full JSON Schema validation:
 constraints such as patterns, string lengths and numeric bounds are not checked. Optional omitted inputs are not sent.
 
+`allOf`, `anyOf`, and `oneOf` combine the supported checks. Composed schemas containing unsupported constraints fail
+explicitly rather than treating unchecked alternatives as matches. Evaluation is limited to 32 nesting levels and 10,000
+schema evaluations per parameter or body.
+
 Parameter and request-body object references use the document reader's bounded reference support. Schema references and
-composition, object-valued parameter encodings, matrix/label/deepObject styles, `allowReserved: true`, content-based
-parameters, multipart/form/XML/binary bodies, and GET/HEAD bodies are not supported for preparation. If a supplied or
-required input needs unsupported handling, preparation fails instead of returning a request containing placeholders.
-Document inspection remains available.
+conditional schemas, object-valued parameter encodings, matrix/label/deepObject styles, `allowReserved: true`,
+content-based parameters, multipart/form/XML/binary bodies, and GET/HEAD bodies are not supported for preparation. If a
+supplied or required input needs unsupported handling, preparation fails instead of returning a request containing
+placeholders. Document inspection remains available.
 
 JSON output has these fields:
 
