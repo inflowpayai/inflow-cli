@@ -15,6 +15,7 @@ import {
 } from '@inflowpayai/inflow-core';
 import { describe, expect, it, vi } from 'vitest';
 import { type AuthCommandContext, __testing } from '../../../../src/commands/auth/index.js';
+import { logoutOutput } from '../../../../src/commands/auth/schema.js';
 
 const defaultAuthCtx: AuthCommandContext = {
   apiKey: undefined,
@@ -393,6 +394,7 @@ describe('runAuthLogout (agent mode)', () => {
       resetVault,
     });
     expect(result).toEqual({ authenticated: false });
+    expect(logoutOutput.parse(result)).toEqual(result);
     expect(auth.revokeToken).toHaveBeenCalledWith('r');
     expect(storage.getAuth()).toBeNull();
     expect(resetVault).toHaveBeenCalledOnce();

@@ -21,6 +21,10 @@ import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { Table, type TableColumn } from '../../utils/table.js';
 import {
   offeringCapabilitiesArgs,
+  capabilitiesOutput,
+  discoveryOutput,
+  offeringOutput,
+  offeringPageOutput,
   offeringCapabilitiesOptions,
   offeringDiscoverArgs,
   offeringDiscoverOptions,
@@ -566,6 +570,7 @@ export function createOfferingsCli(resource: OfferingResource) {
   const cli = Cli.create('offerings', { description: 'Find and inspect offerings.' });
 
   cli.command('capabilities', {
+    output: capabilitiesOutput,
     args: offeringCapabilitiesArgs,
     description: 'Resolve offering search filters and sorts.',
     mcp: mcpTool('odp_offerings_capabilities'),
@@ -586,6 +591,7 @@ export function createOfferingsCli(resource: OfferingResource) {
   });
 
   cli.command('list', {
+    output: offeringPageOutput,
     args: offeringListArgs,
     description: 'List offerings from a service.',
     mcp: mcpTool('odp_offerings_list'),
@@ -623,6 +629,7 @@ export function createOfferingsCli(resource: OfferingResource) {
   });
 
   cli.command('search', {
+    output: offeringPageOutput,
     args: offeringSearchArgs,
     description: 'Search offerings from a service.',
     mcp: mcpTool('odp_offerings_search'),
@@ -660,6 +667,7 @@ export function createOfferingsCli(resource: OfferingResource) {
   });
 
   cli.command('get', {
+    output: offeringOutput,
     args: offeringGetArgs,
     description: 'Get full offering details.',
     mcp: mcpTool('odp_offerings_get'),
@@ -676,6 +684,7 @@ export function createOfferingsCli(resource: OfferingResource) {
   });
 
   cli.command('discover', {
+    output: discoveryOutput,
     args: offeringDiscoverArgs,
     description: 'Find offerings across services selected from the directory.',
     mcp: mcpTool('odp_offerings_discover'),

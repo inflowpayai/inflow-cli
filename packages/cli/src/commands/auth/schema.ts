@@ -1,5 +1,9 @@
 import { z } from 'incur';
 
+export const logoutOutput = z.object({
+  authenticated: z.literal(false).describe('Local authentication has been cleared.'),
+});
+
 export const loginOptions = z.object({
   clientName: z.string().default('InFlow').describe('Agent or app name shown to the user during device authorization.'),
   interval: z.coerce

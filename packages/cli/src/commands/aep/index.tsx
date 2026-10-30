@@ -50,6 +50,12 @@ import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { ProgressView } from '../../utils/progress-view.js';
 import { shellArg } from '../../utils/payment-fetch-command.js';
 import {
+  enrollOutput,
+  fetchOutput,
+  grantOutput,
+  inspectOutput,
+  revokeOutput,
+  statusOutput,
   enrollOptions,
   fetchArgs,
   fetchOptions,
@@ -1450,6 +1456,7 @@ async function runRevoke(c: Context, inflow: Inflow, authStorage: AuthStorage): 
 export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
   const cli = Cli.create('aep', { description: 'Agent Enrollment Protocol service commands' });
   cli.command('inspect', {
+    output: inspectOutput,
     args: serviceReferenceArgs,
     description: 'Inspect an AEP Service without authentication.',
     mcp: mcpTool('aep_inspect'),
@@ -1458,6 +1465,7 @@ export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
     run: (c) => runInspect(c, inflow, authStorage),
   });
   cli.command('enroll', {
+    output: enrollOutput,
     args: serviceReferenceArgs,
     description: 'Enroll with an AEP Service.',
     mcp: mcpTool('aep_enroll'),
@@ -1466,6 +1474,7 @@ export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
     run: (c) => runEnroll(c, inflow, authStorage),
   });
   cli.command('fetch', {
+    output: fetchOutput,
     args: fetchArgs,
     description: 'Fetch a resource with AEP authentication when challenged.',
     mcp: mcpTool('aep_fetch'),
@@ -1474,6 +1483,7 @@ export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
     run: (c) => runFetch(c, inflow, authStorage),
   });
   cli.command('status', {
+    output: statusOutput,
     args: serviceReferenceArgs,
     description: 'Get AEP Service lifecycle status.',
     mcp: mcpTool('aep_status'),
@@ -1481,6 +1491,7 @@ export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
     run: (c) => runStatus(c, inflow, authStorage),
   });
   cli.command('grant', {
+    output: grantOutput,
     args: serviceReferenceArgs,
     description: 'Request and store a Service credential.',
     mcp: mcpTool('aep_grant'),
@@ -1489,6 +1500,7 @@ export function createAepCli(inflow: Inflow, authStorage: AuthStorage) {
     run: (c) => runGrant(c, inflow, authStorage),
   });
   cli.command('revoke', {
+    output: revokeOutput,
     args: serviceReferenceArgs,
     description: 'Revoke Service credentials.',
     mcp: mcpTool('aep_revoke'),

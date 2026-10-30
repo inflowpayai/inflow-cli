@@ -12,12 +12,22 @@ import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/m
 import { encodePaymentRequiredHeader } from '@x402/core/http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  buildCombinedFrame,
-  buildNoPaymentFrame,
+  buildCombinedFrame as combinedFrame,
+  buildNoPaymentFrame as noPaymentFrame,
   createInspectCommand,
   type InspectCommandContext,
-  runCombinedInspectCommand,
+  runCombinedInspectCommand as combinedCommand,
 } from '../../../../src/commands/inspect/index.js';
+import { inspectOutput } from '../../../../src/commands/inspect/schema.js';
+
+function checkedFrame<T>(frame: T): T {
+  if (frame !== undefined) expect(inspectOutput.safeParse(frame).error).toBeUndefined();
+  return frame;
+}
+const buildCombinedFrame = (...args: Parameters<typeof combinedFrame>) => checkedFrame(combinedFrame(...args));
+const buildNoPaymentFrame = (...args: Parameters<typeof noPaymentFrame>) => checkedFrame(noPaymentFrame(...args));
+const runCombinedInspectCommand = async (...args: Parameters<typeof combinedCommand>) =>
+  checkedFrame(await combinedCommand(...args));
 
 const URL = 'https://seller.test/api';
 

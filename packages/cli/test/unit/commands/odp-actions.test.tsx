@@ -7,6 +7,7 @@ import {
 } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
+import { actionOutput } from '../../../src/commands/odp/schema.js';
 import { ActionView, __testing, createActionsCli } from '../../../src/commands/odp/actions.js';
 import { OdpCommandError } from '../../../src/commands/odp/command.js';
 import * as renderer from '../../../src/utils/render-ink-until-exit.js';
@@ -207,6 +208,7 @@ describe('ODP Action commands', () => {
       },
     );
     expect(output.join('')).toContain('download-dataset');
+    expect(actionOutput.safeParse(JSON.parse(output.join(''))).error).toBeUndefined();
     expect(output.join('')).toContain('https://data.example/actions/dataset');
   });
 

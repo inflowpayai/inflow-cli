@@ -16,6 +16,7 @@ import {
 } from '@inflowpayai/mpp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __testing, createSubscriptionsCli } from '../../../../src/commands/subscriptions/index.js';
+import { cancelOutput, listOutput, subscriptionOutput } from '../../../../src/commands/subscriptions/schema.js';
 
 const tokens: AuthTokens = {
   access_token: 'access',
@@ -107,6 +108,16 @@ function dependencies(overrides: Partial<ISubscriptionResource> = {}) {
 }
 
 describe('subscription command runners', () => {
+  it('describes revoked subscriptions and preserves additional response fields', async () => {
+    const revoked = { ...subscription, status: 'REVOKED' as const, revoked: '2026-09-01T00:00:00Z', extra: 'value' };
+    const deps = dependencies({ get: vi.fn(() => Promise.resolve(revoked)) });
+    const result = await __testing.runGet(context({}, { subscriptionId: subscription.subscriptionId }), deps);
+    expect(result).toEqual(revoked);
+    expect(subscriptionOutput.safeParse(result).success).toBe(true);
+    expect(subscriptionOutput.safeParse({ ...result, amount: 10 }).success).toBe(false);
+    expect(subscriptionOutput.safeParse({ ...result, subscriptionId: undefined }).success).toBe(false);
+    expect(listOutput.parse({ count: 0, data: [], total: 0 })).toEqual({ count: 0, data: [], total: 0 });
+  });
   it.each(['list', 'get', 'cancel'] as const)(
     'dispatches %s through the real command schema and JSON formatter',
     async (command) => {
@@ -128,12 +139,15 @@ describe('subscription command runners', () => {
       const result: unknown = JSON.parse(output.join(''));
       if (command === 'list') {
         expect(result).toMatchObject({ count: 1, data: [subscription] });
+        expect(listOutput.parse(result)).toEqual(result);
         expect(deps.list).toHaveBeenCalledWith({ descending: true, limit: 2, offset: 4, status: 'active' });
       } else if (command === 'get') {
         expect(result).toEqual(subscription);
+        expect(subscriptionOutput.parse(result)).toEqual(result);
         expect(deps.get).toHaveBeenCalledWith('subscription-id');
       } else {
         expect(result).toEqual({ cancelled: true, subscription_id: 'subscription-id' });
+        expect(cancelOutput.parse(result)).toEqual(result);
         expect(deps.cancel).toHaveBeenCalledOnce();
       }
       expect(output.join('')).not.toContain('Loading');

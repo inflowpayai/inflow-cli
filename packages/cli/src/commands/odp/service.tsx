@@ -23,6 +23,8 @@ import { renderInkUntilExit } from '../../utils/render-ink-until-exit.js';
 import { Table, type TableColumn } from '../../utils/table.js';
 import {
   collectionGetArgs,
+  collectionOutput,
+  collectionPageOutput,
   collectionGetOptions,
   collectionListArgs,
   collectionListOptions,
@@ -445,6 +447,7 @@ export function createCollectionsCli(resource: CollectionResource) {
   const cli = Cli.create('collections', { description: 'Browse collections from a service.' });
 
   cli.command('list', {
+    output: collectionPageOutput,
     args: collectionListArgs,
     description: 'List collections from a service.',
     mcp: mcpTool('odp_collections_list'),
@@ -469,6 +472,7 @@ export function createCollectionsCli(resource: CollectionResource) {
   });
 
   cli.command('search', {
+    output: collectionPageOutput,
     args: collectionSearchArgs,
     description: 'Search collections from a service.',
     mcp: mcpTool('odp_collections_search'),
@@ -493,6 +497,7 @@ export function createCollectionsCli(resource: CollectionResource) {
   });
 
   cli.command('get', {
+    output: collectionOutput,
     args: collectionGetArgs,
     description: 'Get full collection details.',
     mcp: mcpTool('odp_collections_get'),

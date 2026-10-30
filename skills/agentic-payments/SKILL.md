@@ -35,7 +35,7 @@ InFlow runs as a **standalone CLI** or an **MCP server**.
 
 ### Common commands / options
 
-**The CLI is the source of truth for exact flags, enums, and output shapes** - run `inflow <command> --schema` for one command, or `inflow --llms-full` for everything. This playbook covers *when and why*, not exhaustive parameter lists; when you need a precise flag name, value set, or response shape, query the CLI rather than guessing.
+**The CLI is the source of truth for exact flags and enums** - run `inflow <command> --schema` for one command, or `inflow --llms-full` for everything. Response definitions appear under `output` when available; MPP and x402 commands publish input definitions only. An absent `output` definition does not mean the command returns no data. This playbook explains the payment responses and when to use each command.
 
 - `inflow --llms` (or `--llms-full` for parameter detail) - discover all commands. `inflow <command> --schema` for a single command's JSON Schema.
 - `inflow --skill` - print this playbook (no frontmatter) to stdout. Use it to paste into the system-prompt field of an MCP host that doesn't natively load skills: `inflow --skill | pbcopy`.
@@ -153,7 +153,7 @@ Do not run a separate `aep grant` just to continue payment.
 | Cancel uses | `approval_id` | `approval_id` |
 | Protocol-specific error codes | `PAYMENT_FAILED`, `PAYMENT_EXPIRED`, `PAYMENT_NOT_ACCEPTED` | `APPROVAL_TIMEOUT`, `APPROVAL_FAILED`, `APPROVAL_CANCELLED` |
 
-Throughout this section `<mpp|x402>` means "use your protocol's prefix." For the exact parameters and output shape of any command below, run `inflow <command> --schema`.
+Throughout this section `<mpp|x402>` means "use your protocol's prefix." For the exact parameters of any command below, run `inflow <command> --schema`.
 
 ### Step 1: Pre-flight evaluation
 

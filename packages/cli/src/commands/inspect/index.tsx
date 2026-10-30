@@ -22,7 +22,7 @@ import { storedAepCredentialAuthenticationHeaders } from '../aep/runtime.js';
 import { challengeToFrame } from '../mpp/inspect.js';
 import { acceptToFrame } from '../x402/inspect.js';
 import { CombinedInspectView, detectedProtocols } from './combined-inspect-view.js';
-import { inspectArgs, inspectOptions } from './schema.js';
+import { inspectArgs, inspectOptions, inspectOutput } from './schema.js';
 import { isDocumentInspect } from './routing.js';
 import { discoverOrigin, inspectDocument, type OriginDiscovery } from './document.js';
 import { SourceDiscovery } from '@inflowpayai/inflow-core';
@@ -51,6 +51,7 @@ interface InspectCommandDefinition {
   mcp: ReturnType<typeof mcpTool>;
   args: typeof inspectArgs;
   options: typeof inspectOptions;
+  output: typeof inspectOutput;
   outputPolicy: 'agent-only';
   examples: {
     args: { url: string };
@@ -444,6 +445,7 @@ export function createInspectCommand(
     description: 'Inspect a URL for agent discovery, enrollment, and payment capabilities',
     mcp: mcpTool('inspect'),
     args: inspectArgs,
+    output: inspectOutput,
     options: inspectOptions,
     outputPolicy: 'agent-only' as const,
     examples: [

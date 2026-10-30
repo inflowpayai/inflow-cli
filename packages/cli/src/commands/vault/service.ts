@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, statSync } from 'node:fs';
 import { LocalVaultClient, SecureStorageError, usesLinuxVaultService } from '@inflowpayai/inflow-core';
 import { Cli } from 'incur';
+import { serviceStartOutput } from './schema.js';
 
 const LAUNCHER = '/opt/inflow/lib/inflow/vault-launcher';
 export const SERVICE_START_INSTRUCTION =
@@ -195,6 +196,7 @@ export function createVaultServiceCli() {
   cli.command('start', {
     description: 'Start the vault service with administrator privileges.',
     mcp: false,
+    output: serviceStartOutput,
     outputPolicy: 'all' as const,
     async run(c) {
       try {

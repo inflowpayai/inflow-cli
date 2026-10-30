@@ -10,6 +10,12 @@ import type {
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  capabilitiesOutput,
+  discoveryOutput,
+  offeringOutput,
+  offeringPageOutput,
+} from '../../../src/commands/odp/schema.js';
+import {
   DiscoveryView,
   OfferingCapabilitiesView,
   OfferingView,
@@ -759,6 +765,14 @@ describe('ODP Offering commands', () => {
     });
 
     expect(output.join('')).toContain(expected);
+    const schema = {
+      capabilities: capabilitiesOutput,
+      discover: discoveryOutput,
+      get: offeringOutput,
+      list: offeringPageOutput,
+      search: offeringPageOutput,
+    }[_name];
+    expect(schema.safeParse(JSON.parse(output.join(''))).error).toBeUndefined();
   });
 
   it.each([

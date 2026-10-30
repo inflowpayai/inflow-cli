@@ -1,5 +1,5 @@
 diff --git a/dist/Cli.d.ts b/dist/Cli.d.ts
-index 1d2d12a..36def74 100644
+index 1d2d12a60f4ef2f3a14290e8a2e1d68e9264ae52..36def742fdbf0a2821d4a595d72abe23640d8ed6 100644
 --- a/dist/Cli.d.ts
 +++ b/dist/Cli.d.ts
 @@ -211,9 +211,11 @@ export declare namespace create {
@@ -26,17 +26,30 @@ index 1d2d12a..36def74 100644
          }) => never;
          /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
          format: Formatter.Format;
-@@ -452,4 +456,4 @@ type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, en
-         version: string | undefined;
-     }): InferReturn<output> | Promise<InferReturn<output>> | AsyncGenerator<InferReturn<output>, unknown, unknown>;
- };
--//# sourceMappingURL=Cli.d.ts.map
-\ No newline at end of file
-+//# sourceMappingURL=Cli.d.ts.map
 diff --git a/dist/Cli.js b/dist/Cli.js
-index 1824430..4f60ed8 100644
+index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5fdbc9252 100644
 --- a/dist/Cli.js
 +++ b/dist/Cli.js
+@@ -855,15 +855,15 @@ async function serveImpl(name, commands, argv, options = {}) {
+         const format = formatExplicit ? formatFlag : 'toon';
+         const result = {};
+         if (cmd.args)
+-            result.args = Schema.toJsonSchema(cmd.args);
++            result.args = Schema.toJsonSchema(cmd.args, { io: 'input' });
+         if (cmd.env)
+-            result.env = Schema.toJsonSchema(cmd.env);
++            result.env = Schema.toJsonSchema(cmd.env, { io: 'input' });
+         if (cmd.options)
+-            result.options = Schema.toJsonSchema(cmd.options);
++            result.options = Schema.toJsonSchema(cmd.options, { io: 'input' });
+         if (cmd.output)
+             result.output = Schema.toJsonSchema(cmd.output);
+         if (options.globals?.schema)
+-            result.globals = Schema.toJsonSchema(options.globals.schema);
++            result.globals = Schema.toJsonSchema(options.globals.schema, { io: 'input' });
+         writeln(Formatter.format(result, format));
+         return;
+     }
 @@ -1131,8 +1131,10 @@ async function serveImpl(name, commands, argv, options = {}) {
                          ok: false,
                          error: {
@@ -172,15 +185,41 @@ index 1824430..4f60ed8 100644
                      },
                      meta: {
                          command: ctx.path,
-@@ -2703,4 +2724,4 @@ function resolveDisplayName(name, aliases) {
-         return basename;
-     return name;
+@@ -2458,7 +2479,7 @@ function buildIndexManifest(commands, prefix = [], globalsSchema) {
+     return {
+         version: 'incur.v1',
+         commands: collectIndexCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
+-        ...(globalsSchema ? { globals: Schema.toJsonSchema(globalsSchema) } : undefined),
++        ...(globalsSchema ? { globals: Schema.toJsonSchema(globalsSchema, { io: 'input' }) } : undefined),
+     };
  }
--//# sourceMappingURL=Cli.js.map
-\ No newline at end of file
-+//# sourceMappingURL=Cli.js.map
+ /** @internal Recursively collects leaf commands with name + description only. */
+@@ -2489,7 +2510,7 @@ function buildManifest(commands, prefix = [], globalsSchema) {
+     return {
+         version: 'incur.v1',
+         commands: collectCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
+-        ...(globalsSchema ? { globals: Schema.toJsonSchema(globalsSchema) } : undefined),
++        ...(globalsSchema ? { globals: Schema.toJsonSchema(globalsSchema, { io: 'input' }) } : undefined),
+     };
+ }
+ /** @internal Recursively collects leaf commands with their full paths. */
+@@ -2652,11 +2673,11 @@ function buildInputSchema(args, env, options) {
+         return undefined;
+     const result = {};
+     if (args)
+-        result.args = Schema.toJsonSchema(args);
++        result.args = Schema.toJsonSchema(args, { io: 'input' });
+     if (env)
+-        result.env = Schema.toJsonSchema(env);
++        result.env = Schema.toJsonSchema(env, { io: 'input' });
+     if (options)
+-        result.options = Schema.toJsonSchema(options);
++        result.options = Schema.toJsonSchema(options, { io: 'input' });
+     return result;
+ }
+ /** @internal Scans argv for deprecated flags and writes warnings to stderr. */
 diff --git a/dist/Formatter.js b/dist/Formatter.js
-index 4334224..752bd9f 100644
+index 43342243991d9d04ec1b67ae223454bdd0741a82..752bd9f6a0f5522d536c830e4b2c7511bccb5c43 100644
 --- a/dist/Formatter.js
 +++ b/dist/Formatter.js
 @@ -54,15 +54,22 @@ function table(headers, rows) {
@@ -209,7 +248,7 @@ index 4334224..752bd9f 100644
  /** Formats a value as Markdown, recursing into nested objects. */
  function formatMarkdown(value, path = []) {
 diff --git a/dist/Help.d.ts b/dist/Help.d.ts
-index 87bac47..529b6be 100644
+index 87bac4745eb88aefdfc8b897fd6cd1f584683163..529b6be4b8032fdf1db90f71f06058dc3d8f64ba 100644
 --- a/dist/Help.d.ts
 +++ b/dist/Help.d.ts
 @@ -1,5 +1,10 @@
@@ -224,7 +263,7 @@ index 87bac47..529b6be 100644
  export declare function formatRoot(name: string, options?: formatRoot.Options): string;
  export declare namespace formatRoot {
 diff --git a/dist/Help.js b/dist/Help.js
-index ad48d9a..c3f120e 100644
+index ad48d9ada2766ed57ca366a01f38df81f1d3a353..c3f120ed39ff7e82a8b47d1a19fe9b153410612d 100644
 --- a/dist/Help.js
 +++ b/dist/Help.js
 @@ -2,6 +2,11 @@ import { z } from 'zod';
@@ -248,7 +287,7 @@ index ad48d9a..c3f120e 100644
              ? [{ flag: `--${configFlag} <path>`, desc: 'Load JSON option defaults from a file' }]
              : []),
 diff --git a/dist/Mcp.js b/dist/Mcp.js
-index d916f16..b0663ff 100644
+index d916f16d0d3789a809d7a90d88ed6de7844708fd..f43c82159e3edf407c910b2fde7015cd78076ba8 100644
 --- a/dist/Mcp.js
 +++ b/dist/Mcp.js
 @@ -1,15 +1,13 @@
@@ -391,15 +430,17 @@ index d916f16..b0663ff 100644
                  description: mcp?.description ?? entry.description,
                  inputSchema: buildToolSchema(entry.args, entry.options),
                  ...(outputSchema ? { outputSchema } : undefined),
-@@ -365,4 +389,4 @@ function buildToolSchema(args, options) {
-         return { type: 'object', properties, required };
-     return { type: 'object', properties };
- }
--//# sourceMappingURL=Mcp.js.map
-\ No newline at end of file
-+//# sourceMappingURL=Mcp.js.map
+@@ -357,7 +381,7 @@ function buildToolSchema(args, options) {
+     for (const schema of [args, options]) {
+         if (!schema)
+             continue;
+-        const json = Schema.toJsonSchema(schema);
++        const json = Schema.toJsonSchema(schema, { io: 'input' });
+         Object.assign(properties, json.properties ?? {});
+         required.push(...(json.required ?? []));
+     }
 diff --git a/dist/Parser.js b/dist/Parser.js
-index f72f537..e27c5d3 100644
+index f72f537acf0501b106f77bcdcc0411ad50404b36..e27c5d39f04a45d74174cad3cb3f0149693d159b 100644
 --- a/dist/Parser.js
 +++ b/dist/Parser.js
 @@ -96,8 +96,13 @@ export function parse(argv, options = {}) {
@@ -417,8 +458,88 @@ index f72f537..e27c5d3 100644
          for (let j = 0; j < keys.length; j++) {
              const key = keys[j];
              if (isArrayField(key, argsSchema)) {
+diff --git a/dist/Schema.d.ts b/dist/Schema.d.ts
+index 673c4c21ac809e659365c8483e67aad94f11f529..8a23aed51fa4a8de0dc2324080d5446fa9d5a082 100644
+--- a/dist/Schema.d.ts
++++ b/dist/Schema.d.ts
+@@ -4,5 +4,5 @@ import { z } from 'zod';
+  * meta-property. Represents bigints and dates as `{ type: "string" }`
+  * since JSON lacks native types for them.
+  */
+-export declare function toJsonSchema(schema: z.ZodType): Record<string, unknown>;
++export declare function toJsonSchema(schema: z.ZodType, options?: { io?: 'input' | 'output' }): Record<string, unknown>;
+ //# sourceMappingURL=Schema.d.ts.map
+diff --git a/dist/Schema.js b/dist/Schema.js
+index 935ee549e5eccc081b999103cad698319fba256b..3e14b96f75122ec31105e43a1bae30bafbffbb5f 100644
+--- a/dist/Schema.js
++++ b/dist/Schema.js
+@@ -4,9 +4,10 @@ import { z } from 'zod';
+  * meta-property. Represents bigints and dates as `{ type: "string" }`
+  * since JSON lacks native types for them.
+  */
+-export function toJsonSchema(schema) {
++export function toJsonSchema(schema, options = {}) {
+     const result = z.toJSONSchema(schema, {
+         unrepresentable: 'any',
++        io: options.io ?? 'output',
+         override: (ctx) => {
+             const type = ctx.zodSchema._zod?.def?.type;
+             if (type === 'bigint' || type === 'date')
+diff --git a/dist/Skill.js b/dist/Skill.js
+index 97c991bf7fc368d45a8b7530dba4134835b1e7f5..2ea61934b2cbf6609c8c8908cb2331b0dbb4bfd4 100644
+--- a/dist/Skill.js
++++ b/dist/Skill.js
+@@ -23,7 +23,7 @@ function buildSignature(cli, cmd) {
+     if (!cmd.args)
+         return base;
+     const shape = cmd.args.shape;
+-    const json = Schema.toJsonSchema(cmd.args);
++    const json = Schema.toJsonSchema(cmd.args, { io: 'input' });
+     const required = new Set(json.required ?? []);
+     const properties = json.properties;
+     const argNames = Object.keys(shape).map((k) => {
+@@ -109,7 +109,7 @@ function renderCommandBody(cli, cmd, level = 1) {
+     // Arguments table
+     if (cmd.args) {
+         const shape = cmd.args.shape;
+-        const json = Schema.toJsonSchema(cmd.args);
++        const json = Schema.toJsonSchema(cmd.args, { io: 'input' });
+         const required = new Set(json.required ?? []);
+         const properties = json.properties;
+         const rows = Object.entries(shape).map(([key, field]) => {
+@@ -124,7 +124,7 @@ function renderCommandBody(cli, cmd, level = 1) {
+     // Environment Variables table
+     if (cmd.env) {
+         const shape = cmd.env.shape;
+-        const json = Schema.toJsonSchema(cmd.env);
++        const json = Schema.toJsonSchema(cmd.env, { io: 'input' });
+         const required = new Set(json.required ?? []);
+         const properties = json.properties;
+         const rows = Object.entries(shape).map(([key, field]) => {
+@@ -140,7 +140,7 @@ function renderCommandBody(cli, cmd, level = 1) {
+     // Options table
+     if (cmd.options) {
+         const shape = cmd.options.shape;
+-        const json = Schema.toJsonSchema(cmd.options);
++        const json = Schema.toJsonSchema(cmd.options, { io: 'input' });
+         const properties = json.properties;
+         const rows = Object.entries(shape).map(([key, field]) => {
+             const prop = properties?.[key];
+@@ -182,9 +182,9 @@ export function hash(commands) {
+         name: cmd.name,
+         description: cmd.description,
+         hint: cmd.hint,
+-        args: cmd.args ? Schema.toJsonSchema(cmd.args) : undefined,
+-        env: cmd.env ? Schema.toJsonSchema(cmd.env) : undefined,
+-        options: cmd.options ? Schema.toJsonSchema(cmd.options) : undefined,
++        args: cmd.args ? Schema.toJsonSchema(cmd.args, { io: 'input' }) : undefined,
++        env: cmd.env ? Schema.toJsonSchema(cmd.env, { io: 'input' }) : undefined,
++        options: cmd.options ? Schema.toJsonSchema(cmd.options, { io: 'input' }) : undefined,
+         output: cmd.output ? Schema.toJsonSchema(cmd.output) : undefined,
+     }));
+     return createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16);
 diff --git a/dist/internal/command.d.ts b/dist/internal/command.d.ts
-index 8adad9d..536e25e 100644
+index 8adad9db91b9ab8df6da25b5c4fedb76a1df6c52..536e25eb60e1475ee7ddb280c887d6c2eb4b7697 100644
 --- a/dist/internal/command.d.ts
 +++ b/dist/internal/command.d.ts
 @@ -60,8 +60,10 @@ export declare namespace execute {
@@ -432,15 +553,8 @@ index 8adad9d..536e25e 100644
              fieldErrors?: FieldError[] | undefined;
          };
          cta?: CtaBlock | undefined;
-@@ -223,4 +225,4 @@ export declare function findBuiltinSubcommand(builtin: (typeof builtinCommands)[
- }) | undefined;
- /** @internal Checks if a token matches a builtin command by name or alias. */
- export declare function isBuiltin(token: string): boolean;
--//# sourceMappingURL=command.d.ts.map
-\ No newline at end of file
-+//# sourceMappingURL=command.d.ts.map
 diff --git a/dist/internal/command.js b/dist/internal/command.js
-index 7011ed7..81121ad 100644
+index 7011ed74f3d71854e57ae8e024bcd4c2459b46ef..81121ad2ed58afa7e161b675de00eeac46dad087 100644
 --- a/dist/internal/command.js
 +++ b/dist/internal/command.js
 @@ -104,8 +104,10 @@ export async function execute(command, options) {
@@ -465,15 +579,8 @@ index 7011ed7..81121ad 100644
                      },
                      ...(opts.cta ? { cta: opts.cta } : undefined),
                      ...(opts.exitCode !== undefined ? { exitCode: opts.exitCode } : undefined),
-@@ -302,4 +306,4 @@ export function findBuiltinSubcommand(builtin, token) {
- export function isBuiltin(token) {
-     return builtinCommands.some((b) => b.name === token || b.aliases?.includes(token));
- }
--//# sourceMappingURL=command.js.map
-\ No newline at end of file
-+//# sourceMappingURL=command.js.map
 diff --git a/dist/middleware.d.ts b/dist/middleware.d.ts
-index 18a684c..158cbae 100644
+index 18a684c32e4c3f5e5da5555bcc87b0d3ade701d6..158cbae33ed9ed3061039b748825f315cbbab998 100644
 --- a/dist/middleware.d.ts
 +++ b/dist/middleware.d.ts
 @@ -32,9 +32,11 @@ export type Context<vars extends z.ZodObject<any> | undefined = undefined, env e
@@ -488,10 +595,3 @@ index 18a684c..158cbae 100644
      }) => never;
      /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
      format: Formatter.Format;
-@@ -56,4 +58,4 @@ export type Context<vars extends z.ZodObject<any> | undefined = undefined, env e
- /** Creates a strictly typed middleware handler. Pass the vars schema as a generic for typed `c.set()` and `c.var`, the env schema for typed `c.env`, and the globals schema for typed `c.globals`. */
- export default function middleware<const vars extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(handler: Handler<vars, env, globals>): Handler<vars, env, globals>;
- export {};
--//# sourceMappingURL=middleware.d.ts.map
-\ No newline at end of file
-+//# sourceMappingURL=middleware.d.ts.map

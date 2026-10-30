@@ -24,7 +24,7 @@ import { Login } from './login.js';
 import { LoginApiKey } from './login-api-key.js';
 import { LoginPrompt } from './login-prompt.js';
 import { Logout } from './logout.js';
-import { loginOptions, statusOptions } from './schema.js';
+import { loginOptions, logoutOutput, statusOptions } from './schema.js';
 import { AuthStatus } from './status.js';
 import { ensureLocalVaultUnlocked, resetLocalVault, type LocalVaultDaemonClientOptions } from '../vault/index.js';
 
@@ -561,6 +561,7 @@ export function createAuthCli(
   cli.command('logout', {
     description: 'Log out from InFlow',
     mcp: mcpTool('auth_logout'),
+    output: logoutOutput,
     outputPolicy: 'agent-only' as const,
     async run(c) {
       return runAuthLogout(c, { authResource, authStorage, resetVault: () => resetLocalVault(ctx.vaultOptions ?? {}) });

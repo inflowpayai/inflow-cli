@@ -75,6 +75,13 @@ For host-specific skill and MCP installation, see the repository's
 
 ## Global flags
 
+`inflow <command> --schema` describes command arguments and options, plus an `output` schema when provided by that
+command. Global flags are listed below, not in each command's schema or MCP tool input. Configure the MCP server's
+environment and credentials when starting it; individual tool calls do not accept credential flags. MPP, x402,
+`subscriptions fetch`, `auth login`, `auth status`, `balances list`, and `deposit-addresses list` publish input schemas
+only. An absent `output` schema does not mean a command returns no data. Output definitions describe successful command
+results, including pending approvals or HTTP error responses where applicable; command failures use the error response.
+
 These flags are pre-extracted from `process.argv` before subcommand dispatch, so they work positionally —
 `inflow --sandbox balances list` is the same as `inflow balances list --sandbox`. Resolution order for each setting is:
 **CLI flag > environment variable > saved config > built-in default**.

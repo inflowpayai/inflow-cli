@@ -191,6 +191,139 @@ function closeServer(server: Server): Promise<void> {
 }
 
 describe('cli smoke', () => {
+  it.each([200, 402])('inspect returns schema-valid structured MCP output for HTTP %i', async (status) => {
+    await withSeller(
+      (req, res) => {
+        if (req.url !== '/resource') {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
+        res.statusCode = status;
+        if (status === 402)
+          res.setHeader(
+            'WWW-Authenticate',
+            renderChallengeHeader({
+              id: 'schema-challenge',
+              realm: 'fixture.test',
+              method: 'inflow',
+              intent: 'charge',
+              request: encode({ amount: '0.10', currency: 'USDC', methodDetails: { rail: 'balance' } }),
+            }),
+          );
+        res.end('resource response');
+      },
+      async (url) => {
+        const origin = new URL(url).origin;
+        const response = JSON.parse(
+          await callMcp(
+            'inspect',
+            { url: `${origin}/resource` },
+            {
+              INFLOW_BASE_URL: origin,
+              INFLOW_API_KEY: 'synthetic-schema-key',
+              INFLOW_AUTH_FILE: authFile,
+              HOME: authDir,
+            },
+          ),
+        ) as {
+          error?: unknown;
+          result?: { isError?: boolean; content?: { text?: string }[]; structuredContent?: Record<string, unknown> };
+        };
+        expect(response.error).toBeUndefined();
+        expect(response.result?.isError, JSON.stringify(response)).not.toBe(true);
+        expect(response.result?.structuredContent).toMatchObject({
+          outcome: status === 402 ? 'inspected' : 'no-payment-required',
+        });
+        expect(response.result?.structuredContent).toEqual(JSON.parse(response.result?.content?.[0]?.text ?? 'null'));
+      },
+    );
+  });
+
+  it.each(
+    ['list', 'get', 'cancel'].flatMap((command) => [
+      { command, success: true },
+      { command, success: false },
+    ]),
+  )(
+    'subscriptions $command preserves MCP success and error responses (success=$success)',
+    async ({ command, success }) => {
+      const subscription = {
+        amount: '0.49',
+        billingAnchor: '2026-08-01T00:00:00Z',
+        created: '2026-08-01T00:00:00Z',
+        currency: 'USD',
+        lastChargedPeriod: 2,
+        period0Amount: '0',
+        periodCount: 1,
+        periodUnit: 'day',
+        revoked: '2026-08-03T00:00:00Z',
+        status: 'REVOKED',
+        subscriptionExpires: '2027-08-01T00:00:00Z',
+        subscriptionId: 'fixture-subscription',
+        transactionType: 'MPP',
+        updated: '2026-08-03T00:00:00Z',
+        extension: 'additive server field',
+      };
+      const page = { count: 1, data: [subscription], total: 1 };
+      const requests: Array<{ method: string | undefined; path: string }> = [];
+      await withSeller(
+        (req, res) => {
+          const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+          if (path.startsWith('/v1/subscriptions')) {
+            requests.push({ method: req.method, path });
+            res.setHeader('Content-Type', 'application/json');
+            if (!success) {
+              res.statusCode = 403;
+              res.end(JSON.stringify({ message: 'Subscription access denied.' }));
+            } else if (req.method === 'DELETE') {
+              res.statusCode = 204;
+              res.end();
+            } else res.end(JSON.stringify(path === '/v1/subscriptions' ? page : subscription));
+          } else {
+            res.statusCode = 404;
+            res.end();
+          }
+        },
+        async (url) => {
+          const response = JSON.parse(
+            await callMcp(
+              `subscriptions_${command}`,
+              command === 'list' ? {} : { subscriptionId: subscription.subscriptionId },
+              { INFLOW_BASE_URL: new URL(url).origin, INFLOW_API_KEY: 'synthetic-schema-test-key' },
+            ),
+          ) as { result?: { isError?: boolean; content?: { text?: string }[]; structuredContent?: unknown } };
+          const expected =
+            command === 'list'
+              ? page
+              : command === 'get'
+                ? subscription
+                : {
+                    cancelled: true,
+                    subscription_id: subscription.subscriptionId,
+                  };
+          if (success) {
+            expect(response.result?.isError).not.toBe(true);
+            expect(response.result?.structuredContent).toEqual(expected);
+            expect(JSON.parse(response.result?.content?.[0]?.text ?? 'null')).toEqual(expected);
+          } else {
+            expect(response.result?.isError).toBe(true);
+            expect(response.result?.structuredContent).toBeUndefined();
+          }
+          expect(requests).toEqual([
+            {
+              method: command === 'cancel' ? 'DELETE' : 'GET',
+              path:
+                command === 'list'
+                  ? '/v1/subscriptions'
+                  : `/v1/subscriptions/${subscription.subscriptionId}${command === 'cancel' ? '/delete' : ''}`,
+            },
+          ]);
+        },
+      );
+    },
+  );
+
   it.skipIf(process.platform === 'linux' && packagedExecutable === undefined).each(['input close', 'SIGTERM'] as const)(
     '--mcp retains its control client across tools and exits on %s',
     async (termination) => {

@@ -23,6 +23,9 @@ import {
 } from '../../../src/commands/openapi/index.js';
 import { prepareOpenApiRequest, previewOpenApiRequest } from '@inflowpayai/inflow-core';
 import * as renderer from '../../../src/utils/render-ink-until-exit.js';
+import { callOutput, getOutput, listOutput, prepareOutput } from '../../../src/commands/openapi/schema.js';
+import { Schema } from 'incur';
+import { fromJsonSchema } from '@modelcontextprotocol/server';
 
 function setup() {
   const values = new Map<string, unknown>();
@@ -68,7 +71,17 @@ async function run(discovery: Pick<SourceDiscovery, 'inspect'>, args: string[], 
       output.push(chunk);
     },
   });
-  return { exit, value: JSON.parse(output.join('')) as unknown, text: output.join('') };
+  const value: unknown = JSON.parse(output.join(''));
+  if (!exit.mock.calls.some(([code]) => code !== 0)) {
+    const schema = { call: callOutput, get: getOutput, list: listOutput, prepare: prepareOutput }[args[0] ?? ''];
+    expect(schema?.safeParse(value).error).toBeUndefined();
+    expect(schema).toBeDefined();
+    if (schema !== undefined) {
+      const validated = await fromJsonSchema(Schema.toJsonSchema(schema))['~standard'].validate(value);
+      expect(validated.issues).toBeUndefined();
+    }
+  }
+  return { exit, value, text: output.join('') };
 }
 
 describe('OpenAPI commands', () => {

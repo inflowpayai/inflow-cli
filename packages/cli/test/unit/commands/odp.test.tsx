@@ -8,6 +8,7 @@ import {
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
 import { SearchView, SuggestView, __testing, createDirectoryCli } from '../../../src/commands/directory/index.js';
+import { directorySearchOutput, directorySuggestOutput } from '../../../src/commands/directory/schema.js';
 import { OdpCommandError } from '../../../src/commands/odp/command.js';
 import * as renderer from '../../../src/utils/render-ink-until-exit.js';
 
@@ -169,6 +170,7 @@ describe('Directory commands', () => {
       },
     );
     expect(JSON.parse(output.join(''))).toEqual(page);
+    expect(directorySearchOutput.safeParse(JSON.parse(output.join(''))).error).toBeUndefined();
     expect(
       render(
         <SearchView
@@ -297,12 +299,11 @@ describe('Directory commands', () => {
     });
   });
 
-  it('returns name suggestions in the stable items envelope', async () => {
-    const suggest = vi.fn(() => Promise.resolve(['gpu', 'gpu compute']));
-
-    await expect(__testing.runDirectorySuggest({ suggest }, 'gp', { ...emptyInput, limit: 5 })).resolves.toEqual({
-      items: ['gpu', 'gpu compute'],
-    });
+  it.each([[], ['gpu', 'gpu compute']])('describes the name suggestions %j', async (...items) => {
+    const suggest = vi.fn(() => Promise.resolve(items));
+    const result = await __testing.runDirectorySuggest({ suggest }, 'gp', { ...emptyInput, limit: 5 });
+    expect(result).toEqual({ items });
+    expect(directorySuggestOutput.parse(result)).toEqual(result);
     expect(suggest).toHaveBeenCalledWith({ limit: 5, prefix: 'gp' });
   });
 

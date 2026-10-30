@@ -26,6 +26,9 @@ import {
 import { createInspectCli, createOdpCli } from '../../../src/commands/odp/index.js';
 import { OdpCommandError } from '../../../src/commands/odp/command.js';
 import * as renderer from '../../../src/utils/render-ink-until-exit.js';
+import { collectionOutput, collectionPageOutput, inspectionOutput } from '../../../src/commands/odp/schema.js';
+import { Schema } from 'incur';
+import { fromJsonSchema } from '@modelcontextprotocol/server';
 
 const collection: Collection = {
   id: 'compute',
@@ -376,6 +379,11 @@ describe('ODP Service and Collection commands', () => {
     );
 
     expect(JSON.parse(output.join(''))).toMatchObject({ document: { mcp: inspection.document.mcp } });
+    expect(inspectionOutput.safeParse(JSON.parse(output.join(''))).error).toBeUndefined();
+    const validated = await fromJsonSchema(Schema.toJsonSchema(inspectionOutput))['~standard'].validate(
+      JSON.parse(output.join('')),
+    );
+    expect(validated.issues).toBeUndefined();
   });
 
   it('renders native inspection in a human terminal', async () => {
@@ -661,6 +669,9 @@ describe('ODP Service and Collection commands', () => {
     });
 
     expect(output.join('')).toContain('compute');
+    expect(
+      (_name === 'get' ? collectionOutput : collectionPageOutput).safeParse(JSON.parse(output.join(''))).error,
+    ).toBeUndefined();
   });
 
   it.each([
