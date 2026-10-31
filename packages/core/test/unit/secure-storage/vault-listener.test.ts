@@ -2,10 +2,13 @@ import { once } from 'node:events';
 import { chmodSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer, type Server } from 'node:net';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { inspectSameUserVaultListener } from '../../../src/secure-storage/vault-peer-verifier.js';
 
 describe.runIf(process.platform === 'darwin')('macOS native vault listener inspection', () => {
+  beforeEach(() => vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true));
+  afterEach(() => vi.unstubAllGlobals());
+
   it('identifies an immediately rejecting listener without making another connection', async () => {
     const root = mkdtempSync('/tmp/inflow-listener-');
     const socketPath = join(root, 'vault.sock');

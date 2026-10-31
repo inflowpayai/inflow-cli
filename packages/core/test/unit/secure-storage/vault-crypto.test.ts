@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   VAULT_MASTER_KEY_BYTES,
   VAULT_SIDECAR_BYTES,
@@ -19,6 +19,9 @@ const firstFactor = Buffer.from('123456', 'utf8');
 const secondFactor = Buffer.from('better-passphrase', 'utf8');
 
 describe('vault crypto', () => {
+  beforeEach(() => vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true));
+  afterEach(() => vi.unstubAllGlobals());
+
   it.each([0, 31, 33])('rejects a %s-byte wrapping key before creating or unwrapping material', (length) => {
     const key = Buffer.alloc(length);
     const salt = Buffer.alloc(VAULT_SALT_BYTES);

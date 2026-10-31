@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SecureStorageError } from '../../../src/secure-storage/errors.js';
 import { vaultFilePaths } from '../../../src/secure-storage/vault-files.js';
 import * as peerVerification from '../../../src/secure-storage/vault-peer-verifier.js';
@@ -32,6 +32,9 @@ function dependencies(overrides: Partial<LocalVaultPeerRecoveryDependencies> = {
 }
 
 describe('vault peer recovery', () => {
+  beforeEach(() => vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true));
+  afterEach(() => vi.unstubAllGlobals());
+
   it.runIf(process.platform === 'darwin' || process.platform === 'linux').each(['darwin', 'linux'] as const)(
     'routes %s recovery to its operating-system inspection method',
     async (platform) => {
