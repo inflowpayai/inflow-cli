@@ -36,14 +36,26 @@ import { UserResource } from './resources/user.js';
 import { createAccessTokenProvider } from './session.js';
 import { sanitizeResource } from './utils/sanitize-proxy.js';
 import { InflowApiClient } from './utils/api-client.js';
-import { inspectService, type InspectServiceOptions, type InspectServiceResult } from '@aep-foundation/agent';
+import {
+  inspectService,
+  readAepServiceDocument,
+  type AepDocumentReadResult,
+  type InspectServiceOptions,
+  type InspectServiceResult,
+  type ReadAepServiceDocumentOptions,
+} from '@aep-foundation/agent';
 import { OdpResource, type IOdpResource } from './odp.js';
 
 export interface IAepResource {
   inspect(options: InspectServiceOptions): Promise<InspectServiceResult>;
+  document(options: ReadAepServiceDocumentOptions): Promise<AepDocumentReadResult>;
 }
 
 class AepResource implements IAepResource {
+  document(options: ReadAepServiceDocumentOptions): Promise<AepDocumentReadResult> {
+    return readAepServiceDocument(options);
+  }
+
   inspect(options: InspectServiceOptions): Promise<InspectServiceResult> {
     return inspectService(options);
   }

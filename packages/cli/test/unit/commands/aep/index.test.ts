@@ -60,6 +60,8 @@ const platformRecovery = vi.hoisted<{
   provisioned: boolean;
   statusErrorCode: string | undefined;
   approvalsCreated: number;
+  signContexts: Record<string, unknown>[];
+  approvedDocumentIds: unknown;
 }>(() => ({
   identity: undefined,
   identityNotFoundOnSign: false,
@@ -68,6 +70,8 @@ const platformRecovery = vi.hoisted<{
   provisioned: false,
   statusErrorCode: undefined,
   approvalsCreated: 0,
+  signContexts: [],
+  approvedDocumentIds: undefined,
 }));
 
 const fetchScenario = vi.hoisted(() => ({
@@ -145,14 +149,7 @@ vi.mock('@aep-foundation/agent', async (importOriginal) => {
       super('AEP Claim Values failed validation.');
     }
   }
-  class AepCommandError extends Error {
-    problem?: { code: string };
-
-    constructor(message?: string, _status?: number, problem?: { code: string }) {
-      super(message);
-      if (problem !== undefined) this.problem = problem;
-    }
-  }
+  const AepCommandError = actual.AepCommandError;
   class AepInspectError extends Error {
     constructor(
       message: string,
@@ -165,11 +162,15 @@ vi.mock('@aep-foundation/agent', async (importOriginal) => {
   class AepPendingSignError extends Error {}
   class AepServiceReferenceError extends Error {}
   const signer = (_claims: unknown, context: { platformContext?: Record<string, unknown> }) => {
+    platformRecovery.signContexts.push(structuredClone(context.platformContext ?? {}));
     if (platformRecovery.identityNotFoundOnSign) {
       platformRecovery.identityNotFoundOnSign = false;
-      const error = new AepCommandError();
-      error.problem = { code: 'agent_identity_not_found' };
-      throw error;
+      throw new AepCommandError('Identity not found', 404, {
+        code: 'agent_identity_not_found',
+        status: 404,
+        title: 'Identity not found',
+        type: 'urn:aep:error:agent_identity_not_found',
+      });
     }
     if (platformRecovery.immediateSignResult === 'string') return 'immediate-assertion';
     if (platformRecovery.immediateSignResult === 'completed-without-context') {
@@ -178,7 +179,12 @@ vi.mock('@aep-foundation/agent', async (importOriginal) => {
     if (platformRecovery.immediateSignResult === 'completed') {
       return {
         clientAssertion: 'immediate-assertion',
-        platformContext: { approved_claims: { 'contact.email': 'agent@example.test' } },
+        platformContext: {
+          approved_claims: { 'contact.email': 'agent@example.test' },
+          ...(platformRecovery.approvedDocumentIds === undefined
+            ? {}
+            : { approved_document_ids: platformRecovery.approvedDocumentIds }),
+        },
         status: 'completed' as const,
       };
     }
@@ -188,12 +194,18 @@ vi.mock('@aep-foundation/agent', async (importOriginal) => {
     }
     return {
       clientAssertion: 'assertion',
-      platformContext: { approved_claims: { 'contact.email': 'agent@example.test' } },
+      platformContext: {
+        approved_claims: { 'contact.email': 'agent@example.test' },
+        ...(platformRecovery.approvedDocumentIds === undefined
+          ? {}
+          : { approved_document_ids: platformRecovery.approvedDocumentIds }),
+      },
       status: 'completed' as const,
     };
   };
   return {
     AepPendingSignResolverError: actual.AepPendingSignResolverError,
+    readAepServiceDocument: actual.readAepServiceDocument,
     AepClaimRequirementsError,
     AepClaimValuesError,
     AepCommandError,
@@ -244,9 +256,12 @@ vi.mock('@aep-foundation/agent', async (importOriginal) => {
         platformRecovery.statusErrorCode !== undefined
       ) {
         platformRecovery.provisioned = false;
-        const error = new AepCommandError();
-        error.problem = { code: platformRecovery.statusErrorCode ?? 'not_recognized' };
-        throw error;
+        throw new AepCommandError('Identity not recognized', 404, {
+          code: platformRecovery.statusErrorCode ?? 'not_recognized',
+          status: 404,
+          title: 'Identity not recognized',
+          type: `urn:aep:error:${platformRecovery.statusErrorCode ?? 'not_recognized'}`,
+        });
       }
       return { body: { status: 'active' } };
     },
@@ -300,6 +315,7 @@ function inflow(inspectResult: InspectServiceResult = inspect): InflowCore.Inflo
     hasApiKey: () => false,
     platformAuthenticationHeaders: () => ({ 'X-API-KEY': 'key' }),
     resolvedApiBaseUrl: 'https://platform.example',
+    tap: { canSign: () => false },
     user: { retrieve: () => ({ userId: 'user-1' }) },
   } as never;
 }
@@ -316,6 +332,8 @@ afterEach(async () => {
   platformRecovery.provisioned = false;
   platformRecovery.statusErrorCode = undefined;
   platformRecovery.approvalsCreated = 0;
+  platformRecovery.signContexts = [];
+  platformRecovery.approvedDocumentIds = undefined;
   probeScenario.classification = 'success';
   probeScenario.calls = 0;
   probeScenario.status = 204;
@@ -336,6 +354,64 @@ afterEach(async () => {
 });
 
 describe('aep commands', () => {
+  const serviceDocument: AepAgent.AepDocumentReadResult['descriptor'] = {
+    id: 'terms',
+    type: 'terms_of_service',
+    title: 'Terms',
+    enrollment: 'required',
+    representations: [{ media_type: 'text/html', url: 'https://service.example/terms' }],
+  };
+
+  it.each([true, false])('reads a document without authentication in agent mode %s', async (agent) => {
+    const client = new (await vi.importActual<typeof InflowCore>('@inflowpayai/inflow-core')).Inflow();
+    const inspectCall = vi
+      .spyOn(client.aep, 'inspect')
+      .mockResolvedValue({ ...inspect, document: { ...inspect.document, service_documents: [serviceDocument] } });
+    const user = vi.spyOn(client.user, 'retrieve').mockRejectedValue(new Error('No authentication allowed'));
+    const c = {
+      ...context({ summary: false, timeout: 10 }),
+      agent,
+      formatExplicit: agent,
+      args: { serviceReference: 'service.example', documentId: 'terms' },
+    };
+    const frame = await __testing.runDocument(c, client);
+    expect(frame).toMatchObject({ outcome: 'web', document_id: 'terms', web_url: 'https://service.example/terms' });
+    expect(inspectCall.mock.calls[0]?.[0].serviceUrl).toBe('service.example');
+    expect(inspectCall.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal);
+    expect(user).not.toHaveBeenCalled();
+    expect(rendering.present).toHaveBeenCalledTimes(agent ? 0 : 1);
+  });
+
+  it.each([undefined, [serviceDocument]])('reports missing document IDs in catalog %j', async (documents) => {
+    const client = inflow({
+      ...inspect,
+      document: { ...inspect.document, ...(documents === undefined ? {} : { service_documents: documents }) },
+    });
+    await expect(
+      __testing.runDocument(
+        { ...context({ timeout: 10 }), args: { serviceReference: 'service.example', documentId: 'missing' } },
+        client,
+      ),
+    ).rejects.toThrow('AEP_DOCUMENT_NOT_FOUND');
+  });
+
+  it('preserves Inspect failures when reading a document', async () => {
+    const client = inflow();
+    vi.spyOn(client.aep, 'inspect').mockRejectedValue(new AepServiceReferenceError('Invalid reference'));
+    await expect(
+      __testing.runDocument(
+        { ...context({ timeout: 10 }), args: { serviceReference: 'bad', documentId: 'terms' } },
+        client,
+      ),
+    ).rejects.toThrow('AEP_SERVICE_URL_INVALID');
+  });
+
+  it('includes Service documents in standalone Inspect JSON', async () => {
+    const client = inflow({ ...inspect, document: { ...inspect.document, service_documents: [serviceDocument] } });
+    const frame = await __testing.runInspect(context({ timeout: 30 }), client);
+    expect(frame).toHaveProperty('document.service_documents', [serviceDocument]);
+  });
+
   it('uses the requested Inspect URL when no redirect URL is supplied', async () => {
     const inspected = { ...inspect };
     delete inspected.finalUrl;
@@ -543,7 +619,7 @@ describe('aep commands', () => {
     expect(platformRecovery.approvalsCreated).toBe(0);
   });
 
-  it.each(['missing-identity', 'unrecognized', 'no-grants', 'already-enrolled'] as const)(
+  it.each(['missing-identity', 'unrecognized', 'no-grants'] as const)(
     'finishes the human view for %s without starting an approval',
     async (scenario) => {
       const storage = new MemoryStorage();
@@ -555,13 +631,9 @@ describe('aep commands', () => {
       if (scenario === 'no-grants') delete document.commands.grant_types;
       const client = inflow({ ...inspect, document });
       const c = { ...context({ scope: [], maxAttempts: 1, timeout: 1 }), agent: false, formatExplicit: false };
-      if (scenario === 'already-enrolled') {
-        expect(await __testing.runEnroll(c, client, storage)).toEqual({ status: 'active' });
-      } else {
-        expect(await __testing.runGrant(c, client, storage)).toMatchObject({ granted: false });
-        if (scenario === 'missing-identity') {
-          expect(await __testing.runStatus(c, client, storage)).toMatchObject({ enrolled: false });
-        }
+      expect(await __testing.runGrant(c, client, storage)).toMatchObject({ granted: false });
+      if (scenario === 'missing-identity') {
+        expect(await __testing.runStatus(c, client, storage)).toMatchObject({ enrolled: false });
       }
       expect(rendering.present).toHaveBeenCalled();
       expect(platformRecovery.approvalsCreated).toBe(0);
@@ -712,7 +784,9 @@ describe('aep commands', () => {
       });
       expect(__testing.commandError(error)).toEqual({
         code: 'AEP_REQUIREMENTS_UNMET',
-        message: 'The Platform cannot satisfy the required Service claims.',
+        details: { requirements_pending: [], required_document_ids: [] },
+        message:
+          'The Service requires updated enrollment information or document acceptance.\n\nRun aep enroll for this Service to review and update enrollment. Then request Grant again when ready.',
         retryable: false,
       });
     },
@@ -987,7 +1061,7 @@ describe('aep commands', () => {
 
     const help = output.join('');
     expect(exit).not.toHaveBeenCalled();
-    for (const command of ['inspect', 'enroll', 'fetch', 'status', 'grant', 'revoke']) {
+    for (const command of ['document', 'inspect', 'enroll', 'fetch', 'status', 'grant', 'revoke']) {
       expect(help).toContain(command);
     }
   });
@@ -1130,16 +1204,18 @@ describe('aep commands', () => {
       exitCode: 2,
       message: 'The AEP Service reference is invalid.',
     });
-    expect(__testing.commandError(new AepInspectError('failed', 'response_too_large'))).toEqual({
+    expect(
+      __testing.commandError(new AepInspectError('Response exceeds the size limit.', 'response_too_large')),
+    ).toEqual({
       code: 'AEP_INSPECT_RESPONSE_TOO_LARGE',
-      message: 'AEP Service Inspect failed.',
+      message: 'Response exceeds the size limit.',
       retryable: true,
     });
-    const identityMismatch = new AepInspectError('failed');
+    const identityMismatch = new AepInspectError('\u001b[31mService identity does not match.\u001b[0m');
     Object.defineProperty(identityMismatch, 'code', { value: 'service_identity_mismatch' });
     expect(__testing.commandError(identityMismatch)).toEqual({
       code: 'AEP_SERVICE_IDENTITY_MISMATCH',
-      message: 'AEP Service Inspect failed.',
+      message: 'Service identity does not match.',
       retryable: false,
     });
     expect(__testing.commandError(new Error('failed'))).toEqual({
@@ -1285,7 +1361,9 @@ describe('aep commands', () => {
       ),
     ).toEqual({
       code: 'AEP_REQUIREMENTS_UNMET',
-      message: 'The Platform cannot satisfy the required Service claims.',
+      details: { requirements_pending: [], required_document_ids: [] },
+      message:
+        'The Service requires updated enrollment information or document acceptance.\n\nRun aep enroll for this Service to review and update enrollment. Then request Grant again when ready.',
       retryable: false,
     });
     expect(
@@ -2200,6 +2278,55 @@ describe('aep commands', () => {
     },
   );
 
+  it.each([true, false])(
+    'returns Enroll guidance for unmet Grant requirements (agent=%s) without automatic retries',
+    async (agent) => {
+      platformRecovery.immediateSignResult = 'completed';
+      const storage = new MemoryStorage();
+      storage.setApiKey('key');
+      const persisted = new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+      await persisted.identities().saveIdentity(identity);
+      const actual = await vi.importActual<typeof AepAgent>('@aep-foundation/agent');
+      const problem = {
+        code: 'requirements_unmet',
+        status: 422,
+        title: 'Requirements unmet',
+        type: 'urn:aep:error:requirements_unmet',
+        requirements_pending: ['contact.email', 'service_documents'],
+        required_document_ids: ['terms'],
+      };
+      const transport = vi.fn(() => Promise.resolve(Response.json(problem, { status: 422 })));
+      const grant = vi
+        .spyOn(AepAgent, 'grantService')
+        .mockImplementationOnce((options) => actual.grantService({ ...options, fetch: transport }));
+      const enroll = vi.spyOn(AepAgent, 'enrollService');
+      const error = vi.fn((value: unknown): never => {
+        throw value;
+      });
+      await expect(
+        __testing.runGrant({ ...context({ scope: [] }), agent, formatExplicit: agent, error }, inflow(), storage),
+      ).rejects.toMatchObject({
+        code: 'AEP_REQUIREMENTS_UNMET',
+        cta: { commands: [{ command: 'aep enroll service.example', description: 'Review and update enrollment' }] },
+        details: {
+          requirements_pending: ['contact.email', 'service_documents'],
+          required_document_ids: ['terms'],
+          resolution: { action: 'enroll', tool: 'aep_enroll', input: { serviceReference: 'service.example' } },
+        },
+        message:
+          'The Service requires updated enrollment information or document acceptance.' +
+          '\n\nRequired information\n  contact.email\n  service_documents' +
+          '\n\nRequired documents\n  terms' +
+          '\n\nRun inflow aep enroll service.example to review and update enrollment. Then request Grant again when ready.',
+        retryable: false,
+      });
+      expect(transport).toHaveBeenCalledOnce();
+      expect(grant).toHaveBeenCalledOnce();
+      expect(enroll).not.toHaveBeenCalled();
+      expect(await persisted.credentials().listCredentials(identity.serviceDid)).toEqual([]);
+    },
+  );
+
   it('rejects per-credential Revoke when the credential is not stored locally', async () => {
     const storage = new MemoryStorage();
     storage.setApiKey('key');
@@ -2243,7 +2370,7 @@ describe('aep commands', () => {
     },
   );
 
-  it('checks Status and skips approval when enrolling an existing identity', async () => {
+  it.each([true, false])('approves explicit repeated enrollment with the same identity (agent %s)', async (agent) => {
     const approvalFetch = vi.fn(() =>
       Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 })),
     );
@@ -2251,13 +2378,278 @@ describe('aep commands', () => {
     const storage = new MemoryStorage();
     storage.setApiKey('key');
     const client = inflow();
-    const options = context({ interval: 1, maxAttempts: 1, timeout: 1 });
+    const options = { ...context({ interval: 1, maxAttempts: 1, timeout: 1 }), agent, formatExplicit: agent };
+    const enrolled = vi.spyOn(AepAgent, 'enrollService');
 
     await __testing.runEnroll(options, client, storage);
-    const approvalRequests = approvalFetch.mock.calls.length;
+    const savedIdentity = storage.getAepState()?.identities[identity.serviceDid];
     await expect(__testing.runEnroll(options, client, storage)).resolves.toEqual({ status: 'active' });
-    expect(approvalFetch).toHaveBeenCalledTimes(approvalRequests);
+    expect(approvalFetch).toHaveBeenCalledTimes(2);
+    expect(platformRecovery.approvalsCreated).toBe(2);
+    expect(enrolled).toHaveBeenCalledTimes(2);
+    expect(storage.getAepState()?.identities[identity.serviceDid]).toEqual(savedIdentity);
+    expect(enrolled.mock.calls[0]?.[0].agentDid).toBe(identity.agentDid);
+    expect(enrolled.mock.calls[1]?.[0].agentDid).toBe(identity.agentDid);
+    expect(enrolled.mock.calls[0]?.[0].idempotencyKey).not.toBe(enrolled.mock.calls[1]?.[0].idempotencyKey);
   });
+
+  it('requests current claims on repeated enrollment and sends only approved claim values', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(Response.json({ status: 'APPROVED' }))),
+    );
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const options = context({ interval: 1, maxAttempts: 1, timeout: 1 });
+    const enrolled = vi.spyOn(AepAgent, 'enrollService');
+    const grant = vi.spyOn(AepAgent, 'grantService');
+    await __testing.runEnroll(options, inflow(), storage);
+
+    const document = structuredClone(inspect.document);
+    document.claims = { required: ['contact.email'], preferred: [], optional: ['person.first_name'] };
+    await __testing.runEnroll(options, inflow({ ...inspect, document }), storage);
+
+    expect(platformRecovery.signContexts.filter((value) => value['claims'] !== undefined)).toEqual([
+      { claims: inspect.document.claims },
+      { claims: document.claims },
+    ]);
+    expect(enrolled).toHaveBeenLastCalledWith(
+      expect.objectContaining({ agentDid: identity.agentDid, claims: { 'contact.email': 'agent@example.test' } }),
+    );
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('hands approved documents to the real SDK (agent %s)', async (agent) => {
+    const actual = await vi.importActual<typeof AepAgent>('@aep-foundation/agent');
+    const enrolled = vi.spyOn(AepAgent, 'enrollService').mockImplementation(actual.enrollService);
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        if (String(url).endsWith('/aep/enroll')) {
+          const body = JSON.parse(await new Response(init?.body).text()) as Record<string, unknown>;
+          requests.push(body);
+          return Promise.resolve(
+            Response.json({
+              status: 'active',
+              acknowledged_document_ids: body['acknowledged_document_ids'],
+              service_extension: 'retained',
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({ status: 'APPROVED' }));
+      }),
+    );
+    platformRecovery.approvedDocumentIds = ['privacy', 'terms'];
+    const document = {
+      ...inspect.document,
+      extensions: { supported: ['urn:aep:ext:aep-foundation:service-documents#v=1.0.0'] },
+      service_documents: [
+        serviceDocument,
+        { ...serviceDocument, id: 'privacy' },
+        { ...serviceDocument, id: 'notice', enrollment: 'not-required' as const },
+      ],
+    };
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const options = {
+      ...context({ interval: 1, maxAttempts: 1, timeout: 2 }),
+      agent,
+      formatExplicit: agent,
+      error: (error: { code: string; message: string }): never => {
+        throw new Error(`${error.code}: ${error.message}`);
+      },
+    };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await __testing.runEnroll(options, inflow({ ...inspect, document }), storage)).toEqual({
+        status: 'active',
+        acknowledged_document_ids: ['privacy', 'terms'],
+        service_extension: 'retained',
+      });
+    }
+    expect(platformRecovery.signContexts.filter((value) => value['claims'] !== undefined)).toEqual([
+      { claims: inspect.document.claims, required_document_ids: ['terms', 'privacy'] },
+      { claims: inspect.document.claims, required_document_ids: ['terms', 'privacy'] },
+    ]);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({
+      agent_did: identity.agentDid,
+      acknowledged_document_ids: ['privacy', 'terms'],
+    });
+    expect(enrolled.mock.calls[1]?.[0].agentDid).toBe(identity.agentDid);
+    if (!agent) {
+      const pendingView = rendering.render.mock.calls.find(
+        ([element]) => isValidElement(element) && element.type === PendingApprovalView,
+      )?.[0];
+      if (!isValidElement<{ children: ReactElement }>(pendingView)) throw new Error('Missing approval presentation');
+      expect(pendingView.props.children.props).toMatchObject({
+        documents: document.service_documents,
+        serviceUrl: 'service.example',
+      });
+    } else expect(rendering.render).not.toHaveBeenCalled();
+  });
+
+  it('reports the real SDK error when the Service omits the acknowledgement echo', async () => {
+    const actual = await vi.importActual<typeof AepAgent>('@aep-foundation/agent');
+    vi.spyOn(AepAgent, 'enrollService').mockImplementation(actual.enrollService);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL) =>
+        Promise.resolve(Response.json({ status: String(url).endsWith('/aep/enroll') ? 'active' : 'APPROVED' })),
+      ),
+    );
+    platformRecovery.approvedDocumentIds = ['terms'];
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const document = {
+      ...inspect.document,
+      extensions: { supported: ['urn:aep:ext:aep-foundation:service-documents#v=1.0.0'] },
+      service_documents: [serviceDocument],
+    };
+    const error = vi.fn((failure: { code: string }) => {
+      throw new Error(failure.code);
+    });
+    await expect(
+      __testing.runEnroll(
+        { ...context({ interval: 1, maxAttempts: 1, timeout: 2 }), error },
+        inflow({ ...inspect, document }),
+        storage,
+      ),
+    ).rejects.toThrow('AEP_ENROLL_RESPONSE_INVALID');
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'AEP_ENROLL_RESPONSE_INVALID',
+        message:
+          'The Service did not confirm the approved document IDs in its enrollment response. ' +
+          'The Service must return the same acknowledged_document_ids that were sent. Enrollment could not be confirmed.',
+      }),
+    );
+  });
+
+  it('resumes with the original approved IDs despite newly advertised required documents', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(Response.json({ status: 'APPROVED' }))),
+    );
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const original = { ...inspect, document: { ...inspect.document, service_documents: [serviceDocument] } };
+    const enrolled = vi.spyOn(AepAgent, 'enrollService');
+    const pending = await __testing.runEnroll(context({ maxAttempts: 1, timeout: 2 }), inflow(original), storage);
+    expect(pending['state']).toBe('pending');
+    expect(enrolled).not.toHaveBeenCalled();
+    expect(platformRecovery.signContexts.at(-1)).toMatchObject({ required_document_ids: ['terms'] });
+    platformRecovery.approvedDocumentIds = ['terms'];
+    await __testing.runEnroll(
+      context({ approvalId: 'approval-1', maxAttempts: 1, timeout: 2 }),
+      inflow({
+        ...original,
+        document: {
+          ...original.document,
+          service_documents: [serviceDocument, { ...serviceDocument, id: 'new-terms' }],
+        },
+      }),
+      storage,
+    );
+    expect(enrolled).toHaveBeenCalledWith(expect.objectContaining({ acknowledgedDocumentIds: ['terms'] }));
+    expect(platformRecovery.signContexts.at(-1)).toEqual({ approval_id: 'approval-1' });
+    expect(platformRecovery.approvalsCreated).toBe(1);
+  });
+
+  it.each([
+    undefined,
+    null,
+    'terms',
+    ['terms', 'terms'],
+    ['Terms'],
+    [],
+    ['terms', 'extra'],
+    [1],
+    ['bad id'],
+    ['a'.repeat(33)],
+    Array.from({ length: 8 }, (_, i) => `id${i}`),
+  ])('does not submit enrollment with invalid or mismatched document approval: %j', async (approved) => {
+    platformRecovery.approvedDocumentIds = approved;
+    platformRecovery.immediateSignResult = 'completed';
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const enrolled = vi.spyOn(AepAgent, 'enrollService');
+    await expect(
+      __testing.runEnroll(
+        context({ maxAttempts: 1, timeout: 2 }),
+        inflow({
+          ...inspect,
+          document: { ...inspect.document, service_documents: [serviceDocument] },
+        }),
+        storage,
+      ),
+    ).rejects.toThrow('AEP_DOCUMENT_APPROVAL_INVALID');
+    expect(enrolled).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, []])('preserves absent or explicitly empty approved IDs: %j', async (approved) => {
+    platformRecovery.approvedDocumentIds = approved;
+    platformRecovery.immediateSignResult = 'completed';
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const enrolled = vi.spyOn(AepAgent, 'enrollService');
+    await __testing.runEnroll(
+      context({ maxAttempts: 1, timeout: 2 }),
+      inflow({
+        ...inspect,
+        document: { ...inspect.document, service_documents: [{ ...serviceDocument, enrollment: 'not-required' }] },
+      }),
+      storage,
+    );
+    expect(platformRecovery.signContexts.at(-1)).toEqual({ claims: inspect.document.claims });
+    const input = enrolled.mock.calls[0]?.[0];
+    if (approved === undefined) expect(input).not.toHaveProperty('acknowledgedDocumentIds');
+    else expect(input).toHaveProperty('acknowledgedDocumentIds', []);
+  });
+
+  it('does not infer document acceptance for an older continued approval without document context', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(Response.json({ status: 'APPROVED' }))),
+    );
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const enrolled = vi.spyOn(AepAgent, 'enrollService');
+    await __testing.runEnroll(
+      context({ approvalId: 'approval-1', maxAttempts: 1, timeout: 2 }),
+      inflow({
+        ...inspect,
+        document: { ...inspect.document, service_documents: [serviceDocument] },
+      }),
+      storage,
+    );
+    expect(enrolled.mock.calls[0]?.[0]).not.toHaveProperty('acknowledgedDocumentIds');
+    expect(platformRecovery.signContexts.at(-1)).toEqual({ approval_id: 'approval-1' });
+  });
+
+  it.each(['pending', 'rejected', 'suspended', 'terminated'] as const)(
+    'preserves the Service decision %s for an explicit repeated enrollment',
+    async (status) => {
+      platformRecovery.identity = identity;
+      platformRecovery.immediateSignResult = 'completed';
+      vi.spyOn(AepAgent, 'statusService').mockResolvedValueOnce({
+        body: { status },
+        commandUrl: new URL('https://service.example/aep/status'),
+        status: 200,
+      });
+      vi.spyOn(AepAgent, 'enrollService').mockResolvedValueOnce({
+        body: { status },
+        commandUrl: new URL('https://service.example/aep/enroll'),
+        status: 200,
+      });
+      const storage = new MemoryStorage();
+      storage.setApiKey('key');
+
+      expect(await __testing.runEnroll(context({ maxAttempts: 1, timeout: 1 }), inflow(), storage)).toEqual({ status });
+      expect(AepAgent.enrollService).toHaveBeenCalledOnce();
+      expect(storage.getAepState()?.identities[identity.serviceDid]).toMatchObject(identity);
+    },
+  );
 
   it.each(['completed', 'completed-without-context', 'string'] as const)(
     'accepts an immediate %s Platform signature',
@@ -2338,7 +2730,6 @@ describe('aep commands', () => {
       'fetch',
       vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'APPROVED' }), { status: 200 }))),
     );
-    platformRecovery.notRecognized = true;
     const storage = new MemoryStorage();
     storage.setApiKey('key');
     const persisted = new AepStorage(storage, {
@@ -2441,7 +2832,7 @@ describe('aep commands', () => {
 
   it('rehydrates a missing local identity from the Platform before checking Status', async () => {
     platformRecovery.identity = identity;
-    const approvalFetch = vi.fn();
+    const approvalFetch = vi.fn(() => Promise.resolve(Response.json({ status: 'APPROVED' })));
     vi.stubGlobal('fetch', approvalFetch);
     const storage = new MemoryStorage();
     storage.setApiKey('key');
@@ -2449,7 +2840,7 @@ describe('aep commands', () => {
     await expect(
       __testing.runEnroll(context({ interval: 1, maxAttempts: 1, timeout: 1 }), inflow(), storage),
     ).resolves.toEqual({ status: 'active' });
-    expect(approvalFetch).not.toHaveBeenCalled();
+    expect(approvalFetch).toHaveBeenCalledOnce();
     expect(storage.getAepState()?.identities[identity.serviceDid]).toMatchObject(identity);
   });
 

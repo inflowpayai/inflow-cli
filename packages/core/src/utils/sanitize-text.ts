@@ -1,8 +1,8 @@
 import stripAnsi from 'strip-ansi';
 
-const CONTROL_CHAR_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\r]/g;
+const CONTROL_CHAR_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\r]/g;
 
-const NEEDS_SANITIZE_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\r\x1b]/;
+const NEEDS_SANITIZE_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\r\x1b]/;
 
 /** `null`, `undefined`, and empty input collapse to `''` rather than throwing or passing the nullish value through. */
 export function sanitizeText(input: string | undefined | null): string {

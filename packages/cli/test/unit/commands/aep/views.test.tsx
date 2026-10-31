@@ -1,6 +1,7 @@
 import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { ServiceDocumentsTable } from '../../../../src/commands/aep/documents.js';
 import {
   EnrollView,
   FetchView,
@@ -8,6 +9,7 @@ import {
   GrantView,
   InspectNotAdvertisedView,
   InspectView,
+  AepDetailsTable,
   NotEnrolledView,
   PendingApprovalView,
   RevokeView,
@@ -15,6 +17,31 @@ import {
 } from '../../../../src/commands/aep/views.js';
 
 describe('AEP views', () => {
+  it('includes documents in the shared standalone and combined AEP details view', () => {
+    const view = render(
+      <AepDetailsTable
+        serviceUrl="https://service.example"
+        document={{
+          service: { did: 'did:web:service.example' },
+          commands: { supported: ['inspect'] },
+          service_documents: [
+            {
+              id: 'terms',
+              title: 'Terms',
+              type: 'terms_of_service',
+              enrollment: 'required',
+              representations: [{ media_type: 'text/html', url: 'https://service.example/terms' }],
+            },
+          ],
+        }}
+      />,
+    );
+    const output = view.lastFrame() ?? '';
+    expect(output).toContain('Service documents');
+    expect(output).toContain('terms');
+    expect(output.indexOf('Document ID')).toBeLessThan(output.indexOf('Title'));
+    view.unmount();
+  });
   it.each(['active', 'rejected'])('renders %s enrollment without a misleading follow-up', (status) => {
     const view = render(
       <EnrollView onComplete={() => undefined} serviceDid="did:web:service.example" status={status} />,
@@ -126,6 +153,40 @@ describe('AEP views', () => {
     view.unmount();
   });
 
+  it('shows document IDs and links beside the human approval without another acceptance prompt', () => {
+    const view = render(
+      <PendingApprovalView
+        approvalId="approval-1"
+        approvalUrl="https://app.example/approval"
+        onCancel={() => undefined}
+      >
+        <ServiceDocumentsTable
+          serviceUrl="https://service.example"
+          documents={[
+            {
+              id: 'terms',
+              title: 'Terms',
+              type: 'terms_of_service',
+              enrollment: 'required',
+              representations: [{ media_type: 'text/html', url: 'https://service.example/terms' }],
+            },
+          ]}
+        />
+      </PendingApprovalView>,
+    );
+    const output = view.lastFrame() ?? '';
+    for (const text of [
+      'Document ID',
+      'terms',
+      'Required',
+      'https://service.example/terms',
+      'https://app.example/approval',
+    ])
+      expect(output).toContain(text);
+    expect(output).not.toContain('Press Enter to accept');
+    view.unmount();
+  });
+
   it.each([
     ['Escape', '\u001b'],
     ['Ctrl-C', '\u0003'],
@@ -201,8 +262,8 @@ describe('AEP views', () => {
     const view = render(
       <InspectNotAdvertisedView onComplete={() => undefined} serviceUrl="https://service.example/" />,
     );
-    expect(view.lastFrame()).toContain('This Service does not advertise AEP.');
-    expect(view.lastFrame()).toContain('https://service.example/');
+    expect(view.lastFrame()).toContain('No AEP discovery document was found (HTTP 404).');
+    expect(view.lastFrame()).toContain('https://service.example/.well-known/aep');
     view.unmount();
   });
 

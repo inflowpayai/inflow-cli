@@ -1,4 +1,5 @@
 import { z } from 'incur';
+import { httpUrlArgument } from '../../utils/http-url-argument.js';
 
 const statuses = ['active', 'cancelled', 'expired', 'failed', 'past_due', 'pending', 'revoked'];
 const statusPattern = `^(?:${statuses.map((status) => status.replace(/[a-z]/g, (letter) => `[${letter}${letter.toUpperCase()}]`)).join('|')})$`;
@@ -51,7 +52,7 @@ export const subscriptionIdArgs = z.object({
 });
 
 export const subscriptionFetchArgs = subscriptionIdArgs.extend({
-  resourceUrl: z.string().describe('The MPP-protected resource URL to fetch.'),
+  resourceUrl: httpUrlArgument.describe('The MPP-protected resource URL to fetch.'),
 });
 
 export const listOptions = z.object({

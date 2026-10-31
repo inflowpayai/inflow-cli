@@ -42,6 +42,24 @@ vi.mock('@inflowpayai/x402-buyer', async (importOriginal) => {
 
 const server = makeServer();
 
+it('reads public Service documents through the sanitizing AEP resource without authentication', async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(new Error('No platform request expected'));
+  const client = new Inflow({ accessToken: 'must-not-be-sent', fetch });
+  const result = await client.aep.document({
+    document: {
+      id: 'terms',
+      title: '\x1b[2JTerms',
+      type: 'terms_of_service',
+      enrollment: 'required',
+      representations: [{ media_type: 'text/html', url: 'https://service.example/terms' }],
+    },
+  });
+  expect(result.status).toBe('web');
+  expect(result.descriptor.title).toBe('Terms');
+  expect(result.webUrl).toBe('https://service.example/terms');
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it.each([
   'deposit-addresses',
   'subscription-list',

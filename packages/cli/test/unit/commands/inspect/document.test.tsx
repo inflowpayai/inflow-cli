@@ -33,6 +33,71 @@ import * as renderer from '../../../../src/utils/render-ink-until-exit.js';
 
 afterEach(() => vi.restoreAllMocks());
 
+it.each(['documents', 'none', 'failure'] as const)(
+  'discovers Service documents for public ODP: %s',
+  async (scenario) => {
+    const { discovery } = setup(true);
+    const original = await discovery.inspect('https://weather.test');
+    if (original.sourceType !== 'odp') throw new Error('Expected ODP');
+    const result: SourceDiscoveryResult = {
+      ...original,
+      document: {
+        ...original.document,
+        protocols: { ...original.document.protocols, enrollment: [{ name: 'aep' as const }] },
+      },
+    };
+    const documents = [
+      {
+        id: 'terms',
+        type: 'terms_of_service',
+        title: 'Terms',
+        enrollment: 'required' as const,
+        representations: [{ media_type: 'text/html', url: 'https://weather.test/terms' }],
+      },
+    ];
+    const client = new Inflow();
+    const inspect = vi.spyOn(client.aep, 'inspect');
+    if (scenario === 'failure') inspect.mockRejectedValue(new Error('Unavailable'));
+    else
+      inspect.mockResolvedValue({
+        inspectUrl: new URL('https://weather.test/.well-known/aep'),
+        commandUrl: (command) => new URL(`/aep/${command}`, 'https://weather.test'),
+        document: {
+          aep_version: '1.0',
+          service: { did: 'did:web:weather.test' },
+          commands: { supported: ['inspect'] },
+          core: { signing_algorithms: ['ES256'] },
+          bindings: { supported: ['http'] },
+          identity: { methods: ['did:web'] },
+          http: { endpoint_base: '/aep' },
+          ...(scenario === 'documents' ? { service_documents: documents } : {}),
+        },
+      });
+    const frame = await inspectDocument(
+      context('https://weather.test'),
+      { inspect: () => Promise.resolve(result) },
+      client.aep,
+    );
+    expect(inspect.mock.calls[0]?.[0].serviceUrl).toBe('https://weather.test');
+    expect(inspect.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal);
+    if (scenario === 'documents') expect(frame['service_documents']).toEqual(documents);
+    else expect(frame).not.toHaveProperty('service_documents');
+    if (scenario === 'failure')
+      expect(frame['warnings']).toEqual([expect.objectContaining({ code: 'AEP_DOCUMENTS_UNAVAILABLE' })]);
+    else expect(frame).not.toHaveProperty('warnings');
+    const view = render(
+      <DocumentView
+        result={result}
+        {...(scenario === 'documents' ? { documents } : {})}
+        documentsUnavailable={scenario === 'failure'}
+      />,
+    );
+    if (scenario === 'documents') expect(view.lastFrame()).toContain('Document ID');
+    if (scenario === 'failure') expect(view.lastFrame()).toContain('inspection failed');
+    view.unmount();
+  },
+);
+
 it('does not prepare vault credentials for public document inspection', async () => {
   const { discovery } = setup();
   const prepare = vi.fn().mockRejectedValue(new Error('Vault must not be accessed'));

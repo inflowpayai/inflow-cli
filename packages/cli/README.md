@@ -73,6 +73,76 @@ For host-specific skill and MCP installation, see the repository's
 | `inflow subscriptions fetch <id> <url>`                          | Fetch a resource using a fresh short-lived subscription authorization.                                                            |
 | `inflow subscriptions cancel <id>`                               | Cancel a subscription immediately.                                                                                                |
 
+## Service documents
+
+`inflow aep inspect <service>` lists advertised documents with their document ID, title, type, enrollment requirement,
+and web link. `inflow inspect <resource-url>` includes the same table when AEP discovery succeeds. Public ODP inspection
+also discovers documents when the Service advertises AEP. A failed document inspection is reported; it does not imply
+that no documents exist.
+
+```sh
+inflow aep document https://service.example terms
+inflow aep document https://service.example terms --summary
+inflow aep document https://service.example terms --format json
+inflow aep document --schema --format json
+```
+
+Document reading is anonymous and does not unlock the vault, enroll, or acknowledge anything. The default is the full
+portable document. `--summary` displays the Service-authored summary when supplied, otherwise the full text with a
+notice. If portable text is not advertised, unavailable, or unsupported, the result supplies the web link. Markdown and
+HTML representations are not scraped or summarized. `--timeout` bounds discovery and retrieval together (default 30
+seconds; maximum 300).
+
+`aep enroll` requests human approval for required documents and submits only the approved identifiers to the Service.
+The terminal shows document links while waiting; acceptance happens in the InFlow approval screen. A continued approval
+uses its original document identifiers, even if the Service advertises additional documents later. An explicit repeated
+Enroll reuses the Agent identity and lets the Service apply the approved requirements; it does not run Grant afterward.
+`AEP_DOCUMENT_APPROVAL_INVALID` means InFlow returned malformed identifiers or a list different from the initial
+request; the CLI stops before submitting enrollment. Request a new approval with `aep enroll <service>`.
+
+If Grant returns `AEP_REQUIREMENTS_UNMET`, review the listed claims and document IDs, then explicitly run
+`inflow aep enroll <service>`. Request Grant separately after enrollment succeeds. The CLI does not chain these
+commands. Agent errors include `details.requirements_pending`, `details.required_document_ids`, and `details.resolution`
+identifying `aep_enroll` and its `serviceReference`. Reading a document is not permission to acknowledge it on the
+user's behalf.
+
+Structured output contains `schema_version: 1`, `document_id`, `title`, `type`, `enrollment`, and `web_url`. The
+Enrollment column displays **Required** or **Not Required**; JSON preserves the protocol values `required` and
+`not-required`, respectively. For `outcome: "portable"`, `view` is `full` or `summary`; `content` is rendered Markdown
+inside a code fence; and `instruction` directs the caller to present it without interpretation. An optional `notice`
+explains summary fallback. For `outcome: "web"`, `reason` is `not_advertised` or `unavailable_or_unsupported`, and
+`content` is omitted. Its `instruction` asks the caller to present `web_url` for the user to read without inferring
+contents or treating reading as acceptance. `--schema` describes the command inputs and both response variants,
+including the meaning of every output field. MCP exposes the same response contract as `outputSchema` and returns the
+result as structured content alongside the text response. Raw portable JSON is not returned. Source links and
+presentation instructions remain outside the fenced document text. An unknown ID fails with `AEP_DOCUMENT_NOT_FOUND`;
+discovery failures use the AEP Inspect error codes.
+
+General public ODP inspection includes `service_documents` when advertised. If the advertised AEP endpoint cannot be
+inspected, `warnings` contains `AEP_DOCUMENTS_UNAVAILABLE`. Resource inspection and AEP Inspect include the catalog in
+their existing AEP `document.service_documents` field. Absent catalogs are omitted.
+
+### Demo walkthrough
+
+The demo Service advertises `terms` as Required, and `privacy` and `acceptable-use` as Not Required. Terms and privacy
+have portable text; acceptable use supplies a browser link. These are demonstration documents, not InFlow's production
+legal terms.
+
+```sh
+inflow aep inspect demo.inflowpay.ai
+inflow aep document demo.inflowpay.ai terms --summary
+inflow aep document demo.inflowpay.ai privacy
+inflow aep document demo.inflowpay.ai acceptable-use
+inflow aep enroll demo.inflowpay.ai --interval 5
+inflow aep grant demo.inflowpay.ai --grant-type api-key --interval 5
+```
+
+Run each step separately. Reading needs no account; Enroll and Grant require InFlow authentication and any requested
+human approval. In the enrollment approval, required and additional reading appear above the approval actions. Accept
+only after reviewing the documents. An explicit repeated Enroll reuses the identity; Grant is a separate operation that
+obtains a credential. If the demo reports unmet requirements, follow the Enroll guidance before requesting Grant again.
+The Service decides which requirements remain outstanding.
+
 ## Global flags
 
 `inflow <command> --schema` describes command arguments and options, plus an `output` schema when provided by that

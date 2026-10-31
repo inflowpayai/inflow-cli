@@ -1,7 +1,8 @@
 import { z } from 'incur';
+import { httpUrlArgument } from '../../utils/http-url-argument.js';
 
 export const payArgs = z.object({
-  url: z.string().describe('The x402-protected resource URL to pay for.'),
+  url: httpUrlArgument.describe('The x402-protected resource URL to pay for.'),
 });
 
 export const payOptions = z.object({
@@ -79,7 +80,7 @@ export const statusArgs = z.object({
 
 export const fetchArgs = z.object({
   transactionId: z.string().describe('The transaction id returned by `x402 pay`.'),
-  resourceUrl: z.string().describe('The x402-protected resource URL to fetch.'),
+  resourceUrl: httpUrlArgument.describe('The x402-protected resource URL to fetch.'),
 });
 
 export const fetchOptions = z.object({
@@ -138,7 +139,7 @@ export const decodeArgs = z.object({
 });
 
 export const inspectArgs = z.object({
-  url: z.string().describe('The x402-protected resource URL to probe. No payment is made.'),
+  url: httpUrlArgument.describe('The x402-protected resource URL to probe. No payment is made.'),
 });
 
 export const inspectOptions = z.object({

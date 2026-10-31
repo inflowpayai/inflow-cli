@@ -4,6 +4,8 @@ import type React from 'react';
 import { useEffect, useState } from 'react';
 import { openUrl } from '../../utils/open-url.js';
 import { Table, type TableColumn } from '../../utils/table.js';
+import type { AepDocumentReadResult } from '@aep-foundation/agent';
+import { ServiceDocumentsTable } from './documents.js';
 
 interface AepOpenApiOperationPolicyView {
   matchedOperation?: { method: string; pathTemplate: string };
@@ -31,6 +33,7 @@ interface InspectViewProps extends ViewProps {
     commands: { grant_types?: string[]; supported: string[] };
     identity?: { methods?: string[] };
     service: { did: string };
+    service_documents?: AepDocumentReadResult['descriptor'][];
   };
   serviceUrl: string;
   openApiPolicy?: AepOpenApiOperationPolicyView;
@@ -51,7 +54,7 @@ function listed(values: readonly string[] | undefined): string {
   return values === undefined || values.length === 0 ? 'None' : values.join(', ');
 }
 
-const CLI_COMMANDS = ['enroll', 'fetch', 'grant', 'inspect', 'revoke', 'status'] as const;
+const CLI_COMMANDS = ['document', 'enroll', 'fetch', 'grant', 'inspect', 'revoke', 'status'] as const;
 
 export const AepDetailsTable: React.FC<
   Pick<InspectViewProps, 'document' | 'openApiPolicy' | 'resourceAuthentication' | 'serviceUrl'>
@@ -76,7 +79,12 @@ export const AepDetailsTable: React.FC<
     { field: 'Preferred claims', value: listed(document.claims?.preferred) },
     { field: 'Optional claims', value: listed(document.claims?.optional) },
   ];
-  return <Table columns={DETAIL_COLUMNS} rows={rows} />;
+  return (
+    <Box flexDirection="column">
+      <Table columns={DETAIL_COLUMNS} rows={rows} />
+      <ServiceDocumentsTable documents={document.service_documents} serviceUrl={serviceUrl} />
+    </Box>
+  );
 };
 
 export const InspectView: React.FC<InspectViewProps> = ({
@@ -108,8 +116,8 @@ export const InspectNotAdvertisedView: React.FC<InspectNotAdvertisedViewProps> =
   useComplete(() => onComplete());
   return (
     <Box flexDirection="column">
-      <Text>This Service does not advertise AEP.</Text>
-      <Text dimColor>{serviceUrl}</Text>
+      <Text>No AEP discovery document was found (HTTP 404).</Text>
+      <Text dimColor>{new URL('/.well-known/aep', serviceUrl).href}</Text>
     </Box>
   );
 };
@@ -131,12 +139,18 @@ export const EnrollView: React.FC<EnrollViewProps> = ({ onComplete, serviceDid, 
 };
 
 interface PendingApprovalViewProps {
+  children?: React.ReactNode;
   approvalId: string;
   approvalUrl: string;
   onCancel: () => Promise<void> | void;
 }
 
-export const PendingApprovalView: React.FC<PendingApprovalViewProps> = ({ approvalId, approvalUrl, onCancel }) => {
+export const PendingApprovalView: React.FC<PendingApprovalViewProps> = ({
+  children,
+  approvalId,
+  approvalUrl,
+  onCancel,
+}) => {
   const [cancelling, setCancelling] = useState(false);
   const [cancellationFailed, setCancellationFailed] = useState(false);
   useInput((input, key) => {
@@ -159,6 +173,7 @@ export const PendingApprovalView: React.FC<PendingApprovalViewProps> = ({ approv
   }
   return (
     <Box flexDirection="column" paddingY={1}>
+      {children}
       <Box marginBottom={1}>
         <Text bold>Approval required</Text>
       </Box>
