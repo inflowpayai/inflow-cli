@@ -22,6 +22,7 @@
     "build": "turbo run build && node scripts/align-skill-version.js && pnpm stage:web",
     "build:homebrew-cask": "node scripts/render-homebrew-cask.mjs",
     "build:linux-apt-repository": "node scripts/build-linux-apt-repository.mjs",
+    "build:linux-arch-package": "node scripts/build-linux-arch-package.mjs",
     "build:linux-installer": "node scripts/render-linux-installer.mjs",
     "build:linux-package": "node scripts/build-linux-package.mjs",
     "build:linux-release-signatures": "node scripts/sign-linux-release.mjs",

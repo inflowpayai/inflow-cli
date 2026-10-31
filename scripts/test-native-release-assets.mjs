@@ -18,6 +18,8 @@ const packages = [
   `inflow-${version}-windows-x64.msi`,
   `inflow-${version}-linux-arm64.tar.gz`,
   `inflow-${version}-linux-x64.tar.gz`,
+  `inflow-${version}-1-aarch64.pkg.tar.zst`,
+  `inflow-${version}-1-x86_64.pkg.tar.zst`,
   `inflow-${version}-1.aarch64.rpm`,
   `inflow-${version}-1.x86_64.rpm`,
   `inflow_${version}_amd64.deb`,

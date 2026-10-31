@@ -13,6 +13,8 @@ const version = packageVersion();
 const expectedAssets = [
   `inflow-${version}-linux-arm64.tar.gz`,
   `inflow-${version}-linux-x64.tar.gz`,
+  `inflow-${version}-1-aarch64.pkg.tar.zst`,
+  `inflow-${version}-1-x86_64.pkg.tar.zst`,
   `inflow-${version}-1.aarch64.rpm`,
   `inflow-${version}-1.x86_64.rpm`,
   `inflow_${version}_amd64.deb`,
@@ -24,7 +26,7 @@ for (const name of expectedAssets) {
   if (!existsSync(asset)) throw new Error(`Linux release asset is unavailable: ${asset}`);
 }
 const unexpectedPackages = readdirSync(artifactRoot)
-  .filter((name) => /\.(?:deb|rpm|tar\.gz)$/u.test(name) && !expectedAssets.includes(name))
+  .filter((name) => /\.(?:deb|rpm|tar\.gz|pkg\.tar\.zst)$/u.test(name) && !expectedAssets.includes(name))
   .sort();
 if (unexpectedPackages.length > 0) {
   throw new Error(`Unexpected Linux release assets: ${unexpectedPackages.join(', ')}`);

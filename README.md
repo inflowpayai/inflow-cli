@@ -46,7 +46,7 @@ brew uninstall --cask inflow
 
 ### Hosted installers
 
-On macOS, Debian/Ubuntu, and Fedora/RHEL:
+On macOS, Debian/Ubuntu, Fedora/RHEL, and Arch Linux:
 
 ```bash
 curl -fsSL https://inflowcli.ai/install.sh | bash
@@ -54,8 +54,8 @@ curl -fsSL https://inflowcli.ai/install.sh | bash
 
 On macOS 13.5 or newer, the installer selects the current architecture, verifies the checksum plus code-signing and
 Gatekeeper checks, installs `InFlow.app` into `~/.local/share/inflow`, and links `inflow` into `~/.local/bin`. On Linux,
-it verifies the OpenPGP-signed release manifest and package checksum before installing the matching Debian or RPM system
-package.
+it verifies the OpenPGP-signed release manifest and package checksum before installing the matching Debian, RPM, or Arch
+system package.
 
 Run the installer again to upgrade to the latest GitHub Release. Uninstall with:
 
@@ -109,8 +109,8 @@ Download the matching artifact from the `inflowpayai/inflow-cli` GitHub Release 
 
 The zip contains `InFlow.app`; the executable is inside the app bundle at `InFlow.app/Contents/MacOS/inflow`.
 
-Linux releases include ARM64 and AMD64 Debian packages, RPM packages, and standalone archives. Debian and RPM packages
-install the system vault service required by the Linux security model.
+Linux releases include ARM64 and AMD64 Debian packages, RPM packages, Arch packages, and standalone archives. These
+packages install the system vault service required by the Linux security model.
 
 Windows MSI packages install the command-line application and its on-demand vault service. Windows verifies the
 Authenticode signature and publisher before installation.
