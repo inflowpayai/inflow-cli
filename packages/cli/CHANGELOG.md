@@ -1,5 +1,96 @@
 # @inflowpayai/inflow
 
+## 0.15.0
+
+### Minor Changes
+
+- [#181](https://github.com/inflowpayai/inflow-cli/pull/181)
+  [`6cc2e15`](https://github.com/inflowpayai/inflow-cli/commit/6cc2e15efff871dcc23b032b0d9ee9ebe93a20dd) Thanks
+  [@nkavian](https://github.com/nkavian)! - Add explicit administrator startup for the packaged Linux vault on systems
+  without systemd. Keep vault unlocking under the ordinary user's identity, enforce the service sandbox, and report
+  startup instructions when the service is absent. Fix a Linux broker handoff race that could lose the first request
+  after authentication during concurrent startup. Close active and authenticating vault connections during service
+  shutdown so connected clients do not block package upgrades or service recovery.
+
+### Patch Changes
+
+- [#182](https://github.com/inflowpayai/inflow-cli/pull/182)
+  [`513cd72`](https://github.com/inflowpayai/inflow-cli/commit/513cd7239287749e20a0683936558d800832edb0) Thanks
+  [@nkavian](https://github.com/nkavian)! - Correct command input schemas so options with defaults are optional in
+  `--schema`, generated command documentation, and MCP discovery. Preserve output-schema requirements and argument
+  parsing.
+
+  Describe AEP, ODP, directory, OpenAPI, combined inspection, vault, logout, and subscription management responses in
+  command schemas and MCP discovery, with structured MCP results matching the existing text responses. Include existing
+  AEP timeout and polling limits in input metadata. Payment and streaming or array response schemas remain outside this
+  change.
+
+- [#182](https://github.com/inflowpayai/inflow-cli/pull/182)
+  [`15d824e`](https://github.com/inflowpayai/inflow-cli/commit/15d824e30b06e1eab0626a2fe1ff1df2fdcb0d37) Thanks
+  [@nkavian](https://github.com/nkavian)! - Explain known ODP action document validation failures, including invalid
+  OpenAPI documents and missing JSON Schema version declarations, without exposing arbitrary internal error messages.
+
+- [#175](https://github.com/inflowpayai/inflow-cli/pull/175)
+  [`43cb4b4`](https://github.com/inflowpayai/inflow-cli/commit/43cb4b4528e6f3325c3026b153538296d7a7b2fa) Thanks
+  [@nkavian](https://github.com/nkavian)! - Prevent repeated subscription cancellation requests during interactive
+  rendering.
+
+  Preserve approval denial, timeout, cancellation, and server-error responses when AEP fetch or payment authentication
+  requires signing approval.
+
+  Expand regression coverage for authentication, credential storage, discovery, and payment command flows.
+
+  Forward explicitly configured bearer access tokens to the MPP and x402 payment clients.
+
+  Release public-document stream readers even when cancellation fails after a stream error.
+
+  Keep platform request timeouts and cancellation active while reading response bodies.
+
+  Preserve existing platform identity lookup during AEP fetch and payment authentication without automatically
+  provisioning or enrolling an identity.
+
+  Clear the current passphrase buffer when the replacement-passphrase prompt is cancelled.
+
+- [#173](https://github.com/inflowpayai/inflow-cli/pull/173)
+  [`203bbbb`](https://github.com/inflowpayai/inflow-cli/commit/203bbbb6f555b02cdf0e28b402fe0354a7ed2ea4) Thanks
+  [@nkavian](https://github.com/nkavian)! - Allow local HTTP development endpoints to be inspected and paid without
+  requesting TAP signatures.
+
+- [#180](https://github.com/inflowpayai/inflow-cli/pull/180)
+  [`59614e0`](https://github.com/inflowpayai/inflow-cli/commit/59614e0f044b23a7bc2acf94108188acf4dc3434) Thanks
+  [@nkavian](https://github.com/nkavian)! - Default vault sleep locking to off on Linux without systemd. Keep the
+  eight-hour idle timeout and preserve saved policies. Sleep locking remains enabled by default on systemd Linux, macOS,
+  and Windows.
+
+- [#182](https://github.com/inflowpayai/inflow-cli/pull/182)
+  [`15d824e`](https://github.com/inflowpayai/inflow-cli/commit/15d824e30b06e1eab0626a2fe1ff1df2fdcb0d37) Thanks
+  [@nkavian](https://github.com/nkavian)! - Support allOf, anyOf, and oneOf during OpenAPI request preparation within
+  the supported validation subset, with bounded evaluation and explicit errors for unsupported alternative constraints.
+
+- [#170](https://github.com/inflowpayai/inflow-cli/pull/170)
+  [`f5690d8`](https://github.com/inflowpayai/inflow-cli/commit/f5690d80a49c2b36d0532299dbbae1ec81ce4c15) Thanks
+  [@nkavian](https://github.com/nkavian)! - Upgrade the AEP Agent SDK to 0.6.0 for protected-resource credential
+  selection, redirect isolation, and pending-approval handling fixes.
+
+- [#177](https://github.com/inflowpayai/inflow-cli/pull/177)
+  [`207932e`](https://github.com/inflowpayai/inflow-cli/commit/207932e6a7386c83d121e9895a7a07f46608ff9f) Thanks
+  [@nkavian](https://github.com/nkavian)! - Exclude unsupported Circle Gateway offers from x402 inspection and payment
+  selection, retain ordinary payment options, and explain when the seller only offers unsupported payments.
+
+  Update the InFlow x402 buyer SDK to 0.11.2.
+
+- [#179](https://github.com/inflowpayai/inflow-cli/pull/179)
+  [`a818766`](https://github.com/inflowpayai/inflow-cli/commit/a81876633725b4c272b9e48877a213d050cbc354) Thanks
+  [@nkavian](https://github.com/nkavian)! - Allow Linux and Windows repository builds to use per-user development vaults
+  without installed system services. Select development behavior explicitly at build time and require packaged peer
+  verification independently of executable location.
+
+- [#178](https://github.com/inflowpayai/inflow-cli/pull/178)
+  [`bd51c8f`](https://github.com/inflowpayai/inflow-cli/commit/bd51c8f9110257da68962e759d4cbf4c00ba8c90) Thanks
+  [@nkavian](https://github.com/nkavian)! - Fix Intel macOS startup under Rosetta, align macOS packaging with the 13.5
+  minimum, and include the stapled notarization ticket in release archives. Verify startup and native deployment targets
+  from the distributed archive.
+
 ## 0.14.2
 
 ### Patch Changes
