@@ -10,6 +10,209 @@ permissions:
   id-token: write
 
 jobs:
+  ci:
+    runs-on: ubuntu-24.04
+    outputs:
+      native: ${{ steps.changes.outputs.native }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect native and packaging changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync } from 'node:fs';
+          const base = process.env.BASE_SHA;
+          const head = process.env.HEAD_SHA;
+          let native = true;
+          if (base && !/^0+$/.test(base)) {
+            const range = process.env.GITHUB_EVENT_NAME === 'pull_request' ? `${base}...${head}` : `${base}..${head}`;
+            const paths = execFileSync('git', ['diff', '--name-only', '--no-renames', '-z', range], {
+              encoding: 'utf8',
+            }).split('\0').filter(Boolean);
+            native = paths.some((path) =>
+              /^(?:\.github\/workflows\/|packaging\/|patches\/|scripts\/)/.test(path) ||
+              /^packages\/core\/(?:native\/|src\/secure-storage\/|test\/native\/|test\/unit\/secure-storage\/)/.test(path) ||
+              /^packages\/cli\/(?:src\/(?:commands\/vault\/|startup-vault\.ts$|mcp-metadata\.ts$)|test\/integration\/)/.test(path) ||
+              /^(?:packages\/[^/]+\/)?(?:package\.json|tsconfig[^/]*\.json|tsup[^/]*\.ts|vitest[^/]*\.ts)$/.test(path) ||
+              /^(?:pnpm-lock\.yaml|pnpm-workspace\.yaml|turbo\.json|\.node-version|\.npmrc|packages\/cli\/src\/cli\.tsx|packages\/cli\/test\/setup\.ts|packages\/core\/src\/(?:index\.ts|utils\/storage\.ts))$/.test(path),
+            );
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `native=${native}\n`);
+          NODE
+
+  verify:
+    needs: ci
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install native vault dependencies
+        run: sudo apt-get update && sudo apt-get install --yes bubblewrap libseccomp-dev
+
+      - name: Prepare pinned Argon2 source
+        run: |
+          node scripts/prepare-argon2-source.mjs "$RUNNER_TEMP/argon2-20190702"
+          echo "INFLOW_ARGON2_SOURCE_DIR=$RUNNER_TEMP/argon2-20190702" >> "$GITHUB_ENV"
+
+      - name: Build vault peer verifier
+        run: node scripts/build-vault-peer-native.mjs
+
+      - name: Verify
+        run: pnpm verify
+
+      - name: Check generated and formatted files
+        run: git diff --exit-code
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          disable_search: true
+          use_oidc: true
+          files: packages/cli/coverage/lcov.info,packages/core/coverage/lcov.info
+
+      - name: Publish dry-run
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: pnpm --filter @inflowpayai/inflow publish --dry-run --no-git-checks
+
+  linux-development:
+    needs: ci
+    if: needs.ci.outputs.native == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Linux native and packaging tools
+        run: sudo apt-get update && sudo apt-get install --yes cpio rpm bubblewrap libseccomp-dev
+
+      - name: Prepare pinned Argon2 source
+        run: |
+          node scripts/prepare-argon2-source.mjs "$RUNNER_TEMP/argon2-20190702"
+          echo "INFLOW_ARGON2_SOURCE_DIR=$RUNNER_TEMP/argon2-20190702" >> "$GITHUB_ENV"
+
+      - name: Build native vault module
+        run: node scripts/build-vault-peer-native.mjs
+
+      - run: pnpm build
+
+      - name: Test repository vault lifecycle
+        run: |
+          pnpm --filter @inflowpayai/inflow exec vitest run test/integration/cli-smoke.test.ts \
+            -t 'starts and reuses the development vault' --coverage.enabled=false
+
+      - name: Test native release asset contract
+        run: pnpm test:native-release-assets
+
+      - name: Build Linux package
+        run: sudo env "PATH=$PATH" CI=1 "INFLOW_ARGON2_SOURCE_DIR=$INFLOW_ARGON2_SOURCE_DIR" pnpm build:linux-package
+
+      - name: Test packaged Linux vault
+        run: |
+          sudo rm -rf /opt/inflow-package-smoke
+          sudo mkdir /opt/inflow-package-smoke
+          sudo tar -xzf dist/linux/inflow-*-linux-*.tar.gz -C /opt/inflow-package-smoke --strip-components=1
+          sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/opt/inflow-package-smoke/bin/inflow \
+            pnpm smoke:linux-packaged-vault
+
+      - name: Test Debian system vault
+        run: |
+          sudo dpkg -i dist/linux/inflow_*_amd64.deb
+          sudo swapoff -a
+          sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/usr/bin/inflow pnpm smoke:linux-system-vault
+
+      - name: Test non-systemd vault lifecycle
+        run: |
+          # Hosted runners make /opt world-writable; the installed service requires a trusted parent.
+          sudo chmod 0755 /opt
+          sudo env "PATH=$PATH" unshare --mount --fork sh -ec '
+            mount --make-rprivate /
+            mount -t tmpfs tmpfs /run
+            chmod 0755 /run
+            mount -t tmpfs tmpfs /var/lib/inflow
+            chown inflow:inflow /var/lib/inflow
+            chmod 0700 /var/lib/inflow
+            mount -t tmpfs tmpfs /var/lib/inflow-broker
+            chmod 0755 /var/lib/inflow-broker
+            INFLOW_DISPOSABLE_CONTAINER=1 node scripts/test-linux-non-systemd-vault.mjs
+          '
+
+      - name: Test installed Linux inspection and MCP lifecycle
+        run: |
+          INFLOW_SMOKE_EXECUTABLE=/usr/bin/inflow pnpm --filter @inflowpayai/inflow exec vitest run \
+            test/integration/cli-smoke.test.ts -t 'filters .* offers with|retains its control client' --coverage.enabled=false
+
+      - name: Test Debian package lifecycle
+        run: |
+          sudo test -d /var/lib/inflow
+          sudo test -f /var/lib/inflow-broker/private.der
+          sudo cp /var/lib/inflow-broker/public.der "$RUNNER_TEMP/inflow-broker-public.der"
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get remove --yes inflow
+          sudo test -d /var/lib/inflow
+          sudo test -f /var/lib/inflow-broker/private.der
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes "$PWD"/dist/linux/inflow_*.deb
+          sudo inflow vault status --format json | grep '"lock_state": "locked"'
+          sudo cmp /var/lib/inflow-broker/public.der "$RUNNER_TEMP/inflow-broker-public.der"
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get purge --yes inflow
+          sudo test ! -e /var/lib/inflow
+          sudo test ! -e /var/lib/inflow-broker
+          sudo test ! -e /run/inflow
+
+  macos-development:
+    needs: ci
+    if: needs.ci.outputs.native == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prepare pinned Argon2 source
+        run: |
+          node scripts/prepare-argon2-source.mjs "$RUNNER_TEMP/argon2-20190702"
+          echo "INFLOW_ARGON2_SOURCE_DIR=$RUNNER_TEMP/argon2-20190702" >> "$GITHUB_ENV"
+
+      - name: Build native vault module
+        run: node scripts/build-vault-peer-native.mjs
+
+      - run: pnpm build
+
+      - name: Test native compilation and archive verification
+        run: node --test scripts/build-vault-peer-native.test.mjs scripts/verify-macos-archive.test.mjs
+
+      - name: Test repository CLI and vault lifecycle
+        timeout-minutes: 10
+        run: |
+          pnpm --filter @inflowpayai/inflow exec vitest run test/integration/cli-smoke.test.ts \
+            --coverage.enabled=false
+
   windows-development:
     needs: ci
     if: needs.ci.outputs.native == 'true'
@@ -90,145 +293,3 @@ jobs:
           } finally {
             Remove-LocalUser $name
           }
-  ci:
-    runs-on: ubuntu-24.04
-    outputs:
-      native: ${{ steps.changes.outputs.native }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Detect native and packaging changes
-        id: changes
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          node --input-type=module <<'NODE'
-          import { execFileSync } from 'node:child_process';
-          import { appendFileSync } from 'node:fs';
-          const base = process.env.BASE_SHA;
-          const head = process.env.HEAD_SHA;
-          let native = true;
-          if (base && !/^0+$/.test(base)) {
-            const range = process.env.GITHUB_EVENT_NAME === 'pull_request' ? `${base}...${head}` : `${base}..${head}`;
-            const paths = execFileSync('git', ['diff', '--name-only', '--no-renames', '-z', range], {
-              encoding: 'utf8',
-            }).split('\0').filter(Boolean);
-            native = paths.some((path) =>
-              /^(?:\.github\/workflows\/|packaging\/|patches\/|scripts\/)/.test(path) ||
-              /^packages\/core\/(?:native\/|src\/secure-storage\/|test\/native\/|test\/unit\/secure-storage\/)/.test(path) ||
-              /^packages\/cli\/(?:src\/(?:commands\/vault\/|startup-vault\.ts$|mcp-metadata\.ts$)|test\/integration\/)/.test(path) ||
-              /^(?:packages\/[^/]+\/)?(?:package\.json|tsconfig[^/]*\.json|tsup[^/]*\.ts|vitest[^/]*\.ts)$/.test(path) ||
-              /^(?:pnpm-lock\.yaml|pnpm-workspace\.yaml|turbo\.json|\.node-version|\.npmrc|packages\/cli\/src\/cli\.tsx|packages\/cli\/test\/setup\.ts|packages\/core\/src\/(?:index\.ts|utils\/storage\.ts))$/.test(path),
-            );
-          }
-          appendFileSync(process.env.GITHUB_OUTPUT, `native=${native}\n`);
-          NODE
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24.15.0
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Install native vault dependencies
-        run: sudo apt-get update && sudo apt-get install --yes bubblewrap libseccomp-dev
-
-      - name: Prepare pinned Argon2 source
-        run: |
-          node scripts/prepare-argon2-source.mjs "$RUNNER_TEMP/argon2-20190702"
-          echo "INFLOW_ARGON2_SOURCE_DIR=$RUNNER_TEMP/argon2-20190702" >> "$GITHUB_ENV"
-
-      - name: Build vault peer verifier
-        run: node scripts/build-vault-peer-native.mjs
-
-      - name: Verify
-        run: pnpm verify
-
-      - name: Check generated and formatted files
-        run: git diff --exit-code
-
-      - name: Test native release asset contract
-        if: steps.changes.outputs.native == 'true'
-        run: pnpm test:native-release-assets
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
-        with:
-          disable_search: true
-          use_oidc: true
-          files: packages/cli/coverage/lcov.info,packages/core/coverage/lcov.info
-
-      - name: Install Linux packaging tools
-        if: steps.changes.outputs.native == 'true'
-        run: sudo apt-get install --yes cpio rpm
-
-      - name: Build Linux package
-        if: steps.changes.outputs.native == 'true'
-        run: sudo env "PATH=$PATH" CI=1 "INFLOW_ARGON2_SOURCE_DIR=$INFLOW_ARGON2_SOURCE_DIR" pnpm build:linux-package
-
-      - name: Test packaged Linux vault
-        if: steps.changes.outputs.native == 'true'
-        run: |
-          sudo rm -rf /opt/inflow-package-smoke
-          sudo mkdir /opt/inflow-package-smoke
-          sudo tar -xzf dist/linux/inflow-*-linux-*.tar.gz -C /opt/inflow-package-smoke --strip-components=1
-          sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/opt/inflow-package-smoke/bin/inflow \
-            pnpm smoke:linux-packaged-vault
-
-      - name: Test Debian system vault
-        if: steps.changes.outputs.native == 'true'
-        run: |
-          sudo dpkg -i dist/linux/inflow_*_amd64.deb
-          sudo swapoff -a
-          sudo env "PATH=$PATH" CI=1 INFLOW_PACKAGED_EXECUTABLE=/usr/bin/inflow pnpm smoke:linux-system-vault
-
-      - name: Test non-systemd vault lifecycle
-        if: steps.changes.outputs.native == 'true'
-        run: |
-          # Hosted runners make /opt world-writable; the installed service requires a trusted parent.
-          sudo chmod 0755 /opt
-          sudo env "PATH=$PATH" unshare --mount --fork sh -ec '
-            mount --make-rprivate /
-            mount -t tmpfs tmpfs /run
-            chmod 0755 /run
-            mount -t tmpfs tmpfs /var/lib/inflow
-            chown inflow:inflow /var/lib/inflow
-            chmod 0700 /var/lib/inflow
-            mount -t tmpfs tmpfs /var/lib/inflow-broker
-            chmod 0755 /var/lib/inflow-broker
-            INFLOW_DISPOSABLE_CONTAINER=1 node scripts/test-linux-non-systemd-vault.mjs
-          '
-
-      - name: Test installed Linux inspection and MCP lifecycle
-        if: steps.changes.outputs.native == 'true'
-        run: |
-          INFLOW_SMOKE_EXECUTABLE=/usr/bin/inflow pnpm --filter @inflowpayai/inflow exec vitest run \
-            test/integration/cli-smoke.test.ts -t 'filters .* offers with|retains its control client' --coverage.enabled=false
-
-      - name: Test Debian package lifecycle
-        if: steps.changes.outputs.native == 'true'
-        run: |
-          sudo test -d /var/lib/inflow
-          sudo test -f /var/lib/inflow-broker/private.der
-          sudo cp /var/lib/inflow-broker/public.der "$RUNNER_TEMP/inflow-broker-public.der"
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get remove --yes inflow
-          sudo test -d /var/lib/inflow
-          sudo test -f /var/lib/inflow-broker/private.der
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes "$PWD"/dist/linux/inflow_*.deb
-          sudo inflow vault status --format json | grep '"lock_state": "locked"'
-          sudo cmp /var/lib/inflow-broker/public.der "$RUNNER_TEMP/inflow-broker-public.der"
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get purge --yes inflow
-          sudo test ! -e /var/lib/inflow
-          sudo test ! -e /var/lib/inflow-broker
-          sudo test ! -e /run/inflow
-
-      - name: Publish dry-run
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: pnpm --filter @inflowpayai/inflow publish --dry-run --no-git-checks
