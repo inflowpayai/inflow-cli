@@ -278,9 +278,10 @@ jobs:
 
       - name: Install from signed RPM repository
         run: |
-          # Allow Bubblewrap to create the service sandbox; its own seccomp filter remains enforced.
+          # Outer Docker filters block Bubblewrap mounts; the vault enforces its own sandbox and seccomp filter.
           docker run --rm \
             --cap-add SYS_ADMIN --cap-add SYS_PTRACE \
+            --security-opt apparmor=unconfined \
             --security-opt seccomp=unconfined \
             --volume "$PWD/dist/linux/rpm:/repository:ro" \
             fedora:42 \
@@ -433,9 +434,10 @@ jobs:
 
       - name: Test Fedora signed installer lifecycle
         run: |
-          # Allow Bubblewrap to create the service sandbox; its own seccomp filter remains enforced.
+          # Outer Docker filters block Bubblewrap mounts; the vault enforces its own sandbox and seccomp filter.
           docker run --rm \
             --cap-add SYS_ADMIN --cap-add SYS_PTRACE \
+            --security-opt apparmor=unconfined \
             --security-opt seccomp=unconfined \
             --volume "$PWD/dist/linux/release:/release:ro" \
             fedora:42 \
