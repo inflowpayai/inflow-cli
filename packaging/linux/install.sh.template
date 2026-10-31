@@ -79,8 +79,10 @@ case "$action" in
       privileged env DEBIAN_FRONTEND=noninteractive apt-get remove --yes inflow
     elif command -v dnf >/dev/null 2>&1; then
       privileged dnf remove --assumeyes inflow
+    elif command -v pacman >/dev/null 2>&1; then
+      privileged pacman -R --noconfirm inflow
     else
-      fail "Uninstall requires apt-get or dnf."
+      fail "Uninstall requires apt-get, dnf, or pacman."
     fi
     say "InFlow was uninstalled. Encrypted vault data was preserved."
     exit 0
@@ -90,8 +92,10 @@ case "$action" in
       privileged env DEBIAN_FRONTEND=noninteractive apt-get purge --yes inflow
     elif command -v dnf >/dev/null 2>&1; then
       privileged dnf remove --assumeyes inflow
+    elif command -v pacman >/dev/null 2>&1; then
+      privileged pacman -R --noconfirm inflow
     else
-      fail "Purge requires apt-get or dnf."
+      fail "Purge requires apt-get, dnf, or pacman."
     fi
     privileged rm -rf /var/lib/inflow /var/lib/inflow-broker /run/inflow
     say "InFlow and its system vault data were removed."
@@ -119,8 +123,11 @@ if command -v apt-get >/dev/null 2>&1; then
 elif command -v dnf >/dev/null 2>&1; then
   asset="inflow-${version}-1.${rpm_architecture}.rpm"
   installer='dnf'
+elif command -v pacman >/dev/null 2>&1; then
+  asset="inflow-${version}-1-${rpm_architecture}.pkg.tar.zst"
+  installer='pacman'
 else
-  fail "Installation requires a supported Debian/Ubuntu or Fedora/RHEL system with systemd."
+  fail "Installation requires apt-get, dnf, or pacman on a supported Linux system."
 fi
 
 say "Downloading InFlow $version for $architecture."
@@ -148,8 +155,10 @@ awk -v asset="$asset" '$2 == asset { print; found = 1 } END { if (!found) exit 1
 
 if [ "$installer" = 'apt' ]; then
   privileged env DEBIAN_FRONTEND=noninteractive apt-get install --yes "$temporary_directory/$asset"
-else
+elif [ "$installer" = 'dnf' ]; then
   privileged dnf install --assumeyes "$temporary_directory/$asset"
+else
+  privileged pacman -U --noconfirm "$temporary_directory/$asset"
 fi
 
 command -v inflow >/dev/null 2>&1 || fail "InFlow was installed but is not available on PATH."

@@ -1,0 +1,45 @@
+post_install() {
+  systemd-sysusers /usr/lib/sysusers.d/inflow.conf || return 1
+  local inflow_uid inflow_home inflow_shell
+  inflow_uid=$(id -u inflow) || return 1
+  inflow_home=$(getent passwd inflow | cut -d: -f6)
+  inflow_shell=$(getent passwd inflow | cut -d: -f7)
+  if [ "$inflow_uid" -eq 0 ] || [ "$inflow_uid" -ge 1000 ] ||
+     [ "$inflow_home" != /var/lib/inflow ] ||
+     { [ "$inflow_shell" != /usr/bin/nologin ] && [ "$inflow_shell" != /usr/sbin/nologin ] && [ "$inflow_shell" != /sbin/nologin ]; }; then
+    echo 'The existing inflow account is not a compatible locked system identity.' >&2
+    return 1
+  fi
+  systemd-tmpfiles --create /usr/lib/tmpfiles.d/inflow.conf || return 1
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || return 1
+    systemctl enable --now inflow-vault.socket
+  else
+    /opt/inflow/bin/inflow vault service start
+  fi
+}
+
+pre_upgrade() {
+  if [ -d /run/systemd/system ]; then
+    systemctl stop inflow-vault.service inflow-vault.socket
+  elif [ -d /run/inflow ]; then
+    /opt/inflow/lib/inflow/vault-launcher --stop
+  fi
+}
+
+post_upgrade() {
+  post_install
+}
+
+pre_remove() {
+  pre_upgrade || return 1
+  if [ -d /run/systemd/system ]; then
+    systemctl disable inflow-vault.socket
+  fi
+}
+
+post_remove() {
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+  fi
+}

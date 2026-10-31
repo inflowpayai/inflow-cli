@@ -73,7 +73,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Linux packaging tools
-        run: sudo apt-get update && sudo apt-get install --yes cpio rpm bubblewrap libseccomp-dev
+        run:
+          sudo apt-get update && sudo apt-get install --yes cpio rpm bubblewrap libseccomp-dev makepkg
+          pacman-package-manager libarchive-tools zstd file
 
       - name: Prepare pinned Argon2 source
         run: |
@@ -82,6 +84,13 @@ jobs:
 
       - name: Build Linux package
         run: sudo env "PATH=$PATH" CI=1 "INFLOW_ARGON2_SOURCE_DIR=$INFLOW_ARGON2_SOURCE_DIR" pnpm build:linux-package
+
+      - name: Build Arch package
+        run: |
+          sudo mkdir -p /var/lib/pacman/local
+          sudo pacman-db-upgrade
+          sudo chown "$(id -u):$(id -g)" dist/linux
+          node scripts/build-linux-arch-package.mjs
 
       - name: Test packaged vault
         run: |
@@ -132,7 +141,61 @@ jobs:
             dist/linux/*.deb.sha256
             dist/linux/*.rpm
             dist/linux/*.rpm.sha256
+            dist/linux/*.pkg.tar.zst
+            dist/linux/*.pkg.tar.zst.sha256
           if-no-files-found: error
+
+  arch-package:
+    name: Arch package (${{ matrix.architecture }})
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: x64
+            image: archlinux:base
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+            image: ghcr.io/menci/archlinuxarm@sha256:6cb4c39efc46ecfa17ef10d26f8a149cf7ac7dd1012290ed64ffadbbed350215
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: inflow-linux-${{ matrix.architecture }}
+          path: dist/arch-test
+
+      - name: Sign test package manifest
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/arch-test-gpg"
+          mkdir --mode=0700 "$GNUPGHOME"
+          gpg --batch --passphrase '' --quick-gen-key 'InFlow Arch Test <support@inflowpay.ai>' rsa3072 sign 1d
+          fingerprint="$(gpg --batch --with-colons --fingerprint | awk -F: '$1 == "fpr" { print $10; exit }')"
+          test -n "$fingerprint"
+          (cd dist/arch-test && sha256sum *.pkg.tar.zst > SHA256SUMS)
+          gpg --batch --armor --detach-sign --local-user "$fingerprint" dist/arch-test/SHA256SUMS
+          gpg --batch --armor --export "$fingerprint" > dist/arch-test/inflow-linux-signing-key.asc
+          INFLOW_LINUX_SIGNING_FINGERPRINT="$fingerprint" node scripts/render-linux-installer.mjs dist/arch-test/install.sh
+
+      - name: Test Arch package lifecycle
+        run: |
+          # Bubblewrap supplies the vault sandbox inside this disposable test container.
+          docker run --rm \
+            --cap-add SYS_ADMIN --cap-add SYS_PTRACE \
+            --security-opt apparmor=unconfined --security-opt seccomp=unconfined \
+            --env INFLOW_DISPOSABLE_CONTAINER=1 \
+            --volume "$PWD/dist/arch-test:/release:ro" \
+            --volume "$PWD/scripts/test-linux-arch-package.mjs:/test.mjs:ro" \
+            '${{ matrix.image }}' sh -ec '
+              pacman -Syu --noconfirm nodejs
+              node /test.mjs /release
+            '
 
   apt-repository:
     name: signed APT repository
@@ -536,6 +599,7 @@ jobs:
     name: stage signed release
     if: inputs.production
     needs:
+      - arch-package
       - apt-repository
       - package
       - rpm-repository
@@ -608,6 +672,7 @@ jobs:
             dist/linux/release/*.rpm
             dist/linux/release/*.tar.gz
             dist/linux/release/SHA256SUMS
+            dist/linux/release/*.pkg.tar.zst
 
       - name: Stage production release assets
         uses: actions/upload-artifact@v6
@@ -620,6 +685,8 @@ jobs:
             dist/linux/release/*.rpm.sha256
             dist/linux/release/*.tar.gz
             dist/linux/release/*.tar.gz.sha256
+            dist/linux/release/*.pkg.tar.zst
+            dist/linux/release/*.pkg.tar.zst.sha256
             dist/linux/release/SHA256SUMS
             dist/linux/release/SHA256SUMS.asc
             dist/linux/release/inflow-linux-signing-key.asc

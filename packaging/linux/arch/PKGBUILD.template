@@ -1,0 +1,23 @@
+pkgname=inflow
+pkgver=__INFLOW_VERSION__
+pkgrel=1
+pkgdesc='Agent-native payment command line'
+arch=('__INFLOW_ARCH__')
+url='https://inflowcli.ai'
+license=('MIT')
+depends=('glibc' 'gcc-libs' 'systemd' 'bubblewrap>=0.9' 'libseccomp>=2.5.5')
+options=('!strip' '!debug')
+install=inflow.install
+source=('runtime.tar.gz' 'inflow-vault.service' 'inflow-vault.socket' 'inflow.conf' 'inflow-tmpfiles.conf' 'LICENSE')
+sha256sums=(__INFLOW_CHECKSUMS__)
+
+package() {
+  install -dm755 "$pkgdir/opt/inflow" "$pkgdir/usr/bin"
+  cp -a "$srcdir/__INFLOW_RUNTIME__/bin" "$srcdir/__INFLOW_RUNTIME__/lib" "$pkgdir/opt/inflow/"
+  ln -s /opt/inflow/bin/inflow "$pkgdir/usr/bin/inflow"
+  install -Dm644 "$srcdir/inflow-vault.service" "$pkgdir/usr/lib/systemd/system/inflow-vault.service"
+  install -Dm644 "$srcdir/inflow-vault.socket" "$pkgdir/usr/lib/systemd/system/inflow-vault.socket"
+  install -Dm644 "$srcdir/inflow.conf" "$pkgdir/usr/lib/sysusers.d/inflow.conf"
+  install -Dm644 "$srcdir/inflow-tmpfiles.conf" "$pkgdir/usr/lib/tmpfiles.d/inflow.conf"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/inflow/LICENSE"
+}
