@@ -13,7 +13,9 @@ jobs:
   ci:
     runs-on: ubuntu-24.04
     outputs:
-      native: ${{ steps.changes.outputs.native }}
+      linux: ${{ steps.changes.outputs.linux }}
+      macos: ${{ steps.changes.outputs.macos }}
+      windows: ${{ steps.changes.outputs.windows }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -24,28 +26,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          node --input-type=module <<'NODE'
-          import { execFileSync } from 'node:child_process';
-          import { appendFileSync } from 'node:fs';
-          const base = process.env.BASE_SHA;
-          const head = process.env.HEAD_SHA;
-          let native = true;
-          if (base && !/^0+$/.test(base)) {
-            const range = process.env.GITHUB_EVENT_NAME === 'pull_request' ? `${base}...${head}` : `${base}..${head}`;
-            const paths = execFileSync('git', ['diff', '--name-only', '--no-renames', '-z', range], {
-              encoding: 'utf8',
-            }).split('\0').filter(Boolean);
-            native = paths.some((path) =>
-              /^(?:\.github\/workflows\/|packaging\/|patches\/|scripts\/)/.test(path) ||
-              /^packages\/core\/(?:native\/|src\/secure-storage\/|test\/native\/|test\/unit\/secure-storage\/)/.test(path) ||
-              /^packages\/cli\/(?:src\/(?:commands\/vault\/|startup-vault\.ts$|mcp-metadata\.ts$)|test\/integration\/)/.test(path) ||
-              /^(?:packages\/[^/]+\/)?(?:package\.json|tsconfig[^/]*\.json|tsup[^/]*\.ts|vitest[^/]*\.ts)$/.test(path) ||
-              /^(?:pnpm-lock\.yaml|pnpm-workspace\.yaml|turbo\.json|\.node-version|\.npmrc|packages\/cli\/src\/cli\.tsx|packages\/cli\/test\/setup\.ts|packages\/core\/src\/(?:index\.ts|utils\/storage\.ts))$/.test(path),
-            );
-          }
-          appendFileSync(process.env.GITHUB_OUTPUT, `native=${native}\n`);
-          NODE
+        run: node scripts/detect-platform-changes.mjs
 
   verify:
     needs: ci
@@ -95,7 +76,7 @@ jobs:
 
   linux-development:
     needs: ci
-    if: needs.ci.outputs.native == 'true'
+    if: needs.ci.outputs.linux == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -183,7 +164,7 @@ jobs:
 
   macos-development:
     needs: ci
-    if: needs.ci.outputs.native == 'true'
+    if: needs.ci.outputs.macos == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
@@ -215,7 +196,7 @@ jobs:
 
   windows-development:
     needs: ci
-    if: needs.ci.outputs.native == 'true'
+    if: needs.ci.outputs.windows == 'true'
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v6
