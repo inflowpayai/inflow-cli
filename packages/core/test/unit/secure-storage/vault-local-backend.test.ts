@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
 import { LocalVaultBackend } from '../../../src/secure-storage/vault-local-backend.js';
 import { vaultFilePaths } from '../../../src/secure-storage/vault-files.js';
@@ -14,6 +14,7 @@ describe('LocalVaultBackend', () => {
   let backend: LocalVaultBackend;
 
   beforeEach(() => {
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
     tmpDir = mkdtempSync(join(tmpdir(), 'inflow-local-vault-'));
     repository = new SecureSqliteRepository({ rootDir: tmpDir });
     backend = new LocalVaultBackend({
@@ -25,6 +26,7 @@ describe('LocalVaultBackend', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     repository.close();
     rmSync(tmpDir, { force: true, recursive: true });
   });

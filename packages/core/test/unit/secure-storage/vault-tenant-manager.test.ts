@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MultiTenantVaultBackendManager } from '../../../src/secure-storage/vault-tenant-manager.js';
 import type { VaultSocketPeer } from '../../../src/secure-storage/vault-peer-verifier.js';
 import { parseVaultSecretReference } from '../../../src/secure-storage/vault-types.js';
@@ -13,7 +13,10 @@ describe('multi-tenant vault backend manager', () => {
   let manager: MultiTenantVaultBackendManager | undefined;
   let tmpDir: string | undefined;
 
+  beforeEach(() => vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true));
+
   afterEach(async () => {
+    vi.unstubAllGlobals();
     await manager?.close();
     manager = undefined;
     vi.useRealTimers();

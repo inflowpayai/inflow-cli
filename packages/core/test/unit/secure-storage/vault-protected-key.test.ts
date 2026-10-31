@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ProtectedVaultKey,
   deriveVaultWrappingKey,
@@ -7,6 +7,9 @@ import {
 } from '../../../src/secure-storage/vault-protected-key.js';
 
 describe('native vault key derivation', () => {
+  beforeEach(() => vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true));
+  afterEach(() => vi.unstubAllGlobals());
+
   it('matches the existing Argon2id sidecar derivation and preserves caller-owned input', () => {
     const unlockFactor = Buffer.from('compatibility-factor');
     const original = Buffer.from(unlockFactor);
