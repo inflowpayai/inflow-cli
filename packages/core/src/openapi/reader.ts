@@ -74,7 +74,8 @@ export async function readOpenApi(
         if (group === undefined) continue;
         if (!Array.isArray(group)) throw new TypeError('OpenAPI parameters must be an array.');
         for (const parameter of group) {
-          const resolved = (await references.resolve(parameter, item.url)).value;
+          const parameterReference = await references.resolve(parameter, item.url);
+          const resolved = references.schemas(parameterReference.value, parameterReference.url);
           if (typeof resolved['name'] !== 'string' || typeof resolved['in'] !== 'string')
             throw new TypeError('OpenAPI parameters require name and in.');
           parameters.set(`${resolved['in']}:${resolved['name']}`, resolved);
@@ -101,8 +102,10 @@ export async function readOpenApi(
           throw new TypeError('OpenAPI operation tags must be an array of strings.');
         operation.tags = [...new Set<string>(raw['tags'])];
       }
-      if (raw['requestBody'] !== undefined)
-        operation.requestBody = (await references.resolve(raw['requestBody'], item.url)).value;
+      if (raw['requestBody'] !== undefined) {
+        const bodyReference = await references.resolve(raw['requestBody'], item.url);
+        operation.requestBody = references.schemas(bodyReference.value, bodyReference.url);
+      }
       for (const parameter of operation.parameters) {
         if (!['path', 'query', 'header'].includes(String(parameter['in'])))
           operation.limitations.push(
@@ -188,6 +191,30 @@ class References {
     this.loaded.set(document.finalUrl, document);
   }
   private externalCount = 0;
+  private readonly schemaBudget = { remaining: 10_000 };
+
+  schemas(value: Record<string, unknown>, base: string): Record<string, unknown> {
+    const document = this.loaded.get(base);
+    if (document === undefined) return value;
+    if (
+      isRecord(document.value) &&
+      document.value['jsonSchemaDialect'] !== undefined &&
+      document.value['jsonSchemaDialect'] !== 'https://spec.openapis.org/oas/3.1/dialect/base'
+    )
+      return value;
+    const resolve = (schema: unknown) => localSchema(schema, document.value, new Set(), this.schemaBudget);
+    const result = { ...value };
+    if (value['schema'] !== undefined) result['schema'] = resolve(value['schema']);
+    if (isRecord(value['content'])) {
+      result['content'] = Object.fromEntries(
+        Object.entries(value['content']).map(([type, media]) => [
+          type,
+          isRecord(media) && media['schema'] !== undefined ? { ...media, schema: resolve(media['schema']) } : media,
+        ]),
+      );
+    }
+    return result;
+  }
 
   async resolve(
     value: unknown,
@@ -233,4 +260,55 @@ class References {
     for (const field of ['summary', 'description']) if (typeof value[field] === 'string') result[field] = value[field];
     return { value: result, url: resolved.url };
   }
+}
+
+function localSchema(
+  schema: unknown,
+  document: unknown,
+  seen: Set<unknown>,
+  budget: { remaining: number },
+  depth = 0,
+): unknown {
+  if (!isRecord(schema) || --budget.remaining < 0 || depth > 32 || seen.has(schema)) return schema;
+  if (schema['$id'] !== undefined || schema['$schema'] !== undefined) return schema;
+  const next = new Set(seen).add(schema);
+  const resolve = (value: unknown) => localSchema(value, document, next, budget, depth + 1);
+  if (schema['$ref'] !== undefined) {
+    // Schema reference siblings have version-dependent semantics; keep them unsupported rather than discard constraints.
+    if (Object.keys(schema).length !== 1 || typeof schema['$ref'] !== 'string' || !schema['$ref'].startsWith('#/'))
+      return schema;
+    let fragment: string;
+    try {
+      fragment = decodeURIComponent(schema['$ref'].slice(2));
+    } catch {
+      return schema;
+    }
+    let target = document;
+    for (const part of fragment.split('/')) {
+      if (/~(?:[^01]|$)/.test(part)) return schema;
+      const key = part.replace(/~1/g, '/').replace(/~0/g, '~');
+      if (
+        (!isRecord(target) && !Array.isArray(target)) ||
+        (isRecord(target) && (target['$id'] !== undefined || target['$schema'] !== undefined)) ||
+        !Object.hasOwn(target, key)
+      )
+        return schema;
+      target = Reflect.get(target, key) as unknown;
+    }
+    if ((!isRecord(target) && typeof target !== 'boolean') || next.has(target)) return schema;
+    if (isRecord(target) && (target['$id'] !== undefined || target['$schema'] !== undefined)) return schema;
+    return resolve(target);
+  }
+  const result = { ...schema };
+  if (isRecord(schema['properties']))
+    result['properties'] = Object.fromEntries(
+      Object.entries(schema['properties']).map(([name, property]) => [name, resolve(property)]),
+    );
+  for (const key of ['items', 'additionalProperties']) {
+    if (schema[key] !== undefined) result[key] = resolve(schema[key]);
+  }
+  for (const key of ['allOf', 'anyOf', 'oneOf']) {
+    if (Array.isArray(schema[key])) result[key] = schema[key].map(resolve);
+  }
+  return result;
 }

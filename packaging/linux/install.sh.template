@@ -157,6 +157,8 @@ if [ "$installer" = 'apt' ]; then
   privileged env DEBIAN_FRONTEND=noninteractive apt-get install --yes "$temporary_directory/$asset"
 elif [ "$installer" = 'dnf' ]; then
   privileged dnf install --assumeyes "$temporary_directory/$asset"
+  privileged /opt/inflow/bin/inflow vault service start ||
+    fail 'The package was installed, but the InFlow vault service could not start. Resolve the service error and rerun the installer.'
 else
   privileged pacman -U --noconfirm "$temporary_directory/$asset"
 fi

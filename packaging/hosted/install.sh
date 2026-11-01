@@ -94,8 +94,11 @@ install_linux() {
   elif command -v dnf >/dev/null 2>&1; then
     asset="inflow-${version}-1.${rpm_architecture}.rpm"
     package_manager='dnf'
+  elif command -v pacman >/dev/null 2>&1; then
+    asset="inflow-${version}-1-${rpm_architecture}.pkg.tar.zst"
+    package_manager='pacman'
   else
-    fail 'Installation requires a supported Debian/Ubuntu or Fedora/RHEL system with systemd.'
+    fail 'Installation requires a supported Debian/Ubuntu, Fedora/RHEL, or Arch Linux system with systemd.'
   fi
 
   say "Downloading InFlow $version for Linux $(uname -m)."
@@ -122,8 +125,12 @@ install_linux() {
 
   if [ "$package_manager" = 'apt' ]; then
     privileged env DEBIAN_FRONTEND=noninteractive apt-get install --yes "$temporary_directory/$asset"
-  else
+  elif [ "$package_manager" = 'dnf' ]; then
     privileged dnf install --assumeyes "$temporary_directory/$asset"
+    privileged /opt/inflow/bin/inflow vault service start ||
+      fail 'The package was installed, but the InFlow vault service could not start. Resolve the service error and rerun the installer.'
+  else
+    privileged pacman -U --noconfirm "$temporary_directory/$asset"
   fi
   command -v inflow >/dev/null 2>&1 || fail 'InFlow was installed but is not available on PATH.'
   say "Installed $(inflow --version)."
@@ -200,8 +207,10 @@ uninstall_linux() {
     privileged env DEBIAN_FRONTEND=noninteractive apt-get remove --yes inflow
   elif command -v dnf >/dev/null 2>&1; then
     privileged dnf remove --assumeyes inflow
+  elif command -v pacman >/dev/null 2>&1; then
+    privileged pacman -R --noconfirm inflow
   else
-    fail 'Uninstall requires apt-get or dnf.'
+    fail 'Uninstall requires apt-get, dnf, or pacman.'
   fi
   say 'InFlow was uninstalled. Encrypted vault data was preserved.'
 }
@@ -211,8 +220,10 @@ purge_linux() {
     privileged env DEBIAN_FRONTEND=noninteractive apt-get purge --yes inflow
   elif command -v dnf >/dev/null 2>&1; then
     privileged dnf remove --assumeyes inflow
+  elif command -v pacman >/dev/null 2>&1; then
+    privileged pacman -R --noconfirm inflow
   else
-    fail 'Purge requires apt-get or dnf.'
+    fail 'Purge requires apt-get, dnf, or pacman.'
   fi
   privileged rm -rf /var/lib/inflow /var/lib/inflow-broker /run/inflow
   say 'InFlow and its system vault data were removed.'

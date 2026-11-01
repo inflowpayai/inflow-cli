@@ -8,7 +8,7 @@ import {
   previewOpenApiRequest,
   type OpenApiPreparationInput,
 } from '../../src/openapi/prepare.js';
-import type { OpenApiDescription, OpenApiOperation } from '../../src/openapi/reader.js';
+import { readOpenApi, type OpenApiDescription, type OpenApiOperation } from '../../src/openapi/reader.js';
 
 function document(overrides: Partial<OpenApiOperation> = {}): OpenApiDescription {
   return {
@@ -450,11 +450,12 @@ describe('OpenAPI request preparation', () => {
                 },
               }
             : {
-                parameter: { name: 'id', in: 'path', required: true, schema: { type: 'integer' } },
+                parameter: { name: 'id', in: 'path', required: true, schema: { $ref: '#/definitions/Id' } },
                 body: {
                   required: true,
-                  content: { 'application/json': { schema: { type: 'object', required: ['query'] } } },
+                  content: { 'application/json': { schema: { $ref: '#/definitions/Body' } } },
                 },
+                definitions: { Id: { type: 'integer' }, Body: { type: 'object', required: ['query'] } },
               },
         ),
       ),
@@ -470,5 +471,148 @@ describe('OpenAPI request preparation', () => {
     });
     expect(prepared.request.url).toBe('https://example.com/v1/items/5');
     expect(fetch.mock.calls.map(([url]) => url.pathname)).toEqual(['/openapi.json', '/defs.json']);
+  });
+});
+
+describe('local OpenAPI schema references', () => {
+  async function read(schema: unknown, definitions: Record<string, unknown> = {}, overrides = {}) {
+    const raw = {
+      openapi: '3.1.0',
+      info: { title: 'Example' },
+      components: { schemas: { Id: { type: 'string', enum: ['one'] }, ...definitions } },
+      paths: {
+        '/items/{id}': {
+          post: {
+            operationId: 'create',
+            parameters: [{ name: 'id', in: 'path', required: true, schema }],
+            requestBody: { content: { 'application/json': { schema } } },
+          },
+        },
+      },
+      ...overrides,
+    };
+    const original = structuredClone(raw);
+    const fetch = vi.fn(() => Promise.reject(new Error('Unexpected reference retrieval')));
+    const cache: PublicSourceCache = { get: () => undefined, set: () => undefined, delete: () => undefined };
+    const result = await readOpenApi(
+      {
+        sourceUrl: 'https://example.com/openapi.json',
+        finalUrl: 'https://example.com/openapi.json',
+        value: raw,
+        status: 200,
+        headers: {},
+        cacheable: false,
+        expiresAt: 0,
+      },
+      new PublicSourceDocuments(cache, fetch),
+      {},
+    );
+    expect(raw).toEqual(original);
+    expect(fetch).not.toHaveBeenCalled();
+    return result;
+  }
+
+  it.each(['3.0.3', '3.1.0'])(
+    'resolves a local parameter reference without weakening type or enum checks (%s)',
+    async (version) => {
+      const doc = await read({ $ref: '#/components/schemas/Id' }, {}, { openapi: version });
+      expect(prepareOpenApiRequest(doc, input).request.url).toBe('https://example.com/items/one');
+      expect(() => prepareOpenApiRequest(doc, { ...input, parameters: { path: { id: 1 } } })).toThrow('declared type');
+      expect(() => prepareOpenApiRequest(doc, { ...input, parameters: { path: { id: 'two' } } })).toThrow('enum');
+    },
+  );
+
+  it('resolves chains, escaped pointer names and boolean schemas', async () => {
+    const doc = await read(
+      { $ref: '#/components/schemas/Alias' },
+      {
+        Alias: { $ref: '#/components/schemas/a~1b~0c%20d' },
+        'a/b~c d': false,
+      },
+    );
+    expect(() => prepareOpenApiRequest(doc, input)).toThrow('not permitted');
+    expect(
+      prepareOpenApiRequest(await read({ $ref: '#/components/schemas/Yes' }, { Yes: true }), input).request.url,
+    ).toBe('https://example.com/items/one');
+  });
+
+  it('resolves nested body schemas without interpreting examples or defaults as schemas', async () => {
+    const schema = {
+      type: 'object',
+      required: ['ids'],
+      properties: { ids: { type: 'array', items: { $ref: '#/components/schemas/Id' } } },
+      additionalProperties: { $ref: '#/components/schemas/No' },
+      example: { $ref: '#/missing-example' },
+      default: { $ref: '#/missing-default' },
+    };
+    const doc = await read(schema, { No: false });
+    const operation = doc.operations[0];
+    if (operation === undefined) throw new Error('Missing fixture operation');
+    operation.parameters = [{ name: 'id', in: 'path', schema: { type: 'string' } }];
+    expect(prepareOpenApiRequest(doc, { ...input, data: '{"ids":["one"]}' }).request.body).toBe('{"ids":["one"]}');
+    expect(() => prepareOpenApiRequest(doc, { ...input, data: '{"ids":[2]}' })).toThrow('declared type');
+    expect(() => prepareOpenApiRequest(doc, { ...input, data: '{"ids":["one"],"extra":true}' })).toThrow(
+      'not permitted',
+    );
+    expect(operation.requestBody?.['content']).toMatchObject({
+      'application/json': { schema: { example: schema.example, default: schema.default } },
+    });
+  });
+
+  it.each(['allOf', 'anyOf', 'oneOf'])('resolves references inside %s', async (keyword) => {
+    const doc = await read({ [keyword]: [{ $ref: '#/components/schemas/Id' }] });
+    expect(prepareOpenApiRequest(doc, input).request.url).toContain('/items/one');
+    expect(() => prepareOpenApiRequest(doc, { ...input, parameters: { path: { id: 'two' } } })).toThrow();
+  });
+
+  it.each([
+    { $ref: '#/components/schemas/Missing' },
+    { $ref: '#/components/schemas/~9' },
+    { $ref: '#/%E0%A4' },
+    { $ref: '#named-anchor' },
+    { $ref: 'https://other.example/schema.json' },
+    { $ref: 1 },
+    { $ref: '#/components/schemas/Id', type: 'integer' },
+    { $id: 'https://other.example/schema', $ref: '#/components/schemas/Id' },
+    { $schema: 'https://other.example/dialect', $ref: '#/components/schemas/Id' },
+  ])('keeps unsupported references explicit: %j', async (schema) => {
+    const awaited = await read(schema);
+    expect(() => prepareOpenApiRequest(awaited, input)).toThrow('unsupported schema keyword $ref');
+  });
+
+  it.each([
+    null,
+    'invalid',
+    { $id: 'https://other.example/schema', type: 'string' },
+    { $schema: 'https://other.example/dialect', type: 'string' },
+  ])('does not substitute invalid or differently scoped targets: %j', async (target) => {
+    const doc = await read({ $ref: '#/components/schemas/Target' }, { Target: target });
+    expect(() => prepareOpenApiRequest(doc, input)).toThrow('unsupported schema keyword $ref');
+  });
+
+  it('bounds cycles and long reference chains while keeping inspection available', async () => {
+    const cyclic = await read(
+      { $ref: '#/components/schemas/A' },
+      {
+        A: { $ref: '#/components/schemas/B' },
+        B: { $ref: '#/components/schemas/A' },
+      },
+    );
+    expect(() => prepareOpenApiRequest(cyclic, input)).toThrow('unsupported schema keyword $ref');
+    const long = await read(
+      { $ref: '#/components/schemas/0' },
+      Object.fromEntries(Array.from({ length: 40 }, (_, i) => [String(i), { $ref: `#/components/schemas/${i + 1}` }])),
+    );
+    expect(() => prepareOpenApiRequest(long, input)).toThrow('unsupported schema keyword $ref');
+  });
+
+  it('does not interpret references using an unsupported root dialect or a nested resource base', async () => {
+    for (const overrides of [
+      { jsonSchemaDialect: 'https://other.example/dialect' },
+      { components: { $id: 'https://other.example/resource', schemas: { Id: { type: 'string' } } } },
+    ]) {
+      const doc = await read({ $ref: '#/components/schemas/Id' }, {}, overrides);
+      expect(() => prepareOpenApiRequest(doc, input)).toThrow('unsupported schema keyword $ref');
+    }
   });
 });
