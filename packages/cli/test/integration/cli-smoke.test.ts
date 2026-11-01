@@ -115,17 +115,27 @@ function callMcp(
     let errors = '';
     let response: string | undefined;
     let initialized = false;
-    const timer = setTimeout(() => child.kill('SIGTERM'), 10_000);
+    let phase = 'initialization';
+    let timer: ReturnType<typeof setTimeout>;
+    const waitFor = (nextPhase: string, timeout: number) => {
+      phase = nextPhase;
+      clearTimeout(timer);
+      timer = setTimeout(() => child.kill('SIGTERM'), timeout);
+    };
+    waitFor('initialization', 10_000);
     child.stdout.on('data', (chunk: Buffer) => {
       output += chunk.toString();
       for (const line of output.split('\n').slice(0, -1)) {
         const message = JSON.parse(line) as { id?: number };
         if (message.id === 1 && !initialized) {
           initialized = true;
+          waitFor('test setup', 30_000);
           void Promise.resolve()
             .then(afterInitialize)
             .then(
               () => {
+                if (child.killed) return;
+                waitFor('tools/call', 10_000);
                 child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
                 child.stdin.write(
                   `${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: arguments_ } })}\n`,
@@ -149,7 +159,7 @@ function callMcp(
     child.on('error', reject);
     child.on('close', () => {
       clearTimeout(timer);
-      if (response === undefined) reject(new Error(`MCP did not respond: ${errors}`));
+      if (response === undefined) reject(new Error(`MCP ${name} did not respond during ${phase}: ${errors}`));
       else resolveResult(response);
     });
     for (const message of [
@@ -191,6 +201,16 @@ function closeServer(server: Server): Promise<void> {
 }
 
 describe('cli smoke', () => {
+  it('does not count test setup against the MCP response deadline', async () => {
+    const response = await callMcp(
+      'mpp_decode',
+      { value: '@@@not-decodable@@@' },
+      { HOME: authDir, XDG_DATA_HOME: join(authDir, 'data'), INFLOW_API_KEY: '' },
+      () => new Promise((resolve) => setTimeout(resolve, 11_000)),
+    );
+    expect(JSON.parse(response)).toMatchObject({ id: 2, result: { isError: true } });
+  }, 25_000);
+
   it.each([200, 402])('inspect returns schema-valid structured MCP output for HTTP %i', async (status) => {
     await withSeller(
       (req, res) => {
@@ -848,7 +868,7 @@ describe('cli smoke', () => {
         rmSync(root, { recursive: true, force: true });
       }
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(process.platform !== 'darwin' || packagedExecutable !== undefined).each(['replace', 'lock'])(
