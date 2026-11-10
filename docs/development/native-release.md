@@ -1,5 +1,17 @@
 # Native Release Automation
 
+## Prepare a version
+
+The `release` workflow uses Changesets to create or update the version PR from pending changesets on `main`. Merging
+that PR records the version and changelog without publishing anything. The existing npm package remains an installation
+notice; native releases do not require npm publication.
+
+After merging the version PR and any release-workflow fixes, wait for the selected commit's checks to pass. Read the
+version from `packages/cli/package.json`, create the matching `v<version>` tag on that reviewed commit, and push the
+tag. Do not reuse a tag for a different commit or change the version merely to match the npm package.
+
+## Build and publish
+
 Production releases use the `native release` GitHub Actions workflow. Create `v<version>` from the reviewed release
 commit, then dispatch the workflow from that tag with an explicit `mode` input. The workflow derives the package version
 from the selected tag; selecting a branch is rejected:

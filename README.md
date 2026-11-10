@@ -1,10 +1,7 @@
 # inflow
 
 [![CI](https://github.com/inflowpayai/inflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/inflowpayai/inflow-cli/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/@inflowpayai/inflow)](https://www.npmjs.com/package/@inflowpayai/inflow)
-[![npm downloads](https://img.shields.io/npm/dm/@inflowpayai/inflow)](https://www.npmjs.com/package/@inflowpayai/inflow)
 [![codecov](https://codecov.io/gh/inflowpayai/inflow-cli/branch/main/graph/badge.svg)](https://codecov.io/gh/inflowpayai/inflow-cli)
-[![node](https://img.shields.io/node/v/@inflowpayai/inflow)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1488618872461332562?logo=discord&logoColor=white&label=Discord)](https://discord.gg/Z9nmMAgaR4)
 [![skills.sh](https://skills.sh/b/inflowpayai/inflow-cli)](https://skills.sh/inflowpayai/inflow-cli)
@@ -276,6 +273,9 @@ pnpm changeset
 ```
 
 ## Release automation
+
+Changesets opens release PRs for version numbers and changelogs. Merging a release PR prepares the version; it does not
+publish to npm or distribute native binaries. The existing npm package only directs users to the native installer.
 
 Production releases use one atomic native workflow that signs and verifies the macOS, Windows, and Linux artifacts
 before publishing an immutable GitHub Release, updating Homebrew, and producing the WinGet submission manifests. See the
