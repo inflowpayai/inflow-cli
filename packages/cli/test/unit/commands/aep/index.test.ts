@@ -1198,6 +1198,36 @@ describe('aep commands', () => {
     });
   });
 
+  it('reports the SDK API-key presentation failure without its secret', async () => {
+    const { credentialPresentationHeaders } = await vi.importActual<typeof AepAgent>('@aep-foundation/agent');
+    let failure: unknown;
+    try {
+      credentialPresentationHeaders({
+        api_key: 'synthetic-key\r\nInjected: value',
+        credential_id: 'synthetic-id',
+        expires_at: '2027-01-01T00:00:00Z',
+        header: 'Authorization',
+        scopes: [],
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(__testing.commandError(failure)).toEqual({
+      code: 'AEP_INTERNAL_ERROR',
+      message: 'The issued API-key value is not a valid API-key presentation.',
+    });
+  });
+
+  it('does not expose unrecognized carrier error messages', () => {
+    const error = new Error('synthetic-secret');
+    error.name = 'AepAuthorizationCarrierError';
+    expect(__testing.commandError(error)).toEqual({
+      code: 'AEP_INTERNAL_ERROR',
+      message: 'The AEP command failed unexpectedly.',
+    });
+  });
+
   it('maps Inspect and unexpected failures to stable command errors', () => {
     expect(__testing.commandError(new AepServiceReferenceError('invalid'))).toEqual({
       code: 'AEP_SERVICE_URL_INVALID',

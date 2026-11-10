@@ -420,6 +420,13 @@ function commandError(error: unknown, context?: RequirementErrorContext): ErrorO
       message: error.message,
     };
   }
+  if (
+    error instanceof Error &&
+    error.name === 'AepAuthorizationCarrierError' &&
+    error.message === 'The issued API-key value is not a valid API-key presentation.'
+  ) {
+    return { code: 'AEP_INTERNAL_ERROR', message: error.message };
+  }
   return { code: 'AEP_INTERNAL_ERROR', message: 'The AEP command failed unexpectedly.' };
 }
 
