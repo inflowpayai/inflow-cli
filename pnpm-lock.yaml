@@ -82,8 +82,8 @@ importers:
   packages/cli:
     dependencies:
       '@aep-foundation/agent':
-        specifier: ^0.7.0
-        version: 0.7.0
+        specifier: ^0.7.1
+        version: 0.7.1
       '@inflowpayai/mpp':
         specifier: ^0.12.0
         version: 0.12.0(mppx@0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3)))
@@ -153,8 +153,8 @@ importers:
         version: 7.18.2
     devDependencies:
       '@aep-foundation/agent':
-        specifier: ^0.7.0
-        version: 0.7.0
+        specifier: ^0.7.1
+        version: 0.7.1
       '@inflowpayai/mpp':
         specifier: ^0.12.0
         version: 0.12.0(mppx@0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3)))
@@ -191,12 +191,12 @@ packages:
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
-  '@aep-foundation/agent@0.7.0':
-    resolution: {integrity: sha512-f3F6jqbd9Qq2/Cv8S3iq3fNazVZEpr8t2EpgRdZ7Az0Gl7feqDl/EUH5DIN+UP67XZ2VVYoWOn3h+EpAEQ98qA==}
+  '@aep-foundation/agent@0.7.1':
+    resolution: {integrity: sha512-IKoAQhqqeOXFAVuJZNqGLNyPtc89/YiD5y5w9gIF722iJzUCdVRyK7lAmBGTL+13yJtXKTMwczRNekC+6g3lkw==}
     engines: {node: '>=22.0.0'}
 
-  '@aep-foundation/core@0.8.0':
-    resolution: {integrity: sha512-BgTjJOgTSl8jpEaGWv1KZwN4TQf/kb+vkqfj/zJigONP7CvzMLO86t3uCEfj+vmnEjoaM9xdlvgf+NrKd5l2JQ==}
+  '@aep-foundation/core@0.8.1':
+    resolution: {integrity: sha512-xpycxaTrfhPcgbhA7VX94I2L1rKhGhx6W3V43fGcXdUVazP5L7ihyQwAyuhx7DfyvfVjsHy3WvuDXZGkBQ/eZw==}
     engines: {node: '>=22.0.0'}
 
   '@alcalzone/ansi-tokenize@0.1.3':
@@ -3154,11 +3154,11 @@ snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@aep-foundation/agent@0.7.0':
+  '@aep-foundation/agent@0.7.1':
     dependencies:
-      '@aep-foundation/core': 0.8.0
+      '@aep-foundation/core': 0.8.1
 
-  '@aep-foundation/core@0.8.0':
+  '@aep-foundation/core@0.8.1':
     dependencies:
       jose: 6.2.14
 
