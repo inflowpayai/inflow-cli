@@ -1,5 +1,26 @@
 # @inflowpayai/inflow
 
+## 0.15.1
+
+### Patch Changes
+
+- [#192](https://github.com/inflowpayai/inflow-cli/pull/192)
+  [`9139a1a`](https://github.com/inflowpayai/inflow-cli/commit/9139a1a89af7057f141440789e284778ecffc5ac) Thanks
+  [@nkavian](https://github.com/nkavian)! - Show a specific, secret-free error when an AEP Service issues an API-key
+  value that cannot be presented safely.
+
+  Update the AEP SDK to support complete API-key header values, including Bearer and Basic presentations, and the
+  revised session credential validation rules.
+
+- [#190](https://github.com/inflowpayai/inflow-cli/pull/190)
+  [`6100547`](https://github.com/inflowpayai/inflow-cli/commit/6100547667825d21f6e70ae63a25f0a87ae34aa3) Thanks
+  [@nkavian](https://github.com/nkavian)! - Resolve local OpenAPI schema references when preparing operation parameters
+  and JSON request bodies. Unsupported references remain explicit preparation errors without additional network
+  requests.
+
+  Support Arch Linux in the hosted installer and report failed vault startup after RPM installation instead of reporting
+  installation success.
+
 ## 0.15.0
 
 ### Minor Changes
