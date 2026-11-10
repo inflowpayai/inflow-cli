@@ -12,11 +12,10 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
-  id-token: write
 
 jobs:
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -30,88 +29,15 @@ jobs:
           node-version: 24.15.0
           cache: pnpm
 
-      - name: Upgrade npm for Trusted Publishing
-        run: npm install --global npm@^11.5.1
-
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Create Release PR or Publish
-        id: changesets
+      - name: Create Release PR
         uses: changesets/action@v1
         with:
           createGithubReleases: false
-          publish: pnpm release
           version: pnpm version-packages
           commit: 'chore(release): version packages'
           title: 'chore(release): version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_CONFIG_PROVENANCE: 'true'
-
-      - name: Verify provenance attestations
-        if: steps.changesets.outputs.published == 'true'
-        run: |
-          published='${{ steps.changesets.outputs.publishedPackages }}'
-          echo "$published" | jq -c '.[]' | while read -r entry; do
-            name=$(echo "$entry" | jq -r '.name')
-            version=$(echo "$entry" | jq -r '.version')
-            attestations=""
-            for delay in 0 10 20 30 45 60; do
-              if [[ $delay -gt 0 ]]; then
-                echo "waiting ${delay}s for $name@$version to propagate to the read CDN..."
-                sleep "$delay"
-              fi
-              attestations=$(npm view "$name@$version" --json 2>/dev/null | jq -r '.dist.attestations // empty')
-              [[ -n "$attestations" ]] && break
-            done
-            if [[ -z "$attestations" ]]; then
-              echo "::error::No provenance attestations on $name@$version after retries"
-              exit 1
-            fi
-            echo "ok: $name@$version has attestations"
-          done
-
-  maintenance-release:
-    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/release/')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Upgrade npm for Trusted Publishing
-        run: npm install --global npm@^11.5.1
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Test
-        run: pnpm test
-
-      - name: Typedoc
-        run: pnpm typedoc
-
-      - name: Build
-        run: pnpm build
-
-      - name: Smoke packaged CLI
-        run: pnpm smoke
-
-      - name: Publish maintenance release
-        run: pnpm release
-        env:
-          NPM_CONFIG_PROVENANCE: 'true'

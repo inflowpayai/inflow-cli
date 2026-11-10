@@ -101,9 +101,8 @@ Rules the tooling can't enforce. Breaking them lands a regression.
 ## Adding a package
 
 For a new package: follow the structure of the existing packages — `packages/<name>/{src,test/unit}`, `package.json`
-with the standard fields (`peerDependencies` if needed, `publishConfig.access: public`,
-`publishConfig.provenance: true`), `tsconfig.json` + `tsconfig.test.json`, `tsup.config.ts`, `vitest.config.ts`,
-`README.md`. Then `pnpm install` to refresh the lockfile.
+with the standard fields (`peerDependencies` if needed), `tsconfig.json` + `tsconfig.test.json`, `tsup.config.ts`,
+`vitest.config.ts`, `README.md`. Then `pnpm install` to refresh the lockfile.
 
 New packages should be rare. If you're adding one, the change should justify why a new package boundary is needed
 instead of a new module inside `packages/cli` or `packages/core`.
@@ -111,7 +110,7 @@ instead of a new module inside `packages/cli` or `packages/core`.
 ## Writing docs
 
 - **The README is the long-form doc.** It carries usage examples, integration recipes, and the conceptual map. Keep it
-  accurate; the published `README.md` ships in the npm package.
+  accurate for users installing the native binary.
 - **TSDoc is minimal.** Default to none. Add a TSDoc block only when the signature can't say it and there's a
   non-obvious sentence the caller needs. The linter does not require TSDoc on every export.
 - **Use `{@link Foo}` only for symbols re-exported from the package barrel** — links must resolve from the published API
@@ -124,13 +123,12 @@ instead of a new module inside `packages/cli` or `packages/core`.
 
 - Short-lived branches off `main`. Conventional Commits, scoped by package: `feat(cli): …`, `fix(sdk): …`.
 - PRs touching `packages/**` need a Changeset (`pnpm changeset`). CI fails without one.
-- Release flow uses `changesets/action` from `.github/workflows/release.yml`. Only `@inflowpayai/inflow` publishes to
-  npm — `@inflowpayai/inflow-core` is private (workspace-only).
-- One npm channel: `latest`.
+- `.github/workflows/release.yml` uses Changesets only for version PRs and changelogs. Merging a version PR does not
+  publish anything. `.github/workflows/native-release.yml` builds and publishes the signed binaries from a reviewed
+  `v<version>` tag. Follow `docs/development/native-release.md`.
+- Do not publish either package to npm. The existing npm package is an installation notice.
 - The skill version in `skills/agentic-payments/SKILL.md` frontmatter is auto-synced from `packages/cli/package.json`
   via `scripts/align-skill-version.js` during `pnpm build`. Don't hand-edit the skill's `version:` line.
-- CI runs `pnpm --filter @inflowpayai/inflow publish --dry-run --no-git-checks` on every push to `main` to catch
-  publishability regressions before they bite.
 
 ## When stuck
 

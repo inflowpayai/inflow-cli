@@ -58,7 +58,6 @@
     "changeset": "changeset",
     "stage:web": "node scripts/stage-web.mjs",
     "version-packages": "changeset version && node scripts/align-skill-version.js",
-    "release": "pnpm --filter @inflowpayai/inflow build:shim && changeset publish",
     "clean": "turbo run clean && rm -rf node_modules",
     "prepare": "husky"
   },
