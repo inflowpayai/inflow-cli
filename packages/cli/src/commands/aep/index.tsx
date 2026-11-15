@@ -392,7 +392,14 @@ function commandError(error: unknown, context?: RequirementErrorContext): ErrorO
     }
     if (code === 'authorization_denied')
       return { code: 'AEP_APPROVAL_DENIED', message: 'The InFlow approval was denied.' };
-    return { code: typeof code === 'string' ? code : 'AEP_SIGN_FAILED', message: 'The AEP command failed.' };
+    const operation =
+      /^AEP (Platform provision|Platform identity list|Platform sign|Enroll|Grant|Revoke|Status) failed with HTTP /.exec(
+        error.message,
+      )?.[1];
+    return {
+      code: typeof code === 'string' ? code : 'AEP_SIGN_FAILED',
+      message: `AEP ${operation ?? 'command'} failed with HTTP ${error.status}.`,
+    };
   }
   if (error instanceof TypeError && error.message === 'Invalid AEP Grant response.') {
     return { code: 'AEP_GRANT_RESPONSE_INVALID', message: 'The Service returned an invalid AEP Grant response.' };

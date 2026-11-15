@@ -1408,7 +1408,31 @@ describe('aep commands', () => {
     ).toEqual({ code: 'AEP_APPROVAL_DENIED', message: 'The InFlow approval was denied.' });
     expect(__testing.commandError(new AepCommandError('failed', 500))).toEqual({
       code: 'AEP_SIGN_FAILED',
-      message: 'The AEP command failed.',
+      message: 'AEP command failed with HTTP 500.',
+    });
+  });
+
+  it.each(['Platform provision', 'Platform identity list', 'Platform sign', 'Enroll', 'Grant', 'Revoke', 'Status'])(
+    'preserves the %s operation and HTTP status without response text',
+    (operation) => {
+      expect(
+        __testing.commandError(
+          new AepCommandError(`AEP ${operation} failed with HTTP 500 secret-status-text.`, 500, {
+            code: 'unexpected_error',
+            status: 500,
+            title: 'secret-title',
+            detail: 'secret-detail',
+            type: 'urn:aep:error:unexpected_error',
+          }),
+        ),
+      ).toEqual({ code: 'unexpected_error', message: `AEP ${operation} failed with HTTP 500.` });
+    },
+  );
+
+  it('does not display arbitrary AEP error messages', () => {
+    expect(__testing.commandError(new AepCommandError('secret-token', 502))).toEqual({
+      code: 'AEP_SIGN_FAILED',
+      message: 'AEP command failed with HTTP 502.',
     });
   });
 
