@@ -1,4 +1,4 @@
-import { decodePaymentRequiredHeader, encodePaymentRequiredHeader } from '@x402/core/http';
+import { decodePaymentRequiredHeader, encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
 import { PaymentInspectionBlockedError } from '@inflowpayai/inflow-core';
 import { render } from 'ink-testing-library';
 import React from 'react';

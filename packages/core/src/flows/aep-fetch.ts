@@ -11,7 +11,7 @@ import {
 } from '@aep-foundation/agent';
 import { HEADERS as MPP_HEADERS, parseChallengeHeaders, readHeaderAll as readMppHeaderAll } from '@inflowpayai/mpp';
 import { HEADERS as X402_HEADERS, readHeader as readX402Header } from '@inflowpayai/x402';
-import { decodePaymentRequiredHeader } from '@x402/core/http';
+import { decodePaymentRequiredHeader } from '@inflowpayai/x402/http';
 import { buildBodyAttachment, type BodyAttachment } from './x402-pay.js';
 
 export type AepFetchAuthentication =

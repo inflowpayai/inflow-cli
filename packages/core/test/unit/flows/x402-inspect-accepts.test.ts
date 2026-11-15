@@ -1,6 +1,6 @@
 import { HEADERS } from '@inflowpayai/x402';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
-import type { PaymentRequired } from '@x402/core/types';
+import { encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
+import type { PaymentRequired } from '@inflowpayai/x402/http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type InspectEvent,

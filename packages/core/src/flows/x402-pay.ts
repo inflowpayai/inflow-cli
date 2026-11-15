@@ -12,8 +12,8 @@ import {
   X402ApprovalTimeoutError,
   X402PaymentIdFormatError,
 } from '@inflowpayai/x402-buyer';
-import { decodePaymentRequiredHeader, decodePaymentResponseHeader } from '@x402/core/http';
-import type { PaymentRequired } from '@x402/core/types';
+import { decodePaymentRequiredHeader, decodePaymentResponseHeader } from '@inflowpayai/x402/http';
+import type { PaymentRequired } from '@inflowpayai/x402/http';
 import { approvalUrlFor } from '../x402/dashboard-url.js';
 import { describeBody, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { userFacingApiError } from './api-error.js';

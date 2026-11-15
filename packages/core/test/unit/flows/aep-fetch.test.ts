@@ -6,7 +6,7 @@ import {
   type AgentCredentialRecord,
 } from '@aep-foundation/agent';
 import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
+import { encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';

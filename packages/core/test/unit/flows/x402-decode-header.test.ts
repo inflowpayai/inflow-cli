@@ -1,5 +1,5 @@
-import { encodePaymentRequiredHeader } from '@x402/core/http';
-import type { PaymentRequired } from '@x402/core/types';
+import { encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
+import type { PaymentRequired } from '@inflowpayai/x402/http';
 import { describe, expect, it } from 'vitest';
 import { decodeHeader } from '../../../src/flows/x402-decode.js';
 

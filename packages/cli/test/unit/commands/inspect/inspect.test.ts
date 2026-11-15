@@ -9,7 +9,7 @@ import {
   type ServiceInspection,
 } from '@inflowpayai/inflow-core';
 import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
+import { encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildCombinedFrame as combinedFrame,

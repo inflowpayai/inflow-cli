@@ -1,6 +1,6 @@
 import type { PaymentRequirements } from '@inflowpayai/x402';
-import { decodePaymentRequiredHeader } from '@x402/core/http';
-import type { PaymentRequired } from '@x402/core/types';
+import { decodePaymentRequiredHeader } from '@inflowpayai/x402/http';
+import type { PaymentRequired } from '@inflowpayai/x402/http';
 
 export interface DecodedHeader {
   x402Version: number;

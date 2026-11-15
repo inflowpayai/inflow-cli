@@ -9,10 +9,11 @@ import {
   runAepFetch,
   runMppInspectPipeline,
   runMppPayPipeline,
+  runMppFetch,
   type MppPayEvent,
   type SellerAuthenticationError,
 } from '@inflowpayai/inflow-core';
-import { MppClient } from '@inflowpayai/mpp';
+import { encode, renderChallengeHeader, MppClient } from '@inflowpayai/mpp';
 import {
   AepCommandError,
   AepPendingSignResolverError,
@@ -151,6 +152,101 @@ afterEach(() => {
 });
 
 describe('AEP-aware seller transport', () => {
+  it.each([undefined, 'Payment-Authorization', 'X-Payment'])(
+    'sends AEP and MPP together for initial and resumed payments using %s',
+    async (header) => {
+      const authStorage = new MemoryStorage();
+      const storage = new AepStorage(authStorage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+      await storage.credentials().saveCredential({
+        credential: {
+          access_token: 'stored-token',
+          token_type: 'Bearer',
+          scopes: [],
+          credential_id: 'cred-1',
+          expires_at: '2999-01-01T00:00:00.000Z',
+        },
+        credentialId: 'cred-1',
+        expiresAt: '2999-01-01T00:00:00.000Z',
+        grantType: 'oauth-bearer',
+        issuedAt: '2026-01-01T00:00:00.000Z',
+        serviceDid: 'did:web:seller.test',
+      });
+      const challenge = {
+        id: 'challenge',
+        realm: 'seller.test',
+        method: 'inflow',
+        intent: 'charge',
+        request: encode({ amount: '1', currency: 'USD', methodDetails: { rail: 'balance' } }),
+        ...(header === undefined ? {} : { header }),
+      };
+      const credential = encode({ challenge, payload: { transactionId: 'tx-header' } });
+      const selectedHeader = header ?? 'Authorization';
+      let paidRequests = 0;
+      const fetch = vi.fn<typeof globalThis.fetch>((input, init) => {
+        const url = requestUrl(input);
+        if (url.endsWith('/.well-known/aep'))
+          return Promise.resolve(
+            Response.json(OAUTH_INSPECT_DOCUMENT, {
+              headers: { 'Content-Type': 'application/aep+json' },
+            }),
+          );
+        if (url.endsWith('/openapi.json')) return Promise.resolve(Response.json(OAUTH_OPENAPI_DOCUMENT));
+        const headers = new Headers(init?.headers);
+        if (headers.get('AEP-Authorization') !== 'Bearer stored-token') {
+          expect(headers.has(selectedHeader)).toBe(false);
+          return Promise.resolve(
+            new Response(null, {
+              status: 401,
+              headers: {
+                'WWW-Authenticate':
+                  'AEP service_did="did:web:seller.test", inspect="https://seller.test/.well-known/aep"',
+              },
+            }),
+          );
+        }
+        if (headers.get(selectedHeader) === `Payment ${credential}`) {
+          paidRequests += 1;
+          return Promise.resolve(new Response('paid'));
+        }
+        return Promise.resolve(
+          new Response(null, { status: 402, headers: { 'WWW-Authenticate': renderChallengeHeader(challenge) } }),
+        );
+      });
+      const sellerTransport = createAepAwareSellerTransport({
+        authStorage,
+        context: context(),
+        fetch,
+        inflow: inflow(),
+        timeout: 30,
+      });
+      const client = new MppClient({ apiKey: 'test', baseUrl: 'https://platform.example' });
+      const ready = { state: 'ready' as const, transactionId: 'tx-header', credential };
+      const create = vi.spyOn(client, 'createTransaction').mockResolvedValue(ready);
+      vi.spyOn(client, 'getTransaction').mockResolvedValue(ready);
+      const input = {
+        client,
+        apiBaseUrl: 'https://platform.example',
+        url: 'https://seller.test/resource',
+        probeOptions: { method: 'GET', headers: {} },
+        sellerTransport,
+        showBody: false,
+        interval: 0,
+        maxAttempts: 1,
+        timeout: 30,
+      };
+      const emit = vi.fn<(event: MppPayEvent) => void>();
+      await runMppPayPipeline(input, emit);
+      expect(emit.mock.calls.at(-1)?.[0], JSON.stringify(emit.mock.calls)).toMatchObject({ type: 'replayed' });
+      expect(create).toHaveBeenCalledOnce();
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({ challenge }));
+      const resumed = [];
+      for await (const event of runMppFetch({ ...input, transactionId: 'tx-header' }).events) resumed.push(event);
+      expect(resumed.at(-1)?.type).toBe('replayed');
+      expect(paidRequests).toBe(2);
+      expect(create).toHaveBeenCalledOnce();
+    },
+  );
+
   it.each([401, 403, 500])('does not send payment credentials after an unrelated HTTP %s response', async (status) => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response('rejected', { status }));
     const client = inflow();

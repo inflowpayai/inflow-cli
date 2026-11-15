@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { HEADERS, type PaymentRequirements } from '@inflowpayai/x402';
 import { type PreparedPayment, X402ApprovalCancelledError, X402ApprovalTimeoutError } from '@inflowpayai/x402-buyer';
-import { encodePaymentRequiredHeader, encodePaymentResponseHeader } from '@x402/core/http';
-import type { PaymentRequired } from '@x402/core/types';
+import { encodePaymentRequiredHeader, encodePaymentResponseHeader } from '@inflowpayai/x402/http';
+import type { PaymentRequired } from '@inflowpayai/x402/http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildBodyAttachment,
