@@ -1,5 +1,5 @@
-import type { PaymentRequired } from '@x402/core/types';
-import { decodePaymentRequiredHeader } from '@x402/core/http';
+import type { PaymentRequired } from '@inflowpayai/x402/http';
+import { decodePaymentRequiredHeader } from '@inflowpayai/x402/http';
 import { describe, expect, it } from 'vitest';
 import {
   buildNoFilteredMatchMessage,

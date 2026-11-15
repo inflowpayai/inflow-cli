@@ -1,5 +1,5 @@
 import { ASSET_TRANSFER_METHODS, EXTRA_KEYS } from '@inflowpayai/x402';
-import type { PaymentRequired } from '@x402/core/types';
+import type { PaymentRequired } from '@inflowpayai/x402/http';
 
 /** Error code emitted when a seller returns 402 but omits the PAYMENT-REQUIRED header. */
 export const INVALID_402_CODE = 'INVALID_402';

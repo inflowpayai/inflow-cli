@@ -608,7 +608,7 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
           method: probeOptions.method,
           headers: probeOptions.headers,
           ...(probeOptions.data !== undefined ? { data: probeOptions.data } : {}),
-          paymentHeaderName: HEADERS.AUTHORIZATION,
+          paymentHeaderName: challenge.header ?? HEADERS.AUTHORIZATION,
           paymentHeaderValue: `${SCHEME_PAYMENT} ${credential}`,
           showBody: deps.showBody,
           ...(deps.outputFile !== undefined ? { outputFile: deps.outputFile } : {}),

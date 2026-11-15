@@ -1,6 +1,6 @@
 import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
 import { AepInspectError, type InspectServiceResult } from '@aep-foundation/agent';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
+import { encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ServiceInspection } from '@offering-protocol/agent';
 import {

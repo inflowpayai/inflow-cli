@@ -1,6 +1,6 @@
 import { Inflow, MemoryStorage, type CardVerification, type CardVerificationEvent } from '@inflowpayai/inflow-core';
 import { encode, renderChallengeHeader } from '@inflowpayai/mpp';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
+import { encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
 import { render } from 'ink-testing-library';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';

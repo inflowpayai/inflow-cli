@@ -333,6 +333,46 @@ async function collect(d: MppPayPipelineDeps): Promise<MppPayEvent[]> {
 }
 
 describe('runMppPayPipeline', () => {
+  it.each([undefined, 'Authorization', 'Payment-Authorization', 'X-Payment'])(
+    'preserves and uses the selected payment header %s',
+    async (header) => {
+      const offered = { ...challenge('inflow'), ...(header === undefined ? {} : { header }) };
+      const credential = encode({ challenge: offered, payload: { transactionId: 'tx-header' } });
+      const selectedHeader = header ?? 'Authorization';
+      let submissions = 0;
+      server.use(
+        http.get(SELLER, ({ request }) => {
+          expect(request.headers.get('X-Application-Key')).toBe('application-key');
+          if (request.headers.get(selectedHeader) === `Payment ${credential}`) {
+            submissions += 1;
+            if (selectedHeader !== 'Authorization') {
+              expect(request.headers.get('Authorization')).toBe('Bearer application-token');
+            }
+            return new HttpResponse('paid');
+          }
+          return new HttpResponse(null, {
+            status: 402,
+            headers: { 'WWW-Authenticate': renderChallengeHeader(offered) },
+          });
+        }),
+        http.post(`${INFLOW}/v1/transactions/mpp`, async ({ request }) => {
+          expect(await request.json()).toMatchObject({ challenge: offered });
+          return HttpResponse.json({ state: 'ready', transactionId: 'tx-header', credential });
+        }),
+      );
+      const events = await collect(
+        deps({
+          probeOptions: {
+            method: 'GET',
+            headers: { Authorization: 'Bearer application-token', 'X-Application-Key': 'application-key' },
+          },
+        }),
+      );
+      expect(events.at(-1)?.type).toBe('replayed');
+      expect(submissions).toBe(1);
+    },
+  );
+
   it.each([true, false])(
     'tries subscription challenges without creating another purchase (authorized=%s)',
     async (authorized) => {

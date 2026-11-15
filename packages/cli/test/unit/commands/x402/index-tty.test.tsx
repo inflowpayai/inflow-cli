@@ -6,8 +6,8 @@ import type {
   PreparedPayment,
   X402PayloadResponse,
 } from '@inflowpayai/x402-buyer';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
-import type { PaymentRequired } from '@x402/core/types';
+import { encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
+import type { PaymentRequired } from '@inflowpayai/x402/http';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { __testing, createX402Cli } from '../../../../src/commands/x402/index.js';
 import { fetchOptions } from '../../../../src/commands/x402/schema.js';

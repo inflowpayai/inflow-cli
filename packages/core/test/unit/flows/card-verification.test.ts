@@ -1,7 +1,7 @@
 import { encode, renderChallengeHeader } from '@inflowpayai/mpp';
 import type { PaymentStatusResponse } from '@inflowpayai/mpp';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
-import type { PaymentRequirements } from '@x402/core/types';
+import { encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
+import type { PaymentRequirements } from '@inflowpayai/x402/http';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';

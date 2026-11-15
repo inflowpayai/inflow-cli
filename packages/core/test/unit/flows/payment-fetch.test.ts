@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encode, type MppClient } from '@inflowpayai/mpp';
-import { encodePaymentResponseHeader } from '@x402/core/http';
+import { encodePaymentResponseHeader } from '@inflowpayai/x402/http';
 import type { InflowClient as X402InflowClient } from '@inflowpayai/x402-buyer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runMppFetch, runX402Fetch, SellerAuthenticationError } from '../../../src/index.js';
@@ -31,6 +31,50 @@ async function drain<T>(events: AsyncIterable<T>): Promise<T[]> {
 afterEach(() => vi.restoreAllMocks());
 
 describe('payment fetch replay safety', () => {
+  it.each([undefined, 'Authorization', 'Payment-Authorization', 'X-Payment'])(
+    'resumes MPP using the credential challenge header %s',
+    async (header) => {
+      const credential = encode({
+        challenge: {
+          id: 'challenge',
+          realm: 'seller.test',
+          method: 'inflow',
+          intent: 'charge',
+          request: encode({ amount: '1', currency: 'USD' }),
+          ...(header === undefined ? {} : { header }),
+        },
+        payload: { transactionId: 'tx-header' },
+      });
+      const selectedHeader = header ?? 'Authorization';
+      const request = vi.fn().mockResolvedValue({
+        status: 200,
+        headers: new Headers(),
+        bytes: new Uint8Array(),
+      });
+      const events = await drain(
+        runMppFetch({
+          client: mppClient({ state: 'ready', transactionId: 'tx-header', credential }),
+          transactionId: 'tx-header',
+          url: 'https://seller.test/api',
+          probeOptions: { method: 'GET', headers: { Authorization: 'Bearer application-token' } },
+          interval: 0,
+          maxAttempts: 1,
+          timeout: 30,
+          showBody: false,
+          sellerTransport: { request },
+        }).events,
+      );
+      expect(events.at(-1)?.type).toBe('replayed');
+      expect(request).toHaveBeenCalledOnce();
+      expect(request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          additionalAuthenticationHeaders: { [selectedHeader]: `Payment ${credential}` },
+          headers: selectedHeader === 'Authorization' ? {} : { Authorization: 'Bearer application-token' },
+        }),
+      );
+    },
+  );
+
   it.each([undefined, false, true])(
     'preserves authentication retryability (%s) without retrying a payment',
     async (retryable) => {

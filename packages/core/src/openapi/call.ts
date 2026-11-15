@@ -1,5 +1,5 @@
 import { parseChallengeHeaders } from '@inflowpayai/mpp';
-import { decodePaymentRequiredHeader } from '@x402/core/http';
+import { decodePaymentRequiredHeader } from '@inflowpayai/x402/http';
 import { buildBodyAttachment } from '../flows/x402-pay.js';
 import {
   prepareOpenApiRequest,

@@ -14,8 +14,8 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { resolve as resolvePath, dirname, join } from 'node:path';
 import { encode, renderChallengeHeader } from '@inflowpayai/mpp';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
-import type { PaymentRequired } from '@x402/core/types';
+import { encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
+import type { PaymentRequired } from '@inflowpayai/x402/http';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ testTimeout: 15_000 });

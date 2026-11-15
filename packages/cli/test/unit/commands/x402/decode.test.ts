@@ -1,6 +1,6 @@
 import { fromFoundationRequirements } from '@inflowpayai/x402-buyer';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
-import type { PaymentRequired } from '@x402/core/types';
+import { encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
+import type { PaymentRequired } from '@inflowpayai/x402/http';
 import { describe, expect, it } from 'vitest';
 import { decodeHeader, summarizeAccepts } from '../../../../src/commands/x402/decode.js';
 

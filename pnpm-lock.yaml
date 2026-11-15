@@ -85,26 +85,23 @@ importers:
         specifier: ^0.7.1
         version: 0.7.1
       '@inflowpayai/mpp':
-        specifier: ^0.12.0
-        version: 0.12.0(mppx@0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.13.0
+        version: 0.13.0(mppx@0.18.1)
       '@inflowpayai/mpp-buyer':
-        specifier: ^0.8.1
-        version: 0.8.1(mppx@0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.9.0
+        version: 0.9.0(mppx@0.18.1)
       '@inflowpayai/x402':
-        specifier: ^0.12.0
-        version: 0.12.0(@x402/core@2.27.0)
+        specifier: ^0.13.0
+        version: 0.13.0(@x402/core@2.31.0)
       '@inflowpayai/x402-buyer':
-        specifier: ^0.11.2
-        version: 0.11.2(@x402/core@2.27.0)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))
+        specifier: ^0.12.0
+        version: 0.12.0(@x402/core@2.31.0)(viem@2.57.19)
       '@modelcontextprotocol/server':
         specifier: 2.0.0-alpha.4
         version: 2.0.0-alpha.4
       '@node-rs/argon2':
         specifier: ^2.0.2
         version: 2.0.2
-      '@x402/core':
-        specifier: ^2.27.0
-        version: 2.27.0
       incur:
         specifier: ^0.4.5
         version: 0.4.19(patch_hash=f2b628f4f58f449cd45c7a1f41afb13012f5fb86380729ae116e5589b3fa5b00)
@@ -156,17 +153,17 @@ importers:
         specifier: ^0.7.1
         version: 0.7.1
       '@inflowpayai/mpp':
-        specifier: ^0.12.0
-        version: 0.12.0(mppx@0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.13.0
+        version: 0.13.0(mppx@0.18.1)
       '@inflowpayai/mpp-buyer':
-        specifier: ^0.8.1
-        version: 0.8.1(mppx@0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3)))
+        specifier: ^0.9.0
+        version: 0.9.0(mppx@0.18.1)
       '@inflowpayai/x402':
-        specifier: ^0.12.0
-        version: 0.12.0(@x402/core@2.27.0)
+        specifier: ^0.13.0
+        version: 0.13.0(@x402/core@2.31.0)
       '@inflowpayai/x402-buyer':
-        specifier: ^0.11.2
-        version: 0.11.2(@x402/core@2.27.0)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))
+        specifier: ^0.12.0
+        version: 0.12.0(@x402/core@2.31.0)(viem@2.57.19)
       '@offering-protocol/agent':
         specifier: ^0.4.7
         version: 0.4.7(@types/json-schema@7.0.15)
@@ -182,9 +179,6 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^2.1.0
         version: 2.1.9(supports-color@7.2.0)(vitest@2.1.9(@types/node@24.13.3)(msw@2.15.0(@types/node@24.13.3)(typescript@5.9.3))(supports-color@7.2.0))
-      '@x402/core':
-        specifier: ^2.27.0
-        version: 2.27.0
 
 packages:
 
@@ -846,28 +840,28 @@ packages:
   '@hyperjump/uri@1.3.9':
     resolution: {integrity: sha512-cxG5vyIdx3gUb/OQD/FDruQQcGNzF2aKTXWJ6LzlAC1kh97YZQSRsF3hL274xlTDJ1nWGJGRtknlW6ZpU3Ch+A==}
 
-  '@inflowpayai/mpp-buyer@0.8.1':
-    resolution: {integrity: sha512-grcrD/TczH6Z06gsQXhg9+5v1SwZICdjN/Wa6vOqdGOxBXQ7m97oV76ZIsqF4JUjt3HBSWWFBr/8ZGp8fryQ7Q==}
+  '@inflowpayai/mpp-buyer@0.9.0':
+    resolution: {integrity: sha512-sdPhWqzObini2fb2J0v52DClunMRd1loXfh06fUVjmKFDnraAXgw+3x7Yg1WMDao9TWyjgQ5jQ/UkGikdqKFkA==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': '>=1.25.0'
-      mppx: ^0.8.17
+      mppx: ^0.18.1
     peerDependenciesMeta:
       '@modelcontextprotocol/sdk':
         optional: true
 
-  '@inflowpayai/mpp@0.12.0':
-    resolution: {integrity: sha512-33Ix9Kc5TGl4wcPlCGiK2RRooB449j01sHYZbSFzn2by20NS3/VuoDXTar6Mx+CzNr2ju+WAsr2oElcezmH1WQ==}
+  '@inflowpayai/mpp@0.13.0':
+    resolution: {integrity: sha512-a7FMTHBK4p5zykkgxSVxVCrDV0+geGvVcaqgTr7nsVlaOdGywyxdIgPGh+2XluTRb5aXXniLoOXZCVNWODgVNw==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
-      mppx: ^0.8.17
+      mppx: ^0.18.1
 
-  '@inflowpayai/x402-buyer@0.11.2':
-    resolution: {integrity: sha512-enyn8t2De0PhUId0wqUFR1fK6ubegHLkaOJXWW6uqaSqG0dHjjGqScvVIINiHluYMxW9Q1MzuhAN9C8BwjkBDQ==}
+  '@inflowpayai/x402-buyer@0.12.0':
+    resolution: {integrity: sha512-lK4ewoz6ryWECOtCYuWjLppFVjWyGSrRfzxkeSfBFtooShcxgcFsouVq1BAZxyAiuLjC29pasTnNlJBLqPpLHA==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
-      '@x402/core': ^2.27.0
-      '@x402/evm': ^2.27.0
+      '@x402/core': ^2.31.0
+      '@x402/evm': ^2.31.0
       viem: ^2.56.3
     peerDependenciesMeta:
       '@x402/evm':
@@ -875,11 +869,11 @@ packages:
       viem:
         optional: true
 
-  '@inflowpayai/x402@0.12.0':
-    resolution: {integrity: sha512-CbsnW+z9WgPp9Fs7JHS23PIxXfYLEmxvP50PH/H8l9CR6277jE13QhUSbJQDG0XG/nZtgEnqL/Uw4OyLqa217w==}
+  '@inflowpayai/x402@0.13.0':
+    resolution: {integrity: sha512-C+bVZKU16gaijv+nP0UEkZKkw7lbE/ayMhr+diIt4ZriyydC6oZSYX5trVpE8H7ZZ37vCxL/rR+i+OGBmn14Mw==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
-      '@x402/core': ^2.27.0
+      '@x402/core': ^2.31.0
 
   '@inquirer/ansi@2.0.8':
     resolution: {integrity: sha512-WpQM+Ti6Z40EFwwt+uL2p4UabT+W179zHp6HhLVOzfbwnVn05IPO/eXIZXGNqcT1jbQ15SujNLzQ39k4QPPxBQ==}
@@ -1279,10 +1273,6 @@ packages:
   '@shikijs/vscode-textmate@10.0.2':
     resolution: {integrity: sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg==}
 
-  '@stripe/stripe-js@9.13.0':
-    resolution: {integrity: sha512-/0c72BUgzzVkVTlsw5uBn8x3waTdVJ/PZGfQ6jY1eu6K7olUPf4d9lgDPA9/0sIdsR8j7o3QIG8fOCO6ItcL7A==}
-    engines: {node: '>=12.16'}
-
   '@toon-format/toon@2.3.1':
     resolution: {integrity: sha512-sWqEMeAJGMda9qRrfPKrX3C4c33CO9SJuvJzzrcBEn5sbDB+k6pSLkDsfN0rVnLQwR97MV3sDgVbcxQNsq8xVw==}
 
@@ -1455,8 +1445,8 @@ packages:
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
 
-  '@x402/core@2.27.0':
-    resolution: {integrity: sha512-UbxCKnoTsg5nQX9fYER3g9tt5l80jHm1IZOmDczQRqE0cwskls5r+VAAj0iUQfHVshnpv0qo/rLFI7UntqL96g==}
+  '@x402/core@2.31.0':
+    resolution: {integrity: sha512-7ToCOwHfftfFEERW5Mp6Fc5U1+JrtCLTkbQnEVsBl13IutltP9lWIBYi/J+zy8vQWaLUmACq8A2qywzdt/RRIQ==}
 
   abitype@1.2.3:
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
@@ -1877,10 +1867,6 @@ packages:
 
   eventemitter3@5.0.1:
     resolution: {integrity: sha512-GWkBvjiSZK87ELrYOSESUYeVIc9mvLLf/nXalMOS5dYrgZq9o5OVkbZAVM06CVxYsCwH9BDZFPlQTlPA1j4ahA==}
-
-  eventsource-parser@3.1.1:
-    resolution: {integrity: sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ==}
-    engines: {node: '>=18.0.0'}
 
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
@@ -2381,23 +2367,44 @@ packages:
   mlly@1.8.2:
     resolution: {integrity: sha512-d+ObxMQFmbt10sretNDytwt85VrbkhhUA/JBGm1MPaWJ65Cl4wOgLaB1NYvJSZ0Ef03MMEU/0xpPMXUIQ29UfA==}
 
-  mppx@0.8.19:
-    resolution: {integrity: sha512-Rt4aq67bfeOGjK3/jt0oVPZGwULg8fb8yUlTjjb+tfMltjRXuUE7JfQ2AutmI6bhZG3TtXJmI4BK2AxxjC0Ntw==}
+  mppx@0.18.1:
+    resolution: {integrity: sha512-NNlYs3iHldqV14n3nkBFyhzf+tc4UZVSYJpSwOmxIVz8KNtz1+HzHjnIluDD7RzmiX8S015YXX9o6odoXbmwjQ==}
     hasBin: true
     peerDependencies:
       '@modelcontextprotocol/sdk': '>=1.25.0'
-      elysia: '>=1'
+      '@stripe/agent-identity': '>=0.3.0'
+      '@x402/core': '>=2.22.0'
+      '@x402/express': '>=2.22.0'
+      '@x402/hono': '>=2.22.0'
+      '@x402/mcp': '>=2.22.0'
+      '@x402/next': '>=2.22.0'
+      elysia: '>=1.2.0'
       express: '>=5'
       hono: '>=4.12.25'
-      viem: '>=2.54.0'
+      next: '>=16.2.6'
+      viem: '>=2.57.19'
     peerDependenciesMeta:
       '@modelcontextprotocol/sdk':
+        optional: true
+      '@stripe/agent-identity':
+        optional: true
+      '@x402/core':
+        optional: true
+      '@x402/express':
+        optional: true
+      '@x402/hono':
+        optional: true
+      '@x402/mcp':
+        optional: true
+      '@x402/next':
         optional: true
       elysia:
         optional: true
       express:
         optional: true
       hono:
+        optional: true
+      next:
         optional: true
 
   mri@1.2.0:
@@ -2459,16 +2466,8 @@ packages:
   outvariant@1.4.3:
     resolution: {integrity: sha512-+Sl2UErvtsoajRDKCE5/dBz4DIvHXQQnAxtQTF04OJxY0+DyZXSo5P5Bb7XYWOh81syohlYL24hbDwxedPUJCA==}
 
-  ox@0.14.33:
-    resolution: {integrity: sha512-rooA/4o7bBof4Ge2VH/eovfNPb/AEEYyrNj03wggc55g5HZD8Pjs/OeWhttgjic3dDcqn0r29bDuvQEdTiUemQ==}
-    peerDependencies:
-      typescript: '>=5.4.0'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-
-  ox@0.14.56:
-    resolution: {integrity: sha512-Feinlj+deWEam6RIwurRE+eHZ2N3hoUb3AAjQ10BmxRCYIymfqNkv0eZ+4ln4GkgDmSGLD2rGtTMqsFYSVDC6w==}
+  ox@0.14.65:
+    resolution: {integrity: sha512-K7oj+jvEP4Gf78ZOYuWAWzKEX/g5z7p6ukj84gdbFnezmFSt6SpprEp9tH5tymXsywSqRdeqk+8JL4+9o0Schw==}
     peerDependencies:
       typescript: '>=5.4.0'
     peerDependenciesMeta:
@@ -2803,8 +2802,8 @@ packages:
     resolution: {integrity: sha512-6fPc+R4ihwqP6N/aIv2f1gMH8lOVtWQHoqC4yK6oSDVVocumAsfCqjkXnqiYMhmMwS/mEHLp7Vehlt3ql6lEig==}
     engines: {node: '>=8'}
 
-  structured-headers@2.0.3:
-    resolution: {integrity: sha512-4g5yxhlDMClRwCcfKfLeS7Z8yAVdOWGDADwm80Poh1iReU2KVKLGBlqwpHWJ2qovq0+ZIf1atAEO1eua2o9Rgg==}
+  structured-headers@2.1.0:
+    resolution: {integrity: sha512-ClzykN+XQVaSW5UfpOdEWfDplZ1Th7mISdaFvaC2+GjLTeBhGMJw83D/Rw9jPkHOml4oYd3EXaZhbz3gnE5nBQ==}
     engines: {node: '>=18', npm: '>=6'}
 
   sucrase@3.35.1:
@@ -2991,11 +2990,14 @@ packages:
     resolution: {integrity: sha512-Sc5u1VVln93y1Xnz4R+CunOZc7R9LUcTmhj7Rc7Eg3HVcf7rVn2FOoa812fe0W8p3jD7xeoGSYbfqCGGH2B6xw==}
     hasBin: true
 
-  viem@2.57.5:
-    resolution: {integrity: sha512-BaUdS5lJJTxr6hJX17K0AjHbgUhsolsqH8CCbTq1WMunW/I/Siwc9VrTwccCcNPppgqa/gY4TqK8Zl8LLmlTlw==}
+  viem@2.57.19:
+    resolution: {integrity: sha512-ULAHSwef42oL1reV41Os40iR34PF9BFNIX/RBapHLAJL1X6VmrgQikS4q4ulZ7/8GqlFLqrRI5GoNms3hcxsHw==}
     peerDependencies:
+      mppx: '>=0.17.0'
       typescript: '>=5.0.4'
     peerDependenciesMeta:
+      mppx:
+        optional: true
       typescript:
         optional: true
 
@@ -3144,11 +3146,11 @@ packages:
   yoga-layout@3.2.1:
     resolution: {integrity: sha512-0LPOt3AxKqMdFBZA3HBAt/t/8vIKq7VaQYbuA8WxCgung+p9TVyKRYdpvCb80HcdTN2NkbIKbhNwKUfm3tQywQ==}
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
 snapshots:
 
@@ -3702,26 +3704,26 @@ snapshots:
 
   '@hyperjump/uri@1.3.9': {}
 
-  '@inflowpayai/mpp-buyer@0.8.1(mppx@0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3)))':
+  '@inflowpayai/mpp-buyer@0.9.0(mppx@0.18.1)':
     dependencies:
-      '@inflowpayai/mpp': 0.12.0(mppx@0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3)))
-      mppx: 0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))
+      '@inflowpayai/mpp': 0.13.0(mppx@0.18.1)
+      mppx: 0.18.1(@x402/core@2.31.0)(typescript@5.9.3)(viem@2.57.19)
 
-  '@inflowpayai/mpp@0.12.0(mppx@0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3)))':
+  '@inflowpayai/mpp@0.13.0(mppx@0.18.1)':
     dependencies:
-      mppx: 0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))
+      mppx: 0.18.1(@x402/core@2.31.0)(typescript@5.9.3)(viem@2.57.19)
 
-  '@inflowpayai/x402-buyer@0.11.2(@x402/core@2.27.0)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3))':
+  '@inflowpayai/x402-buyer@0.12.0(@x402/core@2.31.0)(viem@2.57.19)':
     dependencies:
-      '@inflowpayai/x402': 0.12.0(@x402/core@2.27.0)
-      '@x402/core': 2.27.0
+      '@inflowpayai/x402': 0.13.0(@x402/core@2.31.0)
+      '@x402/core': 2.31.0
       bs58: 6.0.0
     optionalDependencies:
-      viem: 2.57.5(typescript@5.9.3)(zod@4.4.3)
+      viem: 2.57.19(mppx@0.18.1)(typescript@5.9.3)(zod@4.4.3)
 
-  '@inflowpayai/x402@0.12.0(@x402/core@2.27.0)':
+  '@inflowpayai/x402@0.13.0(@x402/core@2.31.0)':
     dependencies:
-      '@x402/core': 2.27.0
+      '@x402/core': 2.31.0
 
   '@inquirer/ansi@2.0.8': {}
 
@@ -4049,8 +4051,6 @@ snapshots:
 
   '@shikijs/vscode-textmate@10.0.2': {}
 
-  '@stripe/stripe-js@9.13.0': {}
-
   '@toon-format/toon@2.3.1': {}
 
   '@turbo/darwin-64@2.10.12':
@@ -4265,9 +4265,9 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 1.2.0
 
-  '@x402/core@2.27.0':
+  '@x402/core@2.31.0':
     dependencies:
-      zod: 3.25.76
+      zod: 4.6.7
 
   abitype@1.2.3(typescript@5.9.3)(zod@4.4.3):
     optionalDependencies:
@@ -4278,6 +4278,11 @@ snapshots:
     optionalDependencies:
       typescript: 5.9.3
       zod: 4.4.3
+
+  abitype@1.3.0(typescript@5.9.3)(zod@4.6.7):
+    optionalDependencies:
+      typescript: 5.9.3
+      zod: 4.6.7
 
   acorn-jsx@5.3.2(acorn@8.18.0):
     dependencies:
@@ -4703,8 +4708,6 @@ snapshots:
   esutils@2.0.3: {}
 
   eventemitter3@5.0.1: {}
-
-  eventsource-parser@3.1.1: {}
 
   expect-type@1.4.0: {}
 
@@ -5279,14 +5282,14 @@ snapshots:
       pkg-types: 1.3.1
       ufo: 1.6.4
 
-  mppx@0.8.19(typescript@5.9.3)(viem@2.57.5(typescript@5.9.3)(zod@4.4.3)):
+  mppx@0.18.1(@x402/core@2.31.0)(typescript@5.9.3)(viem@2.57.19):
     dependencies:
-      '@stripe/stripe-js': 9.13.0
-      eventsource-parser: 3.1.1
-      ox: 0.14.33(typescript@5.9.3)(zod@4.4.3)
-      structured-headers: 2.0.3
-      viem: 2.57.5(typescript@5.9.3)(zod@4.4.3)
-      zod: 4.4.3
+      ox: 0.14.65(typescript@5.9.3)(zod@4.6.7)
+      structured-headers: 2.1.0
+      viem: 2.57.19(mppx@0.18.1)(typescript@5.9.3)(zod@4.4.3)
+      zod: 4.6.7
+    optionalDependencies:
+      '@x402/core': 2.31.0
     transitivePeerDependencies:
       - typescript
 
@@ -5354,7 +5357,7 @@ snapshots:
 
   outvariant@1.4.3: {}
 
-  ox@0.14.33(typescript@5.9.3)(zod@4.4.3):
+  ox@0.14.65(typescript@5.9.3)(zod@4.4.3):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
       '@noble/ciphers': 1.3.0
@@ -5369,7 +5372,7 @@ snapshots:
     transitivePeerDependencies:
       - zod
 
-  ox@0.14.56(typescript@5.9.3)(zod@4.4.3):
+  ox@0.14.65(typescript@5.9.3)(zod@4.6.7):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
       '@noble/ciphers': 1.3.0
@@ -5377,7 +5380,7 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.3.0(typescript@5.9.3)(zod@4.4.3)
+      abitype: 1.3.0(typescript@5.9.3)(zod@4.6.7)
       eventemitter3: 5.0.1
     optionalDependencies:
       typescript: 5.9.3
@@ -5672,7 +5675,7 @@ snapshots:
 
   strip-json-comments@3.1.1: {}
 
-  structured-headers@2.0.3: {}
+  structured-headers@2.1.0: {}
 
   sucrase@3.35.1:
     dependencies:
@@ -5851,7 +5854,7 @@ snapshots:
 
   uuid@14.0.3: {}
 
-  viem@2.57.5(typescript@5.9.3)(zod@4.4.3):
+  viem@2.57.19(mppx@0.18.1)(typescript@5.9.3)(zod@4.4.3):
     dependencies:
       '@noble/curves': 1.9.1
       '@noble/hashes': 1.8.0
@@ -5859,9 +5862,10 @@ snapshots:
       '@scure/bip39': 1.6.0
       abitype: 1.2.3(typescript@5.9.3)(zod@4.4.3)
       isows: 1.0.7(ws@8.21.0)
-      ox: 0.14.56(typescript@5.9.3)(zod@4.4.3)
+      ox: 0.14.65(typescript@5.9.3)(zod@4.4.3)
       ws: 8.21.0
     optionalDependencies:
+      mppx: 0.18.1(@x402/core@2.31.0)(typescript@5.9.3)(viem@2.57.19)
       typescript: 5.9.3
     transitivePeerDependencies:
       - bufferutil
@@ -5994,6 +5998,6 @@ snapshots:
 
   yoga-layout@3.2.1: {}
 
-  zod@3.25.76: {}
-
   zod@4.4.3: {}
+
+  zod@4.6.7: {}

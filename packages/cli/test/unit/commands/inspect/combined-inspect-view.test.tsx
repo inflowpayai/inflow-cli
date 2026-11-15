@@ -1,6 +1,6 @@
 import { encode, type MppChallenge, renderChallengeHeader } from '@inflowpayai/mpp';
 import type { ServiceInspection } from '@inflowpayai/inflow-core';
-import { decodePaymentRequiredHeader, encodePaymentRequiredHeader } from '@x402/core/http';
+import { decodePaymentRequiredHeader, encodePaymentRequiredHeader } from '@inflowpayai/x402/http';
 import { render } from 'ink-testing-library';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';

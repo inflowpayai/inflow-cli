@@ -1,7 +1,7 @@
 import { HEADERS, type PaymentRequirements, readHeader } from '@inflowpayai/x402';
 import { fromFoundationRequirements } from '@inflowpayai/x402-buyer';
-import { decodePaymentRequiredHeader } from '@x402/core/http';
-import type { PaymentRequired } from '@x402/core/types';
+import { decodePaymentRequiredHeader } from '@inflowpayai/x402/http';
+import type { PaymentRequired } from '@inflowpayai/x402/http';
 import { sellerProbe, type SellerProbeOptions, type SellerProbeResult } from '@inflowpayai/x402-buyer/probe';
 import { PaymentInspectionBlockedError, type PaymentInspectionBlocked } from './payment-fetch.js';
 import { inspectionError } from './api-error.js';

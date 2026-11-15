@@ -175,8 +175,11 @@ export function runMppFetch(input: MppFetchInput): MppFetchRun {
     let replay: PaymentReplayResult | undefined;
     try {
       let instrument = false;
+      let paymentHeaderName: string = HEADERS.AUTHORIZATION;
       try {
-        const challenge = summarizeChallenge(decodeCredential(ready.credential).challenge);
+        const wireChallenge = decodeCredential(ready.credential).challenge;
+        paymentHeaderName = wireChallenge.header ?? HEADERS.AUTHORIZATION;
+        const challenge = summarizeChallenge(wireChallenge);
         instrument = challenge.method === 'inflow' && challenge.intent === 'charge' && challenge.rail === 'instrument';
       } catch {
         /* Opaque credentials are replayed without card continuation. */
@@ -187,7 +190,7 @@ export function runMppFetch(input: MppFetchInput): MppFetchRun {
           method: input.probeOptions.method,
           headers: input.probeOptions.headers,
           ...(input.probeOptions.data !== undefined ? { data: input.probeOptions.data } : {}),
-          paymentHeaderName: HEADERS.AUTHORIZATION,
+          paymentHeaderName,
           paymentHeaderValue: `${SCHEME_PAYMENT} ${ready.credential}`,
           showBody: input.showBody,
           ...(input.outputFile !== undefined ? { outputFile: input.outputFile } : {}),
