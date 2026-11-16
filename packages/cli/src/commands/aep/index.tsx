@@ -417,7 +417,7 @@ function commandError(error: unknown, context?: RequirementErrorContext): ErrorO
   }
   if (error instanceof SecureStorageError) {
     const vaultCode =
-      error.secureStorageCode === 'vault_locked' || error.secureStorageCode === 'secure_storage_secret_missing'
+      error.secureStorageCode === 'vault_locked'
         ? 'VAULT_LOCKED'
         : error.secureStorageCode === 'vault_not_initialized'
           ? 'VAULT_NOT_INITIALIZED'

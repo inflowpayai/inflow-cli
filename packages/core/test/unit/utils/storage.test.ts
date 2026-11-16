@@ -56,6 +56,58 @@ class FaultInjectingSecretStore extends CountingSecretStore {
 }
 
 describe('Storage (file-backed)', () => {
+  it('preserves authentication when another client starts during each credential write', () => {
+    const secrets = new CountingSecretStore();
+    const options = { cwd: tmpDir, secretStore: secrets };
+    const writer = new Storage(options);
+    const create = secrets.create.bind(secrets);
+    vi.spyOn(secrets, 'create').mockImplementation((reference, value) => {
+      create(reference, value);
+      new Storage(options).getAuthSession();
+    });
+
+    writer.setAuth(sampleAuth);
+    const session = writer.getAuthSession();
+    expect(session).not.toBeNull();
+    writer.setAuth({ ...sampleAuth, access_token: 'refreshed' }, session?.id);
+
+    expect(writer.getAuth()?.access_token).toBe('refreshed');
+    expect(new Storage(options).getAuth()?.access_token).toBe('refreshed');
+    expect(new Storage(options).getAuth()?.refresh_token).toBe(sampleAuth.refresh_token);
+  });
+
+  it('preserves service credentials when another client starts during their write', () => {
+    const secrets = new CountingSecretStore();
+    const options = { cwd: tmpDir, secretStore: secrets };
+    const writer = new Storage(options);
+    const create = secrets.create.bind(secrets);
+    vi.spyOn(secrets, 'create').mockImplementation((reference, value) => {
+      create(reference, value);
+      new Storage(options).getAepState();
+    });
+    const state: AepPersistedState = {
+      version: 1,
+      owner: { platformOrigin: 'https://platform.test', userId: 'user-1' },
+      identities: {},
+      credentials: {
+        'did:web:service.test': {
+          credential: {
+            credential: { api_key: 'synthetic-key' },
+            credentialId: 'credential',
+            grantType: 'api-key',
+            issuedAt: '2026-01-01T00:00:00Z',
+            serviceDid: 'did:web:service.test',
+          },
+        },
+      },
+    };
+
+    writer.setAepState(state);
+
+    expect(new Storage(options).getAepState()).toEqual(state);
+    expect(secrets.deleted).toEqual([]);
+  });
+
   it.each(['null', '[]', '42', '"not a credential object"', '{broken'])(
     'rejects corrupt stored AEP credential JSON %s without altering metadata',
     (payload) => {

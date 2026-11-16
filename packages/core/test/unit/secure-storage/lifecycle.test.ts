@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   SecretReferenceManifest,
   MemorySecretStore,
@@ -80,8 +80,85 @@ describe('SecureSecretLifecycleCoordinator', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     repository.close();
     rmSync(tmpDir, { force: true, recursive: true });
+  });
+
+  it('skips concurrent asynchronous writers and deleters across repository connections', async () => {
+    const secondRepository = new SecureSqliteRepository({ rootDir: tmpDir });
+    secondRepository.initialize();
+    const recovery = new SecureSecretLifecycleCoordinator(secondRepository, store, manifest);
+    const reference = { purpose: 'api-key', reference: 'live-writer' };
+    const add = manifest.add.bind(manifest);
+    vi.spyOn(manifest, 'add').mockImplementation(async (item) => {
+      await recovery.recoverInterruptedWork();
+      expect(Buffer.from(await store.read(item)).toString()).toBe('secret');
+      await add(item);
+    });
+    const remove = manifest.remove.bind(manifest);
+    vi.spyOn(manifest, 'remove').mockImplementation(async (item) => {
+      await recovery.recoverInterruptedWork();
+      expect(repository.listSecretLifecycle('deleting')).toEqual([item]);
+      await remove(item);
+    });
+    try {
+      await coordinator.create(reference, Buffer.from('secret'), null);
+      expect(repository.listSecretLifecycle('active')).toEqual([reference]);
+      await coordinator.delete(reference);
+      expect(repository.listSecretLifecycle('deleting')).toEqual([]);
+    } finally {
+      secondRepository.close();
+    }
+  });
+
+  it('lets only one recovery own an abandoned operation', async () => {
+    const reference = { purpose: 'api-key', reference: 'recover-once' };
+    repository.beginSecretLifecycle(reference, null);
+    repository.releaseSecretLifecycle(reference);
+    await store.create(reference, Buffer.from('secret'));
+    const secondRepository = new SecureSqliteRepository({ rootDir: tmpDir });
+    secondRepository.initialize();
+    const recovery = new SecureSecretLifecycleCoordinator(secondRepository, store, manifest);
+    const remove = store.delete.bind(store);
+    const deleting = vi.spyOn(store, 'delete').mockImplementation(async (item) => {
+      if (item.reference === reference.reference) await recovery.recoverInterruptedWork();
+      await remove(item);
+    });
+    try {
+      await coordinator.recoverInterruptedWork();
+      expect(deleting.mock.calls.filter(([item]) => item.reference === reference.reference)).toHaveLength(1);
+      expect(repository.listSecretLifecycle('pending')).toEqual([]);
+    } finally {
+      secondRepository.close();
+    }
+  });
+
+  it('preserves two simultaneous writes during recovery', async () => {
+    const secondRepository = new SecureSqliteRepository({ rootDir: tmpDir });
+    secondRepository.initialize();
+    const references = [
+      { purpose: 'api-key', reference: 'concurrent-a' },
+      { purpose: 'api-key', reference: 'concurrent-b' },
+    ];
+    const add = vi.spyOn(manifest, 'add').mockImplementation(async () => {
+      await coordinator.recoverInterruptedWork();
+    });
+    const second = new SecureSecretLifecycleCoordinator(secondRepository, store, manifest);
+    try {
+      await Promise.all(
+        references.map((reference, index) =>
+          (index === 0 ? coordinator : second).create(reference, Buffer.from(reference.reference), null),
+        ),
+      );
+      expect(add).toHaveBeenCalledTimes(2);
+      expect(repository.listSecretLifecycle('active')).toEqual(references);
+      for (const reference of references) {
+        expect(Buffer.from(await store.read(reference)).toString()).toBe(reference.reference);
+      }
+    } finally {
+      secondRepository.close();
+    }
   });
 
   it('creates a secret item, manifest reference, and active lifecycle row in one serialized operation', async () => {
@@ -115,7 +192,10 @@ describe('SecureSecretLifecycleCoordinator', () => {
     await manifest.add(deleting);
     repository.beginSecretLifecycle(pending, null);
     repository.beginSecretLifecycle(deleting, null);
+    repository.releaseSecretLifecycle(pending);
+    repository.releaseSecretLifecycle(deleting);
     repository.markSecretDeleting(deleting);
+    repository.releaseSecretLifecycle(deleting);
 
     await coordinator.recoverInterruptedWork();
 
@@ -131,7 +211,10 @@ describe('SecureSecretLifecycleCoordinator', () => {
     const deleting = { purpose: 'refresh-token', reference: 'missing-deleting' };
     repository.beginSecretLifecycle(pending, null);
     repository.beginSecretLifecycle(deleting, null);
+    repository.releaseSecretLifecycle(pending);
+    repository.releaseSecretLifecycle(deleting);
     repository.markSecretDeleting(deleting);
+    repository.releaseSecretLifecycle(deleting);
 
     await coordinator.recoverInterruptedWork();
 
@@ -153,6 +236,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
   it('preserves interrupted work when the asynchronous secret store is temporarily unavailable', async () => {
     const pending = { purpose: 'api-key', reference: 'locked-pending' };
     repository.beginSecretLifecycle(pending, null);
+    repository.releaseSecretLifecycle(pending);
     const lockedStore = new LockedSecretStore();
     const lockedCoordinator = new SecureSecretLifecycleCoordinator(
       repository,
@@ -226,7 +310,10 @@ describe('SecureSecretLifecycleCoordinator', () => {
     syncManifest.add(pending);
     repository.beginSecretLifecycle(pending, null);
     repository.beginSecretLifecycle(deleting, null);
+    repository.releaseSecretLifecycle(pending);
+    repository.releaseSecretLifecycle(deleting);
     repository.markSecretDeleting(deleting);
+    repository.releaseSecretLifecycle(deleting);
 
     syncCoordinator.recoverInterruptedWork();
 
@@ -252,6 +339,7 @@ describe('SecureSecretLifecycleCoordinator', () => {
   it('preserves interrupted work when the synchronous secret store is temporarily unavailable', () => {
     const pending = { purpose: 'api-key', reference: 'sync-locked-pending' };
     repository.beginSecretLifecycle(pending, null);
+    repository.releaseSecretLifecycle(pending);
     const lockedStore = new LockedSyncSecretStore();
     const lockedCoordinator = new SyncSecureSecretLifecycleCoordinator(
       repository,

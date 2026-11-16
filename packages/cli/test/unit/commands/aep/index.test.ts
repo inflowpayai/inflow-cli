@@ -1339,10 +1339,12 @@ describe('aep commands', () => {
       message: 'The Service returned an invalid AEP Grant response.',
     });
     expect(
-      __testing.commandError(new SecureStorageError('secure_storage_secret_missing', 'The InFlow vault is locked.')),
+      __testing.commandError(
+        new SecureStorageError('secure_storage_secret_missing', 'A referenced vault secret is missing.'),
+      ),
     ).toEqual({
-      code: 'VAULT_LOCKED',
-      message: 'The InFlow vault is locked.',
+      code: 'secure_storage_secret_missing',
+      message: 'A referenced vault secret is missing.',
     });
     expect(
       __testing.commandError(new SecureStorageError('vault_not_initialized', 'The InFlow vault is not initialized.')),

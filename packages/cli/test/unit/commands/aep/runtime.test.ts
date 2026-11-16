@@ -1924,7 +1924,7 @@ describe('CLI AEP approval resolver', () => {
 describe('CLI AEP persisted stores', () => {
   it.each([
     ['vault_not_initialized', 'VAULT_NOT_INITIALIZED'],
-    ['secure_storage_secret_missing', 'VAULT_LOCKED'],
+    ['secure_storage_secret_missing', 'secure_storage_secret_missing'],
     ['vault_locked', 'VAULT_LOCKED'],
     ['secure_storage_unavailable', 'secure_storage_unavailable'],
   ] as const)('preserves actionable storage errors: %s', (storageCode, code) => {
