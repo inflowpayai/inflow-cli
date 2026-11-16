@@ -137,8 +137,12 @@ An InFlow login is required before enrollment or an operation that needs the use
 
 ```bash
 inflow auth status --format json
-inflow auth login --client-name '<agent-name>' --interval 5 --timeout 300 --format json
 ```
+
+If the user is not authenticated, ask them to run `inflow auth login` themselves in a terminal and follow the login URL
+and phrase to approve access in their browser. Wait for them to finish, then confirm with `inflow auth status --format json`
+before proceeding. If the vault is uninitialized or locked, first ask the user to run `inflow vault unlock` themselves
+in a terminal. Never ask for or accept their vault PIN or passphrase.
 
 Enroll with a Service:
 

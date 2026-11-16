@@ -42,7 +42,6 @@ InFlow runs as a **standalone CLI** or an **MCP server**.
 - Default output is `toon`. Override with `--format <fmt>`; for programmatic parsing prefer `json` (single document) or `jsonl` (line-delimited).
 - Deferred payments return `_next.tool` and `_next.input` for the InFlow MCP server. For shell use, prefix `_next.command` with `inflow` when supplied. If `requires_original_request_options` is true, restore the original `data` and `header` arguments before calling Fetch; they are deliberately omitted from the response.
 - `--auth <path>` identifies a legacy plaintext credential file for deletion; it is not a credential backend.
-- `--api-key <key>` or `INFLOW_API_KEY=<key>` is an alternative to device-flow auth.
 
 ## Authenticate
 
@@ -58,29 +57,20 @@ Check the current state first - the user may already be logged in:
 inflow auth status
 ```
 
-A successful `auth status` returns `authenticated: true` plus `auth_method` (`device_token` or `api_key`), a truncated `access_token` preview (never the full token), `credentials_path`, `connection`, and possibly an `update` field. Run the command to see the full shape.
+A successful `auth status` returns `authenticated: true`. Run the command to see the full response.
 
 If the response includes an `update` field, a newer version of `inflow` is published.
 
 **Surface and defer.** Tell the user a newer version is available and share the install instructions at https://inflowcli.ai/. Then **proceed with the current version**. Only block on the upgrade if a subsequent command fails with `VERSION_UNSUPPORTED` (or an HTTP 426 from the API), at which point the upgrade is mandatory and you should not retry until it lands.
 
-If `authenticated` is `false`, start the device flow:
+If `authenticated` is `false`, ask the user to run this command themselves in a terminal:
 
 ```bash
-inflow auth login --client-name "<your-agent-name>"
+inflow auth login
 ```
 
-Replace `<your-agent-name>` with the name of your agent or application (for example `"Personal Assistant"`, `"Shopping Bot"`). The device-authorization page in the user's browser displays this name when they approve the connection. Use a clear, unique, identifiable name.
-
-The response includes a `verification_url` (present this to the user), a `phrase`, and a `_next.command`. Run that command immediately to poll until authenticated. **Do not wait for the user to respond before starting the poll.**
-
-If your environment can't relay the verification phrase to the user while a separate polling command blocks I/O, use inline polling instead:
-
-```bash
-inflow auth login --client-name "<name>" --interval 5 --timeout 300
-```
-
-**API key alternative:** if the user provides an API key, set `INFLOW_API_KEY=<key>` in the environment (or pass `--api-key <key>` to any command) instead of running `auth login`. The API key takes precedence over a saved device token.
+The user follows the login URL and phrase shown by the CLI to approve access in their browser. Wait for them to finish,
+then confirm with `inflow auth status` before starting a payment.
 
 If `auth status` returns `VAULT_LOCKED`, authentication status is unavailable rather than unauthenticated. Tell the user
 to run `inflow vault unlock` themselves in a terminal, then retry `auth status`.
@@ -464,13 +454,13 @@ These apply to both protocols (in addition to each section's protocol-specific c
 | Error code | Recovery | What to tell the user |
 | --- | --- | --- |
 | `VAULT_LOCKED` | Stored authentication status is unavailable. Ask the user to run `inflow vault unlock` themselves in a terminal, then retry. | "Your InFlow vault is locked. Please unlock it in your terminal, then I can check authentication again." |
-| `NOT_AUTHENTICATED` | No saved device token and no `--api-key` / `INFLOW_API_KEY` configured. Run `inflow auth login` or set the API key env var. | - |
+| `NOT_AUTHENTICATED` | Ask the user to run `inflow auth login` in their terminal, then check `inflow auth status` before continuing. | - |
 | `NO_INFLOW_MATCH` | No supported match. Compare the seller's offers with `supported`; do not prescribe a wallet deposit for a card offer. | Explain which advertised payment method cannot be used. |
 | `NO_FILTERED_MATCH` | A `pay` filter emptied the candidate list. Loosen the filter (flags per the delta table), or re-check the seller's unfiltered options with `inflow inspect <url>`. | "Your filter removed every option the seller accepts. Loosen it or re-check the seller's options with `inflow inspect`." |
 | `INVALID_402` / `DECODE_FAILED` | Seller returned 402 but the protocol's header was missing (`INVALID_402`) or unparseable (`DECODE_FAILED`). Verify the URL is payable; pass the raw header to `inflow <mpp|x402> decode` for the detailed parse error. | - |
 | `POLLING_TIMEOUT` | `--interval` polling reached its max-attempts or timeout. Retryable - resume with `inflow <mpp|x402> fetch <transaction_id> <url> --interval 5 --max-attempts 180`. | "Still waiting on your approval - want me to keep polling, or cancel the request? (`inflow <mpp|x402> cancel <approval_id>` cancels it.)" |
 | `PAYMENT_REPLAY_OUTCOME_UNKNOWN` | A credential-bearing seller request had an indeterminate transport failure. Do not automatically replay. | "The seller request may have received the payment credential, but the connection failed before we got a reliable response. I won't retry automatically because the credential may be consumed." |
-| `api_error` | Non-2xx from the InFlow API on the plain data calls (`balances`, `deposit-addresses`); discriminate on `httpStatus`. `401` - saved auth rejected, re-run `inflow auth login`. `426` (`VERSION_UNSUPPORTED`) - upgrade and retry. `5xx` - server-side; wait and retry. (Note: `pay`/`status` rejections instead surface the server's own code, e.g. `INSUFFICIENT_FUNDS`, or the protocol's terminal code - not `api_error`.) | - |
+| `api_error` | Non-2xx from the InFlow API on the plain data calls (`balances`, `deposit-addresses`); discriminate on `httpStatus`. `401` - saved auth rejected; ask the user to run `inflow auth login` in their terminal. `426` (`VERSION_UNSUPPORTED`) - upgrade and retry. `5xx` - server-side; wait and retry. (Note: `pay`/`status` rejections instead surface the server's own code, e.g. `INSUFFICIENT_FUNDS`, or the protocol's terminal code - not `api_error`.) | - |
 | `VERSION_UNSUPPORTED` / HTTP 426 | Installed `inflow` CLI is below the minimum supported version. Install the current release from https://inflowcli.ai/, then retry; don't retry on the old version. | - |
 | `transport_error` | Network failure - check connectivity; retry. | - |
 

@@ -7,6 +7,11 @@ You are an AI agent whose user asked to get set up with InFlow. Follow these ste
 
 ## 1. Install
 
+Run `inflow --version` to check whether InFlow is installed. If it is available, continue to authentication. Otherwise,
+explain which installer you will run and ask the user for permission before running it. Installation may require the
+user to approve an operating-system prompt or enter an administrator password directly. Never ask the user to send you a
+password.
+
 macOS or Linux:
 
 ```bash
@@ -42,23 +47,23 @@ inflow auth status
 If the response includes an `update` field, tell the user a newer version is available and share the install
 instructions at https://inflowcli.ai/, then proceed with the current version.
 
-If `authenticated` is `false`, start the OAuth device flow:
+If the vault is locked, ask the user to run this command themselves in a terminal:
 
 ```bash
-inflow auth login --client-name "<your-agent-name>"
+inflow vault unlock
 ```
 
-Replace `<your-agent-name>` with a clear, unique, identifiable name for your agent - the user sees it on the approval
-page in their browser. The response includes a `verification_url` (present it to the user), a `phrase`, and a
-`_next.command` - run that command immediately to poll until authenticated; do not wait for the user to respond before
-starting the poll. If your environment can't relay the phrase while a polling command blocks I/O, use inline polling
-instead:
+On first use, the user creates a vault PIN or passphrase; otherwise, they enter their existing one. Never ask for,
+accept, or enter their vault secret. Wait for the user to finish, then check `inflow auth status` again.
+
+If the user is not authenticated, ask them to run this command themselves in a terminal:
 
 ```bash
-inflow auth login --client-name "<name>" --interval 5 --timeout 300
+inflow auth login
 ```
 
-Confirm with `inflow auth status` before proceeding.
+The user follows the login URL and phrase shown by the CLI to approve access in their browser. Wait for them to finish,
+then confirm with `inflow auth status` before proceeding.
 
 ## 3. Load the playbook for your task
 
