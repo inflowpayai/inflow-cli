@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import {
   chmodSync,
   existsSync,
@@ -12,7 +14,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __testing, SecureSqliteRepository } from '../../../src/secure-storage/sqlite.js';
 
 type SqliteTestValue = Uint8Array | bigint | number | string | null;
@@ -81,8 +83,147 @@ describe('SecureSqliteRepository', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     repository.close();
     rmSync(tmpDir, { force: true, recursive: true });
+  });
+
+  it.each(['pending', 'deleting'] as const)('recovers %s work only after its writer process exits', async (state) => {
+    const source = `
+      import { registerHooks } from 'node:module';
+      registerHooks({ resolve(specifier, context, nextResolve) {
+        try { return nextResolve(specifier, context); }
+        catch (error) {
+          if (error.code !== 'ERR_MODULE_NOT_FOUND' || !specifier.endsWith('.js')) throw error;
+          return nextResolve(specifier.slice(0, -3) + '.ts', context);
+        }
+      }});
+      const { SecureSqliteRepository } = await import(${JSON.stringify(new URL('../../../src/secure-storage/sqlite.ts', import.meta.url).href)});
+      const repository = new SecureSqliteRepository({ rootDir: process.argv[1] });
+      repository.initialize();
+      const reference = { purpose: 'api-key', reference: 'child-write' };
+      repository.beginSecretLifecycle(reference, null);
+      if (process.argv[2] === 'deleting') {
+        repository.markSecretActive(reference);
+        repository.markSecretDeleting(reference);
+      }
+      process.send('ready');
+      setInterval(() => {}, 1000);
+    `;
+    const child = spawn(
+      process.execPath,
+      ['--experimental-transform-types', '--input-type=module', '-e', source, tmpDir, state],
+      {
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      },
+    );
+    let stderr = '';
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    const exit = once(child, 'exit');
+    try {
+      const ready = await Promise.race([
+        once(child, 'message'),
+        exit.then(() => {
+          throw new Error(stderr);
+        }),
+      ]);
+      expect(ready[0]).toBe('ready');
+      expect(repository.listSecretLifecycle(state)).toEqual([{ purpose: 'api-key', reference: 'child-write' }]);
+      expect(repository.claimInterruptedSecretLifecycle()).toBeUndefined();
+      child.kill('SIGKILL');
+      await exit;
+      expect(repository.claimInterruptedSecretLifecycle()).toEqual({ purpose: 'api-key', reference: 'child-write' });
+      expect(repository.claimInterruptedSecretLifecycle()).toBeUndefined();
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await exit;
+    }
+  });
+
+  it('preserves live owners on permission errors and releases failed work for another connection', () => {
+    const reference = { purpose: 'api-key', reference: 'owner' };
+    repository.beginSecretLifecycle(reference, null);
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('access denied'), { code: 'EPERM' });
+    });
+    expect(repository.claimInterruptedSecretLifecycle()).toBeUndefined();
+    expect(() => repository.markSecretDeleting(reference)).toThrow('operation is in progress');
+    expect(() => repository.beginSecretLifecycle(reference, null)).toThrow('reference already exists');
+    kill.mockRestore();
+    repository.releaseSecretLifecycle(reference);
+    const other = new SecureSqliteRepository({ rootDir: tmpDir });
+    other.initialize();
+    try {
+      expect(other.claimInterruptedSecretLifecycle()).toEqual(reference);
+      expect(repository.claimInterruptedSecretLifecycle()).toBeUndefined();
+      other.deleteSecretLifecycle(reference);
+      other.releaseSecretLifecycle(reference);
+      expect(() => repository.markSecretActive(reference)).toThrow('lost ownership');
+    } finally {
+      other.close();
+    }
+  });
+
+  it('recovers version-one lifecycle records without altering their application metadata', () => {
+    const raw = new (process.getBuiltinModule('node:sqlite').DatabaseSync)(join(tmpDir, 'inflow.sqlite3'));
+    try {
+      raw
+        .prepare("INSERT INTO secret_lifecycle VALUES (?, ?, NULL, 'pending', 1, ?)")
+        .run('api-key', 'legacy', Buffer.from(JSON.stringify({ setting: 'auth.api_key' })));
+      expect(repository.claimInterruptedSecretLifecycle()).toEqual({ purpose: 'api-key', reference: 'legacy' });
+      const row = raw.prepare('SELECT payload FROM secret_lifecycle').get();
+      const payload = row?.['payload'];
+      if (!(payload instanceof Uint8Array)) throw new Error('Missing lifecycle payload');
+      expect(JSON.parse(Buffer.from(payload).toString())).toEqual({
+        ownerPid: process.pid,
+        value: { setting: 'auth.api_key' },
+      });
+    } finally {
+      raw.close();
+    }
+  });
+
+  it.each([
+    [2, null],
+    [2, {}],
+    [2, { ownerPid: 0, value: {} }],
+    [2, { ownerPid: '123', value: {} }],
+    [2, { ownerPid: -1, value: {} }],
+    [2, { ownerPid: 1.5, value: {} }],
+    [2, { ownerPid: null }],
+    [3, { ownerPid: null, value: {} }],
+  ])('refuses recovery with malformed ownership metadata (%s, %j)', (version, payload) => {
+    const raw = new (process.getBuiltinModule('node:sqlite').DatabaseSync)(join(tmpDir, 'inflow.sqlite3'));
+    try {
+      raw
+        .prepare("INSERT INTO secret_lifecycle VALUES (?, ?, NULL, 'pending', ?, ?)")
+        .run('api-key', 'malformed', Number(version), Buffer.from(JSON.stringify(payload)));
+      expect(() => repository.claimInterruptedSecretLifecycle()).toThrow('ownership is malformed');
+      expect(repository.listSecretLifecycle('pending')).toHaveLength(1);
+    } finally {
+      raw.close();
+    }
+  });
+
+  it('does not activate or release work owned by another process', () => {
+    const raw = new (process.getBuiltinModule('node:sqlite').DatabaseSync)(join(tmpDir, 'inflow.sqlite3'));
+    const reference = { purpose: 'api-key', reference: 'foreign-owner' };
+    try {
+      raw
+        .prepare("INSERT INTO secret_lifecycle VALUES (?, ?, NULL, 'pending', 2, ?)")
+        .run(
+          reference.purpose,
+          reference.reference,
+          Buffer.from(JSON.stringify({ ownerPid: process.ppid, value: {} })),
+        );
+      repository.releaseSecretLifecycle(reference);
+      expect(() => repository.markSecretActive(reference)).toThrow('lost ownership');
+      expect(repository.claimInterruptedSecretLifecycle()).toBeUndefined();
+    } finally {
+      raw.close();
+    }
   });
 
   it('initializes the durable schema and validates database permissions', async () => {

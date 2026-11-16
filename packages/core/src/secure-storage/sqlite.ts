@@ -39,6 +39,41 @@ interface SQLiteModule {
 
 export type SecretLifecycleState = 'active' | 'deleting' | 'pending';
 
+interface SecretLifecyclePayload {
+  ownerPid: number | null;
+  value: unknown;
+}
+
+function lifecyclePayload(row: SQLiteRow): SecretLifecyclePayload {
+  const value = parsePayload(valueColumn(row, 'payload'));
+  if (numberColumn(row, 'payload_version') === 1) return { ownerPid: null, value };
+  if (
+    numberColumn(row, 'payload_version') !== 2 ||
+    typeof value !== 'object' ||
+    value === null ||
+    !('ownerPid' in value) ||
+    !(
+      value.ownerPid === null ||
+      (typeof value.ownerPid === 'number' && Number.isSafeInteger(value.ownerPid) && value.ownerPid > 0)
+    ) ||
+    !('value' in value)
+  ) {
+    throw new SecureStorageError('secure_storage_corrupt', 'Secret lifecycle ownership is malformed.');
+  }
+  return { ownerPid: value.ownerPid, value: value.value };
+}
+
+function ownerIsRunning(ownerPid: number | null): boolean {
+  if (ownerPid === null) return false;
+  try {
+    process.kill(ownerPid, 0);
+    return true;
+  } catch (cause) {
+    // Permission errors and uncertain process status must not authorize secret deletion.
+    return !(cause instanceof Error && 'code' in cause && cause.code === 'ESRCH');
+  }
+}
+
 export interface SecureSqliteRepositoryOptions {
   databasePath?: string;
   loadSqlite?: () => SQLiteModule;
@@ -517,27 +552,80 @@ export class SecureSqliteRepository {
 
   beginSecretLifecycle(reference: SecretReference, principalId: number | null, payload: unknown = {}): void {
     this.transaction(() => {
+      if (this.secretLifecycleRow(reference) !== undefined) {
+        throw new SecureStorageError(
+          'secure_storage_secret_conflict',
+          'The secret lifecycle reference already exists.',
+        );
+      }
       this.db()
         .prepare(
           `INSERT INTO secret_lifecycle (
              secret_purpose, secret_reference, principal_id, state, payload_version, payload
-           ) VALUES (?, ?, ?, 'pending', 1, ?)
-           ON CONFLICT(secret_purpose, secret_reference) DO UPDATE SET
-             principal_id = excluded.principal_id,
-             state = 'pending',
-             payload_version = excluded.payload_version,
-             payload = excluded.payload`,
+           ) VALUES (?, ?, ?, 'pending', 2, ?)`,
         )
-        .run(reference.purpose, reference.reference, principalId, jsonBytes(payload));
+        .run(reference.purpose, reference.reference, principalId, jsonBytes({ ownerPid: process.pid, value: payload }));
     });
   }
 
   markSecretActive(reference: SecretReference): void {
-    this.updateSecretState(reference, 'active');
+    this.transaction(() => {
+      const row = this.secretLifecycleRow(reference);
+      if (row === undefined || lifecyclePayload(row).ownerPid !== process.pid) {
+        throw new SecureStorageError(
+          'secure_storage_secret_conflict',
+          'The secret lifecycle operation lost ownership.',
+        );
+      }
+      this.updateSecretState(reference, 'active');
+      this.releaseSecretLifecycle(reference);
+    });
   }
 
   markSecretDeleting(reference: SecretReference): void {
-    this.updateSecretState(reference, 'deleting');
+    this.transaction(() => {
+      const row = this.secretLifecycleRow(reference);
+      if (row === undefined) return;
+      const payload = lifecyclePayload(row);
+      if (ownerIsRunning(payload.ownerPid)) {
+        throw new SecureStorageError(
+          'secure_storage_secret_conflict',
+          'The secret lifecycle operation is in progress.',
+        );
+      }
+      this.setSecretLifecycleOwner(reference, payload, process.pid);
+      this.updateSecretState(reference, 'deleting');
+    });
+  }
+
+  releaseSecretLifecycle(reference: SecretReference): void {
+    this.transaction(() => {
+      const row = this.secretLifecycleRow(reference);
+      if (row === undefined) return;
+      const payload = lifecyclePayload(row);
+      if (payload.ownerPid === process.pid) this.setSecretLifecycleOwner(reference, payload, null);
+    });
+  }
+
+  claimInterruptedSecretLifecycle(): SecretReference | undefined {
+    return this.transaction(() => {
+      const rows = this.db()
+        .prepare(
+          "SELECT * FROM secret_lifecycle WHERE state IN ('pending', 'deleting') ORDER BY secret_purpose, secret_reference",
+        )
+        .all();
+      for (const row of rows) {
+        const payload = lifecyclePayload(row);
+        if (ownerIsRunning(payload.ownerPid)) continue;
+        const reference = {
+          purpose: stringColumn(row, 'secret_purpose'),
+          reference: stringColumn(row, 'secret_reference'),
+        };
+        this.setSecretLifecycleOwner(reference, payload, process.pid);
+        return reference;
+      }
+      return undefined;
+    });
   }
 
   deleteSecretLifecycle(reference: SecretReference): void {
@@ -698,6 +786,26 @@ export class SecureSqliteRepository {
         .prepare('UPDATE secret_lifecycle SET state = ? WHERE secret_purpose = ? AND secret_reference = ?')
         .run(state, reference.purpose, reference.reference);
     });
+  }
+
+  private secretLifecycleRow(reference: SecretReference): SQLiteRow | undefined {
+    return this.db()
+      .prepare(
+        'SELECT payload_version, payload FROM secret_lifecycle WHERE secret_purpose = ? AND secret_reference = ?',
+      )
+      .get(reference.purpose, reference.reference);
+  }
+
+  private setSecretLifecycleOwner(
+    reference: SecretReference,
+    payload: SecretLifecyclePayload,
+    ownerPid: number | null,
+  ): void {
+    this.db()
+      .prepare(
+        'UPDATE secret_lifecycle SET payload_version = 2, payload = ? WHERE secret_purpose = ? AND secret_reference = ?',
+      )
+      .run(jsonBytes({ ...payload, ownerPid }), reference.purpose, reference.reference);
   }
 
   private vaultRecordFromRow(row: SQLiteRow): StoredVaultRecord {

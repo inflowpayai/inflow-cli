@@ -617,7 +617,7 @@ export function mapAepRuntimeError(error: unknown): { code: string; message: str
   }
   if (error instanceof SecureStorageError) {
     const code =
-      error.secureStorageCode === 'vault_locked' || error.secureStorageCode === 'secure_storage_secret_missing'
+      error.secureStorageCode === 'vault_locked'
         ? 'VAULT_LOCKED'
         : error.secureStorageCode === 'vault_not_initialized'
           ? 'VAULT_NOT_INITIALIZED'
