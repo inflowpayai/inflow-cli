@@ -34,18 +34,19 @@ describe('MppChallengePresentation', () => {
     view.unmount();
   });
 
-  it('identifies CARD amounts as cents, including when the amount is missing', () => {
+  it('renders normalized CARD dollar summaries and missing amounts without unit conversion', () => {
     const result = render(
       <MppChallengePresentation
         challenges={[
-          { id: 'card', realm: 'seller.test', method: 'card', intent: 'charge', amount: '100', currency: 'usd' },
-          { id: 'missing', realm: 'seller.test', method: 'card', intent: 'charge', currency: 'usd' },
+          { id: 'card', realm: 'seller.test', method: 'card', intent: 'charge', amount: '1.00', currency: 'USD' },
+          { id: 'missing', realm: 'seller.test', method: 'card', intent: 'charge', currency: 'USD' },
           { id: 'unsupported', realm: 'seller.test', method: 'card', intent: 'charge', amount: '500', currency: 'jpy' },
         ]}
       />,
     );
-    expect(result.lastFrame()).toContain('100 cents');
-    expect(result.lastFrame()).not.toContain('500 cents');
+    expect(result.lastFrame()).toContain('1.00');
+    expect(result.lastFrame()).toContain('USD');
+    expect(result.lastFrame()).not.toContain('cents');
     expect(result.lastFrame()).toContain('—');
     result.unmount();
   });

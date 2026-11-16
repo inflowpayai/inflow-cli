@@ -70,6 +70,20 @@ describe('filterPayableChallenges', () => {
 });
 
 describe('filterChallenges', () => {
+  it.each(['USD', 'usd'])('matches CARD currency %s without changing the challenge', (currency) => {
+    const card = Object.freeze(decodableChallenge({ method: 'card', currency: 'usd' }));
+    const request = card.request;
+    expect(filterChallenges([card], { currency })).toEqual([card]);
+    expect(card.request).toBe(request);
+    expect(buildNoFilteredMatchMessage([card], { currency: 'EUR' })).toContain('currency=USD');
+  });
+
+  it('does not case-fold token addresses or infer an instrument rail for CARD', () => {
+    const tempo = decodableChallenge({ method: 'tempo', currency: '0xAbCd' });
+    const card = decodableChallenge({ method: 'card', currency: 'usd', rail: 'instrument' });
+    expect(filterChallenges([tempo], { currency: '0xabcd' })).toEqual([]);
+    expect(filterChallenges([card], { rail: 'instrument' })).toEqual([]);
+  });
   it('returns the input unchanged when no filter is set', () => {
     expect(filterChallenges(sample, {})).toEqual(sample);
   });

@@ -295,6 +295,31 @@ describe('CombinedInspectView', () => {
     }
   });
 
+  it('renders CARD dollars from its minor-unit wire challenge', async () => {
+    const card = renderChallengeHeader({
+      id: 'card-price',
+      realm: 'mpp.test',
+      method: 'card',
+      intent: 'charge',
+      request: encode({ amount: '100', currency: 'usd' }),
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, {
+        status: 402,
+        headers: { 'WWW-Authenticate': card },
+      }),
+    );
+    const view = renderView();
+    try {
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('1.00'));
+      expect(view.lastFrame()).toContain('USD');
+      expect(view.lastFrame()).not.toContain('cents');
+      expect(view.lastFrame()).not.toContain('usd');
+    } finally {
+      view.unmount();
+    }
+  });
+
   it.each(['upto', 'GatewayWalletBatched'])('explains filtered %s offers while retaining MPP', async (unsupported) => {
     const document = decodePaymentRequiredHeader(x402Header());
     const header = encodePaymentRequiredHeader({

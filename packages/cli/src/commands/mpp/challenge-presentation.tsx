@@ -8,9 +8,7 @@ function orDash(value: string | undefined): string {
 }
 
 export function displayAmount(challenge: DecodedChallenge): string {
-  return challenge.method === 'card' && challenge.currency === 'usd' && challenge.amount !== undefined
-    ? `${challenge.amount} cents`
-    : orDash(challenge.amount);
+  return orDash(challenge.amount);
 }
 
 const CHALLENGE_COLUMNS: ReadonlyArray<TableColumn<DecodedChallenge>> = [

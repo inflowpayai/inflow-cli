@@ -85,11 +85,11 @@ importers:
         specifier: ^0.7.1
         version: 0.7.1
       '@inflowpayai/mpp':
-        specifier: ^0.13.0
-        version: 0.13.0(mppx@0.18.1)
+        specifier: ^0.13.1
+        version: 0.13.1(mppx@0.18.1)
       '@inflowpayai/mpp-buyer':
-        specifier: ^0.9.0
-        version: 0.9.0(mppx@0.18.1)
+        specifier: ^0.9.1
+        version: 0.9.1(mppx@0.18.1)
       '@inflowpayai/x402':
         specifier: ^0.13.0
         version: 0.13.0(@x402/core@2.31.0)
@@ -153,11 +153,11 @@ importers:
         specifier: ^0.7.1
         version: 0.7.1
       '@inflowpayai/mpp':
-        specifier: ^0.13.0
-        version: 0.13.0(mppx@0.18.1)
+        specifier: ^0.13.1
+        version: 0.13.1(mppx@0.18.1)
       '@inflowpayai/mpp-buyer':
-        specifier: ^0.9.0
-        version: 0.9.0(mppx@0.18.1)
+        specifier: ^0.9.1
+        version: 0.9.1(mppx@0.18.1)
       '@inflowpayai/x402':
         specifier: ^0.13.0
         version: 0.13.0(@x402/core@2.31.0)
@@ -840,8 +840,8 @@ packages:
   '@hyperjump/uri@1.3.9':
     resolution: {integrity: sha512-cxG5vyIdx3gUb/OQD/FDruQQcGNzF2aKTXWJ6LzlAC1kh97YZQSRsF3hL274xlTDJ1nWGJGRtknlW6ZpU3Ch+A==}
 
-  '@inflowpayai/mpp-buyer@0.9.0':
-    resolution: {integrity: sha512-sdPhWqzObini2fb2J0v52DClunMRd1loXfh06fUVjmKFDnraAXgw+3x7Yg1WMDao9TWyjgQ5jQ/UkGikdqKFkA==}
+  '@inflowpayai/mpp-buyer@0.9.1':
+    resolution: {integrity: sha512-RmwOFgq/BfWh9479lOykWn8ySazLXzwUuB9Tsy262HUMsqT1/CrX5kUcvpddVVuONkYem2l/9/Jr9znHEtqKNg==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': '>=1.25.0'
@@ -850,8 +850,8 @@ packages:
       '@modelcontextprotocol/sdk':
         optional: true
 
-  '@inflowpayai/mpp@0.13.0':
-    resolution: {integrity: sha512-a7FMTHBK4p5zykkgxSVxVCrDV0+geGvVcaqgTr7nsVlaOdGywyxdIgPGh+2XluTRb5aXXniLoOXZCVNWODgVNw==}
+  '@inflowpayai/mpp@0.13.1':
+    resolution: {integrity: sha512-FVNEIB4dnBTyyORY/F3+8DS8V2Ss9NuP2TcO3MjHZ//VbIZu95xOK73p0vKkEwTiKbQo52EabNawu1WqnBOgFA==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       mppx: ^0.18.1
@@ -3704,12 +3704,12 @@ snapshots:
 
   '@hyperjump/uri@1.3.9': {}
 
-  '@inflowpayai/mpp-buyer@0.9.0(mppx@0.18.1)':
+  '@inflowpayai/mpp-buyer@0.9.1(mppx@0.18.1)':
     dependencies:
-      '@inflowpayai/mpp': 0.13.0(mppx@0.18.1)
+      '@inflowpayai/mpp': 0.13.1(mppx@0.18.1)
       mppx: 0.18.1(@x402/core@2.31.0)(typescript@5.9.3)(viem@2.57.19)
 
-  '@inflowpayai/mpp@0.13.0(mppx@0.18.1)':
+  '@inflowpayai/mpp@0.13.1(mppx@0.18.1)':
     dependencies:
       mppx: 0.18.1(@x402/core@2.31.0)(typescript@5.9.3)(viem@2.57.19)
 

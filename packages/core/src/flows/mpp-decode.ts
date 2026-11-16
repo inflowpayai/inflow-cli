@@ -2,20 +2,18 @@ import {
   decode,
   decodeCredential,
   decodeReceipt,
-  type InflowChallengeRequest,
   type MppChallenge,
   type MppCredential,
   type MppReceipt,
   parseChallengeHeaders,
+  readMppPaymentAmount,
   subscriptionOptionFingerprint,
   subscriptionOptionFingerprints,
 } from '@inflowpayai/mpp';
 
 /**
- * Compact projection of an MPP challenge for display. The opaque base64url-JCS `request` blob is decoded into its
- * `amount` / `currency` / rail fields; the top-level auth-params (`id`, `realm`, `method`, `intent`, `expires`,
- * `description`, `digest`) are surfaced verbatim. Every method's `amount` and `currency` are surfaced exactly as the
- * seller put them on the wire — the CLI never translates token addresses or base units through a baked-in registry.
+ * Payment summary with CARD and Stripe USD amounts in dollars. Token amounts retain their advertised units. The
+ * original challenge is kept separately for payment and verification.
  */
 export interface DecodedChallenge {
   id: string;
@@ -39,16 +37,16 @@ export interface DecodedChallenge {
   optionFingerprint?: string;
 }
 
-/**
- * Decode a challenge's base64url-JCS `request` into its method request shape (typed against the `inflow` method's
- * `InflowChallengeRequest`; the codec is a permissive JSON decode, so a `tempo` request decodes through the same path
- * and exposes its `amount` / `currency` / `recipient` verbatim). Returns `undefined` when the blob is absent or not
- * decodable.
- */
-export function decodeChallengeRequest(challenge: MppChallenge): InflowChallengeRequest | undefined {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Decode raw method-specific fields without interpreting amounts or validating payment eligibility. */
+export function decodeChallengeRequest(challenge: MppChallenge): Record<string, unknown> | undefined {
   if (challenge.request === '') return undefined;
   try {
-    return decode<InflowChallengeRequest>(challenge.request, 'challenge request');
+    const request = decode<unknown>(challenge.request, 'challenge request');
+    return isRecord(request) ? request : undefined;
   } catch {
     return undefined;
   }
@@ -64,17 +62,19 @@ export function summarizeChallenge(challenge: MppChallenge): DecodedChallenge {
   };
   const request = decodeChallengeRequest(challenge);
   if (request !== undefined) {
-    out.amount = request.amount;
-    out.currency = request.currency;
-    if (request.recipient !== undefined) out.recipient = request.recipient;
-    if (request.methodDetails?.rail !== undefined) out.rail = request.methodDetails.rail;
-    if (request.methodDetails?.instrumentId !== undefined) out.instrumentId = request.methodDetails.instrumentId;
-    if ('periodCount' in request) out.periodCount = request.periodCount;
-    if ('periodUnit' in request) out.periodUnit = request.periodUnit;
-    if ('subscriptionExpires' in request) {
-      out.subscriptionExpires = request.subscriptionExpires;
+    Object.assign(out, readMppPaymentAmount(challenge.method, request));
+    if (typeof request['recipient'] === 'string') out.recipient = request['recipient'];
+    if (challenge.method === 'inflow') {
+      const details = request['methodDetails'];
+      if (isRecord(details)) {
+        if (typeof details['rail'] === 'string') out.rail = details['rail'];
+        if (typeof details['instrumentId'] === 'string') out.instrumentId = details['instrumentId'];
+      }
+      if (typeof request['periodCount'] === 'number') out.periodCount = request['periodCount'];
+      if (typeof request['periodUnit'] === 'string') out.periodUnit = request['periodUnit'];
+      if (typeof request['subscriptionExpires'] === 'string') out.subscriptionExpires = request['subscriptionExpires'];
     }
-    if ('externalId' in request) out.externalId = request.externalId;
+    if (typeof request['externalId'] === 'string') out.externalId = request['externalId'];
   }
   if (challenge.expires !== undefined) out.expires = challenge.expires;
   if (challenge.description !== undefined) out.description = challenge.description;

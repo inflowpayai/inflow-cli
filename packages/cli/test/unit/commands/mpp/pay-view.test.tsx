@@ -239,7 +239,7 @@ describe('PayView', () => {
     );
     try {
       await vi.waitFor(() => expect(view.lastFrame()).toContain('Fulfilling'));
-      expect(view.lastFrame()).toContain(method === 'card' ? '100 cents usd' : '—');
+      expect(view.lastFrame()).toContain(method === 'card' ? '1.00 USD' : '—');
       finishCreation?.();
       await vi.waitFor(() => expect(view.lastFrame()).toContain('Approval required'));
     } finally {
