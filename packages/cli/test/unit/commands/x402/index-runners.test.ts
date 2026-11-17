@@ -6,6 +6,7 @@ import { Inflow, InflowApiError, MemoryStorage, SecureStorageError } from '@infl
 import {
   X402AdapterRoutingError,
   X402ApprovalFailedError,
+  X402ApprovalTimeoutError,
   X402PaymentIdFormatError,
   type EncodedPayment,
   type InflowClient as X402InflowClient,
@@ -203,6 +204,37 @@ afterEach(() => {
 });
 
 describe('runPayCommand (agent mode)', () => {
+  it.each([204, 404, 503])('attempts cancellation after payment approval timeout: HTTP %s', async (status) => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = new Request(input).url;
+      if (url.endsWith('/cancel')) return Promise.resolve(new Response(null, { status }));
+      if (url.endsWith('/.well-known/aep')) return Promise.resolve(new Response(null, { status: 404 }));
+      return Promise.resolve(
+        new Response(null, {
+          status: 402,
+          headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(makePaymentRequired()) },
+        }),
+      );
+    });
+    const prepared = makePrepared(new X402ApprovalTimeoutError('appr_1', 1000));
+    const { inflow, storage } = authedResources(
+      makeClient({ prepareInflowPayment: vi.fn().mockResolvedValue(prepared) }),
+    );
+    const ctx = agentContextReturningError(
+      { url: 'https://seller/api' },
+      payOptions.parse({ interval: 1, timeout: 1 }),
+    );
+    const result = await drainWithReturn(runPayCommand(ctx, inflow, storage, inflow.resolvedApiBaseUrl));
+    expect(result.returnValue).toMatchObject({
+      code: 'APPROVAL_TIMEOUT',
+      message:
+        status === 204
+          ? 'The InFlow approval timed out and was cancelled.'
+          : 'The InFlow approval timed out. Cancellation could not be confirmed. Check the approval in InFlow.',
+    });
+    expect(fetch.mock.calls.filter(([input]) => new Request(input).url.endsWith('/cancel'))).toHaveLength(1);
+    expect(fetch.mock.calls.some(([, init]) => new Headers(init?.headers).has('PAYMENT-SIGNATURE'))).toBe(false);
+  });
   it.each(['USD Coin', 'Other token'])('filters payment assets before preparing a payment: %s', async (assetName) => {
     const required = makePaymentRequired();
     const candidate = required.accepts[0];
@@ -356,7 +388,7 @@ describe('runPayCommand (agent mode)', () => {
     expect(output).toContain('public content');
     expect(output).not.toContain('encoded_payload');
     expect(await execute(['cancel', 'appr_1'])).toContain('"cancelled": true');
-    expect(cancel).toHaveBeenCalledWith('appr_1');
+    expect(cancel).not.toHaveBeenCalled();
     expect(prepare).not.toHaveBeenCalled();
     expect(getX402Payload).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls.map(([input]) => new Request(input).url)).toEqual([
@@ -364,6 +396,7 @@ describe('runPayCommand (agent mode)', () => {
       'https://seller/api',
       'https://seller/api',
       'https://seller/api',
+      new URL('/v1/approvals/appr_1/cancel', inflow.resolvedApiBaseUrl).href,
     ]);
   });
 
@@ -1312,7 +1345,8 @@ describe('runStatusCommand (agent mode)', () => {
 });
 
 describe('runCancelCommand', () => {
-  it('returns the best-effort cancel envelope in agent mode', async () => {
+  it('confirms cancellation through the approval endpoint in agent mode', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
     const cancelApproval = vi.fn(() => Promise.resolve(undefined));
     const client = makeClient({ cancelApproval });
     const ctx = agentContextNoOptions({ approvalId: 'appr_1' });
@@ -1323,10 +1357,12 @@ describe('runCancelCommand', () => {
       cancelled: true,
       note: expect.any(String) as string,
     });
-    expect(cancelApproval).toHaveBeenCalledWith('appr_1');
+    expect(cancelApproval).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({ method: 'POST' }));
   });
 
   it('maps server 401 responses to NOT_AUTHENTICATED', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 401 }));
     const client = makeClient({
       cancelApproval: vi.fn(() => Promise.reject(new InflowApiError('Unauthorized', { status: 401 }))),
     });
@@ -1344,19 +1380,22 @@ describe('runCancelCommand', () => {
     });
     const ctx = agentContextReturningError({ approvalId: 'appr_1' }, {});
     const { inflow, storage } = authedResources(client);
+    vi.spyOn(inflow, 'platformAuthenticationHeaders').mockRejectedValue(
+      new SecureStorageError('vault_locked', 'The InFlow vault is locked.'),
+    );
     const result = await runCancelCommand(ctx, inflow, storage);
     expect(result).toMatchObject({ code: 'VAULT_LOCKED' });
   });
 
-  it('rethrows non-authentication failures', async () => {
+  it('reports cancellation failure without a success frame', async () => {
     const failure = new Error('cancel unavailable');
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(failure);
     const client = makeClient({
       cancelApproval: vi.fn(() => Promise.reject(failure)),
     });
     const ctx = agentContextReturningError({ approvalId: 'appr_1' }, {});
     const { inflow, storage } = authedResources(client);
-    await expect(runCancelCommand(ctx, inflow, storage)).rejects.toBe(failure);
-    expect(ctx.error).not.toHaveBeenCalled();
+    expect(await runCancelCommand(ctx, inflow, storage)).toMatchObject({ code: 'APPROVAL_CANCEL_FAILED' });
   });
 
   it('short-circuits via c.error when not authenticated', async () => {

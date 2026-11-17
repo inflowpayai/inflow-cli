@@ -1,4 +1,11 @@
 import { describe, expect, it } from 'vitest';
+
+it.each([0, -1, 901, Infinity])('rejects invalid payment approval timeout %s', (timeout) => {
+  expect(payOptions.safeParse({ timeout }).success).toBe(false);
+});
+it('accepts the maximum payment approval wait', () => {
+  expect(payOptions.parse({ timeout: 900 }).timeout).toBe(900);
+});
 import {
   decodeArgs,
   fetchArgs,

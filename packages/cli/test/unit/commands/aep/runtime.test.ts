@@ -1661,12 +1661,43 @@ describe('CLI AEP approval resolver', () => {
 
     expect(mapAepRuntimeError(caught)).toEqual({
       code: 'AEP_APPROVAL_TIMEOUT',
-      message: 'The InFlow approval timed out.',
+      message: 'The InFlow approval timed out and was cancelled.',
     });
   });
 
+  it.each([204, 404, 503])('reports automatic authentication timeout cancellation: HTTP %s', async (status) => {
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation((input) =>
+        Promise.resolve(
+          requestUrl(input).endsWith('/cancel') ? new Response(null, { status }) : Response.json({ status: 'PENDING' }),
+        ),
+      );
+    const options = createCliAepAgentOptions({
+      authStorage: new MemoryStorage(),
+      context: context(),
+      inflow: inflow(),
+      interval: 0.001,
+      timeout: 0.005,
+    });
+    const continueSign = vi.fn(() => Promise.resolve({ clientAssertion: 'jwt', status: 'completed' as const }));
+    const result = await Promise.resolve(options.pendingSignResolver?.(resolverInput(continueSign))).catch(
+      (error: unknown) => mapAepRuntimeError(error),
+    );
+    expect(result).toEqual({
+      code: 'AEP_APPROVAL_TIMEOUT',
+      message:
+        status === 204
+          ? 'The InFlow approval timed out and was cancelled.'
+          : 'The InFlow approval timed out. Cancellation could not be confirmed. Check the approval in InFlow.',
+    });
+    expect(continueSign).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.filter(([input]) => requestUrl(input).endsWith('/cancel'))).toHaveLength(1);
+  });
+
   it('aborts a stalled approval status request when the polling deadline expires', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (requestUrl(input).endsWith('/cancel')) return Promise.resolve(new Response(null, { status: 204 }));
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(new Error('request aborted')), { once: true });
       });
@@ -1690,7 +1721,7 @@ describe('CLI AEP approval resolver', () => {
 
     expect(mapAepRuntimeError(caught)).toEqual({
       code: 'AEP_APPROVAL_TIMEOUT',
-      message: 'The InFlow approval timed out.',
+      message: 'The InFlow approval timed out and was cancelled.',
     });
   });
 
@@ -1851,7 +1882,8 @@ describe('CLI AEP approval resolver', () => {
   });
 
   it('aborts a stalled approval status request when the caller cancels', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (requestUrl(input).endsWith('/cancel')) return Promise.resolve(new Response(null, { status: 204 }));
       return new Promise<Response>((_resolve, reject) => {
         if (init?.signal?.aborted === true) {
           reject(new Error('request aborted'));

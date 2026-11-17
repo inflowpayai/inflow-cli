@@ -213,6 +213,7 @@ export interface MppPayPipelineDeps {
    * Defaults to `true`.
    */
   awaitPayment?: boolean;
+  onApprovalTimeout?: (approvalId: string) => Promise<string>;
   sellerTransport?: SellerRequestTransport;
 }
 
@@ -547,7 +548,10 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
         emit({
           type: 'errored',
           code: 'POLLING_TIMEOUT',
-          message: 'Polling timed out before the transaction reached a ready state.',
+          message:
+            created.approvalId !== undefined && deps.onApprovalTimeout !== undefined
+              ? await deps.onApprovalTimeout(created.approvalId)
+              : 'Polling timed out before the transaction reached a ready state.',
         });
         return;
       }

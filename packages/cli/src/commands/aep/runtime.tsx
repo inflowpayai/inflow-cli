@@ -41,6 +41,8 @@ import {
   approvalStatusBeforeDeadline,
   ApprovalTimeoutError,
   cancelApproval,
+  cancelApprovalAfterTimeout,
+  ApprovalCancellationRequestError,
   remainingApprovalDelay,
 } from './approval-polling.js';
 import { PendingApprovalView } from './views.js';
@@ -294,6 +296,13 @@ export function createCliAepAgentOptions(options: AepRuntimeOptions): AepAgentOp
           await approvalSleep(remainingApprovalDelay(deadline, interval * 1000), [input.signal, controller.signal]);
         }
         throw new ApprovalTimeoutError();
+      } catch (error) {
+        if (error instanceof ApprovalTimeoutError) {
+          throw new ApprovalTimeoutError(await cancelApprovalAfterTimeout(options.inflow, approvalId));
+        }
+        if (input.signal?.aborted === true && !controller.signal.aborted)
+          await cancelApproval(options.inflow, approvalId);
+        throw error;
       } finally {
         if (displayHandled) options.approvalDisplay?.clearPendingApproval();
         closePendingApprovalView(waitingView);
@@ -611,7 +620,8 @@ export function mapAepRuntimeError(error: unknown): { code: string; message: str
     (error.cause instanceof ApprovalDeniedError ||
       error.cause instanceof ApprovalCancelledError ||
       error.cause instanceof ApprovalTimeoutError ||
-      error.cause instanceof ApprovalServerError)
+      error.cause instanceof ApprovalServerError ||
+      error.cause instanceof ApprovalCancellationRequestError)
   ) {
     error = error.cause;
   }
@@ -646,8 +656,10 @@ export function mapAepRuntimeError(error: unknown): { code: string; message: str
     return { code: 'APPROVAL_CANCELLED', message: 'The AEP approval was cancelled.' };
   }
   if (error instanceof ApprovalTimeoutError) {
-    return { code: 'AEP_APPROVAL_TIMEOUT', message: 'The InFlow approval timed out.' };
+    return { code: 'AEP_APPROVAL_TIMEOUT', message: error.message };
   }
+  if (error instanceof ApprovalCancellationRequestError)
+    return { code: 'APPROVAL_CANCEL_FAILED', message: error.message };
   if (error instanceof ApprovalServerError) {
     return {
       code: 'AEP_APPROVAL_SERVER_ERROR',

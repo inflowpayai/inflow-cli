@@ -2,17 +2,39 @@ import type { Inflow } from '@inflowpayai/inflow-core';
 
 const APPROVAL_CANCEL_TIMEOUT_MILLISECONDS = 5_000;
 
-export class ApprovalCancellationRequestError extends Error {}
+export class ApprovalCancellationRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
+}
+
+export async function cancelApprovalAfterTimeout(inflow: Inflow, approvalId: string): Promise<string> {
+  try {
+    await cancelApproval(inflow, approvalId);
+    return 'The InFlow approval timed out and was cancelled.';
+  } catch {
+    return 'The InFlow approval timed out. Cancellation could not be confirmed. Check the approval in InFlow.';
+  }
+}
 
 export async function cancelApproval(inflow: Inflow, approvalId: string): Promise<void> {
   const signal = AbortSignal.timeout(APPROVAL_CANCEL_TIMEOUT_MILLISECONDS);
   const headers = await withAbortSignal(inflow.platformAuthenticationHeaders(), signal);
-  const response = await fetch(new URL(`/v1/approvals/${approvalId}/cancel`, inflow.resolvedApiBaseUrl), {
-    headers,
-    method: 'POST',
-    signal,
-  });
-  if (!response.ok) throw new ApprovalCancellationRequestError('Approval cancellation request failed.');
+  let response: Response;
+  try {
+    response = await fetch(new URL(`/v1/approvals/${approvalId}/cancel`, inflow.resolvedApiBaseUrl), {
+      headers,
+      method: 'POST',
+      signal,
+    });
+  } catch {
+    throw new ApprovalCancellationRequestError('Approval cancellation request failed.');
+  }
+  if (!response.ok)
+    throw new ApprovalCancellationRequestError('Approval cancellation request failed.', response.status);
 }
 
 async function withAbortSignal<T>(operation: T | PromiseLike<T>, signal: AbortSignal): Promise<T> {

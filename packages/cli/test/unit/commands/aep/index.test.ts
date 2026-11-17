@@ -675,6 +675,96 @@ describe('aep commands', () => {
     }
   });
 
+  it.each(
+    (['enroll', 'grant'] as const).flatMap((command) =>
+      [true, false].flatMap((agent) =>
+        (['success', 'network-failure', 'server-failure', 'already-approved'] as const).map((outcome) => ({
+          command,
+          agent,
+          outcome,
+        })),
+      ),
+    ),
+  )('cancels timed-out $command in agent mode $agent: $outcome', async ({ command, agent, outcome }) => {
+    vi.useFakeTimers();
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const persisted = new AepStorage(storage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
+    await persisted.identities().saveIdentity(identity);
+    let status = 'PENDING';
+    const approvalFetch = vi.fn((input: URL, init?: RequestInit) => {
+      if (input.pathname.endsWith('/cancel')) {
+        expect(init?.method).toBe('POST');
+        expect(init?.signal?.aborted).toBe(false);
+        if (outcome === 'network-failure') return Promise.reject(new TypeError('Network unavailable'));
+        if (outcome === 'server-failure') return Promise.resolve(new Response(null, { status: 503 }));
+        if (outcome === 'already-approved') {
+          status = 'APPROVED';
+          return Promise.resolve(new Response(null, { status: 404 }));
+        }
+        status = 'CANCELLED';
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return Promise.resolve(Response.json({ status }));
+    });
+    vi.stubGlobal('fetch', approvalFetch);
+    const c = {
+      ...context({ scope: [], interval: 1, maxAttempts: 0, timeout: 1 }),
+      agent,
+      formatExplicit: agent,
+      error: vi.fn(({ code, message }: { code: string; message: string }): never => {
+        throw new Error(`${code}: ${message}`);
+      }),
+    };
+    const message =
+      outcome === 'success'
+        ? 'The InFlow approval timed out and was cancelled.'
+        : 'The InFlow approval timed out. Cancellation could not be confirmed. Check the approval in InFlow.';
+    const rejected = expect(
+      command === 'enroll' ? __testing.runEnroll(c, inflow(), storage) : __testing.runGrant(c, inflow(), storage),
+    ).rejects.toThrow(`AEP_APPROVAL_TIMEOUT: ${message}`);
+    await vi.advanceTimersByTimeAsync(1000);
+    await rejected;
+    expect(c.error).toHaveBeenCalledWith({ code: 'AEP_APPROVAL_TIMEOUT', message });
+    expect(approvalFetch).toHaveBeenCalledTimes(2);
+    expect(approvalFetch.mock.calls[1]?.[0].pathname).toBe('/v1/approvals/approval-1/cancel');
+    expect(status).toBe(outcome === 'success' ? 'CANCELLED' : outcome === 'already-approved' ? 'APPROVED' : 'PENDING');
+    expect(platformRecovery.signContexts.some((value) => value['approval_id'] !== undefined)).toBe(false);
+    expect(persisted.identities().findByServiceDid(identity.serviceDid)).toEqual(identity);
+    expect(persisted.credentials().listCredentials(identity.serviceDid)).toEqual([]);
+    expect(rendering.present).not.toHaveBeenCalled();
+    for (const call of rendering.render.mock.results) {
+      if (call.type !== 'return') throw new Error('Rendering failed');
+      expect(call.value.clear).toHaveBeenCalledOnce();
+      expect(call.value.unmount).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('cancels enrollment after an approval status request exceeds the deadline', async () => {
+    const storage = new MemoryStorage();
+    storage.setApiKey('key');
+    const approvalFetch = vi.fn((input: URL, init?: RequestInit) => {
+      if (input.pathname.endsWith('/cancel')) {
+        expect(init?.signal?.aborted).toBe(false);
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('Request aborted')), { once: true });
+      });
+    });
+    vi.stubGlobal('fetch', approvalFetch);
+    const c = {
+      ...context({ interval: 1, maxAttempts: 0, timeout: 0.01 }),
+      error: ({ message }: { message: string }): never => {
+        throw new Error(message);
+      },
+    };
+    await expect(__testing.runEnroll(c, inflow(), storage)).rejects.toThrow(
+      'The InFlow approval timed out and was cancelled.',
+    );
+    expect(approvalFetch).toHaveBeenCalledTimes(2);
+  });
+
   it.each([['mpp'], ['x402'], ['mpp', 'x402']])(
     'presents payment-required guidance after authentication without initiating payment: %j',
     async (...protocols) => {
@@ -1474,7 +1564,9 @@ describe('aep commands', () => {
 
     const cancelFetch = vi.fn(() => Promise.reject(new Error('offline')));
     vi.stubGlobal('fetch', cancelFetch);
-    await expect(__testing.cancelApproval(inflow(), 'approval-1')).rejects.toThrow('offline');
+    await expect(__testing.cancelApproval(inflow(), 'approval-1')).rejects.toThrow(
+      'Approval cancellation request failed.',
+    );
     expect(cancelFetch).toHaveBeenCalledOnce();
 
     const alreadyAborted = new AbortController();
@@ -1975,10 +2067,11 @@ describe('aep commands', () => {
       ),
     ).rejects.toThrow('AEP_APPROVAL_SERVER_ERROR');
   });
-  it('maps a stalled approval status request to the approval timeout', async () => {
+  it.each([204, 503])('maps a stalled approval status request to timeout with cancellation HTTP %s', async (status) => {
     vi.stubGlobal(
       'fetch',
-      vi.fn((_input, init?: RequestInit) => {
+      vi.fn((input: URL, init?: RequestInit) => {
+        if (input.pathname.endsWith('/cancel')) return Promise.resolve(new Response(null, { status }));
         return new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => reject(new Error('request aborted')), { once: true });
         });
@@ -2021,6 +2114,10 @@ describe('aep commands', () => {
   });
 
   it('maps a cancelled approval status request to cancellation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(null, { status: 204 }))),
+    );
     fetchScenario.run = async (rawInput: unknown) => {
       const input = rawInput as {
         agentOptions: {

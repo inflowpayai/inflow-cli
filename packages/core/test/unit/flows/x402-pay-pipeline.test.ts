@@ -459,6 +459,38 @@ describe('runPayPipeline — full lifecycle', () => {
     expect(events.at(-1)).toMatchObject({ type: 'errored', code: 'APPROVAL_TIMEOUT' });
   });
 
+  it.each(['timeout', 'ready', 'abort', 'failed'] as const)(
+    'runs approval timeout cleanup only for timeout: %s',
+    async (outcome) => {
+      mockSeller();
+      const prepared = preparedPayment();
+      if (outcome !== 'ready')
+        vi.spyOn(prepared, 'awaitPayload').mockRejectedValue(
+          outcome === 'failed' ? new Error('Signing failed') : new X402ApprovalTimeoutError('appr_1', 1000),
+        );
+      const onApprovalTimeout = vi.fn(() => Promise.resolve('Cancellation outcome'));
+      const client = payingClient({ prepareInflowPayment: vi.fn(() => Promise.resolve(prepared)) });
+      const events = await collect(
+        deps({
+          client: client as never,
+          onApprovalTimeout,
+          ...(outcome === 'abort' ? { signOptions: { signal: AbortSignal.abort() } } : {}),
+        }),
+      );
+      if (outcome === 'timeout') {
+        expect(onApprovalTimeout).toHaveBeenCalledOnce();
+        expect(onApprovalTimeout).toHaveBeenCalledWith('appr_1');
+        expect(events.at(-1)).toMatchObject({
+          type: 'errored',
+          code: 'APPROVAL_TIMEOUT',
+          message: 'Cancellation outcome',
+        });
+      } else {
+        expect(onApprovalTimeout).not.toHaveBeenCalled();
+      }
+    },
+  );
+
   it('collapses a probe-time network failure into the generic PAYMENT_FAILED frame', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
     const events = await collect(deps());

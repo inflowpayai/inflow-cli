@@ -8,13 +8,16 @@ import { useFlowState } from '../../hooks/use-flow-state.js';
 export interface CancelViewProps {
   approvalId: string;
   cancel: () => Promise<void>;
-  onComplete: () => void;
+  onComplete: (cancelled: boolean) => void;
 }
 
 export const CancelView: React.FC<CancelViewProps> = ({ approvalId, cancel, onComplete }) => {
-  const action = useCallback(() => cancel(), [cancel]);
+  const action = useCallback(async () => {
+    await cancel();
+    return true;
+  }, [cancel]);
   const { finish } = useFlowExit(onComplete);
-  const { status } = useFlowState(action, finish);
+  const { status, error } = useFlowState(action, (result) => finish(result === true));
 
   if (status === 'loading') {
     return (
@@ -26,9 +29,11 @@ export const CancelView: React.FC<CancelViewProps> = ({ approvalId, cancel, onCo
     );
   }
 
+  if (status === 'error') return <Text color="red">Unable to cancel approval: {error}</Text>;
+
   return (
     <Box>
-      <Text color="green">✓ Cancelled approval {approvalId} (best-effort)</Text>
+      <Text color="green">Cancelled approval {approvalId}.</Text>
     </Box>
   );
 };

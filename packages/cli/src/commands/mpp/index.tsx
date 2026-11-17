@@ -39,7 +39,11 @@ import {
   createAepAwareInspectProbe,
   createTapAepAwareSellerTransport,
 } from '../aep/runtime.js';
-import { cancelApproval } from '../approval-cancellation.js';
+import {
+  ApprovalCancellationRequestError,
+  cancelApproval,
+  cancelApprovalAfterTimeout,
+} from '../approval-cancellation.js';
 import { PaymentFetchView, type PaymentFetchPhase } from '../payment-fetch.js';
 import { useAuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
 import { CancelView } from './cancel.js';
@@ -272,14 +276,14 @@ const PayViewWithAuthentication: React.FC<PayViewWithAuthenticationProps> = ({
   );
   const deps = useMemo<MppPayPipelineDeps>(
     () => ({
-      ...buildPayPipelineInput(c, probeOptions),
+      ...buildPayPipelineInput(c, probeOptions, inflow),
       client,
       apiBaseUrl,
       awaitPayment: true,
       sellerTransport,
       subscriptions: inflow.subscriptions,
     }),
-    [apiBaseUrl, c, client, probeOptions, sellerTransport],
+    [apiBaseUrl, c, client, inflow, probeOptions, sellerTransport],
   );
   return (
     <PayView
@@ -338,6 +342,7 @@ const FetchViewWithAuthentication: React.FC<FetchViewWithAuthenticationProps> = 
 function buildPayPipelineInput(
   c: PayContext,
   probeOptions: SellerProbeOptions,
+  inflow: Inflow,
 ): Omit<MppPayPipelineDeps, 'client' | 'apiBaseUrl'> {
   return {
     probeOptions,
@@ -346,6 +351,7 @@ function buildPayPipelineInput(
     interval: c.options.interval,
     maxAttempts: c.options.maxAttempts,
     timeout: c.options.timeout,
+    onApprovalTimeout: (approvalId) => cancelApprovalAfterTimeout(inflow, approvalId),
     ...(c.options.instrumentId !== undefined ? { instrumentId: c.options.instrumentId } : {}),
     ...(c.options.merchantName !== undefined ? { merchantName: c.options.merchantName } : {}),
     ...(c.options.merchantUrl !== undefined ? { merchantUrl: c.options.merchantUrl } : {}),
@@ -527,7 +533,7 @@ export async function* runPayCommand(
 
   const sellerTransport = createSellerTransport(c, inflow, authStorage);
   const run = inflow.mpp.pay({
-    ...buildPayPipelineInput(c, probeOptions),
+    ...buildPayPipelineInput(c, probeOptions, inflow),
     awaitPayment: c.options.interval > 0,
     sellerTransport,
   });
@@ -773,20 +779,28 @@ async function runCancelCommand(
 
   try {
     if (!c.agent && !c.formatExplicit) {
+      const result = { cancelled: false };
       await renderInkUntilExit(
         <CancelView
           approvalId={c.args.approvalId}
-          cancel={() => inflow.mpp.cancel({ approvalId: c.args.approvalId }).then(() => undefined)}
-          onComplete={() => undefined}
+          cancel={() => cancelApproval(inflow, c.args.approvalId)}
+          onComplete={(cancelled) => {
+            result.cancelled = cancelled;
+          }}
         />,
       );
-      return { approval_id: c.args.approvalId, cancelled: true, note: 'best-effort; server-side state not verified' };
+      if (!result.cancelled)
+        return c.error({ code: 'APPROVAL_CANCEL_FAILED', message: 'Approval cancellation could not be confirmed.' });
+      return { approval_id: c.args.approvalId, cancelled: true, note: 'Cancellation confirmed by InFlow.' };
     }
 
-    return await inflow.mpp.cancel({ approvalId: c.args.approvalId });
+    await cancelApproval(inflow, c.args.approvalId);
+    return { approval_id: c.args.approvalId, cancelled: true, note: 'Cancellation confirmed by InFlow.' };
   } catch (error) {
     const mapped = authenticatedApiError(error);
     if (mapped !== undefined) return c.error(mapped);
+    if (error instanceof ApprovalCancellationRequestError)
+      return c.error({ code: 'APPROVAL_CANCEL_FAILED', message: error.message });
     throw error;
   }
 }
@@ -974,7 +988,7 @@ export function createMppCli(inflow: Inflow, authStorage: MppStorage, apiBaseUrl
   });
 
   cli.command('cancel', {
-    description: 'Best-effort cancel of an MPP approval.',
+    description: 'Cancel a pending MPP approval.',
     mcp: mcpTool('mpp_cancel'),
     args: cancelArgs,
     outputPolicy: 'agent-only' as const,

@@ -33,7 +33,11 @@ import {
   createAepAwareInspectProbe,
   createTapAepAwareSellerTransport,
 } from '../aep/runtime.js';
-import { cancelApproval } from '../approval-cancellation.js';
+import {
+  ApprovalCancellationRequestError,
+  cancelApproval,
+  cancelApprovalAfterTimeout,
+} from '../approval-cancellation.js';
 import { PaymentFetchView, type PaymentFetchPhase } from '../payment-fetch.js';
 import { useAuthenticationApprovalDisplay } from '../payment-authentication-approval.js';
 import { CancelView } from './cancel.js';
@@ -256,10 +260,10 @@ const PayViewWithAuthentication: React.FC<PayViewWithAuthenticationProps> = ({
     () => ({
       client,
       apiBaseUrl,
-      ...buildPayPipelineInput(c, probeOptions),
+      ...buildPayPipelineInput(c, probeOptions, inflow),
       sellerTransport,
     }),
-    [apiBaseUrl, c, client, probeOptions, sellerTransport],
+    [apiBaseUrl, c, client, inflow, probeOptions, sellerTransport],
   );
   return (
     <PayView
@@ -318,6 +322,7 @@ const FetchViewWithAuthentication: React.FC<FetchViewWithAuthenticationProps> = 
 function buildPayPipelineInput(
   c: PayContext,
   probeOptions: SellerProbeOptions,
+  inflow: Inflow,
 ): Omit<PayPipelineDeps, 'client' | 'apiBaseUrl'> {
   return {
     probeOptions,
@@ -326,6 +331,7 @@ function buildPayPipelineInput(
     interval: c.options.interval,
     maxAttempts: c.options.maxAttempts,
     timeout: c.options.timeout,
+    onApprovalTimeout: (approvalId) => cancelApprovalAfterTimeout(inflow, approvalId),
     ...(c.options.instrumentId !== undefined ? { instrumentId: c.options.instrumentId } : {}),
     showBody: c.options.showBody,
     ...(c.options.outputFile !== undefined ? { outputFile: c.options.outputFile } : {}),
@@ -477,7 +483,7 @@ async function* runPayCommand(
 
   const sellerTransport = createSellerTransport(c, inflow, authStorage);
   const run = inflow.x402.pay({
-    ...buildPayPipelineInput(c, probeOptions),
+    ...buildPayPipelineInput(c, probeOptions, inflow),
     awaitPayment: c.options.interval > 0,
     sellerTransport,
   });
@@ -711,24 +717,32 @@ async function runCancelCommand(
 
   try {
     if (!c.agent && !c.formatExplicit) {
+      const result = { cancelled: false };
       await renderInkUntilExit(
         <CancelView
           approvalId={c.args.approvalId}
-          cancel={() => inflow.x402.cancel({ approvalId: c.args.approvalId }).then(() => undefined)}
-          onComplete={() => undefined}
+          cancel={() => cancelApproval(inflow, c.args.approvalId)}
+          onComplete={(cancelled) => {
+            result.cancelled = cancelled;
+          }}
         />,
       );
+      if (!result.cancelled)
+        return c.error({ code: 'APPROVAL_CANCEL_FAILED', message: 'Approval cancellation could not be confirmed.' });
       return {
         approval_id: c.args.approvalId,
         cancelled: true,
-        note: 'best-effort; server-side state not verified',
+        note: 'Cancellation confirmed by InFlow.',
       };
     }
 
-    return await inflow.x402.cancel({ approvalId: c.args.approvalId });
+    await cancelApproval(inflow, c.args.approvalId);
+    return { approval_id: c.args.approvalId, cancelled: true, note: 'Cancellation confirmed by InFlow.' };
   } catch (error) {
     const mapped = authenticatedApiError(error);
     if (mapped !== undefined) return c.error(mapped);
+    if (error instanceof ApprovalCancellationRequestError)
+      return c.error({ code: 'APPROVAL_CANCEL_FAILED', message: error.message });
     throw error;
   }
 }
@@ -906,7 +920,7 @@ export function createX402Cli(inflow: Inflow, authStorage: AuthStorage, apiBaseU
   });
 
   cli.command('cancel', {
-    description: 'Best-effort cancel of an x402 approval.',
+    description: 'Cancel a pending x402 approval.',
     mcp: mcpTool('x402_cancel'),
     args: cancelArgs,
     outputPolicy: 'agent-only' as const,
