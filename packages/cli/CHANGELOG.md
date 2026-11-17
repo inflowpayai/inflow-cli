@@ -1,5 +1,53 @@
 # @inflowpayai/inflow
 
+## 0.16.0
+
+### Minor Changes
+
+- [#196](https://github.com/inflowpayai/inflow-cli/pull/196)
+  [`99b70b8`](https://github.com/inflowpayai/inflow-cli/commit/99b70b8f5326887f096acb6345f8c2cbf5e83dc5) Thanks
+  [@nkavian](https://github.com/nkavian)! - Honor the MPP challenge's selected payment header for initial and resumed
+  payments, preserving separate application authentication headers.
+
+  Use the payment SDK's HTTP codecs and wire types instead of maintaining a separate direct x402 foundation dependency.
+
+  Upgrade the MPP and x402 SDK packages to their latest minor releases.
+
+### Patch Changes
+
+- [#194](https://github.com/inflowpayai/inflow-cli/pull/194)
+  [`31acefd`](https://github.com/inflowpayai/inflow-cli/commit/31acefdadf218fe067b489327cd3bbf53ac01b76) Thanks
+  [@nkavian](https://github.com/nkavian)! - Include the failed AEP operation and HTTP status in command errors while
+  retaining existing error codes and excluding raw server response text.
+
+- [#200](https://github.com/inflowpayai/inflow-cli/pull/200)
+  [`45083f9`](https://github.com/inflowpayai/inflow-cli/commit/45083f9b5d22fe842b85bd9f736c464fb614ffdf) Thanks
+  [@nkavian](https://github.com/nkavian)! - Cancel pending approvals when AEP authentication or payment approval waits
+  time out. Limit approval waits to 15 minutes and report unsuccessful cancellation in both interactive and agent
+  output.
+
+- [#199](https://github.com/inflowpayai/inflow-cli/pull/199)
+  [`fc5ad06`](https://github.com/inflowpayai/inflow-cli/commit/fc5ad061c8547018f4b282b71cd6962c25c3de23) Thanks
+  [@nkavian](https://github.com/nkavian)! - Reject unsupported MPP credential headers before creating payments,
+  authorizing subscriptions, or replaying stored credentials. Preserve supported alternatives and separate AEP
+  authentication when using Payment-Authorization.
+
+- [#197](https://github.com/inflowpayai/inflow-cli/pull/197)
+  [`c40447d`](https://github.com/inflowpayai/inflow-cli/commit/c40447d98992ced1d4797d6c39e6f614c061e820) Thanks
+  [@nkavian](https://github.com/nkavian)! - Report CARD payment summaries in decimal dollars with uppercase USD across
+  terminal, JSON, and MCP output. Match CARD offers with either USD or usd currency filters. Preserve raw challenge and
+  credential values for protocol operations.
+
+- [#198](https://github.com/inflowpayai/inflow-cli/pull/198)
+  [`e93c7c3`](https://github.com/inflowpayai/inflow-cli/commit/e93c7c3bdc0a8faab4e88c31b7ad79ffa4f47b65) Thanks
+  [@nkavian](https://github.com/nkavian)! - Protect in-progress credential writes from concurrent startup recovery.
+  Report missing AEP credentials separately from a locked vault.
+
+- [#201](https://github.com/inflowpayai/inflow-cli/pull/201)
+  [`d39f8eb`](https://github.com/inflowpayai/inflow-cli/commit/d39f8ebd01049e52b9d5afc84d96045d3870b36b) Thanks
+  [@nkavian](https://github.com/nkavian)! - Identify InFlow as the buyer service in x402 builder attribution while
+  preserving seller attribution.
+
 ## 0.15.1
 
 ### Patch Changes

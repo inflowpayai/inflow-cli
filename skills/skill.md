@@ -87,15 +87,15 @@ Report what you verified in plain language. For example, say "InFlow is installe
 confirming both. Explain anything unfinished; installation alone does not mean the user is signed in, has funds, or is
 ready to make a payment.
 
-If the user already stated a goal, offer to find services for that goal. Otherwise ask:
-"What would you like to try? For example, we could search the web or extract content from a webpage."
+If the user already stated a goal, offer to find services for that goal. Otherwise ask: "What would you like to try? For
+example, we could search the web or extract content from a webpage."
 
 If the user wants to explore, load the discovery playbook and find a suitable service. Explain what it provides and
 include the advertised endpoint price and billing unit when available. Do not present advertised pricing as an exact
 quote when the charge depends on request parameters.
 
-Stop at presenting the opportunity. Do not initiate enrollment, payment, or a paid call as part of onboarding.
-Wait for a separate user request before taking those actions.
+Stop at presenting the opportunity. Do not initiate enrollment, payment, or a paid call as part of onboarding. Wait for
+a separate user request before taking those actions.
 
 ## Links
 
