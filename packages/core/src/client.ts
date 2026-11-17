@@ -6,6 +6,7 @@ import {
 } from '@inflowpayai/mpp';
 import { inflow as createInflowMppMethod } from '@inflowpayai/mpp-buyer';
 import { createInflowClient, type InflowClient as X402BuyerClient, type SignerOptions } from '@inflowpayai/x402-buyer';
+import { BuilderCodeClientExtension } from '@x402/extensions/builder-code';
 import { type InflowOptions, resolveApiBaseUrl, resolveInflowSdkConfig } from './config.js';
 import {
   augmentAuth,
@@ -87,12 +88,14 @@ class X402Resource implements IX402Resource {
         instrument: { id: options.instrumentId },
       }).then((client) => {
         client.setSpendControls(false);
+        client.registerExtension(new BuilderCodeClientExtension('inflow'));
         return client;
       });
     }
     if (!this.cached) {
       this.cached = createInflowClient({ ...this.opts, prefer: ['balance', 'exact', 'instrument'] }).then((client) => {
         client.setSpendControls(false);
+        client.registerExtension(new BuilderCodeClientExtension('inflow'));
         return client;
       });
     }

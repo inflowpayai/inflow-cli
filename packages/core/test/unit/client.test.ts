@@ -31,6 +31,7 @@ vi.mock('@inflowpayai/x402-buyer', async (importOriginal) => {
       return Promise.resolve({
         getSupported: () => Promise.resolve({ kinds: [] }),
         setSpendControls: vi.fn(),
+        registerExtension: vi.fn(),
         selectInflowRequirement: () => null,
         getX402Payload: () => Promise.resolve({ status: 'INITIATED' as const }),
         cancelApproval: () => Promise.resolve(),

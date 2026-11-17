@@ -1,5 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { declareBuilderCodeExtension } from '@x402/extensions/builder-code';
 import { Inflow } from '../../src/index.js';
 import { BASE_URL } from './fixtures/handlers.js';
 import { makeServer } from './fixtures/server.js';
@@ -45,6 +46,45 @@ describe('CLI-owned x402 buyer controls', () => {
   });
 
   describe.each([undefined, 'instrument-id'])('instrument %s', (instrumentId) => {
+    it('includes InFlow and seller attribution before requesting a managed approval', async () => {
+      const accepted = {
+        scheme: 'exact',
+        network: 'eip155:8453',
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        amount: '25000000',
+        payTo: '0x2222222222222222222222222222222222222222',
+        maxTimeoutSeconds: 300,
+      };
+      let submitted: unknown;
+      server.use(
+        http.get(`${BASE_URL}/v1/transactions/x402-supported`, () =>
+          HttpResponse.json({ kinds: [{ scheme: accepted.scheme, network: accepted.network, x402Version: 2 }] }),
+        ),
+        http.post(`${BASE_URL}/v1/transactions/x402`, async ({ request }) => {
+          submitted = await request.json();
+          return HttpResponse.json({
+            transactionId: 'tx_attribution',
+            approvalId: 'apr_attribution',
+            approvalStatus: 'PENDING',
+          });
+        }),
+      );
+      const inflow = new Inflow({ apiKey: 'local-test-key', apiBaseUrl: BASE_URL });
+      const client = await inflow.x402.client(instrumentId === undefined ? undefined : { instrumentId });
+      const required = {
+        x402Version: 2,
+        resource: { url: 'https://seller.example/report' },
+        accepts: [accepted],
+        extensions: { 'builder-code': declareBuilderCodeExtension('merchant', ['seller']) },
+      };
+      const snapshot = structuredClone(required);
+      await client.prepareInflowPayment(accepted, required);
+      expect(submitted).toMatchObject({
+        extensions: { 'builder-code': { info: { a: 'merchant', s: ['inflow', 'seller'] } } },
+      });
+      expect(required).toEqual(snapshot);
+    });
+
     it.each([false, true])('allows a $25 payment with a foundation-recognized token: %s', async (recognized) => {
       server.use(http.get(`${BASE_URL}/v1/transactions/x402-supported`, () => HttpResponse.json({ kinds: [] })));
       const inflow = new Inflow({ apiKey: 'local-test-key', apiBaseUrl: BASE_URL });
@@ -70,6 +110,7 @@ describe('CLI-owned x402 buyer controls', () => {
       });
       expect(payment.accepted).toEqual(accepted);
       expect(payment.payload).toEqual({ marker: 'external-scheme' });
+      expect(payment.extensions).toMatchObject({ 'builder-code': { info: { s: ['inflow'] } } });
     });
   });
 });
