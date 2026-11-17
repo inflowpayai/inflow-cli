@@ -75,6 +75,8 @@ import {
   approvalStatus,
   approvalStatusBeforeDeadline,
   ApprovalTimeoutError,
+  cancelApprovalAfterTimeout,
+  ApprovalCancellationRequestError,
   cancelApproval,
   remainingApprovalDelay,
 } from './approval-polling.js';
@@ -551,33 +553,38 @@ async function approvedAssertion(
   if (!Number.isFinite(interval) || interval <= 0) throw new RangeError('Approval interval must be positive.');
   const deadline = Date.now() + options.timeout * 1000;
   let attempts = 0;
-  while (Date.now() < deadline && (options.maxAttempts === 0 || attempts < options.maxAttempts)) {
-    if (options.signal?.aborted === true) throw new ApprovalCancelledError();
-    const status = await approvalStatusBeforeDeadline(inflow, approvalId, deadline, [options.signal]);
-    if (status === 'APPROVED') {
-      const finalClaims = buildClientAssertionClaims({
-        agentDid: identity.agentDid,
-        command,
-        jti: randomUUID,
-        serviceDid: inspect.document.service.did,
-      });
-      const completed = await signer(finalClaims, {
-        command,
-        idempotencyKey: randomUUID(),
-        platformContext: { approval_id: approvalId },
-        serviceDid: inspect.document.service.did,
-        signingAlgorithms: identity.signingAlgorithms,
-      });
-      if (typeof completed === 'string') return { assertion: completed, context: {} };
-      if (completed.status === 'completed')
-        return { assertion: completed.clientAssertion, context: completed.platformContext ?? {} };
+  try {
+    while (Date.now() < deadline && (options.maxAttempts === 0 || attempts < options.maxAttempts)) {
+      if (options.signal?.aborted === true) throw new ApprovalCancelledError();
+      const status = await approvalStatusBeforeDeadline(inflow, approvalId, deadline, [options.signal]);
+      if (status === 'APPROVED') {
+        const finalClaims = buildClientAssertionClaims({
+          agentDid: identity.agentDid,
+          command,
+          jti: randomUUID,
+          serviceDid: inspect.document.service.did,
+        });
+        const completed = await signer(finalClaims, {
+          command,
+          idempotencyKey: randomUUID(),
+          platformContext: { approval_id: approvalId },
+          serviceDid: inspect.document.service.did,
+          signingAlgorithms: identity.signingAlgorithms,
+        });
+        if (typeof completed === 'string') return { assertion: completed, context: {} };
+        if (completed.status === 'completed')
+          return { assertion: completed.clientAssertion, context: completed.platformContext ?? {} };
+      }
+      if (status === 'DECLINED') throw new ApprovalDeniedError();
+      if (status === 'CANCELLED') throw new ApprovalCancelledError();
+      attempts += 1;
+      await approvalSleep(remainingApprovalDelay(deadline, interval * 1000), [options.signal]);
     }
-    if (status === 'DECLINED') throw new ApprovalDeniedError();
-    if (status === 'CANCELLED') throw new ApprovalCancelledError();
-    attempts += 1;
-    await approvalSleep(remainingApprovalDelay(deadline, interval * 1000), [options.signal]);
+    throw new ApprovalTimeoutError();
+  } catch (error) {
+    if (!(error instanceof ApprovalTimeoutError)) throw error;
+    throw new ApprovalTimeoutError(await cancelApprovalAfterTimeout(inflow, approvalId));
   }
-  throw new ApprovalTimeoutError();
 }
 
 class ApprovalServerError extends Error {}
@@ -781,30 +788,38 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
           if (!Number.isFinite(interval) || interval <= 0)
             throw new AepPendingSignResolverError('Approval interval must be positive.', 'server_error');
           const deadline = Date.now() + options.timeout * 1000;
-          while (Date.now() < deadline) {
-            if (input.signal?.aborted === true) throw new ApprovalCancelledError();
-            let status: string;
-            try {
-              status = await approvalStatusBeforeDeadline(inflow, approvalId, deadline, [
-                input.signal,
-                controller.signal,
-              ]);
-            } catch (error) {
-              if (error instanceof ApprovalCancelledError || error instanceof ApprovalTimeoutError) throw error;
-              throw new ApprovalServerError(error instanceof Error ? error.message : String(error));
+          try {
+            while (Date.now() < deadline) {
+              if (input.signal?.aborted === true) throw new ApprovalCancelledError();
+              let status: string;
+              try {
+                status = await approvalStatusBeforeDeadline(inflow, approvalId, deadline, [
+                  input.signal,
+                  controller.signal,
+                ]);
+              } catch (error) {
+                if (error instanceof ApprovalCancelledError || error instanceof ApprovalTimeoutError) throw error;
+                throw new ApprovalServerError(error instanceof Error ? error.message : String(error));
+              }
+              if (status === 'APPROVED') {
+                const completed = await input.continueSign();
+                if (completed.status === 'completed') return completed;
+              } else if (status === 'DECLINED') {
+                throw new ApprovalDeniedError();
+              } else if (status === 'CANCELLED') {
+                controller.abort();
+                throw new ApprovalCancelledError();
+              }
+              await approvalSleep(remainingApprovalDelay(deadline, interval * 1000), [input.signal, controller.signal]);
             }
-            if (status === 'APPROVED') {
-              const completed = await input.continueSign();
-              if (completed.status === 'completed') return completed;
-            } else if (status === 'DECLINED') {
-              throw new ApprovalDeniedError();
-            } else if (status === 'CANCELLED') {
-              controller.abort();
-              throw new ApprovalCancelledError();
+            throw new ApprovalTimeoutError();
+          } catch (error) {
+            if (error instanceof ApprovalTimeoutError) {
+              throw new ApprovalTimeoutError(await cancelApprovalAfterTimeout(inflow, approvalId));
             }
-            await approvalSleep(remainingApprovalDelay(deadline, interval * 1000), [input.signal, controller.signal]);
+            if (input.signal?.aborted === true && !controller.signal.aborted) await cancelApproval(inflow, approvalId);
+            throw error;
           }
-          throw new ApprovalTimeoutError();
         },
       },
       ...(options.data === undefined ? {} : { body: options.data }),
@@ -877,7 +892,8 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
       (error.cause instanceof ApprovalDeniedError ||
         error.cause instanceof ApprovalCancelledError ||
         error.cause instanceof ApprovalTimeoutError ||
-        error.cause instanceof ApprovalServerError)
+        error.cause instanceof ApprovalServerError ||
+        error.cause instanceof ApprovalCancellationRequestError)
     ) {
       error = error.cause;
     }
@@ -894,14 +910,15 @@ async function runFetch(c: FetchContext, inflow: Inflow, authStorage: AuthStorag
       return c.error({ code: 'AEP_APPROVAL_DENIED', message: 'The InFlow approval was declined.' });
     if (error instanceof ApprovalCancelledError || controller.signal.aborted)
       return c.error({ code: 'APPROVAL_CANCELLED', message: 'The AEP approval was cancelled.' });
-    if (error instanceof ApprovalTimeoutError)
-      return c.error({ code: 'AEP_APPROVAL_TIMEOUT', message: 'The InFlow approval timed out.' });
+    if (error instanceof ApprovalTimeoutError) return c.error({ code: 'AEP_APPROVAL_TIMEOUT', message: error.message });
     if (error instanceof ApprovalServerError)
       return c.error({
         code: 'AEP_APPROVAL_SERVER_ERROR',
         message: 'The InFlow approval status request failed.',
         retryable: true,
       });
+    if (error instanceof ApprovalCancellationRequestError)
+      return c.error({ code: 'APPROVAL_CANCEL_FAILED', message: error.message });
     if (error instanceof AepFetchError) return c.error({ code: error.code, message: error.message });
     return c.error(commandError(error));
   }
@@ -1240,8 +1257,7 @@ async function runEnroll(c: Context, inflow: Inflow, authStorage: AuthStorage): 
       return c.error({ code: 'APPROVAL_CANCELLED', message: 'The AEP approval was cancelled.' });
     if (error instanceof ApprovalDeniedError)
       return c.error({ code: 'AEP_APPROVAL_DENIED', message: 'The InFlow approval was declined.' });
-    if (error instanceof ApprovalTimeoutError)
-      return c.error({ code: 'AEP_APPROVAL_TIMEOUT', message: 'The InFlow approval timed out.' });
+    if (error instanceof ApprovalTimeoutError) return c.error({ code: 'AEP_APPROVAL_TIMEOUT', message: error.message });
     return c.error(
       commandError(error, {
         accountUrl: accountUrlFor(inflow.resolvedApiBaseUrl),
@@ -1497,8 +1513,7 @@ async function runGrant(c: Context, inflow: Inflow, authStorage: AuthStorage): P
       return c.error({ code: 'APPROVAL_CANCELLED', message: 'The AEP approval was cancelled.' });
     if (error instanceof ApprovalDeniedError)
       return c.error({ code: 'AEP_APPROVAL_DENIED', message: 'The InFlow approval was declined.' });
-    if (error instanceof ApprovalTimeoutError)
-      return c.error({ code: 'AEP_APPROVAL_TIMEOUT', message: 'The InFlow approval timed out.' });
+    if (error instanceof ApprovalTimeoutError) return c.error({ code: 'AEP_APPROVAL_TIMEOUT', message: error.message });
     return c.error(
       commandError(error, {
         accountUrl: accountUrlFor(inflow.resolvedApiBaseUrl),

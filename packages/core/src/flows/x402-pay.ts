@@ -233,6 +233,7 @@ export interface PayPipelineDeps {
    * approval URL to the user, and resumes signing state via `x402 status`. Defaults to `true` (full lifecycle).
    */
   awaitPayment?: boolean;
+  onApprovalTimeout?: (approvalId: string) => Promise<string>;
   sellerTransport?: SellerRequestTransport;
 }
 
@@ -480,7 +481,16 @@ export async function runPayPipeline(deps: PayPipelineDeps, emit: (event: PayEve
       encoded = await prepared.awaitPayload();
     } catch (err) {
       const mapped = mapSdkError(err);
-      emit({ type: 'errored', code: mapped.code, message: mapped.message });
+      emit({
+        type: 'errored',
+        code: mapped.code,
+        message:
+          err instanceof X402ApprovalTimeoutError &&
+          deps.signOptions.signal?.aborted !== true &&
+          deps.onApprovalTimeout !== undefined
+            ? await deps.onApprovalTimeout(prepared.approvalId)
+            : mapped.message,
+      });
       return;
     }
     emit({

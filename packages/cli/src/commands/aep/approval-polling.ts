@@ -1,6 +1,10 @@
 import type { Inflow } from '@inflowpayai/inflow-core';
 
-export { cancelApproval } from '../approval-cancellation.js';
+export {
+  ApprovalCancellationRequestError,
+  cancelApproval,
+  cancelApprovalAfterTimeout,
+} from '../approval-cancellation.js';
 
 export class ApprovalCancelledError extends Error {}
 export class ApprovalTimeoutError extends Error {}

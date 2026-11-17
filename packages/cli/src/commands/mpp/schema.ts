@@ -45,6 +45,8 @@ export const payOptions = z.object({
     .describe('Hard cap on poll attempts when --interval > 0. 0 means unlimited.'),
   timeout: z.coerce
     .number()
+    .positive()
+    .max(900)
     .default(900)
     .describe('Polling deadline in seconds. Default 900s (matches the server-side approval expiry).'),
   instrumentId: z
@@ -117,7 +119,7 @@ export const fetchOptions = z.object({
     .number()
     .default(0)
     .describe('Hard cap on poll attempts when --interval > 0. 0 means unlimited.'),
-  timeout: z.coerce.number().default(900).describe('Polling deadline in seconds.'),
+  timeout: z.coerce.number().positive().max(900).default(900).describe('Polling deadline in seconds. Maximum 900s.'),
   showBody: z
     .boolean()
     .default(true)

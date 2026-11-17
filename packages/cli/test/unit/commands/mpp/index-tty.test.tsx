@@ -218,11 +218,20 @@ describe('mpp TTY runners (renderInkUntilExit paths)', () => {
     expect(ctx.error).not.toHaveBeenCalled();
   });
 
-  it('runCancelCommand renders the cancel view and returns the best-effort frame', async () => {
+  it('runCancelCommand renders confirmed cancellation', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
     const { inflow, storage } = authed(makeClient());
     const ctx = ttyCtx({ approvalId: 'ap-1' }, {});
     const out = await runCancelCommand(ctx, inflow, storage);
     expect(out).toMatchObject({ approval_id: 'ap-1', cancelled: true });
+  });
+
+  it('runCancelCommand rejects failed cancellation instead of returning success', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 503 }));
+    const { inflow, storage } = authed(makeClient());
+    await expect(runCancelCommand(ttyCtx({ approvalId: 'ap-1' }, {}), inflow, storage)).rejects.toThrow(
+      'APPROVAL_CANCEL_FAILED',
+    );
   });
 
   it('runSupportedCommand renders the supported view and returns undefined', async () => {

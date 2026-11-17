@@ -1300,6 +1300,32 @@ describe('runMppPayPipeline', () => {
     expect(terminal).toMatchObject({ type: 'errored', code: 'POLLING_TIMEOUT' });
   });
 
+  it.each(['pending', 'ready'] as const)('runs approval timeout cleanup only while waiting: %s', async (state) => {
+    const onApprovalTimeout = vi.fn(() => Promise.resolve('Cancellation outcome'));
+    server.use(
+      sellerWithChallenge(),
+      http.post(`${INFLOW}/v1/transactions/mpp`, () =>
+        HttpResponse.json({ state: 'pending', transactionId: 'tx-cleanup', approvalId: 'ap-cleanup' }),
+      ),
+      http.get(`${INFLOW}/v1/transactions/tx-cleanup/mpp`, () =>
+        HttpResponse.json({ state, transactionId: 'tx-cleanup', ...(state === 'ready' ? { credential: 'CRED' } : {}) }),
+      ),
+    );
+    const events = await collect(deps({ maxAttempts: 1, onApprovalTimeout }));
+    if (state === 'pending') {
+      expect(onApprovalTimeout).toHaveBeenCalledOnce();
+      expect(onApprovalTimeout).toHaveBeenCalledWith('ap-cleanup');
+      expect(events.at(-1)).toMatchObject({
+        type: 'errored',
+        code: 'POLLING_TIMEOUT',
+        message: 'Cancellation outcome',
+      });
+    } else {
+      expect(onApprovalTimeout).not.toHaveBeenCalled();
+      expect(events.at(-1)).toMatchObject({ type: 'replayed' });
+    }
+  });
+
   it('errors PAYMENT_EXPIRED when the created transaction is already expired', async () => {
     server.use(
       sellerWithChallenge(),

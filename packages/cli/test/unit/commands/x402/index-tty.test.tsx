@@ -297,7 +297,8 @@ describe('x402 TTY runners (renderInkUntilExit paths)', () => {
     expect(ctx.error).not.toHaveBeenCalled();
   });
 
-  it('runCancelCommand renders the cancel view and returns the best-effort envelope', async () => {
+  it('runCancelCommand renders confirmed cancellation', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
     const cancelApproval = vi.fn(() => Promise.resolve(undefined));
     const { inflow, storage } = authedResources(makeClient({ cancelApproval }));
     const ctx = ttyCtx({ approvalId: 'appr_1' }, {});
@@ -305,9 +306,17 @@ describe('x402 TTY runners (renderInkUntilExit paths)', () => {
     expect(result).toEqual({
       approval_id: 'appr_1',
       cancelled: true,
-      note: 'best-effort; server-side state not verified',
+      note: 'Cancellation confirmed by InFlow.',
     });
-    expect(cancelApproval).toHaveBeenCalledWith('appr_1');
+    expect(cancelApproval).not.toHaveBeenCalled();
+  });
+
+  it('runCancelCommand rejects failed cancellation instead of returning success', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 503 }));
+    const { inflow, storage } = authedResources(makeClient());
+    await expect(runCancelCommand(ttyCtx({ approvalId: 'appr_1' }, {}), inflow, storage)).rejects.toThrow(
+      'APPROVAL_CANCEL_FAILED',
+    );
   });
 
   it('runSupportedCommand renders the supported view and returns undefined', async () => {

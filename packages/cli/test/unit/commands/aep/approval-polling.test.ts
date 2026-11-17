@@ -119,7 +119,7 @@ describe('AEP approval polling', () => {
   it('reports cancellation request failures', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
 
-    await expect(cancelApproval(inflow(), 'approval-1')).rejects.toThrow('offline');
+    await expect(cancelApproval(inflow(), 'approval-1')).rejects.toThrow('Approval cancellation request failed.');
 
     expect(fetchSpy).toHaveBeenCalledWith(
       new URL('/v1/approvals/approval-1/cancel', 'https://platform.example'),
