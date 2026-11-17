@@ -152,9 +152,15 @@ afterEach(() => {
 });
 
 describe('AEP-aware seller transport', () => {
-  it.each([undefined, 'Payment-Authorization', 'X-Payment'])(
-    'sends AEP and MPP together for initial and resumed payments using %s',
-    async (header) => {
+  it.each([
+    { header: undefined, supported: true },
+    { header: 'Payment-Authorization', supported: true },
+    { header: 'pAyMeNt-AuThOrIzAtIoN', supported: true },
+    { header: 'Authorization', supported: false },
+    { header: 'X-Payment', supported: false },
+  ])(
+    'validates the header for initial and resumed AEP-authenticated payments: $header',
+    async ({ header, supported }) => {
       const authStorage = new MemoryStorage();
       const storage = new AepStorage(authStorage, { platformOrigin: 'https://platform.example', userId: 'user-1' });
       await storage.credentials().saveCredential({
@@ -236,14 +242,20 @@ describe('AEP-aware seller transport', () => {
       };
       const emit = vi.fn<(event: MppPayEvent) => void>();
       await runMppPayPipeline(input, emit);
-      expect(emit.mock.calls.at(-1)?.[0], JSON.stringify(emit.mock.calls)).toMatchObject({ type: 'replayed' });
-      expect(create).toHaveBeenCalledOnce();
-      expect(create).toHaveBeenCalledWith(expect.objectContaining({ challenge }));
+      expect(emit.mock.calls.at(-1)?.[0], JSON.stringify(emit.mock.calls)).toMatchObject(
+        supported ? { type: 'replayed' } : { type: 'errored', code: 'NO_INFLOW_MATCH' },
+      );
+      expect(create).toHaveBeenCalledTimes(supported ? 1 : 0);
+      if (supported) expect(create).toHaveBeenCalledWith(expect.objectContaining({ challenge }));
+      const callsBeforeResume = fetch.mock.calls.length;
       const resumed = [];
       for await (const event of runMppFetch({ ...input, transactionId: 'tx-header' }).events) resumed.push(event);
-      expect(resumed.at(-1)?.type).toBe('replayed');
-      expect(paidRequests).toBe(2);
-      expect(create).toHaveBeenCalledOnce();
+      expect(resumed.at(-1)).toMatchObject(
+        supported ? { type: 'replayed' } : { type: 'errored', code: 'UNSUPPORTED_MPP_HEADER' },
+      );
+      if (!supported) expect(fetch).toHaveBeenCalledTimes(callsBeforeResume);
+      expect(paidRequests).toBe(supported ? 2 : 0);
+      expect(create).toHaveBeenCalledTimes(supported ? 1 : 0);
     },
   );
 

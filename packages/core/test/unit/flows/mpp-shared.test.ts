@@ -51,6 +51,19 @@ describe('isSuccessStatus', () => {
 });
 
 describe('filterPayableChallenges', () => {
+  it.each(['inflow', 'tempo', 'card'])('filters credential headers without rewriting %s challenges', (method) => {
+    const offers = [
+      undefined,
+      'Payment-Authorization',
+      'pAyMeNt-AuThOrIzAtIoN',
+      'Authorization',
+      'X-Payment',
+      '',
+      ' Payment-Authorization',
+    ].map((header) => Object.freeze({ ...challenge(method), ...(header === undefined ? {} : { header }) }));
+    expect(filterPayableChallenges(offers)).toEqual(offers.slice(0, 3));
+  });
+
   it('keeps supported MPP method challenges', () => {
     const out = filterPayableChallenges([challenge('inflow'), challenge('other'), challenge('tempo')]);
     expect(out.map((c) => c.method)).toEqual(['inflow', 'tempo']);

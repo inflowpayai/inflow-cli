@@ -5,11 +5,11 @@ import { decodeChallengeRequest, summarizeChallenge } from './mpp-decode.js';
 /** Error code emitted when a seller returns 402 but carries no `WWW-Authenticate: Payment` challenge header. */
 export const INVALID_402_CODE = 'INVALID_402';
 
-/** Error code emitted when none of the seller's parsed challenges use a method the InFlow buyer can fulfil. */
+/** Error code emitted when none of the seller's parsed challenges can be fulfilled by the InFlow buyer. */
 export const NO_INFLOW_MATCH_CODE = 'NO_INFLOW_MATCH';
 
 export const NO_INFLOW_MATCH_MESSAGE =
-  "Seller's 402 carries no InFlow-supported MPP challenge method; the InFlow buyer cannot fulfil it.";
+  "Seller's 402 carries no MPP challenge with an InFlow-supported method and credential header; the InFlow buyer cannot fulfil it.";
 
 /** Error code emitted when the `--currency` filter narrows the `inflow` challenge set to empty. */
 export const NO_FILTERED_MATCH_CODE = 'NO_FILTERED_MATCH';
@@ -25,12 +25,18 @@ export function isSuccessStatus(status: number): boolean {
   return status >= 200 && status < 300;
 }
 
+/** @internal */
+export function supportsMppCredentialHeader(header: unknown): boolean {
+  return header === undefined || (typeof header === 'string' && header.toLowerCase() === 'payment-authorization');
+}
+
 export function filterPayableChallenges(challenges: readonly MppChallenge[]): MppChallenge[] {
   return challenges.filter(
     (challenge) =>
-      challenge.method === METHOD_INFLOW ||
-      challenge.method === METHOD_TEMPO ||
-      (challenge.method === 'card' && challenge.intent === INTENT_CHARGE),
+      supportsMppCredentialHeader(challenge.header) &&
+      (challenge.method === METHOD_INFLOW ||
+        challenge.method === METHOD_TEMPO ||
+        (challenge.method === 'card' && challenge.intent === INTENT_CHARGE)),
   );
 }
 
