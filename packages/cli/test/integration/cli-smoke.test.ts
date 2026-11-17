@@ -1002,7 +1002,8 @@ describe('cli smoke', () => {
             ? {}
             : { assetTransferMethod: 'eip3009', assetName: 'USDC', name: 'USDC', version: '2' },
       } satisfies PaymentRequired['accepts'][number];
-      const paymentPayload = { x402Version: 2, accepted: accept, payload: { transactionId } };
+      const extensions = { 'builder-code': { info: { s: ['inflow'] } } };
+      const paymentPayload = { x402Version: 2, accepted: accept, payload: { transactionId }, extensions };
       const encodedPayload = Buffer.from(JSON.stringify(paymentPayload)).toString('base64');
       const paymentHeader = protocol === 'mpp' ? 'authorization' : 'payment-signature';
       const paymentValue = protocol === 'mpp' ? `Payment ${credential}` : encodedPayload;
@@ -1170,7 +1171,7 @@ describe('cli smoke', () => {
               expect(JSON.parse(submissions[0]?.body ?? '')).toEqual(
                 protocol === 'mpp'
                   ? { challenge, options: {} }
-                  : { accept, x402Version: 2, resource: { url: sellerUrl, mimeType: 'application/json' } },
+                  : { accept, extensions, x402Version: 2, resource: { url: sellerUrl, mimeType: 'application/json' } },
               );
             },
           );
