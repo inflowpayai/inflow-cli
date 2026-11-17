@@ -337,7 +337,95 @@ async function collect(d: MppPayPipelineDeps): Promise<MppPayEvent[]> {
 }
 
 describe('runMppPayPipeline', () => {
-  it.each([undefined, 'Authorization', 'Payment-Authorization', 'X-Payment'])(
+  it.each(
+    ['Authorization', 'X-Payment', ' Payment-Authorization'].flatMap((header) =>
+      [false, true].map((subscription) => ({ header, subscription })),
+    ),
+  )(
+    'rejects header $header before any payment or replay (subscription=$subscription)',
+    async ({ header, subscription }) => {
+      for (const method of ['inflow', 'tempo', 'card']) {
+        const input = deps(subscription ? { subscriptionId: 'sub-1' } : {});
+        const create = vi.spyOn(input.client, 'createTransaction');
+        const subscriptions = new SubscriptionResource({ apiBaseUrl: INFLOW, accessToken: 'test-token' });
+        const authorize = vi.spyOn(subscriptions, 'authorize');
+        input.subscriptions = subscriptions;
+        let sellerCalls = 0;
+        server.use(
+          http.get(SELLER, () => {
+            sellerCalls += 1;
+            return new HttpResponse(null, {
+              status: 402,
+              headers: {
+                'WWW-Authenticate': renderChallengeHeader({ ...challenge(method), header }),
+              },
+            });
+          }),
+        );
+        const events = await collect(input);
+        expect(events.at(-1)).toMatchObject({ type: 'errored', code: 'NO_INFLOW_MATCH' });
+        expect(create).not.toHaveBeenCalled();
+        expect(authorize).not.toHaveBeenCalled();
+        expect(sellerCalls).toBe(1);
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'skips an unsupported offer and pays the valid alternative (subscription=%s)',
+    async (subscription) => {
+      const offered = {
+        ...(subscription ? subscriptionChallenge('month') : challenge('inflow')),
+        header: 'Payment-Authorization',
+      };
+      const unsupported = { ...offered, id: 'unsupported', header: 'Authorization' };
+      const credential = encode({ challenge: offered, payload: { transactionId: 'tx-alternative' } });
+      const created: unknown[] = [];
+      const authorized: unknown[] = [];
+      let replayed = 0;
+      server.use(
+        http.get(SELLER, ({ request }) => {
+          expect(request.headers.get('Authorization')).toBe('Bearer aep-token');
+          if (request.headers.get('Payment-Authorization') === `Payment ${credential}`) {
+            replayed += 1;
+            return new HttpResponse('paid');
+          }
+          return new HttpResponse(null, {
+            status: 402,
+            headers: {
+              'WWW-Authenticate': `${renderChallengeHeader(unsupported)}, ${renderChallengeHeader(offered)}`,
+            },
+          });
+        }),
+        http.post(`${INFLOW}/v1/transactions/mpp`, async ({ request }) => {
+          created.push(await request.json());
+          return HttpResponse.json({ state: 'ready', transactionId: 'tx-alternative', credential });
+        }),
+        http.post(`${INFLOW}/v1/subscriptions/sub-1/authorize`, async ({ request }) => {
+          authorized.push(await request.json());
+          return HttpResponse.json({ credential, expires: '2999-01-01T00:00:00Z' });
+        }),
+      );
+      const events = await collect(
+        deps({
+          probeOptions: { method: 'GET', headers: { Authorization: 'Bearer aep-token' } },
+          ...(subscription
+            ? {
+                subscriptionId: 'sub-1',
+                intentFilter: 'subscription',
+                subscriptions: new SubscriptionResource({ apiBaseUrl: INFLOW, accessToken: 'test-token' }),
+              }
+            : {}),
+        }),
+      );
+      expect(events.at(-1)?.type).toBe('replayed');
+      expect(created).toEqual(subscription ? [] : [{ challenge: offered, options: {} }]);
+      expect(authorized).toEqual(subscription ? [{ challenge: offered }] : []);
+      expect(replayed).toBe(1);
+    },
+  );
+
+  it.each([undefined, 'Payment-Authorization', 'pAyMeNt-AuThOrIzAtIoN'])(
     'preserves and uses the selected payment header %s',
     async (header) => {
       const offered = { ...challenge('inflow'), ...(header === undefined ? {} : { header }) };

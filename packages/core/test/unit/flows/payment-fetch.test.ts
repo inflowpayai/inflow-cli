@@ -31,7 +31,55 @@ async function drain<T>(events: AsyncIterable<T>): Promise<T[]> {
 afterEach(() => vi.restoreAllMocks());
 
 describe('payment fetch replay safety', () => {
-  it.each([undefined, 'Authorization', 'Payment-Authorization', 'X-Payment'])(
+  it.each(['Authorization', 'X-Payment', '', ' Payment-Authorization', 42, true])(
+    'does not replay an unsupported stored credential header %j',
+    async (header) => {
+      const credential = encode({
+        challenge: {
+          id: 'c',
+          realm: 'seller.test',
+          method: 'inflow',
+          intent: 'charge',
+          request: encode({ amount: '1', currency: 'USD' }),
+          header,
+        },
+        payload: { transactionId: 'tx-header' },
+      });
+      for (const supplied of [false, true]) {
+        const request = vi.fn();
+        const client = mppClient({ state: 'ready', transactionId: 'tx-header', credential });
+        const create = vi.spyOn(client, 'createTransaction');
+        const get = vi.spyOn(client, 'getTransaction');
+        const events = await drain(
+          runMppFetch({
+            client,
+            transactionId: 'tx-header',
+            url: 'https://seller.test/api',
+            probeOptions: { method: 'GET', headers: { Authorization: 'Bearer aep-token' } },
+            interval: 0,
+            maxAttempts: 1,
+            timeout: 30,
+            showBody: false,
+            sellerTransport: { request },
+            ...(supplied ? { credential } : {}),
+          }).events,
+        );
+        expect(events).toEqual([
+          {
+            type: 'errored',
+            code: 'UNSUPPORTED_MPP_HEADER',
+            message:
+              'MPP credential header must be omitted or Payment-Authorization. No credential was sent to the seller.',
+          },
+        ]);
+        expect(request).not.toHaveBeenCalled();
+        expect(create).not.toHaveBeenCalled();
+        expect(get).toHaveBeenCalledTimes(supplied ? 0 : 1);
+      }
+    },
+  );
+
+  it.each([undefined, 'Payment-Authorization', 'pAyMeNt-AuThOrIzAtIoN'])(
     'resumes MPP using the credential challenge header %s',
     async (header) => {
       const credential = encode({

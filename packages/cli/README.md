@@ -1065,13 +1065,15 @@ Differences from `x402`:
   the `instrument` rail. Use `--payment-method card` for Visa Intelligent Commerce, or
   `--payment-method inflow --rail instrument` for ordinary card processing. Either uses your primary card when the
   Instrument ID is omitted. A rejected payment does not cause the CLI to try another funding source.
-- `fetch` attaches the base64url credential as `Authorization: Payment <credential>` and never exposes it in Fetch
+- `fetch` attaches the base64url credential as `Authorization: Payment <credential>` when the challenge omits `header`,
+  or as `Payment-Authorization: Payment <credential>` when the challenge selects that field. Explicit header selections
+  other than `Payment-Authorization` (case-insensitive) are unsupported. The credential is never exposed in Fetch
   output. If AEP authentication is required, the replay also carries a non-colliding AEP credential such as
   `AEP-Authorization`. Subscription fetches obtain a fresh, short-lived credential for the seller's current challenge;
   no standing subscription credential is stored locally. `status` can still show or save a one-time payment credential
   for diagnostics.
-- A 402 carrying no supported method fails with `NO_INFLOW_MATCH`. Supported methods are `inflow`, `tempo`, and CARD
-  charges (`card`).
+- A 402 carrying no supported method and credential-header combination fails with `NO_INFLOW_MATCH`. Supported methods
+  are `inflow`, `tempo`, and CARD charges (`card`).
 
 ### Ordinary linked-card payments
 
@@ -1245,6 +1247,7 @@ probe/decode/match codes carry the same meaning as in the `x402` table above; th
 | `DECODE_FAILED`           | Challenge / credential / receipt parse failed.                                                                                                                |
 | `UNEXPECTED_PROBE_STATUS` | Seller returned a non-2xx, non-402 status during the probe. Raised by `pay` and `inspect`.                                                                    |
 | `NO_INFLOW_MATCH`         | The 402 carried no supported `inflow`, `tempo`, or `card` challenge.                                                                                          |
+| `UNSUPPORTED_MPP_HEADER`  | A stored or supplied MPP credential selects an unsupported header. Fetch stops without sending the credential to the seller.                                  |
 | `NO_FILTERED_MATCH`       | `--payment-method` / `--intent` / `--currency` / `--rail` excluded every challenge. The message lists the challenges the seller actually advertised.          |
 | `PAYMENT_NOT_ACCEPTED`    | The seller still returned non-2xx on the replayed (`Authorization: Payment`) request. The transaction was ready but the seller did not honour the credential. |
 | `PAYMENT_FAILED`          | The transaction reached a terminal `failed` state, or the pay pipeline could not produce a credential.                                                        |

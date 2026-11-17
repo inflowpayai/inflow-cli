@@ -8,6 +8,7 @@ import {
 import { summarizeChallenge } from './mpp-decode.js';
 import { buildSettlement, mapMppError, type MppPaySettlement } from './mpp-pay.js';
 import { runMppStatus } from './mpp-status.js';
+import { supportsMppCredentialHeader } from './mpp-shared.js';
 import {
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_CODE,
   PAYMENT_REPLAY_OUTCOME_UNKNOWN_MESSAGE,
@@ -171,19 +172,28 @@ export function runMppFetch(input: MppFetchInput): MppFetchRun {
       return;
     }
 
-    yield { type: 'replaying', response: ready };
     let replay: PaymentReplayResult | undefined;
     try {
       let instrument = false;
       let paymentHeaderName: string = HEADERS.AUTHORIZATION;
       try {
         const wireChallenge = decodeCredential(ready.credential).challenge;
+        if (!supportsMppCredentialHeader(wireChallenge.header)) {
+          yield {
+            type: 'errored',
+            code: 'UNSUPPORTED_MPP_HEADER',
+            message:
+              'MPP credential header must be omitted or Payment-Authorization. No credential was sent to the seller.',
+          };
+          return;
+        }
         paymentHeaderName = wireChallenge.header ?? HEADERS.AUTHORIZATION;
         const challenge = summarizeChallenge(wireChallenge);
         instrument = challenge.method === 'inflow' && challenge.intent === 'charge' && challenge.rail === 'instrument';
       } catch {
         /* Opaque credentials are replayed without card continuation. */
       }
+      yield { type: 'replaying', response: ready };
       for await (const event of replayWithCardVerification(
         {
           url: input.url,

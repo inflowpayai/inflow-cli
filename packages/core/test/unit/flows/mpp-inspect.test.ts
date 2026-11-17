@@ -49,6 +49,27 @@ async function collect(filters: Partial<Parameters<typeof runMppInspectPipeline>
 }
 
 describe('runMppInspectPipeline', () => {
+  it.each([false, true])('reports only payable credential headers (valid alternative=%s)', async (alternative) => {
+    const supported = { ...challenge(), id: 'supported', header: 'Payment-Authorization' };
+    const offers = [{ ...challenge(), header: 'Authorization' }, ...(alternative ? [supported] : [])];
+    server.use(
+      http.get(
+        SELLER,
+        () =>
+          new HttpResponse(null, {
+            status: 402,
+            headers: { 'WWW-Authenticate': offers.map(renderChallengeHeader).join(', ') },
+          }),
+      ),
+    );
+    const events = await collect();
+    expect(events.at(-1)).toMatchObject(
+      alternative
+        ? { type: 'challenges', result: { challenges: [{ id: 'supported' }] } }
+        : { type: 'errored', code: 'NO_INFLOW_MATCH' },
+    );
+  });
+
   it.each(['charge', 'subscription'])(
     'combines method and intent constraints without creating a transaction: %s',
     async (intent) => {
