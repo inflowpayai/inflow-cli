@@ -375,7 +375,7 @@ export async function runMppPayPipeline(deps: MppPayPipelineDeps, emit: (event: 
       (challenge) =>
         deps.instrumentId === undefined ||
         challenge.method === 'card' ||
-        (challenge.method === 'inflow' && decodeChallengeRequest(challenge)?.methodDetails?.rail === 'instrument'),
+        (challenge.method === 'inflow' && summarizeChallenge(challenge).rail === 'instrument'),
     );
     if (hasAnyChallengeFilter(filters) && selected.length === 0) {
       emit({

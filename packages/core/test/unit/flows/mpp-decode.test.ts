@@ -37,9 +37,9 @@ function tempoChallenge(): MppChallenge {
 describe('decodeChallengeRequest', () => {
   it('decodes the inflow challenge request blob', () => {
     const request = decodeChallengeRequest(inflowChallenge());
-    expect(request?.amount).toBe('10');
-    expect(request?.currency).toBe('USDC');
-    expect(request?.methodDetails?.rail).toBe('balance');
+    expect(request?.['amount']).toBe('10');
+    expect(request?.['currency']).toBe('USDC');
+    expect(request?.['methodDetails']).toEqual({ rail: 'balance' });
   });
 
   it('returns undefined for an empty request', () => {
@@ -53,6 +53,75 @@ describe('decodeChallengeRequest', () => {
 });
 
 describe('summarizeChallenge', () => {
+  it.each(['card', 'stripe'])('summarizes %s USD in dollars without rewriting the wire challenge', (method) => {
+    const challenge = Object.freeze({
+      ...inflowChallenge(),
+      method,
+      request: encode({ amount: '125', currency: 'usd' }),
+    });
+    const wire = challenge.request;
+    expect(summarizeChallenge(challenge)).toMatchObject({ amount: '1.25', currency: 'USD' });
+    expect(challenge.request).toBe(wire);
+    expect(decodeChallengeRequest(challenge)).toEqual({ amount: '125', currency: 'usd' });
+    expect(decodeMppValue(renderChallengeHeader(challenge))).toMatchObject({
+      kind: 'challenge',
+      challenge: { amount: '1.25', currency: 'USD' },
+    });
+  });
+
+  it.each([null, [], 'request', 100])('omits invalid request objects: %j', (request) => {
+    const challenge = { ...inflowChallenge(), request: encode(request) };
+    expect(decodeChallengeRequest(challenge)).toBeUndefined();
+    expect(summarizeChallenge(challenge)).not.toHaveProperty('amount');
+  });
+
+  it.each([undefined, null, [], 'details', { rail: 3, instrumentId: false }])(
+    'omits malformed InFlow summary fields: %j',
+    (methodDetails) => {
+      const summary = summarizeChallenge({
+        ...inflowChallenge(),
+        request: encode({
+          amount: null,
+          currency: {},
+          recipient: false,
+          methodDetails,
+          periodCount: '1',
+          periodUnit: 1,
+          subscriptionExpires: [],
+          externalId: {},
+        }),
+      });
+      for (const field of [
+        'amount',
+        'currency',
+        'recipient',
+        'rail',
+        'instrumentId',
+        'periodCount',
+        'periodUnit',
+        'subscriptionExpires',
+        'externalId',
+      ]) {
+        expect(summary).not.toHaveProperty(field);
+      }
+    },
+  );
+
+  it('does not interpret CARD fields as InFlow rail or subscription terms', () => {
+    const summary = summarizeChallenge({
+      ...inflowChallenge(),
+      method: 'card',
+      request: encode({
+        amount: '100',
+        currency: 'usd',
+        methodDetails: { rail: 'instrument' },
+        periodCount: 1,
+      }),
+    });
+    expect(summary).toMatchObject({ amount: '1.00', currency: 'USD' });
+    expect(summary).not.toHaveProperty('rail');
+    expect(summary).not.toHaveProperty('periodCount');
+  });
   it('keeps subscription option identifiers stable when challenge order changes', () => {
     const choices = ['month', 'year'].map((periodUnit) => ({
       ...inflowChallenge(),

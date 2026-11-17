@@ -1114,7 +1114,9 @@ inflow mpp pay https://merchant.example/report --payment-method card \
 
 Add `--instrument-id <uuid>` to use a specific linked card instead of your primary card. CARD is a one-time USD/Visa
 payment with a minimum of USD 0.50; it has no settlement rail. Do not pass `--rail`. CARD challenge amounts are integer
-cents: `"100"` means USD 1.00. Structured output retains that wire value, while terminal amounts identify cents.
+cents: `"100"` means USD 1.00. Terminal and structured challenge summaries report `"1.00"` with currency `"USD"`. The
+challenge sent for payment and the challenge embedded in a credential retain the original wire values. Use
+`--currency USD` to select CARD; the wire spelling `usd` is also accepted.
 
 Missing merchant fields produce `CARD_MERCHANT_REQUIRED`, naming the missing fields and flags before creating a
 transaction. Invalid merchant values or conflicting flags produce `INVALID_PAYMENT_OPTIONS`; an unsupported CARD request

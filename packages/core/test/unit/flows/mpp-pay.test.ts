@@ -87,6 +87,10 @@ describe('CARD payments through the SDK HTTP client', () => {
       const input = deps({ ...merchantOptions, ...(instrumentId === undefined ? {} : { instrumentId }) });
       const before = structuredClone({ probeOptions: input.probeOptions, merchantUrl: input.merchantUrl });
       const events = await collect(input);
+      expect(events.find((event) => event.type === 'decoded')).toMatchObject({
+        type: 'decoded',
+        challenge: { amount: '1.00', currency: 'USD' },
+      });
       expect(events.at(-1)).toMatchObject({ type: 'replayed', result: { body: 'CARD-DELIVERABLE' } });
       expect(observed.submissions).toEqual([
         {

@@ -24,6 +24,38 @@ function challenge(): MppChallenge {
 }
 
 describe('InspectView', () => {
+  it('renders CARD wire cents as dollars from the HTTP challenge', async () => {
+    const offered = { ...challenge(), method: 'card', request: encode({ amount: '100', currency: 'usd' }) };
+    server.use(
+      http.get(
+        SELLER,
+        () =>
+          new HttpResponse(null, {
+            status: 402,
+            headers: { 'WWW-Authenticate': renderChallengeHeader(offered) },
+          }),
+      ),
+    );
+    const onComplete = vi.fn();
+    const view = render(
+      <InspectView
+        url={SELLER}
+        method="GET"
+        deps={{ url: SELLER, probeOptions: { method: 'GET', headers: {} } }}
+        onComplete={onComplete}
+      />,
+    );
+    try {
+      await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+      expect(view.lastFrame()).toContain('1.00');
+      expect(view.lastFrame()).toContain('USD');
+      expect(view.lastFrame()).not.toContain('cents');
+      expect(view.lastFrame()).not.toContain('usd');
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('renders an authentication block without optional Service metadata', async () => {
     const onComplete = vi.fn();
     const view = render(

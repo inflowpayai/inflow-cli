@@ -152,10 +152,11 @@ describe('mpp agent runners', () => {
           merchantCountry: 'US',
           paymentMethod: 'card',
           intent: 'charge',
-          currency: 'usd',
+          currency: merchantName === undefined ? 'USD' : 'usd',
         }),
       );
-      await drain(runPayCommand(context, inflow, storage, 'https://app'));
+      const frames = await drain(runPayCommand(context, inflow, storage, 'https://app'));
+      expect(frames.at(-1)).toMatchObject({ challenge: { amount: '1.00', currency: 'USD' } });
       expect(createTransaction).toHaveBeenCalledOnce();
       expect(createTransaction.mock.calls[0]?.[0]).toMatchObject({
         challenge: offered,

@@ -1,6 +1,6 @@
 import { INTENT_CHARGE, INTENT_SUBSCRIPTION, METHOD_INFLOW, METHOD_TEMPO, type MppChallenge } from '@inflowpayai/mpp';
 import type { SellerProbeOptions } from '@inflowpayai/x402-buyer/probe';
-import { decodeChallengeRequest } from './mpp-decode.js';
+import { decodeChallengeRequest, summarizeChallenge } from './mpp-decode.js';
 
 /** Error code emitted when a seller returns 402 but carries no `WWW-Authenticate: Payment` challenge header. */
 export const INVALID_402_CODE = 'INVALID_402';
@@ -128,8 +128,9 @@ export function filterChallenges(challenges: readonly MppChallenge[], filters: C
     if (intent !== undefined && challenge.intent !== intent) return false;
     if (currency !== undefined || rail !== undefined) {
       const request = decodeChallengeRequest(challenge);
-      if (currency !== undefined && request?.currency !== currency) return false;
-      if (rail !== undefined && request?.methodDetails?.rail !== rail) return false;
+      const summary = summarizeChallenge(challenge);
+      if (currency !== undefined && request?.['currency'] !== currency && summary.currency !== currency) return false;
+      if (rail !== undefined && summary.rail !== rail) return false;
     }
     return true;
   });
@@ -151,10 +152,10 @@ export function buildNoFilteredMatchMessage(challenges: readonly MppChallenge[],
     .join(' ');
   const available = challenges
     .map((challenge) => {
-      const request = decodeChallengeRequest(challenge);
+      const summary = summarizeChallenge(challenge);
       const parts = [`${challenge.method}/${challenge.intent}`];
-      if (request?.currency !== undefined && request.currency !== '') parts.push(`currency=${request.currency}`);
-      const railValue = request?.methodDetails?.rail;
+      if (summary.currency !== undefined && summary.currency !== '') parts.push(`currency=${summary.currency}`);
+      const railValue = summary.rail;
       if (railValue !== undefined && railValue !== '') parts.push(`rail=${railValue}`);
       return parts.join(' ');
     })
