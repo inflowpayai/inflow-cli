@@ -1,5 +1,5 @@
 diff --git a/dist/Cli.d.ts b/dist/Cli.d.ts
-index 1d2d12a60f4ef2f3a14290e8a2e1d68e9264ae52..36def742fdbf0a2821d4a595d72abe23640d8ed6 100644
+index 1d2d12a60f4ef2f3a14290e8a2e1d68e9264ae52..346d5c7fee8ae85f49c8b9720d0443baf9174bb2 100644
 --- a/dist/Cli.d.ts
 +++ b/dist/Cli.d.ts
 @@ -211,9 +211,11 @@ export declare namespace create {
@@ -27,7 +27,7 @@ index 1d2d12a60f4ef2f3a14290e8a2e1d68e9264ae52..36def742fdbf0a2821d4a595d72abe23
          /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
          format: Formatter.Format;
 diff --git a/dist/Cli.js b/dist/Cli.js
-index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5fdbc9252 100644
+index 1824430f9f3ef6281694c173c5ab995f8bc571ad..faf1720a0a186803eb02faa5e50b6ca57b4915df 100644
 --- a/dist/Cli.js
 +++ b/dist/Cli.js
 @@ -855,15 +855,15 @@ async function serveImpl(name, commands, argv, options = {}) {
@@ -50,7 +50,15 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
          writeln(Formatter.format(result, format));
          return;
      }
-@@ -1131,8 +1131,10 @@ async function serveImpl(name, commands, argv, options = {}) {
+@@ -1054,6 +1054,7 @@ async function serveImpl(name, commands, argv, options = {}) {
+             if (Fetch.isStreamingResponse(response)) {
+                 const generator = Fetch.parseStreamingResponse(response);
+                 await handleStreaming(generator, {
++                    filterPaths,
+                     name,
+                     path,
+                     start,
+@@ -1131,8 +1132,10 @@ async function serveImpl(name, commands, argv, options = {}) {
                          ok: false,
                          error: {
                              code: err.code,
@@ -61,7 +69,15 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
                          },
                          meta: {
                              command: path,
-@@ -1262,11 +1264,13 @@ async function serveImpl(name, commands, argv, options = {}) {
+@@ -1221,6 +1224,7 @@ async function serveImpl(name, commands, argv, options = {}) {
+     // Streaming path — async generator
+     if ('stream' in result) {
+         await handleStreaming(result.stream, {
++            filterPaths,
+             name: displayName,
+             path,
+             start,
+@@ -1262,11 +1266,13 @@ async function serveImpl(name, commands, argv, options = {}) {
              ok: false,
              error: {
                  code: result.error.code,
@@ -75,7 +91,7 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
              },
              meta: {
                  command: path,
-@@ -1561,8 +1565,10 @@ async function executeCommand(path, command, rest, inputOptions, request, start,
+@@ -1561,8 +1567,10 @@ async function executeCommand(path, command, rest, inputOptions, request, start,
              ok: false,
              error: {
                  code: err.code,
@@ -86,7 +102,7 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
              },
              meta: meta(formatCtaBlock(options.name ?? path, err.cta)),
          });
-@@ -1624,11 +1630,13 @@ async function executeCommand(path, command, rest, inputOptions, request, start,
+@@ -1624,11 +1632,13 @@ async function executeCommand(path, command, rest, inputOptions, request, start,
              ok: false,
              error: {
                  code: result.error.code,
@@ -100,7 +116,7 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
              },
              meta: {
                  command: path,
-@@ -1802,12 +1810,15 @@ function extractBuiltinFlags(argv, options = {}) {
+@@ -1802,12 +1812,15 @@ function extractBuiltinFlags(argv, options = {}) {
              format = 'json';
              formatExplicit = true;
          }
@@ -120,7 +136,7 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
              formatExplicit = true;
              i++;
          }
-@@ -2253,6 +2264,8 @@ const toRootAliases = new WeakMap();
+@@ -2253,6 +2266,8 @@ const toRootAliases = new WeakMap();
  const sentinel = Symbol.for('incur.sentinel');
  /** @internal Formats an error for human-readable TTY output. */
  function formatHumanError(error) {
@@ -129,7 +145,7 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
      const prefix = error.code === 'UNKNOWN' || error.code === 'COMMAND_NOT_FOUND'
          ? 'Error'
          : `Error (${error.code})`;
-@@ -2304,14 +2317,16 @@ async function handleStreaming(generator, ctx) {
+@@ -2304,22 +2319,25 @@ async function handleStreaming(generator, ctx) {
                                  ok: false,
                                  error: {
                                      code: tagged.code,
@@ -147,7 +163,18 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
                          ctx.exit(tagged.exitCode ?? 1);
                          return;
                      }
-@@ -2330,12 +2345,14 @@ async function handleStreaming(generator, ctx) {
+                 }
++                const data = ctx.filterPaths ? Filter.apply(value, ctx.filterPaths) : value;
+                 if (useJsonl)
+-                    ctx.writeln(Json.stringify({ type: 'chunk', data: value }));
++                    ctx.writeln(Json.stringify({ type: 'chunk', data }));
+                 else if (ctx.renderOutput)
+-                    ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text);
++                    ctx.writeln(ctx.truncate(Formatter.format(data, ctx.format)).text);
+             }
+             // Handle return value — error() or ok() sentinel
+             if (isSentinel(returnValue) && returnValue[sentinel] === 'error') {
+@@ -2330,12 +2348,14 @@ async function handleStreaming(generator, ctx) {
                          ok: false,
                          error: {
                              code: err.code,
@@ -163,7 +190,7 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
                  ctx.exit(err.exitCode ?? 1);
                  return;
              }
-@@ -2392,8 +2409,10 @@ async function handleStreaming(generator, ctx) {
+@@ -2392,8 +2412,10 @@ async function handleStreaming(generator, ctx) {
                              ok: false,
                              error: {
                                  code: tagged.code,
@@ -174,7 +201,7 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
                              },
                              meta: {
                                  command: ctx.path,
-@@ -2412,8 +2431,10 @@ async function handleStreaming(generator, ctx) {
+@@ -2412,8 +2434,10 @@ async function handleStreaming(generator, ctx) {
                      ok: false,
                      error: {
                          code: err.code,
@@ -185,7 +212,7 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
                      },
                      meta: {
                          command: ctx.path,
-@@ -2458,7 +2479,7 @@ function buildIndexManifest(commands, prefix = [], globalsSchema) {
+@@ -2458,7 +2482,7 @@ function buildIndexManifest(commands, prefix = [], globalsSchema) {
      return {
          version: 'incur.v1',
          commands: collectIndexCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
@@ -194,7 +221,7 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
      };
  }
  /** @internal Recursively collects leaf commands with name + description only. */
-@@ -2489,7 +2510,7 @@ function buildManifest(commands, prefix = [], globalsSchema) {
+@@ -2489,7 +2513,7 @@ function buildManifest(commands, prefix = [], globalsSchema) {
      return {
          version: 'incur.v1',
          commands: collectCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
@@ -203,7 +230,7 @@ index 1824430f9f3ef6281694c173c5ab995f8bc571ad..ca30bfa530c768fd69397530fd5637b5
      };
  }
  /** @internal Recursively collects leaf commands with their full paths. */
-@@ -2652,11 +2673,11 @@ function buildInputSchema(args, env, options) {
+@@ -2652,11 +2676,11 @@ function buildInputSchema(args, env, options) {
          return undefined;
      const result = {};
      if (args)
@@ -287,7 +314,7 @@ index ad48d9ada2766ed57ca366a01f38df81f1d3a353..c3f120ed39ff7e82a8b47d1a19fe9b15
              ? [{ flag: `--${configFlag} <path>`, desc: 'Load JSON option defaults from a file' }]
              : []),
 diff --git a/dist/Mcp.js b/dist/Mcp.js
-index d916f16d0d3789a809d7a90d88ed6de7844708fd..f43c82159e3edf407c910b2fde7015cd78076ba8 100644
+index d916f16d0d3789a809d7a90d88ed6de7844708fd..9910b08aee3575728d0f44975dddb086db8bff67 100644
 --- a/dist/Mcp.js
 +++ b/dist/Mcp.js
 @@ -1,15 +1,13 @@
@@ -459,7 +486,7 @@ index f72f537acf0501b106f77bcdcc0411ad50404b36..e27c5d39f04a45d74174cad3cb3f0149
              const key = keys[j];
              if (isArrayField(key, argsSchema)) {
 diff --git a/dist/Schema.d.ts b/dist/Schema.d.ts
-index 673c4c21ac809e659365c8483e67aad94f11f529..8a23aed51fa4a8de0dc2324080d5446fa9d5a082 100644
+index 673c4c21ac809e659365c8483e67aad94f11f529..b95d52781a0ba4ed2f55db6ad6bba933c5df8024 100644
 --- a/dist/Schema.d.ts
 +++ b/dist/Schema.d.ts
 @@ -4,5 +4,5 @@ import { z } from 'zod';
@@ -469,8 +496,9 @@ index 673c4c21ac809e659365c8483e67aad94f11f529..8a23aed51fa4a8de0dc2324080d5446f
 -export declare function toJsonSchema(schema: z.ZodType): Record<string, unknown>;
 +export declare function toJsonSchema(schema: z.ZodType, options?: { io?: 'input' | 'output' }): Record<string, unknown>;
  //# sourceMappingURL=Schema.d.ts.map
+\ No newline at end of file
 diff --git a/dist/Schema.js b/dist/Schema.js
-index 935ee549e5eccc081b999103cad698319fba256b..3e14b96f75122ec31105e43a1bae30bafbffbb5f 100644
+index 935ee549e5eccc081b999103cad698319fba256b..99b43da61631b50f9ae990f4a28295beb4286027 100644
 --- a/dist/Schema.js
 +++ b/dist/Schema.js
 @@ -4,9 +4,10 @@ import { z } from 'zod';
@@ -486,7 +514,7 @@ index 935ee549e5eccc081b999103cad698319fba256b..3e14b96f75122ec31105e43a1bae30ba
              const type = ctx.zodSchema._zod?.def?.type;
              if (type === 'bigint' || type === 'date')
 diff --git a/dist/Skill.js b/dist/Skill.js
-index 97c991bf7fc368d45a8b7530dba4134835b1e7f5..2ea61934b2cbf6609c8c8908cb2331b0dbb4bfd4 100644
+index 97c991bf7fc368d45a8b7530dba4134835b1e7f5..07cecb85cfc175e6d8e127f83a9da15def0d0b56 100644
 --- a/dist/Skill.js
 +++ b/dist/Skill.js
 @@ -23,7 +23,7 @@ function buildSignature(cli, cmd) {
@@ -539,7 +567,7 @@ index 97c991bf7fc368d45a8b7530dba4134835b1e7f5..2ea61934b2cbf6609c8c8908cb2331b0
      }));
      return createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16);
 diff --git a/dist/internal/command.d.ts b/dist/internal/command.d.ts
-index 8adad9db91b9ab8df6da25b5c4fedb76a1df6c52..536e25eb60e1475ee7ddb280c887d6c2eb4b7697 100644
+index 8adad9db91b9ab8df6da25b5c4fedb76a1df6c52..438f874d92e9e6c9eaa51e5cf5dbfc2d56ec16e6 100644
 --- a/dist/internal/command.d.ts
 +++ b/dist/internal/command.d.ts
 @@ -60,8 +60,10 @@ export declare namespace execute {
@@ -554,7 +582,7 @@ index 8adad9db91b9ab8df6da25b5c4fedb76a1df6c52..536e25eb60e1475ee7ddb280c887d6c2
          };
          cta?: CtaBlock | undefined;
 diff --git a/dist/internal/command.js b/dist/internal/command.js
-index 7011ed74f3d71854e57ae8e024bcd4c2459b46ef..81121ad2ed58afa7e161b675de00eeac46dad087 100644
+index 7011ed74f3d71854e57ae8e024bcd4c2459b46ef..c7d711aac1ffbec857e1032f1584c58275eb52be 100644
 --- a/dist/internal/command.js
 +++ b/dist/internal/command.js
 @@ -104,8 +104,10 @@ export async function execute(command, options) {
@@ -580,7 +608,7 @@ index 7011ed74f3d71854e57ae8e024bcd4c2459b46ef..81121ad2ed58afa7e161b675de00eeac
                      ...(opts.cta ? { cta: opts.cta } : undefined),
                      ...(opts.exitCode !== undefined ? { exitCode: opts.exitCode } : undefined),
 diff --git a/dist/middleware.d.ts b/dist/middleware.d.ts
-index 18a684c32e4c3f5e5da5555bcc87b0d3ade701d6..158cbae33ed9ed3061039b748825f315cbbab998 100644
+index 18a684c32e4c3f5e5da5555bcc87b0d3ade701d6..4840f0ac1bfe340be7fb2959f4f238a1f513828d 100644
 --- a/dist/middleware.d.ts
 +++ b/dist/middleware.d.ts
 @@ -32,9 +32,11 @@ export type Context<vars extends z.ZodObject<any> | undefined = undefined, env e

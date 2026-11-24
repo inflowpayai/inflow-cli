@@ -694,6 +694,42 @@ describe('runPayCommand (agent mode)', () => {
     },
   );
 
+  it.each([
+    { agent: true, limit: 'attempts' },
+    { agent: false, limit: 'attempts' },
+    { agent: true, limit: 'timeout' },
+    { agent: false, limit: 'timeout' },
+  ])('Fetch preserves the approval after reaching its $limit limit (agent=$agent)', async ({ agent, limit }) => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected HTTP request'));
+    const cancelApproval = vi.fn(() => Promise.resolve(undefined));
+    const client = makeClient({
+      getX402Payload: vi.fn<X402InflowClient['getX402Payload']>().mockResolvedValue({
+        status: 'INITIATED',
+      }),
+      cancelApproval,
+    });
+    const { inflow, storage } = authedResources(client);
+    const ctx = {
+      agent,
+      formatExplicit: agent,
+      args: { transactionId: 'tx-1', resourceUrl: 'https://seller.test/api' },
+      options: fetchOptions.parse({
+        interval: 0.001,
+        maxAttempts: limit === 'attempts' ? 1 : 0,
+        timeout: limit === 'timeout' ? 0.001 : 900,
+      }),
+      error: vi.fn(),
+    };
+    await drain(runFetchCommand(ctx as never, inflow, storage));
+    expect(ctx.error).toHaveBeenCalledWith({
+      code: 'POLLING_TIMEOUT',
+      message: 'Polling timed out before the transaction reached a signed state.',
+      retryable: true,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(cancelApproval).not.toHaveBeenCalled();
+  });
+
   it.each([0, 1])('runFetchCommand renders the human fetch path with interval %s', async (interval) => {
     const directory = await mkdtemp(join(tmpdir(), 'x402-fetch-human-'));
     const outputFile = join(directory, 'response.txt');

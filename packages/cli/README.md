@@ -20,58 +20,58 @@ For host-specific skill and MCP installation, see the repository's
 
 ## Command index
 
-| Command                                                          | Purpose                                                                                                                           |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `inflow auth login`                                              | Run the OAuth device flow to authenticate. Saves a refreshable access token.                                                      |
-| `inflow auth logout`                                             | Revoke eligible remote credentials and reset local authentication, vault, and cached state.                                       |
-| `inflow auth status`                                             | Show which credential the CLI would use, plus the active environment and resolved API URL.                                        |
-| `inflow vault status`                                            | Show whether the encrypted local credential vault is initialized, locked, and available.                                          |
-| `inflow vault unlock`                                            | Initialize or unlock the local vault from a human-controlled terminal.                                                            |
-| `inflow vault lock`                                              | Lock the local vault.                                                                                                             |
-| `inflow vault policy`                                            | Show the vault idle and sleep-lock policy.                                                                                        |
-| `inflow vault set-policy`                                        | Change the vault idle and sleep-lock policy.                                                                                      |
-| `inflow vault change-passphrase`                                 | Rewrap the vault data key under a new PIN or passphrase.                                                                          |
-| `inflow vault reset`                                             | Remove the local vault database, bootstrap material, policy, and runtime state.                                                   |
-| `inflow balances list`                                           | List the authenticated user's balances.                                                                                           |
-| `inflow deposit-addresses list`                                  | List the user's configured deposit addresses, grouped by network.                                                                 |
-| `inflow inspect <url>`                                           | Inspect a URL for discovery, enrollment, and payment protocols without taking an action.                                          |
-| `inflow directory search`                                        | Search the directory for Services and Collections.                                                                                |
-| `inflow directory suggest <prefix>`                              | Find matching Service and Collection names.                                                                                       |
-| `inflow odp inspect <service>`                                   | Inspect a service's capabilities.                                                                                                 |
-| `inflow odp collections list <service>`                          | List collections from a service in terse form.                                                                                    |
-| `inflow odp collections search <service>`                        | Search collections from a service in terse form.                                                                                  |
-| `inflow odp collections get <service> <id>`                      | Get full collection details.                                                                                                      |
-| `inflow odp offerings list <service>`                            | List offerings from a service in terse form.                                                                                      |
-| `inflow odp offerings capabilities <service>`                    | Resolve the filters and sorts available for offering search.                                                                      |
-| `inflow odp offerings search <service>`                          | Search offerings from a service with structured filters.                                                                          |
-| `inflow odp offerings get <service> <id>`                        | Get full offering details, including resolved schemas, actions, and issues.                                                       |
-| `inflow odp offerings discover`                                  | Find offerings across services selected from the directory.                                                                       |
-| `inflow odp actions resolve <service> <offering-id> <action-id>` | Resolve an offering's action into an executable request without invoking it.                                                      |
-| `inflow aep inspect <service>`                                   | Inspect an Agent Enrollment Protocol Service. No InFlow login is required.                                                        |
-| `inflow aep fetch <resource-url>`                                | Fetch a resource anonymously or complete AEP authentication, approval, credential storage, and replay in one invocation.          |
-| `inflow aep enroll <service>`                                    | Provision or reuse a Service-scoped Agent identity and enroll after InFlow approval.                                              |
-| `inflow aep status <service>`                                    | Fetch Service lifecycle status and list non-secret local credential summaries.                                                    |
-| `inflow aep grant <service>`                                     | Request a fresh Service credential and store it locally without exposing its secret.                                              |
-| `inflow aep revoke <service>`                                    | Revoke all Service credentials, or one credential or grant type.                                                                  |
-| `inflow x402 pay <url>`                                          | Create an x402 payment transaction and optionally poll/replay inline.                                                             |
-| `inflow x402 fetch <tx> <url>`                                   | Resume an x402 transaction, wait for a signed payload when configured, and fetch the seller resource.                             |
-| `inflow x402 inspect <url>`                                      | Read-only probe. Show the seller's `PAYMENT-REQUIRED` accepts for a URL — no auth, no payment.                                    |
-| `inflow x402 status <transactionId>`                             | Poll the signing state of an in-flight transaction without contacting the seller.                                                 |
-| `inflow x402 cancel <approvalId>`                                | Best-effort cancel of an in-flight approval. Requires authentication; success does not verify the server-side approval state.     |
-| `inflow x402 decode <header>`                                    | Decode a raw `PAYMENT-REQUIRED` header value. No auth required.                                                                   |
-| `inflow x402 supported`                                          | List the buyer-side `(scheme, network)` capability cache.                                                                         |
-| `inflow mpp pay <url>`                                           | Create an MPP payment transaction and optionally poll/replay inline.                                                              |
-| `inflow mpp subscribe <url>`                                     | Approve and activate an MPP subscription.                                                                                         |
-| `inflow mpp fetch <tx> <url>`                                    | Complete a ready or pending MPP payment and fetch the seller resource.                                                            |
-| `inflow mpp inspect <url>`                                       | Read-only probe. Parse the seller's MPP `Payment` challenge(s) for a URL — no auth, no payment.                                   |
-| `inflow mpp status <transactionId>`                              | Poll the buyer-side state of an in-flight MPP transaction without contacting the seller.                                          |
-| `inflow mpp cancel <approvalId>`                                 | Best-effort cancel of an in-flight MPP approval. Requires authentication; success does not verify the server-side approval state. |
-| `inflow mpp decode <value>`                                      | Decode a `WWW-Authenticate: Payment` header, or a base64url credential / receipt. No auth required.                               |
-| `inflow mpp supported`                                           | List the methods the buyer can pay with — by intent, settlement rail, and currency.                                               |
-| `inflow subscriptions list`                                      | List your subscriptions.                                                                                                          |
-| `inflow subscriptions get <id>`                                  | View a subscription's details.                                                                                                    |
-| `inflow subscriptions fetch <id> <url>`                          | Fetch a resource using a fresh short-lived subscription authorization.                                                            |
-| `inflow subscriptions cancel <id>`                               | Cancel a subscription immediately.                                                                                                |
+| Command                                                          | Purpose                                                                                                                  |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `inflow auth login`                                              | Run the OAuth device flow to authenticate. Saves a refreshable access token.                                             |
+| `inflow auth logout`                                             | Revoke eligible remote credentials and reset local authentication, vault, and cached state.                              |
+| `inflow auth status`                                             | Show which credential the CLI would use, plus the active environment and resolved API URL.                               |
+| `inflow vault status`                                            | Show whether the encrypted local credential vault is initialized, locked, and available.                                 |
+| `inflow vault unlock`                                            | Initialize or unlock the local vault from a human-controlled terminal.                                                   |
+| `inflow vault lock`                                              | Lock the local vault.                                                                                                    |
+| `inflow vault policy`                                            | Show the vault idle and sleep-lock policy.                                                                               |
+| `inflow vault set-policy`                                        | Change the vault idle and sleep-lock policy.                                                                             |
+| `inflow vault change-passphrase`                                 | Rewrap the vault data key under a new PIN or passphrase.                                                                 |
+| `inflow vault reset`                                             | Remove the local vault database, bootstrap material, policy, and runtime state.                                          |
+| `inflow balances list`                                           | List the authenticated user's balances.                                                                                  |
+| `inflow deposit-addresses list`                                  | List the user's configured deposit addresses, grouped by network.                                                        |
+| `inflow inspect <url>`                                           | Inspect a URL for discovery, enrollment, and payment protocols without taking an action.                                 |
+| `inflow directory search`                                        | Search the directory for Services and Collections.                                                                       |
+| `inflow directory suggest <prefix>`                              | Find matching Service and Collection names.                                                                              |
+| `inflow odp inspect <service>`                                   | Inspect a service's capabilities.                                                                                        |
+| `inflow odp collections list <service>`                          | List collections from a service in terse form.                                                                           |
+| `inflow odp collections search <service>`                        | Search collections from a service in terse form.                                                                         |
+| `inflow odp collections get <service> <id>`                      | Get full collection details.                                                                                             |
+| `inflow odp offerings list <service>`                            | List offerings from a service in terse form.                                                                             |
+| `inflow odp offerings capabilities <service>`                    | Resolve the filters and sorts available for offering search.                                                             |
+| `inflow odp offerings search <service>`                          | Search offerings from a service with structured filters.                                                                 |
+| `inflow odp offerings get <service> <id>`                        | Get full offering details, including resolved schemas, actions, and issues.                                              |
+| `inflow odp offerings discover`                                  | Find offerings across services selected from the directory.                                                              |
+| `inflow odp actions resolve <service> <offering-id> <action-id>` | Resolve an offering's action into an executable request without invoking it.                                             |
+| `inflow aep inspect <service>`                                   | Inspect an Agent Enrollment Protocol Service. No InFlow login is required.                                               |
+| `inflow aep fetch <resource-url>`                                | Fetch a resource anonymously or complete AEP authentication, approval, credential storage, and replay in one invocation. |
+| `inflow aep enroll <service>`                                    | Provision or reuse a Service-scoped Agent identity and enroll after InFlow approval.                                     |
+| `inflow aep status <service>`                                    | Fetch Service lifecycle status and list non-secret local credential summaries.                                           |
+| `inflow aep grant <service>`                                     | Request a fresh Service credential and store it locally without exposing its secret.                                     |
+| `inflow aep revoke <service>`                                    | Revoke all Service credentials, or one credential or grant type.                                                         |
+| `inflow x402 pay <url>`                                          | Create an x402 payment transaction and optionally poll/replay inline.                                                    |
+| `inflow x402 fetch <tx> <url>`                                   | Resume an x402 transaction, wait for a signed payload when configured, and fetch the seller resource.                    |
+| `inflow x402 inspect <url>`                                      | Read-only probe. Show the seller's `PAYMENT-REQUIRED` accepts for a URL — no auth, no payment.                           |
+| `inflow x402 status <transactionId>`                             | Poll the signing state of an in-flight transaction without contacting the seller.                                        |
+| `inflow x402 cancel <approvalId>`                                | Cancel a pending approval. Requires authentication and reports whether InFlow confirmed cancellation.                    |
+| `inflow x402 decode <header>`                                    | Decode a raw `PAYMENT-REQUIRED` header value. No auth required.                                                          |
+| `inflow x402 supported`                                          | List the buyer-side `(scheme, network)` capability cache.                                                                |
+| `inflow mpp pay <url>`                                           | Create an MPP payment transaction and optionally poll/replay inline.                                                     |
+| `inflow mpp subscribe <url>`                                     | Approve and activate an MPP subscription.                                                                                |
+| `inflow mpp fetch <tx> <url>`                                    | Complete a ready or pending MPP payment and fetch the seller resource.                                                   |
+| `inflow mpp inspect <url>`                                       | Read-only probe. Parse the seller's MPP `Payment` challenge(s) for a URL — no auth, no payment.                          |
+| `inflow mpp status <transactionId>`                              | Poll the buyer-side state of an in-flight MPP transaction without contacting the seller.                                 |
+| `inflow mpp cancel <approvalId>`                                 | Cancel a pending MPP approval. Requires authentication and reports whether InFlow confirmed cancellation.                |
+| `inflow mpp decode <value>`                                      | Decode a `WWW-Authenticate: Payment` header, or a base64url credential / receipt. No auth required.                      |
+| `inflow mpp supported`                                           | List the methods the buyer can pay with — by intent, settlement rail, and currency.                                      |
+| `inflow subscriptions list`                                      | List your subscriptions.                                                                                                 |
+| `inflow subscriptions get <id>`                                  | View a subscription's details.                                                                                           |
+| `inflow subscriptions fetch <id> <url>`                          | Fetch a resource using a fresh short-lived subscription authorization.                                                   |
+| `inflow subscriptions cancel <id>`                               | Cancel a subscription immediately.                                                                                       |
 
 ## Service documents
 
@@ -985,14 +985,18 @@ credential when needed. Terminal failure states without a signed payload stop be
 payments can continue through [bank verification](#bank-verification-for-linked-card-payments) and one additional
 request after settlement. Fetch output never exposes the encoded payload or AEP credential material.
 
+When polling reaches `--timeout` or `--max-attempts`, Fetch stops waiting without cancelling the approval. Resume with
+the same transaction ID, or explicitly cancel a pending approval with `x402 cancel`.
+
 ### `x402 cancel`
 
 ```bash
 inflow x402 cancel appr_abc123
 ```
 
-Best-effort cancel of `POST /v1/approvals/{approvalId}/cancel`. Requires authentication. On success, the CLI returns
-`cancelled: true`, but it does not poll for confirmation; the server-side approval may have already terminated.
+Calls `POST /v1/approvals/{approvalId}/cancel`. Requires authentication. The CLI returns `cancelled: true` only when
+InFlow confirms cancellation. A rejected request or network failure returns an error instead of reporting success.
+Cancellation applies to pending approvals, not approved or settled payments.
 
 ### `x402 decode`
 
@@ -1052,7 +1056,7 @@ inflow mpp pay <url> --format json                          # two-process: retur
 inflow mpp subscribe <url> --option-id <optionId> --interval 5 # select terms, approve, and settle period zero
 inflow mpp fetch <transactionId> <url> --interval 5         # resume and fetch the seller resource
 inflow mpp status <transactionId> --interval 5              # monitor state only; never contacts the seller
-inflow mpp cancel <approvalId>                              # best-effort cancel of a pending approval
+inflow mpp cancel <approvalId>                              # cancel a pending approval
 inflow mpp decode '<WWW-Authenticate: Payment value>'       # or a base64url credential / receipt
 inflow mpp supported                                        # methods the buyer can pay with: method -> intent -> rail -> currencies
 ```
@@ -1136,6 +1140,9 @@ inline. Fetch uses the saved purchase and does not take merchant flags or an Ins
 resume approval or credential issuance. In an interactive terminal, Escape during approval requests cancellation and
 waits for the server's response. Escape during `status` or `fetch` stops waiting; it does not cancel an approved
 payment.
+
+When Fetch polling reaches `--timeout` or `--max-attempts`, it stops waiting without cancelling the approval. Resume
+with the same transaction ID, or explicitly cancel a pending approval with `mpp cancel`.
 
 Normal `pay` and `status` structured output uses `credential: "<redacted>"` for CARD; terminal status does not display
 credential material. Fetch sends the credential without printing it. Explicit `--credential-file <path>` on `pay` or

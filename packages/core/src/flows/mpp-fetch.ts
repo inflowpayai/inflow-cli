@@ -125,6 +125,7 @@ async function resolveReady(input: MppFetchInput): Promise<MppTransactionRespons
       };
     }
     if (event.type === 'timedOut') {
+      // Fetch resumes an existing payment; its polling limit must not cancel the approval.
       return {
         error: {
           type: 'errored',

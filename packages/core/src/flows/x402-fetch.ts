@@ -119,6 +119,7 @@ async function resolveSigned(input: X402FetchInput): Promise<X402PayloadResponse
     if (event.type === 'settled') return event.response;
     if (event.type === 'failed') return { error: terminalError(event.response, input.transactionId) };
     if (event.type === 'timedOut') {
+      // Fetch resumes an existing payment; its polling limit must not cancel the approval.
       return {
         error: {
           type: 'errored',
