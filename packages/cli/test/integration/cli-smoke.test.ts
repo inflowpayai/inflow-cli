@@ -628,16 +628,11 @@ describe('cli smoke', () => {
     });
   });
 
-  it.skipIf(process.platform !== 'darwin' || packagedExecutable !== undefined)(
-    'credential-using commands restart a stopped vault and report locked credentials without prompting an agent',
-    async () => {
-      const root = realpathSync(mkdtempSync(join('/private/tmp', 'inflow-inspect-vault-')));
-      const env = {
-        HOME: root,
-        XDG_DATA_HOME: join(root, 'data'),
-        INFLOW_AUTH_FILE: join(root, 'auth.json'),
-        INFLOW_API_KEY: undefined,
-      };
+  describe.skipIf(process.platform !== 'darwin' || packagedExecutable !== undefined)(
+    'credential-using command recovery',
+    () => {
+      let root: string;
+      let env: NodeJS.ProcessEnv;
       const coreUrl = new URL('../../../core/dist/index.js', import.meta.url).href;
       const execute = promisify(execFile);
       const runCommand = (args: string[], environment = env) => run(args, environment, 10_000);
@@ -651,12 +646,19 @@ describe('cli smoke', () => {
         import { LocalVaultClient, Storage, SyncVaultSecretStore } from ${JSON.stringify(coreUrl)};
         globalThis.__INFLOW_DEVELOPMENT_VAULT__ = true;
         const client = new LocalVaultClient();
-        ${body}
+        try { ${body} } finally { client.dispose(); }
       `,
           ],
           { env: { ...process.env, ...env }, timeout: 10_000 },
         );
-      try {
+      beforeAll(async () => {
+        root = realpathSync(mkdtempSync(join('/private/tmp', 'inflow-inspect-vault-')));
+        env = {
+          HOME: root,
+          XDG_DATA_HOME: join(root, 'data'),
+          INFLOW_AUTH_FILE: join(root, 'auth.json'),
+          INFLOW_API_KEY: undefined,
+        };
         expect((await runCommand(['vault', 'policy', '--format', 'json'])).exitCode).toBe(0);
         await vaultScript(`
           await client.unlock(Buffer.from('test-inspection-only-passphrase'));
@@ -665,7 +667,15 @@ describe('cli smoke', () => {
             expires_in: 3600, expires_at: Date.now() + 3600000,
           });
         `);
-        for (const command of [
+      }, 15_000);
+      afterAll(async () => {
+        const reset = await runCommand(['vault', 'reset', '--force', '--format', 'json']);
+        expect(reset.exitCode, `${reset.stdout}\n${reset.stderr}`).toBe(0);
+        rmSync(root, { recursive: true, force: true });
+      }, 15_000);
+
+      it.each(
+        [
           ['mpp', 'inspect', 'http://127.0.0.1:1/resource'],
           ['x402', 'inspect', 'http://127.0.0.1:1/resource'],
           ['aep', 'inspect', 'https://service.test'],
@@ -678,27 +688,31 @@ describe('cli smoke', () => {
           ['x402', 'fetch', 'test-transaction', 'https://service.test', '--api-key', 'test-key'],
           ['odp', 'inspect', 'https://service.test'],
           ['inspect', 'https://service.test/resource'],
-        ]) {
-          await vaultScript('await client.shutdown();');
-          const result = await runCommand([...command, '--format', 'json']);
-          expect(result.exitCode).not.toBe(0);
-          expect(`${result.stdout}${result.stderr}`).toContain('VAULT_LOCKED');
-          expect(`${result.stdout}${result.stderr}`).toContain('inflow vault unlock');
-          expect(`${result.stdout}${result.stderr}`).not.toContain('daemon is unavailable');
-          await vaultScript("if (!(await client.status()).daemonRunning) throw new Error('daemon did not restart');");
-        }
-        for (const [name, arguments_] of [
-          ['aep_inspect', { serviceReference: 'https://service.test' }],
-          ['odp_inspect', { service: 'https://service.test' }],
-          ['mpp_cancel', { approvalId: 'test-approval' }],
-          ['x402_cancel', { approvalId: 'test-approval' }],
-          ['inspect', { url: 'https://service.test/resource' }],
-        ] as const) {
-          await vaultScript('await client.shutdown();');
-          const response = await callMcp(name, arguments_, env);
-          expect(response).toContain('inflow vault unlock');
-          expect(response).not.toContain('daemon is unavailable');
-        }
+        ].map((command) => ({ command, label: command.join(' ') })),
+      )('$label restarts a stopped vault and reports locked credentials without prompting', async ({ command }) => {
+        await vaultScript('await client.shutdown();');
+        const result = await runCommand([...command, '--format', 'json']);
+        expect(result.exitCode).not.toBe(0);
+        expect(`${result.stdout}${result.stderr}`).toContain('VAULT_LOCKED');
+        expect(`${result.stdout}${result.stderr}`).toContain('inflow vault unlock');
+        expect(`${result.stdout}${result.stderr}`).not.toContain('daemon is unavailable');
+        await vaultScript("if (!(await client.status()).daemonRunning) throw new Error('daemon did not restart');");
+      });
+      it.each([
+        ['aep_inspect', { serviceReference: 'https://service.test' }],
+        ['odp_inspect', { service: 'https://service.test' }],
+        ['mpp_cancel', { approvalId: 'test-approval' }],
+        ['x402_cancel', { approvalId: 'test-approval' }],
+        ['inspect', { url: 'https://service.test/resource' }],
+      ] as const)('%s reports locked credentials after vault shutdown', async (name, arguments_) => {
+        await vaultScript('await client.shutdown();');
+        const response = await callMcp(name, arguments_, env);
+        expect(response).toContain('inflow vault unlock');
+        expect(response).not.toContain('daemon is unavailable');
+      });
+
+      it('refreshes MCP credentials safely and rejects missing secrets before sending requests', async () => {
+        await vaultScript('await client.lock();');
         const received: { key: string | undefined; bearer: string | undefined }[] = [];
         let requests = 0;
         await withSeller(
@@ -790,13 +804,8 @@ describe('cli smoke', () => {
             }
           },
         );
-      } finally {
-        const reset = await runCommand(['vault', 'reset', '--force', '--format', 'json']);
-        expect(reset.exitCode).toBe(0);
-        rmSync(root, { recursive: true, force: true });
-      }
+      }, 60_000);
     },
-    120_000,
   );
 
   it.skipIf(process.platform !== 'darwin' || packagedExecutable !== undefined).each([
