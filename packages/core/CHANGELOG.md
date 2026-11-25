@@ -1,5 +1,14 @@
 # @inflowpayai/inflow-core
 
+## 0.8.1
+
+### Patch Changes
+
+- [#205](https://github.com/inflowpayai/inflow-cli/pull/205)
+  [`c75b677`](https://github.com/inflowpayai/inflow-cli/commit/c75b677eaf4e8fba8034a5a41a50e9271cba60e3) Thanks
+  [@nkavian](https://github.com/nkavian)! - Recover macOS vault daemons after an upgrade removes their executable, and
+  stop the vault daemon during Homebrew upgrades without deleting saved credentials.
+
 ## 0.8.0
 
 ### Minor Changes
