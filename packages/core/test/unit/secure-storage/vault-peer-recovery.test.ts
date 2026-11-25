@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, rmSync, unlinkSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,56 +70,80 @@ describe('vault peer recovery', () => {
     },
   );
 
-  it
-    .runIf(process.platform === 'darwin' || process.platform === 'linux')
-    .each(process.platform === 'darwin' ? [false, true] : [false])(
-    'shuts down a same-user local daemon through the public recovery boundary (reject connections: %s)',
-    async (rejectConnections) => {
-      const rootDirectory = mkdtempSync(join(tmpdir(), 'inflow-vault-recovery-'));
-      const socketPath = vaultFilePaths(rootDirectory).socket;
-      const child = spawn(
-        process.execPath,
+  it.runIf(process.platform === 'darwin' || process.platform === 'linux').each(
+    process.platform === 'darwin'
+      ? [
+          { rejectConnections: false, removed: false, daemon: true },
+          { rejectConnections: true, removed: false, daemon: true },
+          { rejectConnections: true, removed: true, daemon: true },
+          { rejectConnections: true, removed: true, daemon: false },
+        ]
+      : [{ rejectConnections: false, removed: false, daemon: true }],
+  )('recovers only a vault daemon: %j', async ({ rejectConnections, removed, daemon }) => {
+    const rootDirectory = mkdtempSync(join(tmpdir(), 'inflow-vault-recovery-'));
+    const socketPath = vaultFilePaths(rootDirectory).socket;
+    const executable = removed ? join(rootDirectory, 'old-node') : process.execPath;
+    if (removed) copyFileSync(process.execPath, executable);
+    const child = spawn(
+      executable,
+      [
+        '-e',
         [
-          '-e',
-          [
-            "const { mkdirSync } = require('node:fs');",
-            "const { dirname } = require('node:path');",
-            "const { createServer } = require('node:net');",
-            'const socketPath = process.argv[1];',
-            'mkdirSync(dirname(socketPath), { recursive: true });',
-            'let connections = 0;',
-            `const rejectConnections = ${String(rejectConnections)};`,
-            'const server = createServer(socket => {',
-            'connections++;',
-            'if (rejectConnections) {',
-            "socket.on('error', () => {});",
-            "socket.end('rejected', () => socket.destroy());",
-            '}',
-            '});',
-            "server.listen(socketPath, () => process.send('ready'));",
-            "process.on('SIGTERM', () => server.close(() => process.exit(rejectConnections && connections !== 1 ? 1 : 0)));",
-          ].join(''),
-          socketPath,
-          '--daemon',
-          'vault',
-        ],
-        { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
-      );
-      try {
-        await once(child, 'message');
-        if (rejectConnections) {
-          const client = createConnection(socketPath);
-          client.resume();
-          await once(client, 'close');
-        }
-        await expect(shutdownUnverifiedLocalVaultDaemon(rootDirectory)).resolves.toBeUndefined();
-        expect(child.exitCode).toBe(0);
-      } finally {
-        if (child.exitCode === null) child.kill('SIGKILL');
-        rmSync(rootDirectory, { force: true, recursive: true });
+          "const { mkdirSync } = require('node:fs');",
+          "const { dirname } = require('node:path');",
+          "const { createServer } = require('node:net');",
+          'const socketPath = process.argv[1];',
+          'mkdirSync(dirname(socketPath), { recursive: true });',
+          'let connections = 0;',
+          `const rejectConnections = ${String(rejectConnections)};`,
+          'const server = createServer(socket => {',
+          'connections++;',
+          'if (rejectConnections) {',
+          "socket.on('error', () => {});",
+          "socket.end('rejected', () => socket.destroy());",
+          '}',
+          '});',
+          "server.listen(socketPath, () => process.send('ready'));",
+          "process.on('SIGTERM', () => server.close(() => process.exit(rejectConnections && connections !== 1 ? 1 : 0)));",
+        ].join(''),
+        socketPath,
+        ...(daemon ? ['--daemon', 'vault'] : []),
+      ],
+      { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
+    );
+    try {
+      await once(child, 'message');
+      if (rejectConnections) {
+        const client = createConnection(socketPath);
+        client.resume();
+        await once(client, 'close');
       }
-    },
-  );
+      if (removed) {
+        unlinkSync(executable);
+        expect(peerVerification.inspectSameUserVaultListener(socketPath)).toMatchObject({
+          path: '',
+          pid: child.pid,
+          uid: process.getuid?.(),
+        });
+      }
+      if (!daemon) {
+        await expect(shutdownUnverifiedLocalVaultDaemon(rootDirectory)).rejects.toMatchObject({
+          secureStorageCode: 'secure_storage_peer_verification_failed',
+        });
+        expect(child.exitCode).toBeNull();
+        return;
+      }
+      await expect(shutdownUnverifiedLocalVaultDaemon(rootDirectory)).resolves.toBeUndefined();
+      expect(child.exitCode).toBe(0);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGKILL');
+        await exited;
+      }
+      rmSync(rootDirectory, { force: true, recursive: true });
+    }
+  });
 
   it('signals a same-user local daemon and waits for its socket to close', async () => {
     const harness = dependencies();

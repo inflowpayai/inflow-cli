@@ -202,13 +202,18 @@ function closeServer(server: Server): Promise<void> {
 
 describe('cli smoke', () => {
   it('does not count test setup against the MCP response deadline', async () => {
-    const response = await callMcp(
-      'mpp_decode',
-      { value: '@@@not-decodable@@@' },
-      { HOME: authDir, XDG_DATA_HOME: join(authDir, 'data'), INFLOW_API_KEY: '' },
-      () => new Promise((resolve) => setTimeout(resolve, 11_000)),
-    );
-    expect(JSON.parse(response)).toMatchObject({ id: 2, result: { isError: true } });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const response = await callMcp(
+        'mpp_decode',
+        { value: '@@@not-decodable@@@' },
+        { HOME: authDir, XDG_DATA_HOME: join(authDir, 'data'), INFLOW_API_KEY: '' },
+        () => vi.advanceTimersByTimeAsync(11_000),
+      );
+      expect(JSON.parse(response)).toMatchObject({ id: 2, result: { isError: true } });
+    } finally {
+      vi.useRealTimers();
+    }
   }, 25_000);
 
   it.each([200, 402])('inspect returns schema-valid structured MCP output for HTTP %i', async (status) => {
@@ -492,7 +497,7 @@ describe('cli smoke', () => {
   });
 
   it.skipIf(packagedExecutable !== undefined)(
-    'starts and reuses the development vault across built CLI commands',
+    'starts and reuses the development vault across built CLI commands, and stops it without losing credentials',
     async () => {
       const vaultRoot = realpathSync(
         mkdtempSync(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'inflow-development-vault-')),
@@ -502,7 +507,7 @@ describe('cli smoke', () => {
         USERPROFILE: vaultRoot,
         XDG_DATA_HOME: join(vaultRoot, 'data'),
       };
-      const { LocalVaultClient } = await import('../../../core/dist/index.js');
+      const { LocalVaultClient, SyncVaultSecretStore } = await import('../../../core/dist/index.js');
       vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
       if (process.platform === 'win32') {
         vi.stubGlobal(
@@ -512,14 +517,16 @@ describe('cli smoke', () => {
             .digest('hex'),
         );
       }
-      const client = new LocalVaultClient({
+      const clientOptions = {
         rootDirectory:
           process.platform === 'darwin'
             ? join(vaultRoot, 'Library', 'Application Support', 'InFlow')
             : process.platform === 'win32'
               ? join(vaultRoot, '.inflow')
               : join(env.XDG_DATA_HOME, 'inflow'),
-      });
+      };
+      const client = new LocalVaultClient(clientOptions);
+      const secrets = new SyncVaultSecretStore(clientOptions);
       let resetCompleted = false;
       try {
         const policy = await run(['vault', 'policy', '--format', 'json'], env);
@@ -530,6 +537,9 @@ describe('cli smoke', () => {
         });
 
         await client.unlock(Buffer.from('synthetic-development-test-factor'));
+        const reference = { purpose: 'api-key', reference: 'upgrade-preserved-key' };
+        secrets.create(reference, Buffer.from('synthetic-upgrade-key'));
+        secrets.dispose();
         const initial = await client.info();
         for (let invocation = 0; invocation < 2; invocation++) {
           const status = await run(['vault', 'status', '--format', 'json'], env);
@@ -538,18 +548,35 @@ describe('cli smoke', () => {
           expect((await client.info()).pid).toBe(initial.pid);
         }
 
+        const stopped = await run(['--daemon', 'vault-stop'], env);
+        expect(stopped.exitCode, `${stopped.stdout}\n${stopped.stderr}`).toBe(0);
+        await expect(client.info()).rejects.toThrow();
+        const stoppedAgain = await run(['--daemon', 'vault-stop'], env);
+        expect(stoppedAgain.exitCode, `${stoppedAgain.stdout}\n${stoppedAgain.stderr}`).toBe(0);
+        expect((await run(['vault', 'policy', '--format', 'json'], env)).exitCode).toBe(0);
+        expect((await client.info()).pid).not.toBe(initial.pid);
+        await expect(client.status()).resolves.toMatchObject({ lockState: 'locked' });
+        await client.unlock(Buffer.from('synthetic-development-test-factor'));
+        const restoredSecrets = new SyncVaultSecretStore(clientOptions);
+        try {
+          expect(Buffer.from(restoredSecrets.read(reference)).toString()).toBe('synthetic-upgrade-key');
+        } finally {
+          restoredSecrets.dispose();
+        }
+
         const reset = await run(['vault', 'reset', '--force', '--format', 'json'], env);
         expect(reset.exitCode, `${reset.stdout}\n${reset.stderr}`).toBe(0);
         expect(parseAgentJson(reset.stdout)).toEqual({ reset: true });
         resetCompleted = true;
       } finally {
+        secrets.dispose();
         client.dispose();
         vi.unstubAllGlobals();
         if (!resetCompleted) await run(['vault', 'reset', '--force', '--format', 'json'], env);
         if (resetCompleted) rmSync(vaultRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       }
     },
-    process.platform === 'win32' ? 30_000 : 15_000,
+    60_000,
   );
 
   it('auth status --format json yields an unauthenticated frame on a cold start', async () => {
@@ -808,7 +835,7 @@ describe('cli smoke', () => {
     },
   );
 
-  it.skipIf(process.platform !== 'darwin' || packagedExecutable !== undefined).each([
+  it.skipIf(process.platform !== 'darwin' || packagedExecutable !== undefined).concurrent.each([
     { custom: false, logout: false },
     { custom: true, logout: false },
     { custom: false, logout: true },
@@ -825,7 +852,8 @@ describe('cli smoke', () => {
       };
       const coreUrl = new URL('../../../core/dist/index.js', import.meta.url).href;
       const initialize = async () => {
-        expect((await run(['vault', 'policy', '--format', 'json'], env)).exitCode).toBe(0);
+        const policy = await run(['vault', 'policy', '--format', 'json'], env);
+        expect(policy.exitCode, `${policy.stdout}\n${policy.stderr}`).toBe(0);
         await promisify(execFile)(
           process.execPath,
           [

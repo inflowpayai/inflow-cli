@@ -1,11 +1,12 @@
 import { Buffer } from 'node:buffer';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { Cli } from 'incur';
+import * as core from '@inflowpayai/inflow-core';
 import {
   changePassphraseOutput,
   lockOutput,
@@ -19,6 +20,7 @@ import {
   ensureLocalVaultUnlocked,
   readVaultStatusWithoutStarting,
   resetLocalVault,
+  stopLocalVaultDaemon,
 } from '../../../../src/commands/vault/index.js';
 import {
   LocalVaultClient,
@@ -26,6 +28,7 @@ import {
   startLocalVaultDaemon,
   type VaultPolicy,
   type VaultStatus,
+  vaultFilePaths,
 } from '@inflowpayai/inflow-core';
 
 type ErrorShape = { code: string; message: string };
@@ -161,6 +164,96 @@ function resetDeps(overrides: Partial<ResetVaultTestDeps> = {}): ResetVaultTestD
 }
 
 describe('vault command runners', () => {
+  it('stops through peer recovery when the daemon cannot be authenticated', async () => {
+    const rootDirectory = mkdtempSync(join(tmpdir(), 'iv-stop-recover-'));
+    const client = new LocalVaultClient({ rootDirectory });
+    vi.spyOn(client, 'shutdown').mockRejectedValue(
+      new SecureStorageError('secure_storage_peer_verification_failed', 'unverified peer'),
+    );
+    const recover = vi.spyOn(core, 'shutdownUnverifiedLocalVaultDaemon').mockResolvedValue();
+    try {
+      await expect(stopLocalVaultDaemon({ rootDirectory, client })).resolves.toBeUndefined();
+      expect(recover).toHaveBeenCalledOnce();
+      expect(recover).toHaveBeenCalledWith(rootDirectory);
+    } finally {
+      recover.mockRestore();
+      client.dispose();
+      rmSync(rootDirectory, { force: true, recursive: true });
+    }
+  });
+
+  it('refuses to stop a service-managed Windows vault', async () => {
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', false);
+    try {
+      await expect(stopLocalVaultDaemon()).rejects.toThrow('must be stopped by its service manager');
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform });
+      vi.stubGlobal('__INFLOW_DEVELOPMENT_VAULT__', true);
+    }
+  });
+
+  it.each([
+    new Error('shutdown failed'),
+    new SecureStorageError('secure_storage_peer_verification_failed', 'unverified peer'),
+  ])('propagates shutdown failures without resetting the vault: %s', async (failure) => {
+    const rootDirectory = mkdtempSync(join(tmpdir(), 'iv-stop-error-'));
+    const client = new LocalVaultClient({ rootDirectory });
+    const shutdown = vi.spyOn(client, 'shutdown').mockRejectedValue(failure);
+    const reset = vi.spyOn(client, 'reset');
+    try {
+      await expect(stopLocalVaultDaemon({ rootDirectory, client })).rejects.toBe(failure);
+      expect(shutdown).toHaveBeenCalledOnce();
+      expect(reset).not.toHaveBeenCalled();
+    } finally {
+      client.dispose();
+      rmSync(rootDirectory, { force: true, recursive: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32').each([false, true])(
+    'stops an isolated daemon without removing its vault (shared client=%s)',
+    async (shared) => {
+      const rootDirectory = mkdtempSync(join(tmpdir(), 'iv-stop-'));
+      const daemon = await startLocalVaultDaemon({ rootDirectory });
+      const client = new LocalVaultClient({ rootDirectory });
+      const dispose = vi.spyOn(LocalVaultClient.prototype, 'dispose');
+      try {
+        await client.unlock(Buffer.from('isolated-stop-passphrase'));
+        const paths = vaultFilePaths(rootDirectory);
+        const sidecar = readFileSync(paths.sidecar);
+        await stopLocalVaultDaemon({ rootDirectory, ...(shared ? { client } : {}) });
+        expect(dispose).toHaveBeenCalledTimes(shared ? 0 : 1);
+        await daemon.closed;
+        expect(readFileSync(paths.sidecar)).toEqual(sidecar);
+        const restarted = await startLocalVaultDaemon({ rootDirectory });
+        try {
+          await expect(client.status()).resolves.toMatchObject({ lockState: 'locked' });
+          await expect(client.unlock(Buffer.from('isolated-stop-passphrase'))).resolves.toMatchObject({
+            lockState: 'unlocked',
+          });
+        } finally {
+          await restarted.close();
+        }
+      } finally {
+        dispose.mockRestore();
+        client.dispose();
+        await daemon.close();
+        rmSync(rootDirectory, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')('stopping an absent daemon does not create a vault', async () => {
+    const rootDirectory = mkdtempSync(join(tmpdir(), 'iv-stop-absent-'));
+    try {
+      await expect(stopLocalVaultDaemon({ rootDirectory })).resolves.toBeUndefined();
+      expect(() => readFileSync(vaultFilePaths(rootDirectory).sidecar)).toThrow();
+    } finally {
+      rmSync(rootDirectory, { force: true, recursive: true });
+    }
+  });
   it.each([false, true])('resets an isolated daemon with shared ownership=%s', async (shared) => {
     const rootDirectory = mkdtempSync(join(tmpdir(), 'iv-reset-owner-'));
     const daemon = await startLocalVaultDaemon({ rootDirectory });

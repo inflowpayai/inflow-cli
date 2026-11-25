@@ -546,6 +546,25 @@ async function vaultSidecarExists(path: string): Promise<boolean> {
   }
 }
 
+export async function stopLocalVaultDaemon(options: LocalVaultDaemonClientOptions = {}): Promise<void> {
+  if (usesLinuxVaultService() || usesWindowsVaultService()) {
+    throw new SecureStorageError(
+      'secure_storage_unavailable',
+      'The vault service must be stopped by its service manager.',
+    );
+  }
+  const client = vaultClient(options);
+  try {
+    try {
+      await shutdownStaleDaemon(client);
+    } catch (cause) {
+      await recoverVaultPeerVerificationFailure(cause, options);
+    }
+  } finally {
+    if (options.client === undefined) client.dispose();
+  }
+}
+
 /* v8 ignore start */
 export async function ensureLocalVaultDaemon(options: LocalVaultDaemonClientOptions = {}): Promise<LocalVaultClient> {
   const client = vaultClient(options);
