@@ -47,6 +47,12 @@ function renderCask({ arm64Checksum, caskUrl, version, x64Checksum }) {
   depends_on macos: :ventura
 
   binary "InFlow.app/Contents/MacOS/inflow", target: "inflow"
+
+  uninstall script: {
+    executable: "#{staged_path}/InFlow.app/Contents/MacOS/inflow",
+    args:       ["--daemon", "vault-stop"],
+    sudo:       false,
+  }
 end
 `;
 }

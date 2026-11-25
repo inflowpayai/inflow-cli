@@ -148,12 +148,15 @@ static napi_value listener_info(napi_env env, napi_callback_info info) {
   pids = NULL;
   if (owner == 0) goto failure;
 
-  char path[PROC_PIDPATHINFO_MAXSIZE];
+  char path[PROC_PIDPATHINFO_MAXSIZE] = {0};
+  errno = 0;
   int path_len = proc_pidpath(owner, path, sizeof(path));
+  /* Unlinked executables are recoverable only through listener ownership, never peer authentication. */
+  if (path_len <= 0 && errno != ENOENT) goto failure;
+  if (path_len <= 0) path_len = 0;
   struct proc_bsdinfo current_process;
   struct socket_fdinfo current_socket;
-  if (path_len <= 0 ||
-      proc_pidinfo(owner, PROC_PIDTBSDINFO, 0, &current_process, sizeof(current_process)) != sizeof(current_process) ||
+  if (proc_pidinfo(owner, PROC_PIDTBSDINFO, 0, &current_process, sizeof(current_process)) != sizeof(current_process) ||
       current_process.pbi_uid != owner_process.pbi_uid ||
       current_process.pbi_start_tvsec != owner_process.pbi_start_tvsec ||
       current_process.pbi_start_tvusec != owner_process.pbi_start_tvusec ||

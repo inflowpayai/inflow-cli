@@ -33,6 +33,7 @@ import {
   ensureLocalVaultDaemon,
   ensureLocalVaultUnlocked,
   readVaultStatusWithoutStarting,
+  stopLocalVaultDaemon,
   type LocalVaultDaemonClientOptions,
 } from './commands/vault/index.js';
 import { createX402Cli } from './commands/x402/index.js';
@@ -91,6 +92,10 @@ async function main(): Promise<void> {
   }
   const daemonMode = extractHiddenDaemonMode();
   if (daemonMode !== undefined) {
+    if (daemonMode === 'vault-stop') {
+      await stopLocalVaultDaemon();
+      return;
+    }
     if (
       daemonMode !== 'vault' &&
       daemonMode !== 'vault-broker' &&

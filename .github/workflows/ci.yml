@@ -187,6 +187,8 @@ jobs:
       - name: Test repository CLI and vault lifecycle
         timeout-minutes: 10
         run: |
+          pnpm --filter @inflowpayai/inflow-core exec vitest run test/unit/secure-storage/vault-peer-recovery.test.ts \
+            --coverage.enabled=false
           pnpm --filter @inflowpayai/inflow exec vitest run test/integration/cli-smoke.test.ts \
             --coverage.enabled=false
 

@@ -206,9 +206,9 @@ describe('vault peer verifier', () => {
     }
   });
 
-  it('inspects a same-user macOS listener through the verified native module', () => {
+  it.each(['/different/inflow', ''])('inspects a same-user macOS listener with executable path %j', (path) => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
-    const peer = { path: '/different/inflow', pid: 123, uid: 501 };
+    const peer = { path, pid: 123, uid: 501 };
     const harness = dependencies({ currentUserId: 501, peer, realpaths: new Map() });
     expect(inspectSameUserVaultListener('/vault.sock', {}, harness)).toEqual(peer);
     expect(harness.verifyNativeModule).toHaveBeenCalledOnce();
